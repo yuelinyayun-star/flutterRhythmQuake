@@ -1,0 +1,136 @@
+name: flutterrhythmquake
+description: "A new Flutter project."
+# The following line prevents the package from being accidentally published to
+# pub.dev using `flutter pub publish`. This is preferred for private packages.
+publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+
+# The following defines the version and build number for your application.
+# A version number is three numbers separated by dots, like 1.2.43
+# followed by an optional build number separated by a +.
+# Both the version and the builder number may be overridden in flutter
+# build by specifying --build-name and --build-number, respectively.
+# In Android, build-name is used as versionName while build-number used as versionCode.
+# Read more about Android versioning at https://developer.android.com/studio/publish/versioning
+# In iOS, build-name is used as CFBundleShortVersionString while build-number is used as CFBundleVersion.
+# Read more about iOS versioning at
+# https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
+# In Windows, build-name is used as the major, minor, and patch parts
+# of the product and file versions while build-number is used as the build suffix.
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.0
+
+hooks:
+  user_defines:
+    sqlite3:
+      # Avoid downloading prebuilt sqlite binaries from GitHub during build.
+      source: system
+      name_windows: winsqlite3
+
+# Dependencies specify other packages that your package needs in order to work.
+# To automatically upgrade your package dependencies to the latest versions
+# consider running `flutter pub upgrade --major-versions`. Alternatively,
+# dependencies can be manually updated by changing the version numbers below to
+# the latest version available on pub.dev. To see which dependencies have newer
+# versions available, run `flutter pub outdated`.
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # The following adds the Cupertino Icons font to your application.
+  # Use with the CupertinoIcons class for iOS style icons.
+  cupertino_icons: ^1.0.8
+  flutter_tts: ^4.0.2
+  window_manager: ^0.3.9
+  tray_manager: ^0.2.4
+  local_notifier: ^0.1.6
+  sqflite: ^2.3.0
+  sqflite_common_ffi: ^2.3.3
+  sqlite3_flutter_libs: ^0.5.24
+  path: ^1.8.3
+  provider: ^6.1.1
+  flutter_map: ^8.3.0
+  latlong2: ^0.9.0
+  geolocator: ^10.1.0
+  ntp: ^2.0.0
+  web_socket_channel: ^3.0.1
+  http: ^1.2.1
+  path_provider: ^2.1.2
+  intl: ^0.19.0
+  webview_flutter: ^4.10.0
+  image: ^4.0.17
+  shared_preferences: ^2.2.2
+  archive: ^4.0.9
+  audioplayers: ^6.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_launcher_icons: ^0.14.3
+
+  # The "flutter_lints" package below contains a set of recommended lints to
+  # encourage good coding practices. The lint set provided by the package is
+  # activated in the `analysis_options.yaml` file located at the root of your
+  # package. See that file for information about deactivating specific lint
+  # rules and activating additional ones.
+  flutter_lints: ^6.0.0
+
+# For information on the generic Dart part of this file, see the
+# following page: https://dart.dev/tools/pub/pubspec
+
+# The following section is specific to Flutter packages.
+flutter:
+
+  # The following line ensures that the Material Icons font is
+  # included with your application, so that you can use the icons in
+  # the material Icons class.
+  uses-material-design: true
+
+  assets:
+    - assets/icon/
+    - assets/maps/中华人民共和国.geojson
+    - assets/maps/japan_prefectures.geojson
+    - assets/maps/world_countries.geojson
+    - assets/maps/cn.eew.topo.json
+    - assets/maps/cn.fault.modified.topo.json
+    - assets/maps/jp.eew.topo.json
+    - assets/maps/jp.tsunami.topo.json
+    - assets/maps/kr.eew.topo.json
+    - assets/travel_times.json
+    - assets/images/madoka_bg.png
+    - assets/sounds/general/
+    - assets/sounds/srev/
+    - assets/fonts/
+
+  # An image asset can refer to one or more resolution-specific "variants", see
+  # https://flutter.dev/to/resolution-aware-images
+
+  # For details regarding adding assets from package dependencies, see
+  # https://flutter.dev/to/asset-from-package
+
+  # To add custom fonts to your application, add a fonts section here,
+  # in this "flutter" section. Each entry in this list should have a
+  # "family" key with the font family name, and a "fonts" key with a
+  #
+  fonts:
+    - family: MPLUSRounded1c
+      fonts:
+        - asset: assets/fonts/MPLUSRounded1c-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/MPLUSRounded1c-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/MPLUSRounded1c-Bold.ttf
+          weight: 700
+    - family: JetBrainsMono
+      fonts:
+        - asset: assets/fonts/JetBrainsMono-Variable.ttf
+  #
+  # For details regarding fonts from package dependencies,
+  # see https://flutter.dev/to/font-from-package
+
+flutter_launcher_icons:
+  image_path: "assets/icon/app_icon.png"
+  android: true
+  web:
+    generate: true

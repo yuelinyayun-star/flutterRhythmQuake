@@ -1,0 +1,234 @@
+/// CENC 烈度速报数据模型
+///
+/// 本模块定义了中国地震台网中心 (CENC) 仪器烈度速报的数据结构。
+/// CENC 烈度速报提供地震发生后各测站的仪器烈度观测数据。
+///
+/// ## 数据内容
+///
+/// - **基本信息**: 事件ID、发震时间、位置、深度等
+/// - **等震线图**: GeoJSON 格式的烈度等值线
+/// - **测站烈度**: 各观测站的仪器烈度、PGA、PGV 等
+///
+/// ## 数据来源
+///
+/// 数据通过 FAN 平台获取，包含：
+/// - uniEventId: 统一事件标识
+/// - contour_geojson: 等震线 GeoJSON 数据
+/// - instrument_intensity_json: 测站烈度 JSON 数组
+
+import 'dart:convert';
+
+/// CENC 烈度速报数据
+///
+/// 包含一次地震事件的完整烈度速报信息。
+class CencIrData {
+  /// 统一事件标识
+  ///
+  /// CENC 分配的唯一事件 ID，用于跨系统关联。
+  final String uniEventId;
+
+  /// 发震时间
+  ///
+  /// 地震发生的 UTC 时间。
+  final DateTime oriTime;
+
+  /// 数据生成时间
+  ///
+  /// 烈度速报数据的生成时间。
+  final DateTime gmtCreate;
+
+  /// 震中位置名称
+  ///
+  /// 人类可读的震中位置描述。
+  final String locName;
+
+  /// 震中经度
+  final double epiLon;
+
+  /// 震中纬度
+  final double epiLat;
+
+  /// 震源深度
+  ///
+  /// 单位：公里 (km)。
+  final double focDepth;
+
+  /// 主题代码
+  ///
+  /// 用于分类的事件代码。
+  final String subjectCodes;
+
+  /// 烈度信息文本
+  ///
+  /// 烈度速报的文字描述。
+  final String intensityInfoText;
+
+  /// 等震线 GeoJSON 数据
+  ///
+  /// 包含烈度等值线的 GeoJSON FeatureCollection。
+  /// 可用于在地图上绘制等震线图。
+  final Map<String, dynamic>? contourGeojson;
+
+  /// 测站仪器烈度列表
+  ///
+  /// 各观测站的仪器烈度观测数据。
+  final List<InstrumentIntensity> instrumentIntensities;
+
+  /// 构造函数
+  CencIrData({
+    required this.uniEventId,
+    required this.oriTime,
+    required this.gmtCreate,
+    required this.locName,
+    required this.epiLon,
+    required this.epiLat,
+    required this.focDepth,
+    required this.subjectCodes,
+    required this.intensityInfoText,
+    this.contourGeojson,
+    this.instrumentIntensities = const [],
+  });
+
+  /// 从 JSON 创建实例
+  ///
+  /// 解析 FAN 平台返回的 CENC 烈度速报数据。
+  ///
+  /// 参数：
+  /// - [json]: 原始 JSON 数据
+  ///
+  /// 返回：
+  /// - 解析后的 CencIrData 实例
+  ///
+  /// ## 数据格式处理
+  ///
+  /// - instrument_intensity_json 可能是 List 或 JSON 字符串
+  /// - contour_geojson 可能是 Map 或 JSON 字符串
+  factory CencIrData.fromJson(Map<String, dynamic> json) {
+    List<InstrumentIntensity> instruments = [];
+    if (json['instrument_intensity_json'] is List) {
+      for (final item in json['instrument_intensity_json']) {
+        if (item is Map) {
+          instruments.add(InstrumentIntensity.fromJson(Map<String, dynamic>.from(item)));
+        }
+      }
+    } else if (json['instrument_intensity_json'] is String) {
+      try {
+        final decoded = jsonDecode(json['instrument_intensity_json']);
+        if (decoded is List) {
+          for (final item in decoded) {
+            if (item is Map) {
+              instruments.add(InstrumentIntensity.fromJson(Map<String, dynamic>.from(item)));
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    Map<String, dynamic>? contour;
+    if (json['contour_geojson'] is Map) {
+      contour = Map<String, dynamic>.from(json['contour_geojson']);
+    } else if (json['contour_geojson'] is String) {
+      try {
+        final decoded = jsonDecode(json['contour_geojson']);
+        if (decoded is Map) {
+          contour = Map<String, dynamic>.from(decoded);
+        }
+      } catch (_) {}
+    }
+
+    return CencIrData(
+      uniEventId: json['uniEventId']?.toString() ?? '',
+      oriTime: DateTime.tryParse(json['oriTime']?.toString() ?? '') ?? DateTime.now(),
+      gmtCreate: DateTime.tryParse(json['gmtCreate']?.toString() ?? '') ?? DateTime.now(),
+      locName: json['locName']?.toString() ?? '',
+      epiLon: double.tryParse(json['epiLon']?.toString() ?? '') ?? 0.0,
+      epiLat: double.tryParse(json['epiLat']?.toString() ?? '') ?? 0.0,
+      focDepth: double.tryParse(json['focDepth']?.toString() ?? '') ?? 0.0,
+      subjectCodes: json['subjectCodes']?.toString() ?? '',
+      intensityInfoText: json['intensity_info_text']?.toString() ?? '',
+      contourGeojson: contour,
+      instrumentIntensities: instruments,
+    );
+  }
+}
+
+/// 仪器烈度数据
+///
+/// 单个观测站的仪器烈度观测结果。
+class InstrumentIntensity {
+  /// 测站名称
+  final String stationName;
+
+  /// 测站经度
+  final double longitude;
+
+  /// 测站纬度
+  final double latitude;
+
+  /// 仪器烈度
+  ///
+  /// 根据仪器记录计算得到的地震烈度值。
+  final double intensity;
+
+  /// 峰值地面加速度
+  ///
+  /// 单位：cm/s² (gal)
+  final double? pga;
+
+  /// 峰值地面速度
+  ///
+  /// 单位：cm/s
+  final double? pgv;
+
+  /// 构造函数
+  InstrumentIntensity({
+    required this.stationName,
+    required this.longitude,
+    required this.latitude,
+    required this.intensity,
+    this.pga,
+    this.pgv,
+  });
+
+  /// 从 JSON 创建实例
+  ///
+  /// 支持多种字段名称格式：
+  /// - stationName / name
+  /// - longitude / lon
+  /// - latitude / lat
+  /// - intensity / int
+  ///
+  /// 参数：
+  /// - [json]: 测站烈度 JSON 数据
+  ///
+  /// 返回：
+  /// - 解析后的 InstrumentIntensity 实例
+  factory InstrumentIntensity.fromJson(Map<String, dynamic> json) {
+    return InstrumentIntensity(
+      stationName: json['stationName']?.toString()
+          ?? json['name']?.toString()
+          ?? json['stName']?.toString()
+          ?? json['stID']?.toString()
+          ?? '',
+      longitude: double.tryParse(json['longitude']?.toString()
+          ?? json['lon']?.toString()
+          ?? json['stlo']?.toString()
+          ?? '') ?? 0.0,
+      latitude: double.tryParse(json['latitude']?.toString()
+          ?? json['lat']?.toString()
+          ?? json['stla']?.toString()
+          ?? '') ?? 0.0,
+      intensity: double.tryParse(json['intensity']?.toString()
+          ?? json['int']?.toString()
+          ?? json['estimateInt']?.toString()
+          ?? json['INT']?.toString()
+          ?? '') ?? 0.0,
+      pga: double.tryParse(json['pga']?.toString()
+          ?? json['PGA']?.toString()
+          ?? ''),
+      pgv: double.tryParse(json['pgv']?.toString()
+          ?? json['PGV']?.toString()
+          ?? ''),
+    );
+  }
+}
