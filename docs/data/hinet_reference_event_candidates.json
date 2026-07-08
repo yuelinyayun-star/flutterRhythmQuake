@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "datasetId": "hinet_reference_event_candidates_v1",
+  "policy": "User-provided Hi-net automatic hypocenter labels are preliminary reference metadata. Entries in this file are not JMA final catalog truth and must not enter benchmark denominators until linked to a local GIF replay package and split assignment.",
+  "events": [
+    {
+      "eventId": "20260623_sanriku_far_east_offshore_m30_hinet",
+      "originTimeUtc": "2026-06-23T11:40:55Z",
+      "originTimeUtcPlus8": "2026-06-23T19:40:55+08:00",
+      "originTimeJst": "2026-06-23T20:40:55+09:00",
+      "region": "Sanriku far east offshore",
+      "regionJapanese": "\u4e09\u9678\u6771\u65b9\u306f\u308b\u304b\u6c96",
+      "latitude": 39.772,
+      "longitude": 143.327,
+      "depthKm": 7.1,
+      "magnitude": 3.0,
+      "source": "user_provided_hinet_hypocenter",
+      "truthQuality": "hinet_user_provided_preliminary",
+      "status": "pending_equake_or_gif_association",
+      "captureDirectory": null,
+      "equakeReport": null,
+      "eventLabels": [
+        "offshore",
+        "far_offshore",
+        "small",
+        "shallow",
+        "hinet_preliminary",
+        "reference_only",
+        "pending_capture"
+      ],
+      "notes": "No matching local GIF capture or EQuake source-estimation report has been found in the project yet. Keep as reference-only metadata until associated with a replay package or later JMA/Hi-net catalog revision."
+    },
+    {
+      "eventId": "20260623_tokachi_southeast_offshore_m34_hinet",
+      "originTimeUtc": "2026-06-23T14:13:06Z",
+      "originTimeUtcPlus8": "2026-06-23T22:13:06+08:00",
+      "originTimeJst": "2026-06-23T23:13:06+09:00",
+      "region": "Tokachi southeast offshore",
+      "regionJapanese": "\u5341\u52dd\u5730\u65b9\u5357\u6771\u6c96",
+      "latitude": 42.497,
+      "longitude": 143.647,
+      "depthKm": 55.5,
+      "magnitude": 3.4,
+      "source": "user_provided_hinet_hypocenter",
+      "truthQuality": "hinet_user_provided_preliminary",
+      "status": "gif_associated_reference_fixture",
+      "captureDirectory": "tmp/captures/tokachi_southeast_offshore_m34_20260623_221306_multilayer",
+      "fixture": "test/fixtures/source_estimation/tokachi_southeast_offshore_m34_20260623_hinet.json",
+      "equakeReport": {
+        "reportNumber": 11,
+        "isFinal": true,
+        "originTimeUtcPlus8": "2026-06-23T22:13:05+08:00",
+        "region": "Tokachi offshore",
+        "regionJapanese": "\u5341\u52dd\u6c96",
+        "latitude": 42.49,
+        "longitude": 143.7,
+        "depthKm": 61,
+        "magnitude": 3.1,
+        "magnitudeStationCount": 41,
+        "observedMaxShindo": 1,
+        "observedMaxShindoFloat": 0.6,
+        "estimatedMaxShindo": 0,
+        "estimatedMaxShindoRange": "-0.5 ~ 0.4",
+        "quality": "B",
+        "confidencePercent": 73.5,
+        "rmsSeconds": 0.75,
+        "azimuthalGapDegrees": 155,
+        "triggeredStationCount": 54,
+        "triggerBreakdown": {
+          "p": 9,
+          "s": 33,
+          "o": 12
+        }
+      },
+      "eventLabels": [
+        "offshore",
+        "hokkaido",
+        "small",
+        "intermediate_depth",
+        "hinet_preliminary",
+        "equake_reference",
+        "gif_available",
+        "reference_only"
+      ],
+      "notes": "Complete 151-second, eight-layer NIED GIF window captured with 1208/1208 files and no failures. Keep outside frozen split metrics until event-level split assignment and final-catalog linking are reviewed."
+    }
+  ]
+}

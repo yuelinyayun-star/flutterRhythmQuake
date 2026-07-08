@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "caseId": "20260702_fukushima_aizu_m46_jma_p2p",
+  "caseType": "event",
+  "captureDirectory": "tmp/captures/20260702_fukushima_aizu_m46_jma_p2p",
+  "timeZone": "Asia/Tokyo",
+  "gifNamePattern": "{stamp}.{layer}.gif",
+  "startTimeJst": "2026-07-02T20:47:30",
+  "endTimeJst": "2026-07-02T20:50:00",
+  "sensitivity": 2,
+  "truth": {
+    "originTimeJst": "2026-07-02T20:48:00",
+    "latitude": 37.2,
+    "longitude": 139.5,
+    "depthKm": 150.0,
+    "magnitude": 4.6,
+    "source": "p2pquake_jma_detail_scale_reference"
+  },
+  "eventLabels": {
+    "catalogEvent": true,
+    "catalogTruthVerified": false,
+    "observableEvent": true,
+    "detectableEvent": true,
+    "includeInDetectionMetrics": false
+  },
+  "classification": {
+    "region": "Fukushima Aizu",
+    "captureSource": "P2PQuake JMA DetailScale id 6a4650e1e88ee598246bee5e; within-retention NIED GIF capture.",
+    "truthQuality": "p2pquake_jma_detail_scale_reference_pending_final_catalog",
+    "plannedUse": "source_estimation_live_intake_reference",
+    "maxShindoLabel": "2",
+    "notes": "Reference-only within-3h P2PQuake/JMA capture. Do not use as catalog-verified frozen metric until a versioned JMA final catalog row is linked."
+  },
+  "splitStatus": "unassigned_reference"
+}

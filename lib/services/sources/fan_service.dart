@@ -39,7 +39,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'base_source.dart';
-import '../../models/unified_quake_data.dart';
 import '../quake_event_adapter.dart';
 import '../../models/quake_message.dart';
 import '../../models/source_status.dart';
@@ -104,7 +103,10 @@ class FanService extends BaseSourceService {
   ];
 
   /// 获取可选择的服务器名称列表
-  static List<String> get serverOptions => ['ws.fanstudio.tech', 'ws.fanstudio.hk'];
+  static List<String> get serverOptions => [
+    'ws.fanstudio.tech',
+    'ws.fanstudio.hk',
+  ];
 
   /// 设置默认连接的服务器索引（在 connect() 之前调用）
   void setDefaultServerIndex(int index) {
@@ -119,6 +121,7 @@ class FanService extends BaseSourceService {
   /// （包括 instrument_intensity_json 和 contour_geojson）。
   void requestCencIrDetail(String id) {
     if (_channel == null) return;
+    _cencIrDetailRequested = true;
     _channel!.sink.add(jsonEncode({'type': 'cencirdetail', 'id': id}));
   }
 
@@ -153,6 +156,7 @@ class FanService extends BaseSourceService {
 
   /// 已处理的 CENC 烈度速报 ID 集合（用于去重）
   final Set<String> _seenCencIrIds = {};
+  bool _cencIrDetailRequested = false;
 
   /// 当前使用的 URL 索引
   int _currentUrlIndex = 0;
@@ -350,7 +354,11 @@ class FanService extends BaseSourceService {
       if (type == 'query_response' || type == 'initial_all') {
         for (final entry in json.entries) {
           final sourceName = entry.key;
-          if (sourceName == 'type' || sourceName == 'ver' || sourceName == 'id' || sourceName == 'timestamp') continue;
+          if (sourceName == 'type' ||
+              sourceName == 'ver' ||
+              sourceName == 'id' ||
+              sourceName == 'timestamp')
+            continue;
           final value = entry.value;
           if (value is Map) {
             _parsePayload(
@@ -395,7 +403,11 @@ class FanService extends BaseSourceService {
             if (id.isEmpty || _seenCencIrIds.contains(id)) continue;
             _seenCencIrIds.add(id);
             if (isEmpty) continue;
-            final parsed = _parseFanEvent(mapped, QuakeSourceType.cenc, isInitialLoad: true);
+            final parsed = _parseFanEvent(
+              mapped,
+              QuakeSourceType.cenc,
+              isInitialLoad: true,
+            );
             if (parsed != null) emit(parsed);
           }
           onCencIrListUpdated?.call(mappedList);
@@ -410,6 +422,8 @@ class FanService extends BaseSourceService {
 
       // CENC 烈度速报详情
       if (type == 'cencirdetail_response') {
+        if (!_cencIrDetailRequested) return;
+        _cencIrDetailRequested = false;
         final data = json['Data'];
         if (data is Map) {
           final detail = Map<String, dynamic>.from(data);
@@ -442,16 +456,30 @@ class FanService extends BaseSourceService {
         final sourceName = json['source']?.toString();
         final data = json['Data'];
         if (data is Map && sourceName != null) {
-          _parsePayload(Map<String, dynamic>.from(data), sourceHint: sourceName, isInitialLoad: true);
+          _parsePayload(
+            Map<String, dynamic>.from(data),
+            sourceHint: sourceName,
+            isInitialLoad: true,
+          );
         } else if (data is Map) {
           _parsePayload(Map<String, dynamic>.from(data), isInitialLoad: true);
         } else {
           for (final entry in json.entries) {
             final k = entry.key;
-            if (k == 'type' || k == 'ver' || k == 'id' || k == 'timestamp' || k == 'source' || k == 'md5') continue;
+            if (k == 'type' ||
+                k == 'ver' ||
+                k == 'id' ||
+                k == 'timestamp' ||
+                k == 'source' ||
+                k == 'md5')
+              continue;
             final v = entry.value;
             if (v is Map) {
-              _parsePayload(Map<String, dynamic>.from(v), sourceHint: k, isInitialLoad: true);
+              _parsePayload(
+                Map<String, dynamic>.from(v),
+                sourceHint: k,
+                isInitialLoad: true,
+              );
             }
           }
         }
@@ -467,7 +495,10 @@ class FanService extends BaseSourceService {
         final sourceHint = json['source']?.toString();
         final data = json['Data'];
         if (data is Map && sourceHint != null) {
-          _parsePayload(Map<String, dynamic>.from(data), sourceHint: sourceHint);
+          _parsePayload(
+            Map<String, dynamic>.from(data),
+            sourceHint: sourceHint,
+          );
         } else if (data is Map) {
           _parsePayload(Map<String, dynamic>.from(data));
         } else {
@@ -511,25 +542,36 @@ class FanService extends BaseSourceService {
     final List<QuakeMessage> messages = [];
     for (final item in items) {
       if (item is! Map) continue;
-      final parsed = _parseFanEvent(Map<String, dynamic>.from(item), source, isInitialLoad: true);
+      final parsed = _parseFanEvent(
+        Map<String, dynamic>.from(item),
+        source,
+        isInitialLoad: true,
+      );
       if (parsed != null) {
         // CWA/JMA/CENC 使用原始地名，其他数据源使用 getFEName 作为备用
         final String finalLocation;
-        if (source == QuakeSourceType.cwa || source == QuakeSourceType.cwa_eew ||
-            source == QuakeSourceType.jma_fan || source == QuakeSourceType.cenc) {
+        if (source == QuakeSourceType.cwa ||
+            source == QuakeSourceType.cwa_eew ||
+            source == QuakeSourceType.jma_fan ||
+            source == QuakeSourceType.cenc) {
           finalLocation = parsed.location;
         } else {
-          final String cnLocation = getFEName(parsed.latitude, parsed.longitude);
+          final String cnLocation = getFEName(
+            parsed.latitude,
+            parsed.longitude,
+          );
           finalLocation = cnLocation.isNotEmpty ? cnLocation : parsed.location;
         }
 
         // CWA/JMA 使用原始震度，不进行回退计算
         final int maxIntensity;
-        if (source == QuakeSourceType.cwa || source == QuakeSourceType.cwa_eew ||
+        if (source == QuakeSourceType.cwa ||
+            source == QuakeSourceType.cwa_eew ||
             source == QuakeSourceType.jma_fan) {
           maxIntensity = parsed.maxIntensity ?? 0;
         } else {
-          maxIntensity = parsed.maxIntensity ??
+          maxIntensity =
+              parsed.maxIntensity ??
               IntensityCalculator.calcCsisLevel(
                 parsed.magnitude,
                 parsed.depth,
@@ -583,7 +625,11 @@ class FanService extends BaseSourceService {
   /// - [payload]: JSON 格式的数据负载
   /// - [sourceHint]: 数据源提示（可选）
   /// - [isInitialLoad]: 是否为初始全量加载（不触发预警/情报UI）
-  void _parsePayload(Map<String, dynamic> payload, {String? sourceHint, bool isInitialLoad = false}) {
+  void _parsePayload(
+    Map<String, dynamic> payload, {
+    String? sourceHint,
+    bool isInitialLoad = false,
+  }) {
     // 提取内部 Data 字段
     final innerData = payload['Data'];
     Map<String, dynamic> event;
@@ -597,7 +643,6 @@ class FanService extends BaseSourceService {
     if (event.containsKey('uniEventId') &&
         (event.containsKey('contour_geojson') ||
             event.containsKey('instrument_intensity_json'))) {
-      _handleCencIrData(event);
       return;
     }
 
@@ -617,7 +662,9 @@ class FanService extends BaseSourceService {
     final QuakeSourceType source = _resolveSource(event, sourceHint);
     final result = _parseFanEvent(event, source, isInitialLoad: isInitialLoad);
     if (result != null) {
-      debugPrint('FAN _parsePayload source=$source eventId=${result.eventId} isInfoEvent=${result.isInfoEvent} isHistory=$isInitialLoad');
+      debugPrint(
+        'FAN _parsePayload source=$source eventId=${result.eventId} isInfoEvent=${result.isInfoEvent} isHistory=$isInitialLoad',
+      );
       if (isInitialLoad) {
         // kanameishi: query_response / initial_all 包含当前活跃的 EEW 事件
         // 对 EEW 事件，检查是否仍然活跃（根据 reportTime 和 timeoutSeconds）
@@ -627,10 +674,14 @@ class FanService extends BaseSourceService {
           final int timeoutSec = QuakeTime.eewTimeoutSeconds(result);
           final int elapsedSec = QuakeTime.calcPassedSeconds(result);
           if (elapsedSec < timeoutSec) {
-            debugPrint('FAN initial EEW still active: ${result.eventId} elapsed=${elapsedSec}s timeout=${timeoutSec}s');
+            debugPrint(
+              'FAN initial EEW still active: ${result.eventId} elapsed=${elapsedSec}s timeout=${timeoutSec}s',
+            );
             emit(result);
           } else {
-            debugPrint('FAN initial EEW expired: ${result.eventId} elapsed=${elapsedSec}s timeout=${timeoutSec}s');
+            debugPrint(
+              'FAN initial EEW expired: ${result.eventId} elapsed=${elapsedSec}s timeout=${timeoutSec}s',
+            );
           }
         }
         // 信息事件：历史数据已通过 cenclist_response / cwalist_response 等专门路径入桶
@@ -648,12 +699,19 @@ class FanService extends BaseSourceService {
     final mapped = <String, dynamic>{};
     mapped['id'] = item['id']?.toString() ?? '';
     mapped['uniEventId'] = item['uniEventId']?.toString() ?? '';
-    mapped['shockTime'] = item['oriTime']?.toString() ?? item['shockTime']?.toString() ?? '';
-    mapped['latitude'] = double.tryParse(item['epiLat']?.toString() ?? '') ?? item['latitude'];
-    mapped['longitude'] = double.tryParse(item['epiLon']?.toString() ?? '') ?? item['longitude'];
-    mapped['placeName'] = item['locName']?.toString() ?? item['placeName']?.toString() ?? '';
-    mapped['magnitude'] = double.tryParse(item['magnitude']?.toString() ?? '') ?? item['magnitude'];
-    mapped['depth'] = double.tryParse(item['focDepth']?.toString() ?? '') ?? item['depth'];
+    mapped['shockTime'] =
+        item['oriTime']?.toString() ?? item['shockTime']?.toString() ?? '';
+    mapped['latitude'] =
+        double.tryParse(item['epiLat']?.toString() ?? '') ?? item['latitude'];
+    mapped['longitude'] =
+        double.tryParse(item['epiLon']?.toString() ?? '') ?? item['longitude'];
+    mapped['placeName'] =
+        item['locName']?.toString() ?? item['placeName']?.toString() ?? '';
+    mapped['magnitude'] =
+        double.tryParse(item['magnitude']?.toString() ?? '') ??
+        item['magnitude'];
+    mapped['depth'] =
+        double.tryParse(item['focDepth']?.toString() ?? '') ?? item['depth'];
     mapped['infoTypeName'] = item['infoTypeName']?.toString() ?? '';
     mapped['nameByInfo'] = item['nameByInfo']?.toString() ?? '';
     return mapped;
@@ -677,7 +735,7 @@ class FanService extends BaseSourceService {
   /// 处理气象预警数据
   void _handleWeatherAlarm(Map<String, dynamic> json) {
     try {
-      final alarm = WeatherAlarm.fromJson(json);
+      final alarm = WeatherAlarm.fromFanJson(json);
       onWeatherAlarm?.call(alarm);
     } catch (e) {
       debugPrint('FAN WeatherAlarm 解析异常: $e');
@@ -685,7 +743,10 @@ class FanService extends BaseSourceService {
   }
 
   /// 处理 NMEFC 海啸预警数据
-  void _handleNmefcTsunami(Map<String, dynamic> json, {bool isInitialLoad = false}) {
+  void _handleNmefcTsunami(
+    Map<String, dynamic> json, {
+    bool isInitialLoad = false,
+  }) {
     try {
       final tsunami = TsunamiMessage.parseNmefcTsunami(json);
       debugPrint('FAN NMEFC海啸: ${tsunami.title} (${tsunami.areas.length}区域)');
@@ -951,9 +1012,11 @@ class FanService extends BaseSourceService {
       if (source == QuakeSourceType.fssnCmt) {
         final allMags = json['allMagnitudes'];
         if (allMags is Map) {
-          magnitude = double.tryParse(allMags['Mw']?.toString() ?? '') ??
+          magnitude =
+              double.tryParse(allMags['Mw']?.toString() ?? '') ??
               double.tryParse(allMags['Mww']?.toString() ?? '') ??
-              double.tryParse(allMags['M']?.toString() ?? '') ?? 0.0;
+              double.tryParse(allMags['M']?.toString() ?? '') ??
+              0.0;
         }
       } else {
         magnitude = double.tryParse(json['magnitude']?.toString() ?? '') ?? 0.0;
@@ -998,11 +1061,11 @@ class FanService extends BaseSourceService {
       final double? epiIntensityRaw = double.tryParse(epiIntensityStr);
       String maxIntensityStr = json['maxIntensity']?.toString() ?? '';
       final int? maxIntensityParsed = int.tryParse(maxIntensityStr);
-      
+
       // JMA 震度字符串转换
       String? jmaShindo;
       int? intensity;
-      
+
       if (source == QuakeSourceType.jma_fan) {
         // JMA 数据源：仅设置 jmaShindo 震度徽章字符串，不转为数值型 maxIntensity
         if (epiIntensityStr.isNotEmpty) {
@@ -1010,14 +1073,16 @@ class FanService extends BaseSourceService {
         } else if (maxIntensityStr.isNotEmpty) {
           jmaShindo = _normalizeJmaShindo(maxIntensityStr);
         }
-      } else if (source == QuakeSourceType.cwa || source == QuakeSourceType.cwa_eew) {
+      } else if (source == QuakeSourceType.cwa ||
+          source == QuakeSourceType.cwa_eew) {
         // CWA 数据源：仅设置 jmaShindo 震度徽章字符串
         if (maxIntensityStr.isNotEmpty) {
           jmaShindo = _formatShindo(maxIntensityStr);
         }
       } else {
         // 其他数据源：使用 API 原始数值型烈度
-        intensity = maxIntensityParsed ??
+        intensity =
+            maxIntensityParsed ??
             (epiIntensityRaw != null ? epiIntensityRaw.round() : null);
       }
 
@@ -1027,12 +1092,11 @@ class FanService extends BaseSourceService {
       final String updateTime = json['updateTime']?.toString() ?? '';
       final String province = json['province']?.toString() ?? '';
       final String md5 = json['md5']?.toString() ?? '';
-      final String url = json['url']?.toString() ?? '';
-      final String imageURI = json['imageURI']?.toString() ?? '';
       final String citystring = json['citystring']?.toString() ?? '';
       final String region = json['region']?.toString() ?? '';
       final String verify = json['verify']?.toString() ?? '';
-      final String typeField = json['type']?.toString() ?? json['infoTypeName']?.toString() ?? '';
+      final String typeField =
+          json['type']?.toString() ?? json['infoTypeName']?.toString() ?? '';
 
       // ─── 布尔标志（JMA 路径） ───
       final bool isFinal = json['final'] == true;
@@ -1050,7 +1114,7 @@ class FanService extends BaseSourceService {
           ? ''
           : getFEName(latitude, longitude);
       String locationBase;
-      
+
       // HKO: 优先使用 placeName，citystring 作为补充描述
       if (source == QuakeSourceType.hko) {
         locationBase = placeName.isNotEmpty
@@ -1064,7 +1128,8 @@ class FanService extends BaseSourceService {
             : '未知地点';
       } else {
         // 国际数据源优先使用 FE 区域中文名
-        final bool useFeName = source == QuakeSourceType.usgs ||
+        final bool useFeName =
+            source == QuakeSourceType.usgs ||
             source == QuakeSourceType.sa ||
             source == QuakeSourceType.emsc ||
             source == QuakeSourceType.bcsf ||
@@ -1072,7 +1137,7 @@ class FanService extends BaseSourceService {
             source == QuakeSourceType.usp ||
             source == QuakeSourceType.fssn ||
             source == QuakeSourceType.kma_eq;
-        
+
         if (useFeName && feName.isNotEmpty) {
           locationBase = feName;
         } else {
@@ -1089,12 +1154,12 @@ class FanService extends BaseSourceService {
               : '未知地点';
         }
       }
-      
+
       // CWA 数据源：提取 "(位於...)" 部分
       if (source == QuakeSourceType.cwa || source == QuakeSourceType.cwa_eew) {
         locationBase = _extractCwaLocation(locationBase);
       }
-      
+
       final String location = locationBase;
 
       // ─── 测定类型 ───
@@ -1111,7 +1176,7 @@ class FanService extends BaseSourceService {
       } else if (typeField == 'reviewed') {
         reviewType = '正式测定';
       }
-      
+
       // HKO: verify=Y/N -> 已核实/待核实
       if (source == QuakeSourceType.hko && verify.isNotEmpty) {
         reviewType = verify == 'Y' ? '已核实' : '待核实';
@@ -1120,10 +1185,11 @@ class FanService extends BaseSourceService {
       final String reportTimeStr = createTime.isNotEmpty
           ? createTime
           : updateTime.isNotEmpty
-              ? updateTime
-              : '';
-      final DateTime? parsedReportTime =
-          reportTimeStr.isNotEmpty ? DateTime.tryParse(reportTimeStr) : null;
+          ? updateTime
+          : '';
+      final DateTime? parsedReportTime = reportTimeStr.isNotEmpty
+          ? DateTime.tryParse(reportTimeStr)
+          : null;
 
       // ─── 烈度计算 ───
       // JMA 和 CWA 使用原始烈度值，其他数据源需要转换
@@ -1143,7 +1209,8 @@ class FanService extends BaseSourceService {
 
       // kanameishi: 初始加载时，EEW 事件需要检查是否仍然活跃
       // 过期的 EEW 不发射统一事件，避免在打开应用时显示已过期的预警
-      final bool isInfoEventSource = source != QuakeSourceType.cea &&
+      final bool isInfoEventSource =
+          source != QuakeSourceType.cea &&
           source != QuakeSourceType.cea_pr &&
           source != QuakeSourceType.kma_eew_fan &&
           source != QuakeSourceType.sa &&
@@ -1162,7 +1229,13 @@ class FanService extends BaseSourceService {
       } else {
         // EEW 事件：检查是否仍然活跃
         // 需要先构造一个临时的 QuakeMessage 来计算过期时间
-        final int timeoutSec = _eewTimeoutForSource(source, magnitude, magnitudel, isCancel, isWarn: source == QuakeSourceType.jma_fan && infoTypeName == '警報');
+        final int timeoutSec = _eewTimeoutForSource(
+          source,
+          magnitude,
+          magnitudel,
+          isCancel,
+          isWarn: source == QuakeSourceType.jma_fan && infoTypeName == '警報',
+        );
         final int elapsedSec = _calcPassedSecondsForSource(
           source,
           createTime.isNotEmpty ? createTime : shockTimeStr,
@@ -1170,14 +1243,18 @@ class FanService extends BaseSourceService {
         );
         shouldEmitUnified = elapsedSec < timeoutSec;
         if (!shouldEmitUnified) {
-          debugPrint('FAN initial EEW expired (unified): source=$source eventId=$eventId elapsed=${elapsedSec}s timeout=${timeoutSec}s');
+          debugPrint(
+            'FAN initial EEW expired (unified): source=$source eventId=$eventId elapsed=${elapsedSec}s timeout=${timeoutSec}s',
+          );
         }
       }
       if (shouldEmitUnified) {
-        _emitFanUnified(
-        source,
-        <String, dynamic>{
-          'eventId': eventId.isNotEmpty ? eventId : id.isNotEmpty ? id : md5,
+        _emitFanUnified(source, <String, dynamic>{
+          'eventId': eventId.isNotEmpty
+              ? eventId
+              : id.isNotEmpty
+              ? id
+              : md5,
           'location': location,
           'magnitude': magnitude > 0 ? magnitude : magnitudel,
           'depth': depth,
@@ -1189,6 +1266,7 @@ class FanService extends BaseSourceService {
           'infoTypeName': infoTypeName,
           'reviewType': reviewType ?? '',
           'type': reviewType ?? '',
+          'verify': verify,
           'updates': updates,
           'isWarn': source == QuakeSourceType.jma_fan && infoTypeName == '警報',
           'isFinal': isFinal,
@@ -1199,8 +1277,9 @@ class FanService extends BaseSourceService {
           'createTime': json['createTime']?.toString() ?? '',
           'updateTime': updateTime,
           'shockTime': json['shockTime']?.toString() ?? '',
-        },
-        );
+          'nodalPlane1': nodalPlane1 ?? '',
+          'nodalPlane2': nodalPlane2 ?? '',
+        });
       }
 
       return QuakeMessage(
@@ -1228,7 +1307,8 @@ class FanService extends BaseSourceService {
         reviewType: reviewType,
         infoTypeName: infoTypeName.isNotEmpty ? infoTypeName : null,
         verify: verify.isNotEmpty ? verify : null,
-        isInfoEvent: source != QuakeSourceType.cea &&
+        isInfoEvent:
+            source != QuakeSourceType.cea &&
             source != QuakeSourceType.cea_pr &&
             source != QuakeSourceType.kma_eew_fan &&
             source != QuakeSourceType.sa &&
@@ -1298,6 +1378,7 @@ class FanService extends BaseSourceService {
     _connectTimeoutTimer?.cancel();
     _connectedInitDone = false;
     _seenCencIrIds.clear();
+    _cencIrDetailRequested = false;
     try {
       _channel?.sink.close();
     } catch (_) {}
@@ -1337,7 +1418,7 @@ class FanService extends BaseSourceService {
   String _normalizeJmaShindo(String shindo) {
     final s = shindo.trim();
     if (s.isEmpty) return '';
-    
+
     // 处理 "5弱", "5強" 等格式
     if (s.contains('弱') || s.toLowerCase().contains('low')) {
       final num = RegExp(r'\d+').firstMatch(s);
@@ -1347,11 +1428,11 @@ class FanService extends BaseSourceService {
       final num = RegExp(r'\d+').firstMatch(s);
       return num != null ? '${num.group(0)}+' : s;
     }
-    
+
     // 处理 "5-", "5+" 格式
     if (s.contains('-') && !s.startsWith('-')) return s;
     if (s.contains('+') && !s.startsWith('+')) return s;
-    
+
     // 纯数字
     final num = RegExp(r'\d+').firstMatch(s);
     if (num != null) {
@@ -1360,7 +1441,7 @@ class FanService extends BaseSourceService {
         return val.toString();
       }
     }
-    
+
     return s;
   }
 
@@ -1402,21 +1483,10 @@ class FanService extends BaseSourceService {
     // 确定时区偏移（对齐 kanameishi 的 timeZone 字段）
     final int tzOffsetHours = QuakeTime.isJapanSource(source) ? 9 : 8;
 
-    // kanameishi: dayjs.utc(time).subtract(timeZone, "hours")
-    // 将本地时间字符串视为 UTC，减去时区偏移得到真正的 UTC 时间戳
-    final utcInstant = DateTime.utc(
-      parsed.year,
-      parsed.month,
-      parsed.day,
-      parsed.hour,
-      parsed.minute,
-      parsed.second,
-      parsed.millisecond,
-      parsed.microsecond,
-    ).subtract(Duration(hours: tzOffsetHours));
-
-    final elapsed = DateTime.now().toUtc().difference(utcInstant);
-    return elapsed.inSeconds.clamp(0, 999999);
+    return QuakeTime.calcPassedSecondsFromDateTime(
+      parsed,
+      Duration(hours: tzOffsetHours),
+    );
   }
 
   /// 格式化震度字符串
@@ -1436,7 +1506,7 @@ class FanService extends BaseSourceService {
   /// - 格式化后的震度字符串
   String _formatShindo(String intensity) {
     if (intensity.isEmpty) return intensity;
-    
+
     return intensity
         .replaceAll('強', '+')
         .replaceAll('弱', '-')
@@ -1456,14 +1526,14 @@ class FanService extends BaseSourceService {
   /// - 提取后的地点名称
   String _extractCwaLocation(String loc) {
     if (loc.isEmpty) return loc;
-    
+
     final start = loc.indexOf('(位於');
     final end = loc.indexOf(')');
-    
+
     if (start == -1 || end == -1 || start + 3 >= end) {
       return loc;
     }
-    
+
     return loc.substring(start + 3, end);
   }
 

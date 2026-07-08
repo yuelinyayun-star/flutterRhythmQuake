@@ -47,17 +47,29 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
 
   Color _colorFromClass(String className) {
     switch (className) {
-      case 'purple': return const Color(0xFF7F007F);
-      case 'dark-red': return const Color(0xFFAF0000);
-      case 'red': return const Color(0xFFDF0F0F);
-      case 'dark-orange': return const Color(0xFFFF4F00);
-      case 'orange': return const Color(0xFFFF8F00);
-      case 'yellow': return const Color(0xFFF7E757);
-      case 'green': return const Color(0xFF5FDF8F);
-      case 'blue': return const Color(0xFF3FAFFF);
-      case 'sky-blue': return const Color(0xFF5FCFFF);
-      case 'dark-gray': return const Color(0xFF9F9F9F);
-      case 'gray': default: return const Color(0xFFCFCFCF);
+      case 'purple':
+        return const Color(0xFF7F007F);
+      case 'dark-red':
+        return const Color(0xFFAF0000);
+      case 'red':
+        return const Color(0xFFDF0F0F);
+      case 'dark-orange':
+        return const Color(0xFFFF4F00);
+      case 'orange':
+        return const Color(0xFFFF8F00);
+      case 'yellow':
+        return const Color(0xFFF7E757);
+      case 'green':
+        return const Color(0xFF5FDF8F);
+      case 'blue':
+        return const Color(0xFF3FAFFF);
+      case 'sky-blue':
+        return const Color(0xFF5FCFFF);
+      case 'dark-gray':
+        return const Color(0xFF9F9F9F);
+      case 'gray':
+      default:
+        return const Color(0xFFCFCFCF);
     }
   }
 
@@ -84,10 +96,7 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
         child: Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: color.withOpacity(0.3),
-              width: 1,
-            ),
+            border: Border.all(color: color.withOpacity(0.3), width: 1),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -104,7 +113,11 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
                       children: [
                         Text(
                           '${widget.group.reportCount}报',
-                          style: TextStyle(color: color.withOpacity(0.8), fontSize: 11, fontWeight: FontWeight.w500),
+                          style: TextStyle(
+                            color: color.withOpacity(0.8),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
                         const SizedBox(width: 4),
                         Icon(
@@ -152,7 +165,10 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
                     if (event.reportNumText.isNotEmpty)
                       Container(
                         margin: const EdgeInsets.only(left: 6),
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 1,
+                        ),
                         decoration: BoxDecoration(
                           color: color.withOpacity(0.2),
                           borderRadius: BorderRadius.circular(4),
@@ -177,7 +193,11 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
                   const SizedBox(height: 2),
                   Text(
                     event.apiTypeLabel,
-                    style: TextStyle(color: Colors.white38, fontSize: 9, fontWeight: FontWeight.w600),
+                    style: TextStyle(
+                      color: Colors.white38,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ],
               ],
@@ -194,7 +214,8 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
 
     if (event.useShindo) {
       final text = event.maxIntensity;
-      final hasSub = text.length > 1 && (text.contains('弱') || text.contains('強'));
+      final hasSub =
+          text.length > 1 && (text.contains('弱') || text.contains('強'));
       final mainChar = hasSub ? text.substring(0, 1) : text;
       final subChar = hasSub ? text.substring(1) : '';
 
@@ -211,24 +232,58 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (subChar.isEmpty)
-              Text(mainChar, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: color, height: 1))
+              Text(
+                mainChar,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
+                  color: color,
+                  height: 1,
+                ),
+              )
             else
               Row(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(mainChar, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: color, height: 1)),
-                  Text(subChar, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: color, height: 1)),
+                  Text(
+                    mainChar,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                      color: color,
+                      height: 1,
+                    ),
+                  ),
+                  Text(
+                    subChar,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w900,
+                      color: color,
+                      height: 1,
+                    ),
+                  ),
                 ],
               ),
-            Text('震度', style: TextStyle(fontSize: 6, fontWeight: FontWeight.w500, color: color, height: 1)),
+            Text(
+              '震度',
+              style: TextStyle(
+                fontSize: 6,
+                fontWeight: FontWeight.w500,
+                color: color,
+                height: 1,
+              ),
+            ),
           ],
         ),
       );
     }
 
     final value = double.tryParse(event.maxIntensity);
-    final display = value != null ? value.toInt().toString() : event.maxIntensity;
+    final display = value != null
+        ? value.toInt().toString()
+        : event.maxIntensity;
 
     return Container(
       width: size,
@@ -244,9 +299,25 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
         children: [
           FittedBox(
             fit: BoxFit.scaleDown,
-            child: Text(display, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: color, height: 1)),
+            child: Text(
+              display,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w900,
+                color: color,
+                height: 1,
+              ),
+            ),
           ),
-          Text('烈度', style: TextStyle(fontSize: 6, fontWeight: FontWeight.w500, color: color, height: 1)),
+          Text(
+            '烈度',
+            style: TextStyle(
+              fontSize: 6,
+              fontWeight: FontWeight.w500,
+              color: color,
+              height: 1,
+            ),
+          ),
         ],
       ),
     );
@@ -295,47 +366,84 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
                     children: [
                       if (report.reportNumText.isNotEmpty)
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 1,
+                          ),
                           decoration: BoxDecoration(
                             color: groupColor.withOpacity(0.2),
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: Text(
                             report.reportNumText,
-                            style: TextStyle(color: groupColor, fontSize: 10, fontWeight: FontWeight.w700),
+                            style: TextStyle(
+                              color: groupColor,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                         ),
                       if (report.isFinal) ...[
                         const SizedBox(width: 4),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0.5),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 0.5,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.green.withOpacity(0.2),
                             borderRadius: BorderRadius.circular(3),
                           ),
-                          child: const Text('最終', style: TextStyle(color: Colors.green, fontSize: 9, fontWeight: FontWeight.w600)),
+                          child: const Text(
+                            '最終',
+                            style: TextStyle(
+                              color: Colors.green,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                         ),
                       ],
                       if (report.isCanceled) ...[
                         const SizedBox(width: 4),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0.5),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 0.5,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.grey.withOpacity(0.2),
                             borderRadius: BorderRadius.circular(3),
                           ),
-                          child: const Text('取消', style: TextStyle(color: Colors.grey, fontSize: 9, fontWeight: FontWeight.w600)),
+                          child: const Text(
+                            '取消',
+                            style: TextStyle(
+                              color: Colors.grey,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                         ),
                       ],
                       if (report.isWarn) ...[
                         const SizedBox(width: 4),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0.5),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 0.5,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.red.withOpacity(0.2),
                             borderRadius: BorderRadius.circular(3),
                           ),
-                          child: const Text('警報', style: TextStyle(color: Colors.red, fontSize: 9, fontWeight: FontWeight.w600)),
+                          child: const Text(
+                            '警報',
+                            style: TextStyle(
+                              color: Colors.red,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                         ),
                       ],
                     ],
@@ -343,7 +451,11 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
                   const SizedBox(height: 3),
                   Text(
                     report.hypocenter.isNotEmpty ? report.hypocenter : '震源 調査中',
-                    style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 2),
@@ -355,13 +467,21 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
                     const SizedBox(height: 2),
                     Text(
                       report.apiTypeLabel,
-                      style: TextStyle(color: Colors.white38, fontSize: 9, fontWeight: FontWeight.w600),
+                      style: TextStyle(
+                        color: Colors.white38,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ],
                 ],
               ),
             ),
-            const Icon(Icons.location_searching, color: Colors.white24, size: 16),
+            const Icon(
+              Icons.location_searching,
+              color: Colors.white24,
+              size: 16,
+            ),
           ],
         ),
       ),
@@ -372,7 +492,9 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
     final isScalePrompt = event.magnitude < 0 && event.hypocenter.isEmpty;
     if (isScalePrompt) return '震源 調査中  規模 調査中';
     if (event.isAssumption) return '${event.hypocenter}  仮定震源要素';
-    final magStr = event.magnitude >= 0 ? 'M${event.magnitude.toStringAsFixed(1)}' : 'M--';
+    final magStr = event.magnitude >= 0
+        ? 'M${event.magnitude.toStringAsFixed(1)}'
+        : 'M--';
     final depthStr = event.depthText.isNotEmpty
         ? event.depthText
         : (event.depth >= 0 ? '深${event.depth.round()}km' : '深度 --');

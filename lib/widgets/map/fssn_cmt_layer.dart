@@ -25,6 +25,7 @@ class FssnCmtMarker {
   final double latitude;
   final double longitude;
   final String nodalPlane1;
+  final String nodalPlane2;
   final String location;
   final double magnitude;
 
@@ -32,6 +33,7 @@ class FssnCmtMarker {
     required this.latitude,
     required this.longitude,
     required this.nodalPlane1,
+    required this.nodalPlane2,
     required this.location,
     required this.magnitude,
   });
@@ -41,6 +43,7 @@ class FssnCmtMarker {
       latitude: event.latitude,
       longitude: event.longitude,
       nodalPlane1: event.nodalPlane1 ?? '0/90/0',
+      nodalPlane2: event.nodalPlane2 ?? '',
       location: event.location,
       magnitude: event.magnitude,
     );
@@ -88,36 +91,9 @@ class _CmtPainter extends CustomPainter {
   }
 
   void _drawBeachball(Canvas canvas, Offset center, double r, String plane1) {
-    final parts = plane1.split('/');
-    if (parts.length != 3) return;
-    final strike = double.tryParse(parts[0]) ?? 0;
-    final dip = double.tryParse(parts[1]) ?? 90;
-    final rake = double.tryParse(parts[2]) ?? 0;
+    final mechanism = _FocalMechanism.tryParse(plane1);
+    if (mechanism == null) return;
 
-    final strRad = strike * pi / 180.0;
-    final dipRad = dip * pi / 180.0;
-    final rakeRad = rake * pi / 180.0;
-
-    // Normal vector to plane 1 (downward)
-    final n1x = -sin(dipRad) * sin(strRad);
-    final n1y = sin(dipRad) * cos(strRad);
-    final n1z = -cos(dipRad);
-
-    // Slip vector on plane 1
-    final s1x =
-        cos(rakeRad) * cos(strRad) + sin(rakeRad) * cos(dipRad) * sin(strRad);
-    final s1y =
-        cos(rakeRad) * sin(strRad) - sin(rakeRad) * cos(dipRad) * cos(strRad);
-    final s1z = -sin(rakeRad) * sin(dipRad);
-
-    final nMinus = n1x - s1x, nMinusy = n1y - s1y, nMinusz = n1z - s1z;
-    double pLen = sqrt(nMinus * nMinus + nMinusy * nMinusy + nMinusz * nMinusz);
-    if (pLen == 0) pLen = 1;
-    final pax = (n1x - s1x) / pLen,
-        pay = (n1y - s1y) / pLen,
-        paz = (n1z - s1z) / pLen;
-
-    // Draw circle background
     final circlePaint = Paint()
       ..color = Colors.white.withValues(alpha: 0.85)
       ..style = PaintingStyle.fill;
@@ -125,10 +101,10 @@ class _CmtPainter extends CustomPainter {
 
     // Fill quadrants by sampling points
     final fillDark = Paint()
-      ..color = const Color(0xFF444444)
+      ..color = Colors.black
       ..style = PaintingStyle.fill;
 
-    const int n = 60;
+    const int n = 96;
     final cellW = 2.0 * r / n + 1;
     for (int i = 0; i < n; i++) {
       final px = center.dx - r + (2 * r * i) / n;
@@ -139,14 +115,12 @@ class _CmtPainter extends CustomPainter {
         final r2 = dx * dx + dy * dy;
         if (r2 > 1.0) continue;
 
-        // Inverse stereographic projection to lower sphere
         final denom = 1.0 + r2;
-        final sx = 2.0 * dx / denom;
-        final sy = 2.0 * dy / denom;
-        final sz = -(1.0 - r2) / denom;
+        final east = 2.0 * dx / denom;
+        final north = -2.0 * dy / denom;
+        final down = (1.0 - r2) / denom;
 
-        final dotP = sx * pax + sy * pay + sz * paz;
-        if (dotP > 0.01) {
+        if (mechanism.amplitude(north, east, down) > 0) {
           canvas.drawRect(
             Rect.fromCenter(
               center: Offset(px, py),
@@ -169,4 +143,72 @@ class _CmtPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _CmtPainter oldDelegate) => true;
+}
+
+class _FocalMechanism {
+  final double mnn;
+  final double mee;
+  final double mdd;
+  final double mne;
+  final double mnd;
+  final double med;
+
+  const _FocalMechanism({
+    required this.mnn,
+    required this.mee,
+    required this.mdd,
+    required this.mne,
+    required this.mnd,
+    required this.med,
+  });
+
+  static _FocalMechanism? tryParse(String plane) {
+    final parts = plane.split('/');
+    if (parts.length != 3) return null;
+    final strike = double.tryParse(parts[0].trim());
+    final dip = double.tryParse(parts[1].trim());
+    final rake = double.tryParse(parts[2].trim());
+    if (strike == null || dip == null || rake == null) return null;
+    return fromStrikeDipRake(strike, dip, rake);
+  }
+
+  static _FocalMechanism fromStrikeDipRake(
+    double strike,
+    double dip,
+    double rake,
+  ) {
+    final strikeRad = strike * pi / 180.0;
+    final dipRad = dip * pi / 180.0;
+    final rakeRad = rake * pi / 180.0;
+
+    final normalN = -sin(dipRad) * sin(strikeRad);
+    final normalE = sin(dipRad) * cos(strikeRad);
+    final normalD = -cos(dipRad);
+
+    final slipN =
+        cos(rakeRad) * cos(strikeRad) +
+        sin(rakeRad) * cos(dipRad) * sin(strikeRad);
+    final slipE =
+        cos(rakeRad) * sin(strikeRad) -
+        sin(rakeRad) * cos(dipRad) * cos(strikeRad);
+    final slipD = -sin(rakeRad) * sin(dipRad);
+
+    return _FocalMechanism(
+      mnn: 2.0 * slipN * normalN,
+      mee: 2.0 * slipE * normalE,
+      mdd: 2.0 * slipD * normalD,
+      mne: slipN * normalE + normalN * slipE,
+      mnd: slipN * normalD + normalN * slipD,
+      med: slipE * normalD + normalE * slipD,
+    );
+  }
+
+  double amplitude(double north, double east, double down) {
+    return mnn * north * north +
+        mee * east * east +
+        mdd * down * down +
+        2.0 * mne * north * east +
+        2.0 * mnd * north * down +
+        2.0 * med * east * down;
+  }
 }

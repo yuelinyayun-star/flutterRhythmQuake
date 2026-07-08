@@ -1,0 +1,197 @@
+{
+  "schemaVersion": "hinet_external_evidence_targets_v1",
+  "policy": "These targets define pending external-evidence collection only. They must not accept user-provided Hi-net text, screenshots, local captures, or EQuake source estimates as catalog truth. A case can clear review only after hinet_truth_quality_review_decisions.json records an accepted decision with reviewer metadata and a revised Hi-net or JMA final-catalog source.",
+  "sourceAvailabilityChecks": [
+    {
+      "sourceType": "hinet_public_hypomap",
+      "sourceUrl": "https://www.hinet.bosai.go.jp/hypomap/?LANG=en",
+      "checkedAtUtc": "2026-06-26T04:55:00Z",
+      "accessStatus": "public_map_available",
+      "catalogScope": "Public map for the past 30 days; Hi-net automatic data for the latest two days and JMA unified data for older entries.",
+      "catalogAcceptance": "not_sufficient_event_level_revised_or_final_source",
+      "notes": "The public map helps locate recent epicenters, but it is not an event-level revised Hi-net or final JMA catalog record with reviewer metadata."
+    },
+    {
+      "sourceType": "hinet_preliminary_catalog",
+      "sourceUrl": "https://hinetwww11.bosai.go.jp/auth/hinet_hypolist/?LANG=en",
+      "checkedAtUtc": "2026-06-26T04:55:00Z",
+      "accessStatus": "login_required",
+      "catalogScope": "Preliminary catalog by the Hi-net automatic system.",
+      "catalogAcceptance": "not_sufficient_without_authenticated_event_row",
+      "notes": "Unauthenticated access returns the registered-user login page. Even if retrieved, this catalog is preliminary and still requires explicit review before split acceptance."
+    },
+    {
+      "sourceType": "hinet_jma_unified_catalog",
+      "sourceUrl": "https://hinetwww11.bosai.go.jp/auth/JMA/?LANG=en",
+      "checkedAtUtc": "2026-06-26T04:55:00Z",
+      "accessStatus": "login_required",
+      "catalogScope": "JMA unified hypocenter catalog provided through the Hi-net registered-user area.",
+      "catalogAcceptance": "not_sufficient_without_authenticated_event_row",
+      "notes": "Unauthenticated access returns the registered-user login page. This remains a viable next evidence path if an event-level row can be exported with source/version metadata."
+    },
+    {
+      "sourceType": "hinet_data_policy",
+      "sourceUrl": "https://www.hinet.bosai.go.jp/about_data/?LANG=en",
+      "checkedAtUtc": "2026-06-26T04:55:00Z",
+      "accessStatus": "public_policy_available",
+      "catalogScope": "NIED describes the Hi-net automatic catalog as preliminary and recommends JMA official/final catalog use for formal reference.",
+      "catalogAcceptance": "policy_only_not_event_evidence",
+      "notes": "This policy supports keeping user-provided Hi-net labels reference-only until event-level revised or final catalog evidence is recorded."
+    }
+  ],
+  "targets": [
+    {
+      "caseId": "20260622_iwate_east_offshore_m30_hinet",
+      "fixturePath": "test/fixtures/source_estimation/iwate_east_offshore_m30_20260622_hinet.json",
+      "originTimeJst": "2026-06-22T11:26:50",
+      "originTimeUtcPlus8": "2026-06-22 10:26:50",
+      "region": "Iwate east offshore",
+      "latitude": 39.91,
+      "longitude": 142.347,
+      "depthKm": 42.4,
+      "magnitude": 3.0,
+      "captureDirectory": "tmp/captures/iwate_east_offshore_m30_20260622_102650_multilayer",
+      "currentTruthQuality": "hinet_user_provided_preliminary",
+      "requiredEvidence": [
+        "revised_hinet_or_jma_final_catalog_link",
+        "reviewer_and_review_timestamp"
+      ],
+      "acceptableSources": [
+        "Hi-net hypocenter map or revised hypocenter source with URL, checked date, and source version when available",
+        "JMA final or unified hypocenter catalog link with URL, catalog month/version, and checked date when available"
+      ],
+      "unacceptableSources": [
+        "user_provided_screenshot_or_text_without_external_link",
+        "equake_source_estimate_as_truth",
+        "local_capture_only_evidence"
+      ],
+      "externalEvidenceFindings": [
+        {
+          "sourceType": "jma_daily_hypocenter_list",
+          "sourceUrl": "https://www.data.jma.go.jp/eqev/data/daily_map/20260622.html",
+          "sourceDate": "2026-06-22",
+          "checkedAtUtc": "2026-06-26T04:23:33Z",
+          "matchStatus": "time_and_location_match_found",
+          "catalogAcceptance": "not_sufficient_final_catalog_or_hinet_revised_source",
+          "originTimeJst": "2026-06-22T11:26:50.1",
+          "latitude": 39.913333,
+          "longitude": 142.393333,
+          "depthKm": 38.0,
+          "magnitude": 2.8,
+          "region": "Iwate offshore",
+          "deltaFromTarget": {
+            "latitudeDegrees": 0.003333,
+            "longitudeDegrees": 0.046333,
+            "depthKm": -4.4,
+            "magnitude": -0.2
+          },
+          "notes": "Official JMA daily hypocenter-list entry is an external match, but this is not recorded as the final monthly catalog or revised Hi-net source required for split acceptance."
+        }
+      ],
+      "status": "pending_external_evidence",
+      "notes": "Complete local capture exists, but the label remains preliminary until revised external evidence is reviewed."
+    },
+    {
+      "caseId": "20260622_tomakomai_south_offshore_m35_hinet",
+      "fixturePath": "test/fixtures/source_estimation/tomakomai_south_offshore_m35_20260622_hinet.json",
+      "originTimeJst": "2026-06-22T20:37:47",
+      "originTimeUtcPlus8": "2026-06-22 19:37:47",
+      "region": "Tomakomai south offshore",
+      "latitude": 42.063,
+      "longitude": 141.347,
+      "depthKm": 100.0,
+      "magnitude": 3.5,
+      "captureDirectory": "tmp/captures/tomakomai_south_offshore_m35_20260622_193747_multilayer",
+      "currentTruthQuality": "hinet_user_provided_preliminary",
+      "requiredEvidence": [
+        "revised_hinet_or_jma_final_catalog_link",
+        "reviewer_and_review_timestamp"
+      ],
+      "acceptableSources": [
+        "Hi-net hypocenter map or revised hypocenter source with URL, checked date, and source version when available",
+        "JMA final or unified hypocenter catalog link with URL, catalog month/version, and checked date when available"
+      ],
+      "unacceptableSources": [
+        "user_provided_screenshot_or_text_without_external_link",
+        "equake_source_estimate_as_truth",
+        "local_capture_only_evidence"
+      ],
+      "externalEvidenceFindings": [
+        {
+          "sourceType": "jma_daily_hypocenter_list",
+          "sourceUrl": "https://www.data.jma.go.jp/eqev/data/daily_map/20260622.html",
+          "sourceDate": "2026-06-22",
+          "checkedAtUtc": "2026-06-26T04:23:33Z",
+          "matchStatus": "time_and_location_match_found",
+          "catalogAcceptance": "not_sufficient_final_catalog_or_hinet_revised_source",
+          "originTimeJst": "2026-06-22T20:37:46.9",
+          "latitude": 42.068333,
+          "longitude": 141.383333,
+          "depthKm": 99.0,
+          "magnitude": 2.8,
+          "region": "Tomakomai offshore",
+          "deltaFromTarget": {
+            "latitudeDegrees": 0.005333,
+            "longitudeDegrees": 0.036333,
+            "depthKm": -1.0,
+            "magnitude": -0.7
+          },
+          "notes": "Official JMA daily hypocenter-list entry is an external match, but the magnitude differs materially from the user-provided Hi-net label and the source is not final-catalog acceptance evidence."
+        }
+      ],
+      "status": "pending_external_evidence",
+      "notes": "Candidate-region residual-immediate guard remains reference-only until explicit external source review."
+    },
+    {
+      "caseId": "20260623_tokachi_southeast_offshore_m34_hinet",
+      "fixturePath": "test/fixtures/source_estimation/tokachi_southeast_offshore_m34_20260623_hinet.json",
+      "originTimeJst": "2026-06-23T23:13:06",
+      "originTimeUtcPlus8": "2026-06-23 22:13:06",
+      "region": "Tokachi southeast offshore",
+      "latitude": 42.497,
+      "longitude": 143.647,
+      "depthKm": 55.5,
+      "magnitude": 3.4,
+      "captureDirectory": "tmp/captures/tokachi_southeast_offshore_m34_20260623_221306_multilayer",
+      "currentTruthQuality": "hinet_user_provided_preliminary",
+      "requiredEvidence": [
+        "revised_hinet_or_jma_final_catalog_link",
+        "reviewer_and_review_timestamp"
+      ],
+      "acceptableSources": [
+        "Hi-net hypocenter map or revised hypocenter source with URL, checked date, and source version when available",
+        "JMA final or unified hypocenter catalog link with URL, catalog month/version, and checked date when available"
+      ],
+      "unacceptableSources": [
+        "user_provided_screenshot_or_text_without_external_link",
+        "equake_source_estimate_as_truth",
+        "local_capture_only_evidence"
+      ],
+      "externalEvidenceFindings": [
+        {
+          "sourceType": "jma_daily_hypocenter_list",
+          "sourceUrl": "https://www.data.jma.go.jp/eqev/data/daily_map/20260623.html",
+          "sourceDate": "2026-06-23",
+          "checkedAtUtc": "2026-06-26T04:23:33Z",
+          "matchStatus": "time_and_location_match_found",
+          "catalogAcceptance": "not_sufficient_final_catalog_or_hinet_revised_source",
+          "originTimeJst": "2026-06-23T23:13:05.7",
+          "latitude": 42.498333,
+          "longitude": 143.681667,
+          "depthKm": 56.0,
+          "magnitude": 3.0,
+          "region": "Tokachi offshore",
+          "deltaFromTarget": {
+            "latitudeDegrees": 0.001333,
+            "longitudeDegrees": 0.034667,
+            "depthKm": 0.5,
+            "magnitude": -0.4
+          },
+          "notes": "Official JMA daily hypocenter-list entry is an external match, but this is not recorded as the final monthly catalog or revised Hi-net source required for split acceptance."
+        }
+      ],
+      "status": "pending_external_evidence",
+      "notes": "The EQuake report is retained as source-estimation reference text only; it is not truth evidence."
+    }
+  ]
+}

@@ -22,7 +22,7 @@
 
 import 'dart:async';
 import 'dart:io' show Platform;
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/event_bus.dart';
@@ -35,9 +35,11 @@ import '../services/ntp_service.dart';
 import '../services/sources/source_manager.dart';
 import '../services/sources/fan_service.dart';
 import '../services/sources/china_weather_alert_service.dart';
+import '../services/sources/typhoon_service.dart';
 import '../services/sources/wolfx_service.dart';
 import '../services/sources/p2pquake_service.dart';
 import '../services/sources/mock_input_service.dart';
+import '../services/sources/global_quake_service.dart';
 import '../services/sources/eqlist/eqlist_manager.dart';
 import '../core/intensity_calculator.dart';
 import '../core/calculator.dart';
@@ -47,6 +49,7 @@ import '../models/eew_event_group.dart';
 import '../models/source_status.dart';
 import '../models/cenc_ir_data.dart';
 import '../models/weather_alarm.dart';
+import '../models/typhoon_data.dart';
 import '../models/tsunami_message.dart';
 import '../core/utils/alert_voice_helper.dart';
 import '../core/utils/quake_time.dart';
@@ -205,6 +208,9 @@ class QuakeProvider with ChangeNotifier {
   List<String> _weatherLocalKeywords = const [];
   final ChinaWeatherAlertService _chinaWeatherService =
       ChinaWeatherAlertService();
+  List<TyphoonData> _activeTyphoons = const [];
+  final TyphoonService _typhoonService = TyphoonService();
+  bool _typhoonLayerEnabled = false;
 
   /// JMA 海啸情报
   TsunamiMessage? _jmaTsunami;
@@ -234,6 +240,12 @@ class QuakeProvider with ChangeNotifier {
   /// 已关闭的统一事件ID集合，防止重新出现
   final Set<String> _dismissedUnifiedIds = {};
 
+  /// 无可靠更新时间的信息源已见事件，防止很久后的正文修正重新顶到主 UI。
+  final Map<String, DateTime> _seenNoUpdateInfoEvents = {};
+  static const String _seenNoUpdateInfoEventsKey = 'seen_no_update_info_events';
+  static const Duration _seenNoUpdateInfoTtl = Duration(hours: 48);
+  static const int _maxSeenNoUpdateInfoEvents = 500;
+
   /// 已关闭的旧管道事件ID集合，防止已关闭事件通过旧管道重新出现
   final Set<String> _dismissedLegacyIds = {};
 
@@ -252,6 +264,7 @@ class QuakeProvider with ChangeNotifier {
 
   /// 地震列表管理器
   final EqlistManager _eqlist = EqlistManager();
+  Timer? _eqlistStartTimer;
 
   /// 扁平化的历史列表
   List<QuakeMessage> _flatHistory = [];
@@ -571,29 +584,67 @@ class QuakeProvider with ChangeNotifier {
   };
 
   Map<String, SourceStatus> get sourceStatuses => _sourceStatuses;
-  QuakeMessage? get currentEvent => _currentEvent;
-  double get currentDistance => _currentDistance;
-  double get estimatedIntensity => _estimatedIntensity;
+  QuakeMessage? get currentEvent =>
+      _legacyActiveQuakePipelineDisabled ? null : _currentEvent;
+  double get currentDistance =>
+      _legacyActiveQuakePipelineDisabled ? 0.0 : _currentDistance;
+  double get estimatedIntensity =>
+      _legacyActiveQuakePipelineDisabled ? 0.0 : _estimatedIntensity;
   WeatherAlarm? get weatherAlarm => _weatherAlarm;
   bool get weatherLocalOnly => _weatherLocalOnly;
   String? get weatherDetectedProvince => _chinaWeatherService.detectedProvince;
   String get weatherLocalAdminLevel => _weatherLocalAdminLevel;
+  List<TyphoonData> get activeTyphoons => _activeTyphoons;
+
+  void setTyphoonLayerEnabled(bool enabled) {
+    if (_typhoonLayerEnabled == enabled) {
+      if (enabled) {
+        if (!_typhoonService.isRunning) {
+          _typhoonService.start();
+        } else {
+          _typhoonService.fetchNow();
+        }
+      }
+      return;
+    }
+    _typhoonLayerEnabled = enabled;
+    if (enabled) {
+      _typhoonService.start();
+      return;
+    }
+    _typhoonService.stop();
+    if (_activeTyphoons.isNotEmpty) {
+      _activeTyphoons = const [];
+      notifyListeners();
+    }
+  }
+
   TsunamiMessage? get jmaTsunami => _jmaTsunami;
   TsunamiMessage? get nmefcTsunami => _nmefcTsunami;
 
-  List<ActiveWarning> get activeWarnings => List.unmodifiable(_activeWarnings);
-  int get currentWarningIndex => _currentWarningIndex;
-  int get activeWarningCount => _activeWarnings.length;
+  List<ActiveWarning> get activeWarnings => _legacyActiveQuakePipelineDisabled
+      ? const <ActiveWarning>[]
+      : List.unmodifiable(_activeWarnings);
+  int get currentWarningIndex =>
+      _legacyActiveQuakePipelineDisabled ? 0 : _currentWarningIndex;
+  int get activeWarningCount =>
+      _legacyActiveQuakePipelineDisabled ? 0 : _activeWarnings.length;
 
   List<ActiveInfoEvent> get activeInfoEvents =>
-      List.unmodifiable(_activeInfoEvents);
+      _legacyActiveQuakePipelineDisabled
+      ? const <ActiveInfoEvent>[]
+      : List.unmodifiable(_activeInfoEvents);
   CencIrData? get cencIrData => _cencIrData;
   List<Map<String, dynamic>> get cencIrList => List.unmodifiable(_cencIrList);
-  int get activeInfoEventCount => _activeInfoEvents.length;
-  bool get isShowingInfoEvent => _isShowingInfoEvent;
-  bool get isShowingTempInfo => _isShowingTempInfo;
-  int get totalDisplayCount =>
-      _activeWarnings.length + _activeInfoEvents.length;
+  int get activeInfoEventCount =>
+      _legacyActiveQuakePipelineDisabled ? 0 : _activeInfoEvents.length;
+  bool get isShowingInfoEvent =>
+      _legacyActiveQuakePipelineDisabled ? false : _isShowingInfoEvent;
+  bool get isShowingTempInfo =>
+      _legacyActiveQuakePipelineDisabled ? false : _isShowingTempInfo;
+  int get totalDisplayCount => _legacyActiveQuakePipelineDisabled
+      ? 0
+      : _activeWarnings.length + _activeInfoEvents.length;
 
   List<UnifiedQuakeData> get unifiedEvents => List.unmodifiable(_unifiedEvents);
   int get currentUnifiedIndex => _currentUnifiedIndex;
@@ -601,25 +652,13 @@ class QuakeProvider with ChangeNotifier {
   UnifiedQuakeData? get currentUnifiedEvent =>
       _unifiedEvents.isNotEmpty ? _unifiedEvents[_currentUnifiedIndex] : null;
 
-  List<QuakeMessage> get unifiedMapEvents => _unifiedEvents.map((e) {
-    final qst = _unifiedToQst[e.source] ?? QuakeSourceType.cenc;
-    return QuakeMessage(
-      source: qst,
-      eventId: e.eventId,
-      location: e.hypocenter,
-      magnitude: e.magnitude,
-      latitude: e.lat ?? 0,
-      longitude: e.lng ?? 0,
-      depth: e.depth,
-      originTime: e.originTime ?? DateTime.now(),
-    );
-  }).toList();
+  List<QuakeMessage> get unifiedMapEvents =>
+      _unifiedEvents.map(_unifiedToMapMessage).toList();
 
   /// 是否应该显示气象警报UI
   /// 仅当预警和信息事件都为空时才显示
   bool get shouldShowWeatherAlarm =>
-      _unifiedEvents.isEmpty &&
-      _weatherAlarm != null;
+      _unifiedEvents.isEmpty && _weatherAlarm != null;
 
   /// 构造函数
   ///
@@ -629,7 +668,7 @@ class QuakeProvider with ChangeNotifier {
     _startUnifiedEventsAfterSourcePrefs();
 
     _eqlist.onAnyUpdated = _rebuildFlat;
-    _eqlist.start();
+    _scheduleEqlistStart();
     _rebuildFlat();
 
     QuakeEventBus().onNewEvent.listen(
@@ -686,10 +725,26 @@ class QuakeProvider with ChangeNotifier {
       }
       notifyListeners();
     };
+
+    _typhoonService.onActiveTyphoonsChanged = (typhoons) {
+      _activeTyphoons = typhoons;
+      notifyListeners();
+    };
   }
 
   void _startUnifiedEventsAfterSourcePrefs() {
-    _loadSourceInfoMagFilters().whenComplete(_subscribeUnifiedEvents);
+    Future.wait([
+      _loadSourceInfoMagFilters(),
+      _loadSeenNoUpdateInfoEvents(),
+    ]).whenComplete(_subscribeUnifiedEvents);
+  }
+
+  void _scheduleEqlistStart() {
+    _eqlistStartTimer?.cancel();
+    _eqlistStartTimer = Timer(const Duration(seconds: 4), () {
+      _eqlistStartTimer = null;
+      _eqlist.start();
+    });
   }
 
   void _subscribeUnifiedEvents() {
@@ -724,6 +779,13 @@ class QuakeProvider with ChangeNotifier {
     if (mockService != null) {
       _unifiedSubscriptions.add(
         mockService.onUnifiedEvent.listen(_handleUnifiedEvent),
+      );
+    }
+
+    final globalQuakeService = SourceManager().getSource<GlobalQuakeService>();
+    if (globalQuakeService != null) {
+      _unifiedSubscriptions.add(
+        globalQuakeService.onUnifiedEvent.listen(_handleUnifiedEvent),
       );
     }
 
@@ -801,7 +863,9 @@ class QuakeProvider with ChangeNotifier {
     'cqEew': QuakeSourceType.cq_eew,
     'kmaEew': QuakeSourceType.kma_eew_fan,
     'sa': QuakeSourceType.sa,
+    'globalQuakeEew': QuakeSourceType.usgs,
     'jmaEqlist': QuakeSourceType.jma_fan,
+    'p2pJmaEqlist': QuakeSourceType.p2p,
     'cwaEqlist': QuakeSourceType.cwa,
     'cencEqlist': QuakeSourceType.cenc,
     'kmaEqlist': QuakeSourceType.kma_eq,
@@ -829,7 +893,38 @@ class QuakeProvider with ChangeNotifier {
   }
 
   String _unifiedEventKey(UnifiedQuakeData event) {
-    return '${event.source}|${event.eventId}';
+    final source = event.isEew ? event.source : _unifiedInfoSlotSource(event);
+    return '$source|${_unifiedCanonicalEventId(event)}';
+  }
+
+  @visibleForTesting
+  String unifiedEventKeyForTest(UnifiedQuakeData event) {
+    return _unifiedEventKey(event);
+  }
+
+  String _unifiedInfoSlotSource(UnifiedQuakeData event) {
+    if (event.isEew) return event.source;
+    final noUpdateSourceKey = _noUpdateTimeFanInfoSourceKey(event.source);
+    if (noUpdateSourceKey != null) return noUpdateSourceKey;
+    return switch (event.source) {
+      'p2pJmaEqlist' => 'jmaEqlist',
+      _ => event.source,
+    };
+  }
+
+  String _unifiedCanonicalEventId(UnifiedQuakeData event) {
+    if (!event.isEew && _unifiedInfoSlotSource(event) == 'jmaEqlist') {
+      final digits = event.eventId.replaceAll(RegExp(r'[^0-9]'), '');
+      if (digits.length >= 12) return digits;
+    }
+    return event.eventId;
+  }
+
+  QuakeSourceType? _unifiedSourceType(UnifiedQuakeData event) {
+    if (event.source == 'jmaEqlist' && event.origin == 2) {
+      return QuakeSourceType.p2p;
+    }
+    return _unifiedToQst[event.source];
   }
 
   bool _isReviewedUnifiedInfoEvent(UnifiedQuakeData event) {
@@ -840,19 +935,11 @@ class QuakeProvider with ChangeNotifier {
         text.contains('reviewed');
   }
 
-  bool _isAutomaticUnifiedInfoEvent(UnifiedQuakeData event) {
-    if (event.isEew) return false;
-    final text = '${event.titleText} ${event.reportNumText}'.toLowerCase();
-    return text.contains('自动') ||
-        text.contains('待核实') ||
-        text.contains('automatic') ||
-        text.contains('unverified');
-  }
-
   String? _unifiedListBucket(UnifiedQuakeData event) {
     if (event.isEew) return null;
     return switch (event.source) {
       'jmaEqlist' => 'jmaEqlist',
+      'p2pJmaEqlist' => 'jmaEqlist',
       'cencEqlist' => 'cencEqlist',
       'usgsEqlist' => 'usgsEqlist',
       'fssnEqlist' => 'fssnEqlist',
@@ -864,11 +951,32 @@ class QuakeProvider with ChangeNotifier {
   }
 
   QuakeMessage _unifiedToListMessage(UnifiedQuakeData event) {
-    final source = _unifiedToQst[event.source] ?? QuakeSourceType.cenc;
+    final fallbackIntensity = IntensityCalculator.calcCsisLevel(
+      event.magnitude,
+      event.depth,
+      0,
+    );
+    return _unifiedToQuakeMessage(
+      event,
+      isHistory: true,
+      fallbackMaxIntensity: fallbackIntensity,
+    );
+  }
+
+  QuakeMessage _unifiedToMapMessage(UnifiedQuakeData event) {
+    return _unifiedToQuakeMessage(event);
+  }
+
+  QuakeMessage _unifiedToQuakeMessage(
+    UnifiedQuakeData event, {
+    bool isHistory = false,
+    int? fallbackMaxIntensity,
+  }) {
+    final source = _unifiedSourceType(event) ?? QuakeSourceType.cenc;
     final intensity = double.tryParse(event.maxIntensity);
     final maxIntensity = intensity != null && intensity > 0
         ? intensity.round()
-        : IntensityCalculator.calcCsisLevel(event.magnitude, event.depth, 0);
+        : fallbackMaxIntensity;
     final isCenc = source == QuakeSourceType.cenc;
     final reviewLabel = isCenc ? _cencReviewLabel(event) : null;
     final reviewType = _unifiedReviewType(event);
@@ -884,10 +992,17 @@ class QuakeProvider with ChangeNotifier {
       reportTime: event.reportTime,
       maxIntensity: maxIntensity,
       jmaShindo: event.useShindo ? event.maxIntensity : null,
-      isHistory: true,
-      isInfoEvent: true,
-      infoTypeName: isCenc ? reviewLabel : null,
+      isHistory: isHistory,
+      isInfoEvent: !event.isEew,
+      infoTypeName: isCenc ? reviewLabel : event.titleText,
       reviewType: isCenc ? _cencReviewType(reviewLabel) : reviewType,
+      isWarn: event.isWarn,
+      isFinal: event.isFinal,
+      isCanceled: event.isCanceled,
+      isAssumption: event.isAssumption,
+      reportNumText: event.reportNumText,
+      nodalPlane1: event.nodalPlane1,
+      nodalPlane2: event.nodalPlane2,
     );
   }
 
@@ -899,6 +1014,234 @@ class QuakeProvider with ChangeNotifier {
 
   String _cencReviewType(String? reviewLabel) {
     return reviewLabel == '正式测定' ? 'reviewed' : 'automatic';
+  }
+
+  bool _isCencRecentInfoUpdate(
+    UnifiedQuakeData oldEvent,
+    UnifiedQuakeData event,
+  ) {
+    if (event.source != 'cencEqlist') return false;
+    final oldReportTime = oldEvent.reportTime;
+    final newReportTime = event.reportTime;
+    if (oldReportTime == null || newReportTime == null) return false;
+
+    // kanameishi 的 CENC 源适配使用真实 ReportTime/createTime 做 30 秒保护。
+    // 当本项目因为字段缺失 fallback 到 originTime 时，不套这个窗口，避免误挡相近地震。
+    if (oldEvent.originTime != null &&
+        oldReportTime.isAtSameMomentAs(oldEvent.originTime!)) {
+      return false;
+    }
+    if (event.originTime != null &&
+        newReportTime.isAtSameMomentAs(event.originTime!)) {
+      return false;
+    }
+
+    final diffMs = newReportTime.difference(oldReportTime).inMilliseconds;
+    return diffMs >= 0 && diffMs < 30000;
+  }
+
+  bool _isSameUsgsInfoBody(UnifiedQuakeData oldEvent, UnifiedQuakeData event) {
+    if (event.source != 'usgsEqlist') return false;
+    if (oldEvent.source != event.source) return false;
+
+    // kanameishi 的 USGS 去重比较不包含 reportTime/updateTime：
+    // 只有更新时间变化、主体内容未变时跳过，避免重复声音和重复刷新。
+    return oldEvent.eventId == event.eventId &&
+        oldEvent.titleText == event.titleText &&
+        oldEvent.hypocenter == event.hypocenter &&
+        _sameDouble(oldEvent.lat, event.lat) &&
+        _sameDouble(oldEvent.lng, event.lng) &&
+        _sameDouble(oldEvent.depth, event.depth) &&
+        _sameDouble(oldEvent.magnitude, event.magnitude) &&
+        oldEvent.maxIntensity == event.maxIntensity &&
+        oldEvent.originTime?.toUtc() == event.originTime?.toUtc();
+  }
+
+  bool _isUsgsSameReportBodyCorrection(
+    UnifiedQuakeData oldEvent,
+    UnifiedQuakeData event,
+  ) {
+    if (event.source != 'usgsEqlist') return false;
+    if (oldEvent.source != event.source) return false;
+    if (oldEvent.eventId != event.eventId) return false;
+    if (_isSameUsgsInfoBody(oldEvent, event)) return false;
+
+    final oldReportTime = oldEvent.reportTime;
+    final newReportTime = event.reportTime;
+    if (oldReportTime == null || newReportTime == null) return false;
+
+    return newReportTime.isAtSameMomentAs(oldReportTime);
+  }
+
+  @visibleForTesting
+  bool isUsgsSameReportBodyCorrectionForTest(
+    UnifiedQuakeData oldEvent,
+    UnifiedQuakeData event,
+  ) {
+    return _isUsgsSameReportBodyCorrection(oldEvent, event);
+  }
+
+  String? _noUpdateTimeFanInfoSourceKey(String source) {
+    switch (source) {
+      case 'hko':
+      case 'hkoEqlist':
+        return 'hko';
+      case 'emsc':
+      case 'emscEqlist':
+        return 'emsc';
+      case 'bcsf':
+      case 'bcsfEqlist':
+        return 'bcsf';
+      case 'gfz':
+      case 'gfzEqlist':
+        return 'gfz';
+      case 'usp':
+      case 'uspEqlist':
+        return 'usp';
+      case 'fssnCmt':
+        return 'fssnCmt';
+    }
+    return null;
+  }
+
+  bool _isNoUpdateTimeFanInfoSource(String source) {
+    return _noUpdateTimeFanInfoSourceKey(source) != null;
+  }
+
+  bool _isLocalFanInfoWithoutReportTime(String source) {
+    switch (source) {
+      case 'ningxia':
+      case 'guangxi':
+      case 'shanxi':
+      case 'beijing':
+      case 'yunnan':
+        return true;
+    }
+    return false;
+  }
+
+  bool _shouldUseArrivalTimeForUnifiedInfo(UnifiedQuakeData event) {
+    return !event.isEew &&
+        (_showStaleInfoEvent ||
+            _isNoUpdateTimeFanInfoSource(event.source) ||
+            _isLocalFanInfoWithoutReportTime(event.source));
+  }
+
+  String? _seenNoUpdateInfoEventKey(UnifiedQuakeData event) {
+    if (event.isEew) return null;
+    final sourceKey = _noUpdateTimeFanInfoSourceKey(event.source);
+    if (sourceKey == null) return null;
+    final eventId = _unifiedCanonicalEventId(event).trim();
+    if (eventId.isEmpty) return null;
+    return '$sourceKey|$eventId';
+  }
+
+  Future<void> _loadSeenNoUpdateInfoEvents() async {
+    final prefs = await SharedPreferences.getInstance();
+    _seenNoUpdateInfoEvents.clear();
+    final now = DateTime.now().toUtc();
+    final rows = prefs.getStringList(_seenNoUpdateInfoEventsKey) ?? const [];
+    for (final row in rows) {
+      final sep = row.lastIndexOf('|');
+      if (sep <= 0 || sep >= row.length - 1) continue;
+      final key = row.substring(0, sep);
+      final seenMs = int.tryParse(row.substring(sep + 1));
+      if (seenMs == null) continue;
+      final seenAt = DateTime.fromMillisecondsSinceEpoch(seenMs, isUtc: true);
+      if (now.difference(seenAt) <= _seenNoUpdateInfoTtl) {
+        _seenNoUpdateInfoEvents[key] = seenAt;
+      }
+    }
+    await _persistSeenNoUpdateInfoEvents();
+  }
+
+  Future<void> _persistSeenNoUpdateInfoEvents() async {
+    _pruneSeenNoUpdateInfoEvents();
+    final prefs = await SharedPreferences.getInstance();
+    final rows = _seenNoUpdateInfoEvents.entries
+        .map((entry) => '${entry.key}|${entry.value.millisecondsSinceEpoch}')
+        .toList(growable: false);
+    await prefs.setStringList(_seenNoUpdateInfoEventsKey, rows);
+  }
+
+  void _pruneSeenNoUpdateInfoEvents() {
+    final now = DateTime.now().toUtc();
+    _seenNoUpdateInfoEvents.removeWhere(
+      (_, seenAt) => now.difference(seenAt) > _seenNoUpdateInfoTtl,
+    );
+    if (_seenNoUpdateInfoEvents.length <= _maxSeenNoUpdateInfoEvents) return;
+    final sorted = _seenNoUpdateInfoEvents.entries.toList()
+      ..sort((a, b) => a.value.compareTo(b.value));
+    final removeCount =
+        _seenNoUpdateInfoEvents.length - _maxSeenNoUpdateInfoEvents;
+    for (var i = 0; i < removeCount; i++) {
+      _seenNoUpdateInfoEvents.remove(sorted[i].key);
+    }
+  }
+
+  void _rememberNoUpdateInfoEvent(
+    UnifiedQuakeData event, {
+    bool persist = true,
+  }) {
+    final key = _seenNoUpdateInfoEventKey(event);
+    if (key == null) return;
+    _seenNoUpdateInfoEvents[key] = DateTime.now().toUtc();
+    _pruneSeenNoUpdateInfoEvents();
+    if (persist) {
+      unawaited(_persistSeenNoUpdateInfoEvents());
+    }
+  }
+
+  bool _isCurrentNoUpdateInfoEvent(UnifiedQuakeData event) {
+    final key = _seenNoUpdateInfoEventKey(event);
+    if (key == null) return false;
+    return _unifiedEvents.any((item) => _seenNoUpdateInfoEventKey(item) == key);
+  }
+
+  bool _shouldSuppressSeenNoUpdateInfoEvent(UnifiedQuakeData event) {
+    final key = _seenNoUpdateInfoEventKey(event);
+    if (key == null) return false;
+    _pruneSeenNoUpdateInfoEvents();
+    return _seenNoUpdateInfoEvents.containsKey(key) &&
+        !_isCurrentNoUpdateInfoEvent(event);
+  }
+
+  @visibleForTesting
+  void rememberNoUpdateInfoEventForTest(UnifiedQuakeData event) {
+    _rememberNoUpdateInfoEvent(event, persist: false);
+  }
+
+  @visibleForTesting
+  bool shouldSuppressSeenNoUpdateInfoEventForTest(UnifiedQuakeData event) {
+    return _shouldSuppressSeenNoUpdateInfoEvent(event);
+  }
+
+  bool _isSameEventBodyChangedWithoutReportTime(
+    UnifiedQuakeData oldEvent,
+    UnifiedQuakeData event,
+  ) {
+    if (!_isNoUpdateTimeFanInfoSource(event.source)) return false;
+    if (_noUpdateTimeFanInfoSourceKey(oldEvent.source) !=
+        _noUpdateTimeFanInfoSourceKey(event.source)) {
+      return false;
+    }
+    if (oldEvent.eventId != event.eventId) return false;
+    if (event.eventId.trim().isEmpty) return false;
+
+    return oldEvent.titleText != event.titleText ||
+        oldEvent.hypocenter != event.hypocenter ||
+        !_sameDouble(oldEvent.lat, event.lat) ||
+        !_sameDouble(oldEvent.lng, event.lng) ||
+        !_sameDouble(oldEvent.depth, event.depth) ||
+        !_sameDouble(oldEvent.magnitude, event.magnitude) ||
+        oldEvent.maxIntensity != event.maxIntensity ||
+        oldEvent.className != event.className ||
+        oldEvent.originTime?.toUtc() != event.originTime?.toUtc();
+  }
+
+  bool _sameDouble(double? a, double? b) {
+    if (a == null || b == null) return a == b;
+    return (a - b).abs() < 0.000001;
   }
 
   String? _unifiedReviewType(UnifiedQuakeData event) {
@@ -924,6 +1267,43 @@ class QuakeProvider with ChangeNotifier {
     _eqlist.upsertBucketItem(bucket, _unifiedToListMessage(event));
   }
 
+  bool _isCwaEew(UnifiedQuakeData event) {
+    return event.isEew && event.source == 'cwaEew';
+  }
+
+  bool _isWolfxCwaEew(UnifiedQuakeData event) {
+    return _isCwaEew(event) && event.origin == 0;
+  }
+
+  bool _isFanCwaEew(UnifiedQuakeData event) {
+    return _isCwaEew(event) && event.origin != 0;
+  }
+
+  bool _shouldKeepExistingCwaWolfx(
+    UnifiedQuakeData oldEvent,
+    UnifiedQuakeData event,
+  ) {
+    return _isWolfxCwaEew(oldEvent) &&
+        _isFanCwaEew(event) &&
+        oldEvent.eventId == event.eventId;
+  }
+
+  bool _shouldAllowCwaWolfxTakeover(
+    UnifiedQuakeData oldEvent,
+    UnifiedQuakeData event,
+    int reportNum,
+    int? storedReportNum,
+  ) {
+    if (!_isFanCwaEew(oldEvent) ||
+        !_isWolfxCwaEew(event) ||
+        oldEvent.eventId != event.eventId ||
+        storedReportNum == null) {
+      return false;
+    }
+    final oldReportNum = _extractReportNum(oldEvent.reportNumText);
+    return reportNum == storedReportNum && reportNum == oldReportNum;
+  }
+
   void _handleUnifiedEvent(UnifiedQuakeData event) {
     debugPrint(
       'QuakeProvider: received unified event: eventId=${event.eventId}, source=${event.source}, isEew=${event.isEew}, mag=${event.magnitude}',
@@ -940,32 +1320,10 @@ class QuakeProvider with ChangeNotifier {
         );
         return;
       }
-    } else {
-      // 信息事件过期检查：参照 kanameishi 的 time -= passedTime 逻辑
-      // 使用 reportTime（报告/测定时间）而非 originTime（发震时间）
-      // 正式测定的 reportTime 是新的，所以不会过期
-      // fallback 到 originTime（当 reportTime 不可用时）
-      // 当 showStaleInfoEvent 开启时跳过过期检查
-      if (!_showStaleInfoEvent) {
-        final reportTime = event.reportTime ?? event.originTime;
-        if (reportTime != null) {
-          final elapsedSec = QuakeTime.calcPassedSecondsFromDateTime(
-            reportTime,
-            Duration(hours: event.timeZone),
-          );
-          final dismissSec = _getUnifiedDismissSeconds(event);
-          if (elapsedSec >= dismissSec) {
-            debugPrint(
-              'QuakeProvider: 信息事件已过期，跳过: eventId=${event.eventId} elapsed=${elapsedSec}s dismiss=${dismissSec}s',
-            );
-            return;
-          }
-        }
-      }
     }
 
     if (!event.isEew) {
-      final qst = _unifiedToQst[event.source];
+      final qst = _unifiedSourceType(event);
       if (qst != null) {
         final threshold = _sourceInfoMagFilters[qst];
         if (threshold != null && threshold < 0) {
@@ -979,7 +1337,20 @@ class QuakeProvider with ChangeNotifier {
     }
 
     final eventKey = _unifiedEventKey(event);
-    if (_dismissedUnifiedIds.contains(eventKey)) {
+    final existingIndex = event.isEew
+        ? _unifiedEvents.indexWhere(
+            (e) => e.source == event.source && e.eventId == event.eventId,
+          )
+        : _unifiedEvents.indexWhere(
+            (e) =>
+                !e.isEew &&
+                _unifiedInfoSlotSource(e) == _unifiedInfoSlotSource(event),
+          );
+    final existingEvent = existingIndex >= 0
+        ? _unifiedEvents[existingIndex]
+        : null;
+    if (_shouldBlockDismissedUnifiedEvent(event) &&
+        _dismissedUnifiedIds.contains(eventKey)) {
       // 旧事件拦截必须在同 source slot 替换前执行，防止已关闭事件重新顶回 UI。
       // 只有正式/已核实测定允许覆盖此前关闭的自动测定。
       if (_isReviewedUnifiedInfoEvent(event)) {
@@ -991,65 +1362,117 @@ class QuakeProvider with ChangeNotifier {
       }
     }
 
+    if (_shouldSuppressSeenNoUpdateInfoEvent(event)) {
+      debugPrint(
+        'QuakeProvider: no-update info event already seen, list only: source=${event.source} eventId=${event.eventId}',
+      );
+      _syncUnifiedToListBucket(event);
+      notifyListeners();
+      return;
+    }
+
     if (event.isEew) {
       final eewKey = eventKey;
       final reportNum = _extractReportNum(event.reportNumText);
       final storedReportNum = _ignoredEewIds[eewKey];
-      if (storedReportNum != null && reportNum <= storedReportNum) {
-        debugPrint(
-          'QuakeProvider: 已忽略过期的 EEW: $eewKey #$storedReportNum >= #$reportNum',
-        );
+      if (existingEvent != null &&
+          _shouldKeepExistingCwaWolfx(existingEvent, event)) {
+        debugPrint('QuakeProvider: CWA EEW 已有 Wolfx，同事件 FAN 不覆盖: $eewKey');
         return;
+      }
+      if (storedReportNum != null && reportNum <= storedReportNum) {
+        final canTakeover =
+            existingEvent != null &&
+            _shouldAllowCwaWolfxTakeover(
+              existingEvent,
+              event,
+              reportNum,
+              storedReportNum,
+            );
+        if (canTakeover) {
+          debugPrint(
+            'QuakeProvider: CWA EEW Wolfx 接管同报号 FAN: $eewKey #$reportNum',
+          );
+        } else {
+          debugPrint(
+            'QuakeProvider: 已忽略过期的 EEW: $eewKey #$storedReportNum >= #$reportNum',
+          );
+          return;
+        }
       }
       _addToEewHistory(event);
     }
 
-    // 信息事件按 source 匹配（参照 kanameishi 的 eqlistList 按 source 匹配逻辑）
-    // 同一 source 的信息事件只保留一个 slot，正式测定替换自动测定
-    final existingIndex = event.isEew
-        ? _unifiedEvents.indexWhere(
-            (e) => e.source == event.source && e.eventId == event.eventId,
-          )
-        : _unifiedEvents.indexWhere(
-            (e) => !e.isEew && e.source == event.source,
-          );
+    // 信息事件按 source slot 匹配（参照 kanameishi 的 eqlistList 按 source 匹配逻辑）
+    // P2PQ 的 JMA 地震信息和其它 JMA 地震信息共享一个当前 slot。
     if (existingIndex >= 0) {
       final oldEvent = _unifiedEvents[existingIndex];
       final oldKey = _unifiedEventKey(oldEvent);
+      var suppressInfoActions = false;
       if (event.isEew) {
         final eewKey = eventKey;
         final reportNum = _extractReportNum(event.reportNumText);
         final storedReportNum = _ignoredEewIds[eewKey];
-        if (storedReportNum != null && reportNum <= storedReportNum) {
-          debugPrint(
-            'QuakeProvider: 已忽略过期的 EEW 更新: $eewKey #$storedReportNum >= #$reportNum',
-          );
+        if (_shouldKeepExistingCwaWolfx(oldEvent, event)) {
+          debugPrint('QuakeProvider: CWA EEW 已有 Wolfx，同事件 FAN 更新不覆盖: $eewKey');
           return;
+        }
+        if (storedReportNum != null && reportNum <= storedReportNum) {
+          final canTakeover = _shouldAllowCwaWolfxTakeover(
+            oldEvent,
+            event,
+            reportNum,
+            storedReportNum,
+          );
+          if (canTakeover) {
+            debugPrint(
+              'QuakeProvider: CWA EEW Wolfx 更新接管同报号 FAN: $eewKey #$reportNum',
+            );
+          } else {
+            debugPrint(
+              'QuakeProvider: 已忽略过期的 EEW 更新: $eewKey #$storedReportNum >= #$reportNum',
+            );
+            return;
+          }
         }
         _ignoredEewIds[eewKey] = reportNum;
       } else {
         // 信息事件按 source 匹配：参照 kanameishi 的 EqlistEvent.update()
         // 只有 reportTime 比旧的更新时才更新（防止重复推送触发声音/重置定时器）
+        if (_isSameUsgsInfoBody(oldEvent, event)) {
+          debugPrint(
+            'QuakeProvider: USGS 主体内容未变化，仅更新时间变化，按 kanameishi 跳过: eventId=${event.eventId}',
+          );
+          return;
+        }
         final oldReportTime = oldEvent.reportTime;
         final newReportTime = event.reportTime;
-        final isSameInfoEvent = oldEvent.eventId == event.eventId;
-        final isReviewedUpgrade =
-            isSameInfoEvent &&
-            _isAutomaticUnifiedInfoEvent(oldEvent) &&
-            _isReviewedUnifiedInfoEvent(event);
         if (oldReportTime != null && newReportTime != null) {
-          if (newReportTime.isBefore(oldReportTime) && !isReviewedUpgrade) {
+          if (_isCencRecentInfoUpdate(oldEvent, event)) {
             debugPrint(
-              'QuakeProvider: 信息事件旧于当前 source slot，跳过: source=${event.source} eventId=${event.eventId}',
+              'QuakeProvider: CENC 信息事件 30秒内更新，按 kanameishi 源适配跳过: eventId=${event.eventId}',
             );
             return;
           }
-          // 参照 kanameishi 的 30 秒去重逻辑：
-          // 如果新 reportTime 不比旧的更新（差值 < 30秒且 eventId 相同），跳过
-          final diff = newReportTime.difference(oldReportTime).inSeconds.abs();
-          if (diff < 30 && isSameInfoEvent && !isReviewedUpgrade) {
+          final oldOriginTime = oldEvent.originTime;
+          final newOriginTime = event.originTime;
+          final isNewerReport = newReportTime.isAfter(oldReportTime);
+          final isNewerOrigin =
+              newReportTime.isAtSameMomentAs(oldReportTime) &&
+              oldOriginTime != null &&
+              newOriginTime != null &&
+              newOriginTime.isAfter(oldOriginTime);
+          final isSameEventBodyCorrection =
+              _isSameEventBodyChangedWithoutReportTime(oldEvent, event);
+          final isUsgsSameReportBodyCorrection =
+              _isUsgsSameReportBodyCorrection(oldEvent, event);
+          suppressInfoActions = isUsgsSameReportBodyCorrection;
+          if (!isNewerReport &&
+              !isNewerOrigin &&
+              !isSameEventBodyCorrection &&
+              !isUsgsSameReportBodyCorrection) {
             debugPrint(
-              'QuakeProvider: 信息事件 30秒去重，跳过: eventId=${event.eventId} diff=${diff}s',
+              'QuakeProvider: 信息事件不新于当前 source slot，跳过: source=${event.source} eventId=${event.eventId}',
             );
             return;
           }
@@ -1057,18 +1480,33 @@ class QuakeProvider with ChangeNotifier {
         // 清除旧 eventId 的 dismissed 标记
         if (oldKey != eventKey) {
           _dismissedUnifiedIds.remove(oldKey);
+          _unifiedDismissTimers[oldKey]?.cancel();
+          _unifiedDismissTimers.remove(oldKey);
         }
       }
       _dismissedUnifiedIds.remove(eventKey);
-      final isNewInfoEvent = !event.isEew && oldEvent.eventId != event.eventId;
+      final isNewInfoEvent =
+          !event.isEew &&
+          _unifiedCanonicalEventId(oldEvent) != _unifiedCanonicalEventId(event);
+      if (!event.isEew &&
+          !isNewInfoEvent &&
+          _isNoUpdateTimeFanInfoSource(event.source)) {
+        suppressInfoActions = true;
+      }
       final arrivedAt = isNewInfoEvent
           ? (event.arrivedAt ?? DateTime.now())
           : oldEvent.arrivedAt;
-      _unifiedEvents[existingIndex] = event.copyWith(arrivedAt: arrivedAt);
+      final nextEvent = !event.isEew
+          ? _mergeUnifiedInfoEvent(oldEvent, event)
+          : event;
+      _unifiedEvents[existingIndex] = nextEvent.copyWith(arrivedAt: arrivedAt);
       _sortUnifiedEvents();
       _startUnifiedCarousel();
       // EEW 每次更新重置定时器；信息事件更新不重置，防止连续推送导致事件挂住
       if (event.isEew) {
+        _setupUnifiedDismissTimer(event);
+      } else if (event.source == 'jmaEqlist' ||
+          event.source == 'p2pJmaEqlist') {
         _setupUnifiedDismissTimer(event);
       } else if (isNewInfoEvent) {
         _unifiedDismissTimers[oldKey]?.cancel();
@@ -1077,8 +1515,11 @@ class QuakeProvider with ChangeNotifier {
       } else if (!_unifiedDismissTimers.containsKey(eventKey)) {
         _setupUnifiedDismissTimer(event);
       }
-      _syncUnifiedToListBucket(event);
-      _playUnifiedSound(event, isFirst: false);
+      _syncUnifiedToListBucket(nextEvent);
+      _rememberNoUpdateInfoEvent(nextEvent);
+      if (!suppressInfoActions) {
+        _playUnifiedSound(nextEvent, isFirst: false);
+      }
       notifyListeners();
       return;
     }
@@ -1095,9 +1536,99 @@ class QuakeProvider with ChangeNotifier {
     _startUnifiedCarousel();
     _setupUnifiedDismissTimer(event);
     _syncUnifiedToListBucket(event);
+    _rememberNoUpdateInfoEvent(event);
     _playUnifiedSound(event, isFirst: true);
 
     notifyListeners();
+  }
+
+  UnifiedQuakeData _mergeUnifiedInfoEvent(
+    UnifiedQuakeData oldEvent,
+    UnifiedQuakeData event,
+  ) {
+    if (!_isSameUnifiedJmaInfoEvent(oldEvent, event)) return event;
+
+    var merged = event.copyWith(eventId: oldEvent.eventId);
+
+    if (_jmaInfoTitleRank(event.titleText) <
+        _jmaInfoTitleRank(oldEvent.titleText)) {
+      merged = merged.copyWith(titleText: oldEvent.titleText);
+    }
+
+    if (!_hasKnownUnifiedShindo(event) && _hasKnownUnifiedShindo(oldEvent)) {
+      merged = merged.copyWith(
+        maxIntensity: oldEvent.maxIntensity,
+        className: oldEvent.className,
+      );
+    }
+
+    if (event.warnArea.trim().isEmpty && oldEvent.warnArea.trim().isNotEmpty) {
+      merged = merged.copyWith(warnArea: oldEvent.warnArea);
+    }
+
+    if (!_hasUnifiedHypocenter(event) && _hasUnifiedHypocenter(oldEvent)) {
+      merged = merged.copyWith(
+        hypocenter: oldEvent.hypocenter,
+        lat: oldEvent.lat,
+        lng: oldEvent.lng,
+      );
+    }
+
+    if (event.magnitude < 0 && oldEvent.magnitude >= 0) {
+      merged = merged.copyWith(magnitude: oldEvent.magnitude);
+    }
+
+    if (event.depth < 0 && oldEvent.depth >= 0) {
+      merged = merged.copyWith(
+        depth: oldEvent.depth,
+        depthText: oldEvent.depthText,
+      );
+    }
+
+    return merged;
+  }
+
+  @visibleForTesting
+  UnifiedQuakeData mergeUnifiedInfoEventForTest(
+    UnifiedQuakeData oldEvent,
+    UnifiedQuakeData event,
+  ) {
+    return _mergeUnifiedInfoEvent(oldEvent, event);
+  }
+
+  bool _isSameUnifiedJmaInfoEvent(
+    UnifiedQuakeData oldEvent,
+    UnifiedQuakeData event,
+  ) {
+    if (oldEvent.isEew || event.isEew) return false;
+    if (_unifiedInfoSlotSource(oldEvent) != 'jmaEqlist' ||
+        _unifiedInfoSlotSource(event) != 'jmaEqlist') {
+      return false;
+    }
+    final oldId = _unifiedCanonicalEventId(oldEvent);
+    final newId = _unifiedCanonicalEventId(event);
+    return oldId.isNotEmpty && oldId == newId;
+  }
+
+  int _jmaInfoTitleRank(String title) {
+    if (title.contains('各地の震度')) return 4;
+    if (title.contains('震度・震源') || title.contains('震源・震度')) return 3;
+    if (title.contains('震源')) return 2;
+    if (title.contains('震度速報')) return 1;
+    return 0;
+  }
+
+  bool _hasKnownUnifiedShindo(UnifiedQuakeData event) {
+    final value = event.maxIntensity.trim();
+    return value.isNotEmpty && value != '-' && value != '?' && value != '不明';
+  }
+
+  bool _hasUnifiedHypocenter(UnifiedQuakeData event) {
+    final name = event.hypocenter.trim();
+    if (name.isEmpty || name.contains('調査中') || name.contains('调查中')) {
+      return false;
+    }
+    return event.lat != null && event.lng != null;
   }
 
   void _playUnifiedSound(UnifiedQuakeData event, {required bool isFirst}) {
@@ -1149,7 +1680,7 @@ class QuakeProvider with ChangeNotifier {
         : '${phase}_${event.reportNumText.trim()}';
     TtsService().speakEvent(
       text,
-      dedupeKey: '${event.source}:${event.eventId}:$reportKey',
+      dedupeKey: '${_unifiedEventKey(event)}:$reportKey',
       isUpdate: isUpdate && phase != 'cancel' && phase != 'final',
       delay: const Duration(milliseconds: 1250),
     );
@@ -1184,7 +1715,7 @@ class QuakeProvider with ChangeNotifier {
     if (event.isCanceled) return 'cancel';
     final source = event.source;
     final title = event.titleText;
-    if (source == 'jmaEqlist') {
+    if (source == 'jmaEqlist' || source == 'p2pJmaEqlist') {
       if (title.contains('震度速報')) return 'prompt';
       if (title.contains('震源')) return 'hypocenter';
       return 'detail';
@@ -1283,7 +1814,7 @@ class QuakeProvider with ChangeNotifier {
     int elapsedSec;
     if (event.isEew) {
       elapsedSec = QuakeTime.calcPassedSecondsUnified(event);
-    } else if (_showStaleInfoEvent) {
+    } else if (_shouldUseArrivalTimeForUnifiedInfo(event)) {
       elapsedSec = 0;
     } else {
       final reportTime = event.reportTime ?? event.originTime;
@@ -1309,7 +1840,10 @@ class QuakeProvider with ChangeNotifier {
   void _removeUnifiedEvent(int index) {
     final event = _unifiedEvents[index];
     final key = _unifiedEventKey(event);
-    _dismissedUnifiedIds.add(key);
+    _rememberNoUpdateInfoEvent(event);
+    if (_shouldBlockDismissedUnifiedEvent(event)) {
+      _dismissedUnifiedIds.add(key);
+    }
     _unifiedDismissTimers[key]?.cancel();
     _unifiedDismissTimers.remove(key);
     _unifiedEvents.removeAt(index);
@@ -1331,9 +1865,7 @@ class QuakeProvider with ChangeNotifier {
     if (_unifiedEvents.isEmpty) {
       _currentUnifiedIndex = 0;
       _unifiedCarouselTimer?.cancel();
-      if (_activeWarnings.isEmpty && _activeInfoEvents.isEmpty) {
-        onAllEventsExpired?.call();
-      }
+      onAllEventsExpired?.call();
     } else {
       _currentUnifiedIndex = _currentUnifiedIndex.clamp(
         0,
@@ -1343,6 +1875,31 @@ class QuakeProvider with ChangeNotifier {
     }
 
     notifyListeners();
+  }
+
+  bool _shouldBlockDismissedUnifiedEvent(UnifiedQuakeData event) {
+    if (!event.isEew && event.source == 'cwaEqlist') return false;
+    return true;
+  }
+
+  void _clearLegacyActiveQuakePipeline() {
+    for (final warning in _activeWarnings) {
+      warning.dismissTimer?.cancel();
+    }
+    _activeWarnings.clear();
+    _activeInfoEvents.clear();
+    _currentWarningIndex = 0;
+    _isShowingInfoEvent = false;
+    _isShowingTempInfo = false;
+    _currentDistance = 0.0;
+    _estimatedIntensity = 0.0;
+    _countdownTimer?.cancel();
+    _carouselTimer?.cancel();
+    _infoDismissTimer?.cancel();
+    _tempInfoDisplayTimer?.cancel();
+    if (_unifiedEvents.isEmpty) {
+      _currentEvent = null;
+    }
   }
 
   void nextUnified() {
@@ -1391,6 +1948,7 @@ class QuakeProvider with ChangeNotifier {
           merged.add(e);
         }
       }
+      _dedupeJmaHistoryEvents(merged);
       merged.sort((a, b) {
         final utcA = _toUtc(a);
         final utcB = _toUtc(b);
@@ -1402,6 +1960,68 @@ class QuakeProvider with ChangeNotifier {
     } catch (e) {
       print('_rebuildFlat error: $e');
     }
+  }
+
+  void _dedupeJmaHistoryEvents(List<QuakeMessage> items) {
+    final seen = <String, int>{};
+    var i = 0;
+    while (i < items.length) {
+      final key = _jmaHistoryDedupeKey(items[i]);
+      if (key == null) {
+        i++;
+        continue;
+      }
+      final existingIndex = seen[key];
+      if (existingIndex == null) {
+        seen[key] = i;
+        i++;
+        continue;
+      }
+      final preferred = _preferJmaHistoryEvent(items[existingIndex], items[i]);
+      items[existingIndex] = preferred;
+      items.removeAt(i);
+    }
+  }
+
+  String? _jmaHistoryDedupeKey(QuakeMessage event) {
+    if (!_isJmaHistorySource(event.source)) return null;
+    final location = event.location.trim().replaceAll(RegExp(r'\s+'), '');
+    if (location.isEmpty) return null;
+    final originMinute =
+        _toUtc(event).millisecondsSinceEpoch ~/ Duration.millisecondsPerMinute;
+    final magnitude = (event.magnitude * 10).round();
+    final depth = event.depth.round();
+    return '$originMinute|$location|$magnitude|$depth';
+  }
+
+  bool _isJmaHistorySource(QuakeSourceType source) {
+    return source == QuakeSourceType.wolfx ||
+        source == QuakeSourceType.jma_fan ||
+        source == QuakeSourceType.p2p;
+  }
+
+  QuakeMessage _preferJmaHistoryEvent(QuakeMessage a, QuakeMessage b) {
+    final aReviewed = _isReviewedJmaHistoryEvent(a);
+    final bReviewed = _isReviewedJmaHistoryEvent(b);
+    if (aReviewed != bReviewed) return bReviewed ? b : a;
+    final aReport = a.reportTime;
+    final bReport = b.reportTime;
+    if (aReport != null && bReport != null && bReport.isAfter(aReport)) {
+      return b;
+    }
+    return a;
+  }
+
+  bool _isReviewedJmaHistoryEvent(QuakeMessage event) {
+    final text =
+        '${event.infoTypeName ?? ''} ${event.reviewType ?? ''} '
+                '${event.reportNumText ?? ''} ${event.tsunamiWarning ?? ''}'
+            .toLowerCase();
+    return text.contains('reviewed') ||
+        text.contains('confirmed') ||
+        text.contains('正式') ||
+        text.contains('確定') ||
+        text.contains('已核实');
   }
 
   /// 将地震事件时间转换为 UTC 时间
@@ -1518,6 +2138,7 @@ class QuakeProvider with ChangeNotifier {
     }
 
     if (_legacyActiveQuakePipelineDisabled) {
+      _clearLegacyActiveQuakePipeline();
       if (event.isHistory ||
           event.isInfoEvent ||
           _isInfoEventSource(event.source)) {
@@ -1906,6 +2527,7 @@ class QuakeProvider with ChangeNotifier {
 
   /// 切换到下一个预警/信息事件
   void nextWarning() {
+    if (_legacyActiveQuakePipelineDisabled) return;
     if (_activeWarnings.isNotEmpty) {
       _currentWarningIndex =
           (_currentWarningIndex + 1) % _activeWarnings.length;
@@ -1919,6 +2541,7 @@ class QuakeProvider with ChangeNotifier {
 
   /// 切换到上一个预警/信息事件
   void prevWarning() {
+    if (_legacyActiveQuakePipelineDisabled) return;
     if (_activeWarnings.isNotEmpty) {
       _currentWarningIndex =
           (_currentWarningIndex - 1 + _activeWarnings.length) %
@@ -1934,6 +2557,7 @@ class QuakeProvider with ChangeNotifier {
 
   /// 切换到指定索引的预警事件
   void _switchToWarning(int index) {
+    if (_legacyActiveQuakePipelineDisabled) return;
     final warning = _activeWarnings[index];
     _currentEvent = warning.event;
     _currentDistance = warning.distance;
@@ -1946,6 +2570,7 @@ class QuakeProvider with ChangeNotifier {
 
   /// 切换到指定索引的信息事件
   void _switchToInfoEvent(int index) {
+    if (_legacyActiveQuakePipelineDisabled) return;
     final info = _activeInfoEvents[index];
     _currentEvent = info.event;
     _currentDistance = info.distance;
@@ -1958,6 +2583,7 @@ class QuakeProvider with ChangeNotifier {
 
   /// 关闭指定的预警事件
   bool _purgeLegacyEventEntries(String eventId) {
+    if (_legacyActiveQuakePipelineDisabled) return false;
     var changed = false;
     _activeWarnings.removeWhere((w) {
       if (w.event.eventId != eventId) return false;
@@ -1977,6 +2603,11 @@ class QuakeProvider with ChangeNotifier {
   }
 
   void _reconcileLegacyDisplayAfterRemoval() {
+    if (_legacyActiveQuakePipelineDisabled) {
+      _clearLegacyActiveQuakePipeline();
+      notifyListeners();
+      return;
+    }
     if (_activeWarnings.isEmpty && _activeInfoEvents.isEmpty) {
       _currentEvent = null;
       _currentDistance = 0;
@@ -2009,6 +2640,7 @@ class QuakeProvider with ChangeNotifier {
   }
 
   void dismissWarning(String eventId) {
+    if (_legacyActiveQuakePipelineDisabled) return;
     _activeWarnings.removeWhere((w) => w.event.eventId == eventId);
     _dismissedLegacyIds.add(eventId);
     if (_dismissedLegacyIds.length > 200) {
@@ -2037,6 +2669,7 @@ class QuakeProvider with ChangeNotifier {
 
   /// 关闭指定的信息事件
   void dismissInfoEvent(String eventId) {
+    if (_legacyActiveQuakePipelineDisabled) return;
     _activeInfoEvents.removeWhere((i) => i.event.eventId == eventId);
     _dismissedLegacyIds.add(eventId);
     if (_dismissedLegacyIds.length > 200) {
@@ -2317,6 +2950,10 @@ class QuakeProvider with ChangeNotifier {
   /// 释放资源
   @override
   void dispose() {
+    _eqlistStartTimer?.cancel();
+    _eqlistStartTimer = null;
+    _eqlist.onAnyUpdated = null;
+    _eqlist.stop();
     _countdownTimer?.cancel();
     _carouselTimer?.cancel();
     _tempInfoDisplayTimer?.cancel();
@@ -2330,6 +2967,7 @@ class QuakeProvider with ChangeNotifier {
       sub.cancel();
     }
     _chinaWeatherService.stop();
+    _typhoonService.stop();
     super.dispose();
   }
 }

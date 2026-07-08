@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../../services/sources/kma_monitor.dart';
+import 'station_dot_painter_layer.dart';
 
 class KmaIntensityLayer extends StatefulWidget {
   final List<KmaStation>? stations;
@@ -75,29 +76,23 @@ class _KmaIntensityLayerState extends State<KmaIntensityLayer> {
       callback(centers);
     }
 
-    final dotMarkers = <Marker>[];
+    final dots = <StationDot>[];
     final iconMarkers = <Marker>[];
 
-    final sorted = List<KmaStation>.from(data)
-      ..sort((a, b) => a.intensity.compareTo(b.intensity));
-
-    for (var station in sorted) {
+    for (var station in data) {
       final active = station.intensity >= 0;
       final level = (station.intensity + 2).clamp(0, 12);
       final showLabel = active && level >= 4;
 
       if (!active) {
-        dotMarkers.add(
-          Marker(
-            width: idleDotSize,
-            height: idleDotSize,
-            point: station.coordinate,
-            child: _SoftStationDot(
-              color: _idleColor,
-              fillOpacity: 0.08 + overview * 0.10,
-              borderOpacity: 0.22 + overview * 0.38,
-              borderWidth: smallBorderWidth,
-            ),
+        dots.add(
+          StationDot(
+            coordinate: station.coordinate,
+            color: _idleColor,
+            radius: idleDotSize / 2,
+            fillOpacity: 0.08 + overview * 0.10,
+            borderOpacity: 0.22 + overview * 0.38,
+            borderWidth: smallBorderWidth,
           ),
         );
       } else if (showLabel) {
@@ -114,18 +109,15 @@ class _KmaIntensityLayerState extends State<KmaIntensityLayer> {
           ),
         );
       } else {
-        iconMarkers.add(
-          Marker(
-            width: smallMarkerSize,
-            height: smallMarkerSize,
-            point: station.coordinate,
-            child: _KmaMarker(
-              color: _kmaColors[level],
-              level: level,
-              fillOpacity: 0.14 + overview * 0.22,
-              borderOpacity: 0.45 + overview * 0.45,
-              borderWidth: smallBorderWidth,
-            ),
+        final color = _kmaColors[level];
+        dots.add(
+          StationDot(
+            coordinate: station.coordinate,
+            color: color,
+            radius: smallMarkerSize / 2,
+            fillOpacity: 0.14 + overview * 0.22,
+            borderOpacity: 0.45 + overview * 0.45,
+            borderWidth: smallBorderWidth,
           ),
         );
       }
@@ -135,7 +127,8 @@ class _KmaIntensityLayerState extends State<KmaIntensityLayer> {
       children: [
         if (showGrids)
           PolygonLayer(polygons: _buildGridPolygons(widget.blinkOn)),
-        MarkerLayer(markers: [...dotMarkers, ...iconMarkers]),
+        StationDotPainterLayer(dots: dots),
+        if (iconMarkers.isNotEmpty) MarkerLayer(markers: iconMarkers),
       ],
     );
   }
@@ -152,7 +145,7 @@ class _KmaIntensityLayerState extends State<KmaIntensityLayer> {
 
     if (!_hadActiveStations) {
       final strongest = activeStations.reduce(
-        (a, b) => a.intensity >= b.intensity ? a : b,
+        (a, b) => a.activityLevel >= b.activityLevel ? a : b,
       );
       _gridDecimal = [
         _gridDecimalPart(strongest.coordinate.latitude),
@@ -171,7 +164,8 @@ class _KmaIntensityLayerState extends State<KmaIntensityLayer> {
         _gridDecimal[1],
       );
       final key = '$latRounded,$lngRounded';
-      final level = station.intensity + 2;
+      final level = station.activityLevel;
+      if (level < 0) continue;
       final existing = _heldGridCells[key];
       if (existing == null || level > existing.level) {
         _heldGridCells[key] = _KmaGridCell(
@@ -201,7 +195,7 @@ class _KmaIntensityLayerState extends State<KmaIntensityLayer> {
           ],
           borderStrokeWidth: 2.0,
           borderColor: color.withValues(alpha: 0.8 * blinkAlpha),
-          color: color.withValues(alpha: 0.25 * blinkAlpha),
+          color: Colors.transparent,
         ),
       );
     }
@@ -212,8 +206,8 @@ class _KmaIntensityLayerState extends State<KmaIntensityLayer> {
     const colorGreen = Color(0xFF3DAA7E);
     const colorYellow = Color(0xFFEBC033);
     const colorRed = Color(0xFFE74C3C);
-    if (level <= 7) return colorGreen;
-    if (level <= 13) return colorYellow;
+    if (level <= 3) return colorGreen;
+    if (level <= 7) return colorYellow;
     return colorRed;
   }
 
@@ -228,83 +222,6 @@ class _KmaIntensityLayerState extends State<KmaIntensityLayer> {
 
   static double _overviewFactor(double zoom) {
     return ((zoom - 3.2) / 3.8).clamp(0.0, 1.0).toDouble();
-  }
-}
-
-class _KmaMarker extends StatelessWidget {
-  final Color color;
-  final int level;
-  final double fillOpacity;
-  final double borderOpacity;
-  final double borderWidth;
-
-  const _KmaMarker({
-    required this.color,
-    required this.level,
-    required this.fillOpacity,
-    required this.borderOpacity,
-    required this.borderWidth,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final isHigh = level >= 7;
-
-    return Container(
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: fillOpacity.clamp(0.0, 1.0)),
-        shape: BoxShape.circle,
-        border: Border.all(
-          color: isHigh
-              ? Colors.white
-              : color.withValues(alpha: borderOpacity.clamp(0.0, 1.0)),
-          width: isHigh ? 1.5 : borderWidth,
-        ),
-        boxShadow: isHigh
-            ? [
-                BoxShadow(
-                  color: color.withValues(alpha: 0.5),
-                  blurRadius: 6,
-                  spreadRadius: 1,
-                ),
-              ]
-            : [
-                BoxShadow(
-                  color: color.withValues(alpha: 0.16),
-                  blurRadius: 2,
-                  spreadRadius: 0.4,
-                ),
-              ],
-      ),
-    );
-  }
-}
-
-class _SoftStationDot extends StatelessWidget {
-  final Color color;
-  final double fillOpacity;
-  final double borderOpacity;
-  final double borderWidth;
-
-  const _SoftStationDot({
-    required this.color,
-    required this.fillOpacity,
-    required this.borderOpacity,
-    required this.borderWidth,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: fillOpacity.clamp(0.0, 1.0)),
-        shape: BoxShape.circle,
-        border: Border.all(
-          color: color.withValues(alpha: borderOpacity.clamp(0.0, 1.0)),
-          width: borderWidth,
-        ),
-      ),
-    );
   }
 }
 
@@ -329,21 +246,6 @@ class _KmaLabeledMarker extends StatelessWidget {
         color: color,
         shape: BoxShape.circle,
         border: Border.all(color: Colors.white, width: isHigh ? 2.0 : 1.2),
-        boxShadow: isHigh
-            ? [
-                BoxShadow(
-                  color: color.withValues(alpha: 0.6),
-                  blurRadius: 8,
-                  spreadRadius: 2,
-                ),
-              ]
-            : [
-                BoxShadow(
-                  color: color.withValues(alpha: 0.3),
-                  blurRadius: 3,
-                  spreadRadius: 1,
-                ),
-              ],
       ),
       alignment: Alignment.center,
       child: FittedBox(

@@ -4450,6 +4450,11 @@ class JmaSeisIntLoc {
     return getStationsBySect()[sect];
   }
 
+  static List<({String name, double lat, double lng, String sect, double arv})>
+  getStations() {
+    return List.unmodifiable(_stations);
+  }
+
   static String? getSectForStation(String stationName) {
     for (final s in _stations) {
       if (s.name == stationName) return s.sect;

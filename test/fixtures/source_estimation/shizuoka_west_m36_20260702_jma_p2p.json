@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "caseId": "20260702_shizuoka_west_m36_jma_p2p",
+  "caseType": "event",
+  "captureDirectory": "tmp/captures/20260702_shizuoka_west_m36_jma_p2p",
+  "timeZone": "Asia/Tokyo",
+  "gifNamePattern": "{stamp}.{layer}.gif",
+  "startTimeJst": "2026-07-02T20:12:30",
+  "endTimeJst": "2026-07-02T20:15:00",
+  "sensitivity": 2,
+  "truth": {
+    "originTimeJst": "2026-07-02T20:13:00",
+    "latitude": 34.7,
+    "longitude": 137.5,
+    "depthKm": 30.0,
+    "magnitude": 3.6,
+    "source": "p2pquake_jma_detail_scale_reference"
+  },
+  "eventLabels": {
+    "catalogEvent": true,
+    "catalogTruthVerified": false,
+    "observableEvent": true,
+    "detectableEvent": true,
+    "includeInDetectionMetrics": false
+  },
+  "classification": {
+    "region": "Shizuoka West",
+    "captureSource": "P2PQuake JMA DetailScale id 6a4648c4e88ee598246bee5d; within-retention NIED GIF capture.",
+    "truthQuality": "p2pquake_jma_detail_scale_reference_pending_final_catalog",
+    "plannedUse": "source_estimation_live_intake_reference",
+    "maxShindoLabel": "2",
+    "notes": "Reference-only within-3h P2PQuake/JMA capture. Do not use as catalog-verified frozen metric until a versioned JMA final catalog row is linked."
+  },
+  "splitStatus": "unassigned_reference"
+}

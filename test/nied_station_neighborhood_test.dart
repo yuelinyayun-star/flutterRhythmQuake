@@ -1,45 +1,19 @@
+// ignore_for_file: avoid_print
+
 import 'dart:io';
-import 'dart:typed_data';
-import 'dart:ui' as ui;
 
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutterrhythmquake/models/nied_scan_positions.dart';
 import 'package:flutterrhythmquake/services/sources/shindo_color_util.dart';
 
-class _DecodedGifFrame {
-  final List<int> packedRgb;
-  const _DecodedGifFrame({required this.packedRgb});
-}
+import 'support/nied_replay_fixture.dart';
 
-Future<_DecodedGifFrame?> _decodeGifFile(File file) async {
-  if (!file.existsSync()) return null;
-  final bytes = await file.readAsBytes();
-  final codec = await ui.instantiateImageCodec(Uint8List.fromList(bytes));
-  final frame = await codec.getNextFrame();
-  final image = frame.image;
-  final byteData = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
-  if (byteData == null) {
-    image.dispose();
-    codec.dispose();
-    return null;
-  }
-
-  final pixels = List<int>.filled(image.width * image.height, 0);
-  for (var i = 0; i < pixels.length; i++) {
-    final offset = i * 4;
-    final r = byteData.getUint8(offset);
-    final g = byteData.getUint8(offset + 1);
-    final b = byteData.getUint8(offset + 2);
-    pixels[i] = (r << 16) | (g << 8) | b;
-  }
-
-  image.dispose();
-  codec.dispose();
-  return _DecodedGifFrame(packedRgb: pixels);
-}
-
-({int r, int g, int b, double? shindo}) _sample(List<int> packedRgb, int x, int y) {
+({int r, int g, int b, double? shindo}) _sample(
+  List<int> packedRgb,
+  int x,
+  int y,
+) {
   final rgb = packedRgb[y * 352 + x];
   final r = (rgb >> 16) & 0xFF;
   final g = (rgb >> 8) & 0xFF;
@@ -63,10 +37,10 @@ void main() {
       return;
     }
 
-    final surface = await _decodeGifFile(
+    final surface = await decodeNiedGifFile(
       File('${dir.path}\\20260609185200.jma_s.gif'),
     );
-    final borehole = await _decodeGifFile(
+    final borehole = await decodeNiedGifFile(
       File('${dir.path}\\20260609185200.jma_b.gif'),
     );
     if (surface == null || borehole == null) {
@@ -82,13 +56,17 @@ void main() {
       print('=== $code center=($cx,$cy) surface ===');
       for (int dy = -2; dy <= 2; dy++) {
         for (int dx = -2; dx <= 2; dx++) {
-          print(_cellText(dx, dy, _sample(surface.packedRgb, cx + dx, cy + dy)));
+          print(
+            _cellText(dx, dy, _sample(surface.packedRgb, cx + dx, cy + dy)),
+          );
         }
       }
       print('=== $code center=($cx,$cy) borehole ===');
       for (int dy = -2; dy <= 2; dy++) {
         for (int dx = -2; dx <= 2; dx++) {
-          print(_cellText(dx, dy, _sample(borehole.packedRgb, cx + dx, cy + dy)));
+          print(
+            _cellText(dx, dy, _sample(borehole.packedRgb, cx + dx, cy + dy)),
+          );
         }
       }
     }

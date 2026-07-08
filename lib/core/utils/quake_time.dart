@@ -1,5 +1,6 @@
 import '../../models/quake_message.dart';
 import '../../models/unified_quake_data.dart';
+import '../../services/ntp_service.dart';
 
 /// 地震时间处理工具类
 /// 
@@ -150,7 +151,7 @@ class QuakeTime {
       refTime.millisecond,
       refTime.microsecond,
     ).subtract(tzOffset);
-    final elapsed = DateTime.now().toUtc().difference(utcInstant);
+    final elapsed = NtpService().now.toUtc().difference(utcInstant);
     return elapsed.inSeconds.clamp(0, 999999);
   }
 

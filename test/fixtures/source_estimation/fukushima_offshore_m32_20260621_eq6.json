@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "caseId": "20260621_fukushima_offshore_m32_eq6",
+  "caseType": "event",
+  "captureDirectory": "tmp/captures/fukushima_offshore_m32_20260621_224108_multilayer",
+  "timeZone": "Asia/Tokyo",
+  "gifNamePattern": "{stamp}.{layer}.gif",
+  "startTimeJst": "2026-06-21T23:40:38",
+  "endTimeJst": "2026-06-21T23:43:08",
+  "sensitivity": 2,
+  "truth": {
+    "originTimeJst": "2026-06-21T23:41:12",
+    "latitude": 37.616,
+    "longitude": 142.279,
+    "depthKm": 29.8,
+    "magnitude": 3.2,
+    "source": "user_provided_hinet_hypocenter"
+  },
+  "eventLabels": {
+    "catalogEvent": true,
+    "catalogTruthVerified": false,
+    "observableEvent": true,
+    "detectableEvent": true,
+    "includeInDetectionMetrics": false
+  },
+  "classification": {
+    "region": "Miyagi southeast offshore",
+    "captureSource": "User-provided EQuake source-estimation report 6 final, 2026-06-21 22:41:08 UTC+8; user-provided Hi-net hypocenter, 2026-06-21 22:41:12 UTC+8",
+    "truthQuality": "hinet_user_provided",
+    "notes": "Hi-net label: Miyagi southeast offshore, 37.616N 142.279E, M3.2, depth 29.8 km, origin 2026-06-21 22:41:12 UTC+8. EQuake reported final M3.2, depth 30 km, quality B 78.1%, RMS 0.8 s, azimuthal gap 263 deg, 35 triggered stations (P:0 S:29 O:6), and 23 magnitude stations. The EQuake hypocenter 37.66N 142.47E is retained only as source-estimation reference text, not truth. Keep outside frozen split metrics until split assignment is reviewed."
+  },
+  "splitStatus": "unassigned_reference"
+}

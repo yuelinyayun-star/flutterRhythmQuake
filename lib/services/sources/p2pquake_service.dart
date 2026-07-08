@@ -48,9 +48,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'base_source.dart';
-import '../../models/quake_message.dart';
 import '../../models/tsunami_message.dart';
-import '../../models/unified_quake_data.dart';
 import '../quake_event_adapter.dart';
 import '../../models/source_status.dart';
 
@@ -76,6 +74,8 @@ class P2PQuakeService extends BaseSourceService {
   /// 用于在日志和状态显示中标识此数据源。
   @override
   String get name => 'P2P';
+
+  final Map<String, Map<String, dynamic>> _jmaEqInfoStateByTime = {};
 
   /// WebSocket 服务器地址
   ///
@@ -275,180 +275,10 @@ class P2PQuakeService extends BaseSourceService {
       final eq = json['earthquake'];
       if (eq == null) return;
 
-      final issueType = issue['type']?.toString() ?? '';
-
-      if (issueType == 'ScalePrompt') {
-        _handleScalePrompt(json, issue, eq);
-        _emitP2pUnified(json);
-        return;
-      }
-
-      if (issueType == 'Destination') {
-        _handleDestination(json, issue, eq);
-        _emitP2pUnified(json);
-        return;
-      }
-
-      _handleFullReport(json, issue, eq, issueType);
-      _emitP2pUnified(json);
+      _emitP2pUnified(_mergeJmaEqInfo(json));
     } catch (e) {
       debugPrint('P2PQuake 551 地震情报解析异常: $e');
     }
-  }
-
-  /// 处理震度速报 (ScalePrompt)
-  ///
-  /// 震度速报是地震发生后最快发布的速报，仅包含最大震度信息。
-  /// 此时震源位置和震级尚未确定。
-  ///
-  /// ## 数据特点
-  /// - 只有最大震度，无震源位置
-  /// - 无震级和深度信息
-  /// - 发布速度最快（通常在震后1-2分钟）
-  ///
-  /// 参数：
-  /// - [json]: 完整的 JSON 数据
-  /// - [issue]: 发布信息对象
-  /// - [eq]: 地震信息对象
-  void _handleScalePrompt(
-    Map<String, dynamic> json,
-    Map<String, dynamic> issue,
-    Map<String, dynamic> eq,
-  ) {
-    final int maxScale = int.tryParse(eq['maxScale']?.toString() ?? '') ?? -1;
-    final String shindo = _maxScaleToShindo(maxScale);
-
-    final String eventId = _makeEventId(json);
-    debugPrint('P2PQuake 震度速報(551): 最大震度 $shindo');
-
-    emit(QuakeMessage(
-      source: QuakeSourceType.p2p,
-      eventId: eventId,
-      location: '日本境内',
-      magnitude: -1,
-      latitude: 0.0,
-      longitude: 0.0,
-      depth: -1,
-      originTime: _parseReportTime(issue),
-      maxIntensity: maxScale > 0 ? (maxScale / 10).round() : null,
-      jmaShindo: maxScale > 0 ? shindo : null,
-      infoTypeName: '震度速報',
-      isInfoEvent: true,
-    ));
-  }
-
-  /// 处理震源速报 (Destination)
-  ///
-  /// 震源速报包含震源位置、深度和震级信息，但不包含震度数据。
-  ///
-  /// ## 数据特点
-  /// - 有震源位置（经纬度）
-  /// - 有震级和深度
-  /// - 无震度信息
-  /// - 发布速度较快（通常在震后2-3分钟）
-  ///
-  /// 参数：
-  /// - [json]: 完整的 JSON 数据
-  /// - [issue]: 发布信息对象
-  /// - [eq]: 地震信息对象
-  void _handleDestination(
-    Map<String, dynamic> json,
-    Map<String, dynamic> issue,
-    Map<String, dynamic> eq,
-  ) {
-    final hypo = eq['hypocenter'];
-    if (hypo == null) return;
-
-    final String location = hypo['name']?.toString() ?? '未知地点';
-    final double lat = _parseCoordD(hypo['latitude']);
-    final double lng = _parseCoordD(hypo['longitude']);
-    final double depth = _parseDepthV(hypo['depth']);
-    final double magnitude =
-        double.tryParse(hypo['magnitude']?.toString() ?? '-1') ?? -1;
-    final String eventId = _makeEventId(json);
-
-    debugPrint(
-      'P2PQuake 震源に関する情報(551): $location '
-      'M${magnitude > 0 ? magnitude.toStringAsFixed(1) : "?"} '
-      '深度 ${depth > 0 ? depth.round() : "?"}km',
-    );
-
-    emit(QuakeMessage(
-      source: QuakeSourceType.p2p,
-      eventId: eventId,
-      location: location,
-      magnitude: magnitude,
-      latitude: lat,
-      longitude: lng,
-      depth: depth > 0 ? depth : 0.0,
-      originTime: _parseReportTime(issue),
-      maxIntensity: null,
-      infoTypeName: '震源に関する情報',
-      isInfoEvent: true,
-    ));
-  }
-
-  /// 处理完整地震报告
-  ///
-  /// 处理 ScaleAndDestination、DetailScale、Foreign、Other 类型的地震情报。
-  /// 这些类型包含完整的震源和震度信息。
-  ///
-  /// ## 支持的类型
-  /// - **ScaleAndDestination**: 震度震源速报（最常见）
-  /// - **DetailScale**: 详细震度速报
-  /// - **Foreign**: 海外地震情报
-  /// - **Other**: 其他类型地震情报
-  ///
-  /// 参数：
-  /// - [json]: 完整的 JSON 数据
-  /// - [issue]: 发布信息对象
-  /// - [eq]: 地震信息对象
-  /// - [issueType]: 情报类型字符串
-  void _handleFullReport(
-    Map<String, dynamic> json,
-    Map<String, dynamic> issue,
-    Map<String, dynamic> eq,
-    String issueType,
-  ) {
-    final hypo = eq['hypocenter'];
-    if (hypo == null) return;
-
-    final String location = hypo['name']?.toString() ?? '未知地点';
-    final double lat = _parseCoordD(hypo['latitude']);
-    final double lng = _parseCoordD(hypo['longitude']);
-    final double depth = _parseDepthV(hypo['depth']);
-    final double magnitude =
-        double.tryParse(hypo['magnitude']?.toString() ?? '-1') ?? -1;
-
-    final int maxScale = int.tryParse(eq['maxScale']?.toString() ?? '') ?? -1;
-    final String shindo = _maxScaleToShindo(maxScale);
-    final int? jmaIntensity =
-        maxScale > 0 ? (maxScale / 10).round() : null;
-
-    final String eventId = _makeEventId(json);
-
-    final title = _issueTypeLabel(issueType);
-    debugPrint(
-      'P2PQuake $title(551): $location '
-      'M${magnitude > 0 ? magnitude.toStringAsFixed(1) : "?"} '
-      '震度 $shindo '
-      '深度 ${depth > 0 ? depth.round() : "?"}km',
-    );
-
-    emit(QuakeMessage(
-      source: QuakeSourceType.p2p,
-      eventId: eventId,
-      location: location,
-      magnitude: magnitude,
-      latitude: lat,
-      longitude: lng,
-      depth: depth > 0 ? depth : 0.0,
-      originTime: _parseReportTime(issue),
-      maxIntensity: jmaIntensity,
-      jmaShindo: shindo,
-      infoTypeName: title,
-      isInfoEvent: true,
-    ));
   }
 
   /// 处理 JMA 海啸情报 (code 552)
@@ -474,158 +304,6 @@ class P2PQuakeService extends BaseSourceService {
     } catch (e) {
       debugPrint('P2PQuake 552 海啸情报解析异常: $e');
     }
-  }
-
-  /// 解析坐标值
-  ///
-  /// P2PQuake API 返回的坐标可能带有方向前缀（如 "N35.5"）。
-  /// 此方法解析并转换为标准十进制度数。
-  ///
-  /// ## 格式支持
-  /// - 带前缀: "N35.5" → 35.5, "S35.5" → -35.5
-  /// - 纯数值: "35.5" → 35.5
-  ///
-  /// 参数：
-  /// - [value]: 原始坐标值（可能是字符串或数值）
-  ///
-  /// 返回：
-  /// - 解析后的十进制度数，南纬/西经为负值
-  double _parseCoordD(dynamic value) {
-    if (value == null) return 0.0;
-    String v = value.toString().trim();
-    if (v.isEmpty) return 0.0;
-
-    final String prefix = v[0].toUpperCase();
-    if (prefix == 'N' || prefix == 'S' || prefix == 'E' || prefix == 'W') {
-      double val = double.tryParse(v.substring(1)) ?? 0.0;
-      return prefix == 'S' || prefix == 'W' ? -val : val;
-    }
-    return double.tryParse(v) ?? 0.0;
-  }
-
-  /// 解析深度值
-  ///
-  /// P2PQuake API 返回的深度可能带有单位（如 "10km"）。
-  /// 此方法提取数值部分。
-  ///
-  /// 参数：
-  /// - [value]: 原始深度值（可能是字符串或数值）
-  ///
-  /// 返回：
-  /// - 解析后的深度值（单位：km）
-  double _parseDepthV(dynamic value) {
-    if (value == null) return 0.0;
-    String v = value.toString().trim().toLowerCase();
-    v = v.replaceAll('km', '').trim();
-    return double.tryParse(v) ?? 0.0;
-  }
-
-  /// 将 maxScale 转换为震度等级字符串
-  ///
-  /// P2PQuake API 使用整数编码震度等级：
-  /// - 10: 震度1
-  /// - 20: 震度2
-  /// - 30: 震度3
-  /// - 40: 震度4
-  /// - 45: 震度5弱
-  /// - 46: 震度5弱（另一种编码）
-  /// - 50: 震度5强
-  /// - 55: 震度6弱
-  /// - 60: 震度6强
-  /// - 70: 震度7
-  ///
-  /// 参数：
-  /// - [maxScale]: API 返回的震度编码值
-  ///
-  /// 返回：
-  /// - 震度等级字符串（如 "5弱"、"7"）
-  String _maxScaleToShindo(int maxScale) {
-    if (maxScale <= 0) return '不明';
-    switch (maxScale) {
-      case 10: return '1';
-      case 20: return '2';
-      case 30: return '3';
-      case 40: return '4';
-      case 45: return '5弱';
-      case 46: return '5弱';
-      case 50: return '5强';
-      case 55: return '6弱';
-      case 60: return '6强';
-      case 70: return '7';
-      default: return '${(maxScale / 10).floor()}';
-    }
-  }
-
-  /// 获取情报类型标签
-  ///
-  /// 将 API 返回的情报类型代码转换为可读的中文标签。
-  ///
-  /// 参数：
-  /// - [type]: 情报类型代码
-  ///
-  /// 返回：
-  /// - 中文标签字符串
-  String _issueTypeLabel(String type) {
-    switch (type) {
-      case 'ScalePrompt':
-        return '震度速報';
-      case 'Destination':
-        return '震源に関する情報';
-      case 'ScaleAndDestination':
-        return '震度・震源に関する情報';
-      case 'DetailScale':
-        return '各地の震度に関する情報';
-      case 'Foreign':
-        return '遠地地震に関する情報';
-      case 'Other':
-        return 'その他の情報';
-      default:
-        return '地震情報';
-    }
-  }
-
-  /// 解析报告时间
-  ///
-  /// 从 issue 对象中提取地震发生时间。
-  ///
-  /// ## 时间格式
-  /// API 返回的时间格式为 "2024/01/01 15:00:00"，
-  /// 需要转换为 DateTime 对象。
-  ///
-  /// 参数：
-  /// - [issue]: 发布信息对象
-  ///
-  /// 返回：
-  /// - 解析后的 DateTime 对象，解析失败则返回当前时间
-  DateTime _parseReportTime(Map<String, dynamic> issue) {
-    final raw = issue['time']?.toString();
-    if (raw != null && raw.isNotEmpty) {
-      final dt = DateTime.tryParse(raw.replaceAll('/', '-'));
-      if (dt != null) return dt;
-    }
-    return DateTime.now();
-  }
-
-  /// 生成事件 ID
-  ///
-  /// 从 JSON 数据中提取或生成唯一的事件标识符。
-  ///
-  /// ## ID 来源优先级
-  /// 1. MongoDB ObjectId (_id.$oid)
-  /// 2. 基于时间和消息代码的哈希值
-  ///
-  /// 参数：
-  /// - [json]: 完整的消息 JSON 数据
-  ///
-  /// 返回：
-  /// - 唯一的事件 ID 字符串
-  String _makeEventId(Map<String, dynamic> json) {
-    final id = json['_id'];
-    if (id is Map && id['\$oid'] != null) {
-      return id['\$oid'].toString();
-    }
-    final time = json['time']?.toString() ?? '';
-    return 'p2p_${time}_${json['code']}'.hashCode.abs().toString();
   }
 
   /// 处理连接失败
@@ -694,5 +372,102 @@ class P2PQuakeService extends BaseSourceService {
   void _emitP2pUnified(Map<String, dynamic> json) {
     final result = QuakeEventAdapter.convert('jmaEqlist', json, 2);
     if (result != null) emitUnified(result);
+  }
+
+  Map<String, dynamic> _mergeJmaEqInfo(Map<String, dynamic> json) {
+    final earthquake = json['earthquake'];
+    if (earthquake is! Map<String, dynamic>) return json;
+
+    final key = earthquake['time']?.toString().trim();
+    if (key == null || key.isEmpty) return json;
+
+    final previous = _jmaEqInfoStateByTime[key];
+    if (previous == null) {
+      final stored = _deepCopyMap(json);
+      _jmaEqInfoStateByTime[key] = stored;
+      _trimJmaEqInfoState();
+      return stored;
+    }
+
+    final merged = _deepCopyMap(previous);
+    final current = _deepCopyMap(json);
+    merged.addAll(current);
+    final issue = current['issue'];
+    final issueType = issue is Map<String, dynamic>
+        ? issue['type']?.toString() ?? ''
+        : '';
+
+    final previousEq = previous['earthquake'];
+    final currentEq = current['earthquake'];
+    if (previousEq is Map<String, dynamic> &&
+        currentEq is Map<String, dynamic>) {
+      final mergedEq = _deepCopyMap(previousEq)..addAll(currentEq);
+
+      final currentHypocenter = currentEq['hypocenter'];
+      final previousHypocenter = previousEq['hypocenter'];
+      if (currentHypocenter is Map<String, dynamic>) {
+        if (_hasValidHypocenter(currentHypocenter)) {
+          mergedEq['hypocenter'] = currentHypocenter;
+        } else if (previousHypocenter is Map<String, dynamic>) {
+          mergedEq['hypocenter'] = previousHypocenter;
+        }
+      }
+
+      if (!_hasValidMaxScale(currentEq['maxScale']) &&
+          _hasValidMaxScale(previousEq['maxScale'])) {
+        mergedEq['maxScale'] = previousEq['maxScale'];
+      }
+      if (issueType == 'Destination' &&
+          _hasValidMaxScale(previousEq['maxScale'])) {
+        mergedEq['maxScale'] = previousEq['maxScale'];
+      }
+
+      merged['earthquake'] = mergedEq;
+    }
+
+    final currentPoints = current['points'];
+    final previousPoints = previous['points'];
+    if (previousPoints is List &&
+        (issueType == 'Destination' ||
+            (currentPoints is List && currentPoints.isEmpty))) {
+      merged['points'] = previousPoints;
+    }
+
+    _jmaEqInfoStateByTime[key] = merged;
+    return merged;
+  }
+
+  Map<String, dynamic> _deepCopyMap(Map<String, dynamic> value) {
+    return jsonDecode(jsonEncode(value)) as Map<String, dynamic>;
+  }
+
+  bool _hasValidHypocenter(Map<String, dynamic> hypocenter) {
+    final name = hypocenter['name']?.toString().trim() ?? '';
+    final lat = _parseDouble(hypocenter['latitude']);
+    final lng = _parseDouble(hypocenter['longitude']);
+    return name.isNotEmpty &&
+        lat != null &&
+        lng != null &&
+        lat >= -90 &&
+        lat <= 90 &&
+        lng >= -180 &&
+        lng <= 180;
+  }
+
+  bool _hasValidMaxScale(dynamic value) {
+    final scale = value is int ? value : int.tryParse(value?.toString() ?? '');
+    return scale != null && scale > 0;
+  }
+
+  double? _parseDouble(dynamic value) {
+    if (value == null) return null;
+    if (value is num) return value.toDouble();
+    return double.tryParse(value.toString());
+  }
+
+  void _trimJmaEqInfoState() {
+    while (_jmaEqInfoStateByTime.length > 20) {
+      _jmaEqInfoStateByTime.remove(_jmaEqInfoStateByTime.keys.first);
+    }
   }
 }

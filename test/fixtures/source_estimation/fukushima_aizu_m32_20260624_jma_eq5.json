@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "caseId": "20260624_fukushima_aizu_m32_jma_eq5",
+  "caseType": "event",
+  "captureDirectory": "tmp/captures/fukushima_aizu_m32_20260624_122445_multilayer",
+  "timeZone": "Asia/Tokyo",
+  "gifNamePattern": "{stamp}.{layer}.gif",
+  "startTimeJst": "2026-06-24T13:24:15",
+  "endTimeJst": "2026-06-24T13:26:45",
+  "sensitivity": 2,
+  "truth": {
+    "originTimeJst": "2026-06-24T13:24:45",
+    "latitude": 37.1,
+    "longitude": 139.4,
+    "depthKm": 10.0,
+    "magnitude": 3.2,
+    "source": "jma_source_and_intensity_information"
+  },
+  "eventLabels": {
+    "catalogEvent": true,
+    "catalogTruthVerified": true,
+    "observableEvent": true,
+    "detectableEvent": true,
+    "includeInDetectionMetrics": false
+  },
+  "classification": {
+    "region": "Fukushima Aizu",
+    "captureSource": "User-provided JMA source and intensity information, 2026-06-24 12:24:45 UTC+8; user-provided EQuake source-estimation reports 1-5, final report at 2026-06-24 12:24:44 UTC+8",
+    "truthQuality": "jma_source_and_intensity_verified",
+    "notes": "JMA event: Fukushima Aizu, 37.1N 139.4E, M3.2, depth 10 km, maximum shindo 3, origin 2026-06-24 12:24:45 UTC+8. No tsunami concern. EQuake final report 5: Fukushima Aizu, 37.05N 139.42E, M3.0, depth 4 km, observed max shindo 2 (1.7), estimated max shindo 2 (1.5-2.4), quality A 77.8%, RMS 0.58 s, azimuthal gap 31 deg, 80 triggered stations (P:22 S:41 O:17), and 50 magnitude stations. EQuake reports 1-4 are retained only as source-estimation progression reference text. Keep outside frozen metrics until event-level split assignment is reviewed."
+  },
+  "splitStatus": "unassigned_reference"
+}

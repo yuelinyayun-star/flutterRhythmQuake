@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "jma_catalog_availability_v1",
+  "asOf": "2026-06-26",
+  "authority": "Japan Meteorological Agency monthly hypocenter bulletin",
+  "latestAvailableFinalCatalogYear": 2023,
+  "latestAvailableFinalCatalogPeriodEnd": "2023-12-31",
+  "latestAvailableFinalCatalogEvidence": {
+    "checkedAtUtc": "2026-06-26T06:20:00Z",
+    "sourceUrl": "https://www.data.jma.go.jp/eqev/data/bulletin/hypo.html",
+    "observedLatestYearLink": 2023,
+    "observedMissingYearLinks": [2024, 2025, 2026],
+    "notes": "Official JMA monthly hypocenter bulletin page still exposes 2023 as the latest yearly final-catalog link at this check. Recent 2026 source-and-intensity labels therefore remain reference-only."
+  },
+  "sourceUrls": [
+    "https://www.data.jma.go.jp/eqev/data/bulletin/hypo.html",
+    "https://www.data.jma.go.jp/eqev/data/bulletin/data/format/fmthyp_j.html",
+    "https://www.data.jma.go.jp/eqev/data/bulletin/data/format/hypfmt_j.html"
+  ],
+  "policy": "Recent JMA source-and-intensity labels remain reference-only until a versioned final catalog record is available and linked with tools/link_jma_catalog.dart."
+}

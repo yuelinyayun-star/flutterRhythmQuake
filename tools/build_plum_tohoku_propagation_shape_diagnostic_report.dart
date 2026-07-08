@@ -1,0 +1,887 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutterrhythmquake/core/calculator.dart';
+import 'package:flutterrhythmquake/core/replay/jma_intensity_dataset.dart';
+import 'package:flutterrhythmquake/core/replay/synthetic_reveal_dataset.dart';
+import 'package:flutterrhythmquake/core/source_estimation/static_intensity_attenuation.dart';
+
+const _defaultDataDirectory = 'tmp/jma_intensity_pretraining';
+const _defaultModelPath =
+    'tmp/jma_intensity_pretraining/static_attenuation_model.json';
+const _defaultOutputPath =
+    '.dart_tool/plum_tohoku_propagation_shape_diagnostic/report.json';
+const _defaultMarkdownPath =
+    'docs/baselines/plum_tohoku_propagation_shape_diagnostic.generated.md';
+
+const _plumRadiusKm = 30.0;
+const _plumDampingPer10Km = 0.50;
+const _localNeighbor10Km = 10.0;
+const _localNeighbor20Km = 20.0;
+const _exampleLimit = 8;
+const _focusRegion = 'tohoku';
+const _focusMinimumEvidenceCount = 8;
+const _focusNearestEvidenceKm = 10.0;
+const _focusMinimumMargin = 1.0;
+const _thresholds = [_Threshold('shindo4', 3.5), _Threshold('shindo5-', 4.5)];
+
+void main(List<String> args) {
+  final dataDirectory =
+      _argument(args, '--data-directory') ?? _defaultDataDirectory;
+  final modelPath = _argument(args, '--model') ?? _defaultModelPath;
+  final outputPath = _argument(args, '--output') ?? _defaultOutputPath;
+  final markdownPath = _argument(args, '--markdown') ?? _defaultMarkdownPath;
+
+  final report = buildPlumTohokuPropagationShapeDiagnosticJson(
+    dataDirectory: dataDirectory,
+    modelPath: modelPath,
+  );
+
+  final output = File(outputPath)..parent.createSync(recursive: true);
+  output.writeAsStringSync(
+    '${const JsonEncoder.withIndent('  ').convert(report)}\n',
+  );
+  final markdown = File(markdownPath)..parent.createSync(recursive: true);
+  markdown.writeAsStringSync(
+    plumTohokuPropagationShapeDiagnosticMarkdown(report),
+  );
+
+  stdout.writeln('wrote PLUM Tohoku propagation-shape diagnostic report');
+  stdout.writeln('json: ${output.path}');
+  stdout.writeln('markdown: ${markdown.path}');
+
+  if (report['status'] != 'pass') exitCode = 1;
+}
+
+Map<String, Object?> buildPlumTohokuPropagationShapeDiagnosticJson({
+  String dataDirectory = _defaultDataDirectory,
+  String modelPath = _defaultModelPath,
+}) {
+  final errors = <String>[];
+  final modelFile = File(modelPath);
+  final splitFile = File('$dataDirectory/splits.json');
+  final annualFiles = [
+    File('$dataDirectory/jma_final_intensity_2020.json'),
+    File('$dataDirectory/jma_final_intensity_2021.json'),
+    File('$dataDirectory/jma_final_intensity_2022.json'),
+  ];
+  if (!modelFile.existsSync()) errors.add('model_missing:$modelPath');
+  if (!splitFile.existsSync()) {
+    errors.add('split_manifest_missing:${splitFile.path}');
+  }
+  for (final file in annualFiles) {
+    if (!file.existsSync()) errors.add('annual_dataset_missing:${file.path}');
+  }
+  if (errors.isNotEmpty) {
+    return _emptyReport(
+      errors: errors,
+      dataDirectory: dataDirectory,
+      modelPath: modelPath,
+    );
+  }
+
+  final annualDatasets = [
+    for (final file in annualFiles)
+      decodeJmaIntensityDataset(file.readAsStringSync()),
+  ];
+  final splits =
+      jsonDecode(splitFile.readAsStringSync()) as Map<String, Object?>;
+  final synthetic = const SyntheticRevealDatasetBuilder(
+    generatedSplits: ['validation', 'test'],
+  ).build(annualDatasets: annualDatasets, splitManifest: splits);
+
+  final model = _modelFromJson(
+    jsonDecode(modelFile.readAsStringSync()) as Map<String, Object?>,
+  );
+  final locator = StaticIntensityLocator(model: model);
+  final jmaPredictor = const JmaStyleIntensityPredictor();
+  final plumPredictor = const PlumLikeIntensityPredictor(
+    radiusKm: _plumRadiusKm,
+    dampingPer10Km: _plumDampingPer10Km,
+  );
+
+  final splitAccumulators = {
+    'validation': _SplitAccumulator(),
+    'test': _SplitAccumulator(),
+  };
+  var skippedMissingMagnitude = 0;
+  var skippedNoEstimate = 0;
+
+  for (final splitName in const ['validation', 'test']) {
+    final dataset = synthetic.datasetsBySplit[splitName]!;
+    final splitAccumulator = splitAccumulators[splitName]!;
+    for (final rawEvent in _list(dataset['events'])) {
+      final event = StaticIntensityEvent.fromJson(_map(rawEvent));
+      final magnitude = event.magnitude;
+      if (magnitude == null || !magnitude.isFinite) {
+        skippedMissingMagnitude++;
+        continue;
+      }
+      final stationsById = {
+        for (final station in event.stations) station.stationId: station,
+      };
+      for (final variant in event.variants) {
+        final retained = [
+          for (final id in variant.retainedStationIds)
+            if (stationsById[id] != null) stationsById[id]!,
+        ];
+        final estimate = locator.locate(retained);
+        if (estimate == null) {
+          skippedNoEstimate++;
+          continue;
+        }
+        splitAccumulator.variantCount++;
+        final estimatedRegion = _eventLatitudeBucket(estimate.latitude);
+        for (final station in event.stations) {
+          splitAccumulator.stationForecastCount++;
+          final jma = jmaPredictor
+              .predict(
+                magnitude: magnitude,
+                sourceLatitude: estimate.latitude,
+                sourceLongitude: estimate.longitude,
+                depthKm: estimate.depthKm,
+                stationLatitude: station.latitude,
+                stationLongitude: station.longitude,
+              )
+              .intensity;
+          final plum = plumPredictor.predict(
+            targetStation: station,
+            observedStations: retained,
+          );
+          for (final threshold in _thresholds) {
+            final margin = plum.intensity - threshold.value;
+            if (estimatedRegion != _focusRegion) continue;
+            if (plum.evidenceCount < _focusMinimumEvidenceCount) continue;
+            if (!plum.nearestEvidenceDistanceKm.isFinite ||
+                plum.nearestEvidenceDistanceKm >= _focusNearestEvidenceKm) {
+              continue;
+            }
+            if (margin < _focusMinimumMargin) continue;
+
+            final shape = _buildShapeSample(
+              event: event,
+              variant: variant,
+              targetStation: station,
+              retainedStations: retained,
+              threshold: threshold,
+              plum: plum,
+              jmaPredictedIntensity: jma,
+            );
+            splitAccumulator.threshold(threshold.label).add(shape);
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    'schemaVersion': 'plum_tohoku_propagation_shape_diagnostic_v1',
+    'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
+    'status': errors.isEmpty ? 'pass' : 'fail',
+    'policy': {
+      'method': 'PLUM Tohoku strong-nearby-evidence propagation-shape diagnostic',
+      'rawPredictedIntensityMutated': false,
+      'frozenTestEvaluated': true,
+      'productionReady': false,
+      'productionUiConnected': false,
+      'diagnosticOnly': true,
+      'parametersTuned': false,
+      'suppressionApplied': false,
+      'plumRadiusKm': _plumRadiusKm,
+      'plumDampingPer10Km': _plumDampingPer10Km,
+    },
+    'inputs': {
+      'dataDirectory': dataDirectory,
+      'modelPath': modelPath,
+      'splits': ['validation', 'test'],
+    },
+    'focusFilter': {
+      'estimatedSourceRegion': _focusRegion,
+      'minimumEvidenceCount': _focusMinimumEvidenceCount,
+      'maximumNearestEvidenceDistanceKm': _focusNearestEvidenceKm,
+      'minimumPredictionMarginShindo': _focusMinimumMargin,
+      'neighborWindowsKm': [_localNeighbor10Km, _localNeighbor20Km],
+      'supportingEvidenceDefinition':
+          'observed station within 30 km whose propagated contribution alone '
+          'crosses the target threshold',
+    },
+    'coverage': {
+      'validationVariants': splitAccumulators['validation']!.variantCount,
+      'testVariants': splitAccumulators['test']!.variantCount,
+      'validationStationForecasts':
+          splitAccumulators['validation']!.stationForecastCount,
+      'testStationForecasts': splitAccumulators['test']!.stationForecastCount,
+      'skippedMissingMagnitudeEvents': skippedMissingMagnitude,
+      'skippedNoSourceEstimateVariants': skippedNoEstimate,
+    },
+    'thresholds': {
+      for (final threshold in _thresholds)
+        threshold.label: {
+          'splits': {
+            for (final splitName in const ['validation', 'test'])
+              splitName: splitAccumulators[splitName]!
+                  .threshold(threshold.label)
+                  .toJson(),
+          },
+        },
+    },
+    'errors': errors,
+  };
+}
+
+_ShapeSample _buildShapeSample({
+  required StaticIntensityEvent event,
+  required StaticIntensityVariant variant,
+  required StaticIntensityStation targetStation,
+  required List<StaticIntensityStation> retainedStations,
+  required _Threshold threshold,
+  required PlumLikeIntensityPrediction plum,
+  required double jmaPredictedIntensity,
+}) {
+  final supportingEvidence = <_EvidenceStation>[];
+  for (final observed in retainedStations) {
+    if (observed.stationId == targetStation.stationId) continue;
+    final distance = QuakeCalculator.haversineDistance(
+      targetStation.latitude,
+      targetStation.longitude,
+      observed.latitude,
+      observed.longitude,
+    );
+    if (distance > _plumRadiusKm) continue;
+    final propagated = observed.intensity -
+        _plumDampingPer10Km * (distance / 10.0);
+    if (propagated >= threshold.value) {
+      supportingEvidence.add(
+        _EvidenceStation(
+          station: observed,
+          targetDistanceKm: distance,
+          propagatedIntensity: propagated,
+        ),
+      );
+    }
+  }
+
+  final strongestEvidence = supportingEvidence.isEmpty
+      ? null
+      : supportingEvidence.reduce((left, right) {
+          if (left.propagatedIntensity == right.propagatedIntensity) {
+            return left.targetDistanceKm <= right.targetDistanceKm
+                ? left
+                : right;
+          }
+          return left.propagatedIntensity >= right.propagatedIntensity
+              ? left
+              : right;
+        });
+  final local10 = _localNeighborSummary(
+    event.stations,
+    targetStation,
+    threshold.value,
+    _localNeighbor10Km,
+  );
+  final local20 = _localNeighborSummary(
+    event.stations,
+    targetStation,
+    threshold.value,
+    _localNeighbor20Km,
+  );
+  final supportShape = _supportShape(
+    targetStation: targetStation,
+    evidenceStations: supportingEvidence,
+  );
+
+  return _ShapeSample(
+    eventId: event.eventId,
+    variantId: variant.variantId,
+    stationId: targetStation.stationId,
+    thresholdValue: threshold.value,
+    actual: targetStation.intensity,
+    plum: plum.intensity,
+    jma: jmaPredictedIntensity,
+    evidenceCount: plum.evidenceCount,
+    nearestEvidenceDistanceKm: plum.nearestEvidenceDistanceKm,
+    strongestEvidenceIntensity: strongestEvidence?.station.intensity,
+    evidenceTargetGap: strongestEvidence == null
+        ? double.nan
+        : strongestEvidence.station.intensity - targetStation.intensity,
+    localNeighborCount10Km: local10.count,
+    localBelowThresholdShare10Km: local10.belowThresholdShare,
+    localNeighborCount20Km: local20.count,
+    localBelowThresholdShare20Km: local20.belowThresholdShare,
+    supportingEvidenceCount: supportingEvidence.length,
+    supportingEvidenceQuadrantCoverage: supportShape.quadrantCoverage,
+    supportingEvidenceCentroidOffsetKm: supportShape.centroidOffsetKm,
+    supportingEvidenceMeanDistanceKm: supportShape.meanDistanceKm,
+    supportingEvidenceMaxSpreadKm: supportShape.maxSpreadKm,
+  );
+}
+
+String plumTohokuPropagationShapeDiagnosticMarkdown(
+  Map<String, Object?> report,
+) {
+  final policy = _map(report['policy']);
+  final coverage = _map(report['coverage']);
+  final focusFilter = _map(report['focusFilter']);
+  final thresholds = _map(report['thresholds']);
+  final buffer = StringBuffer()
+    ..writeln('# PLUM Tohoku Propagation-Shape Diagnostic')
+    ..writeln()
+    ..writeln('- Status: `${report['status']}`')
+    ..writeln('- Method: `${policy['method']}`')
+    ..writeln('- Frozen test evaluated: `${policy['frozenTestEvaluated']}`')
+    ..writeln('- Production ready: `${policy['productionReady']}`')
+    ..writeln('- Production UI connected: `${policy['productionUiConnected']}`')
+    ..writeln('- Diagnostic only: `${policy['diagnosticOnly']}`')
+    ..writeln('- Parameters tuned: `${policy['parametersTuned']}`')
+    ..writeln('- Suppression applied: `${policy['suppressionApplied']}`')
+    ..writeln(
+      '- Raw predicted intensity mutated: '
+      '`${policy['rawPredictedIntensityMutated']}`',
+    )
+    ..writeln()
+    ..writeln('## Coverage')
+    ..writeln()
+    ..writeln('| Split | Variants | Station forecasts |')
+    ..writeln('| --- | ---: | ---: |')
+    ..writeln(
+      '| validation | ${coverage['validationVariants']} | '
+      '${coverage['validationStationForecasts']} |',
+    )
+    ..writeln(
+      '| test | ${coverage['testVariants']} | '
+      '${coverage['testStationForecasts']} |',
+    )
+    ..writeln()
+    ..writeln('## Focus Filter')
+    ..writeln()
+    ..writeln(
+      '- Estimated-source region: `${focusFilter['estimatedSourceRegion']}`',
+    )
+    ..writeln(
+      '- Minimum evidence count: `${focusFilter['minimumEvidenceCount']}`',
+    )
+    ..writeln(
+      '- Maximum nearest evidence distance: '
+      '`${focusFilter['maximumNearestEvidenceDistanceKm']} km`',
+    )
+    ..writeln(
+      '- Minimum prediction margin: '
+      '`${focusFilter['minimumPredictionMarginShindo']} shindo`',
+    )
+    ..writeln(
+      '- Neighbor windows: `${focusFilter['neighborWindowsKm']}`',
+    )
+    ..writeln(
+      '- Supporting evidence definition: '
+      '${focusFilter['supportingEvidenceDefinition']}',
+    )
+    ..writeln();
+
+  for (final threshold in _thresholds) {
+    final thresholdReport = _map(thresholds[threshold.label]);
+    final splits = _map(thresholdReport['splits']);
+    buffer
+      ..writeln('## `${threshold.label}`')
+      ..writeln()
+      ..writeln('### Focus Summary')
+      ..writeln()
+      ..writeln(
+        '| Split | Focus samples | TP | FP | Precision | PLUM-only FP |',
+      )
+      ..writeln('| --- | ---: | ---: | ---: | ---: | ---: |');
+    for (final splitName in const ['validation', 'test']) {
+      final split = _map(splits[splitName]);
+      buffer.writeln(
+        '| $splitName | ${split['focusSampleCount']} | ${split['truePositiveCount']} | '
+        '${split['falsePositiveCount']} | ${_pct(split['precision'])} | '
+        '${split['plumOnlyFalsePositiveCount']} |',
+      );
+    }
+    buffer
+      ..writeln()
+      ..writeln('### Feature Aggregates')
+      ..writeln()
+      ..writeln(
+        '| Split | Outcome | Samples | Strongest Evidence | Actual | Gap | Below@10km | Below@20km | Support Count | Quadrants | Centroid Offset | Mean Dist | Max Spread |',
+      )
+      ..writeln(
+        '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
+      );
+    for (final splitName in const ['validation', 'test']) {
+      final split = _map(splits[splitName]);
+      for (final outcome in const ['truePositive', 'falsePositive']) {
+        final stats = _map(_map(split['outcomes'])[outcome]);
+        final features = _map(stats['features']);
+        buffer.writeln(
+          '| $splitName | $outcome | ${stats['count']} | '
+          '${_fmt(features['strongestEvidenceIntensity'])} | '
+          '${_fmt(features['actualIntensity'])} | '
+          '${_fmt(features['evidenceTargetGap'])} | '
+          '${_pct(features['localBelowThresholdShare10Km'])} | '
+          '${_pct(features['localBelowThresholdShare20Km'])} | '
+          '${_fmt(features['supportingEvidenceCount'])} | '
+          '${_fmt(features['supportingEvidenceQuadrantCoverage'])} | '
+          '${_fmt(features['supportingEvidenceCentroidOffsetKm'])} | '
+          '${_fmt(features['supportingEvidenceMeanDistanceKm'])} | '
+          '${_fmt(features['supportingEvidenceMaxSpreadKm'])} |',
+        );
+      }
+    }
+    buffer
+      ..writeln()
+      ..writeln('### False-Positive Examples')
+      ..writeln()
+      ..writeln(
+        '| Split | Event | Variant | Station | PLUM | Actual | Gap | Below@10km | Support Count | Quadrants | Max Spread | PLUM-only |',
+      )
+      ..writeln(
+        '| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |',
+      );
+    for (final splitName in const ['validation', 'test']) {
+      final split = _map(splits[splitName]);
+      for (final raw in _list(split['falsePositiveExamples'])) {
+        final example = _map(raw);
+        buffer.writeln(
+          '| $splitName | `${example['eventId']}` | `${example['variantId']}` | '
+          '`${example['stationId']}` | ${_fmt(example['plum'])} | '
+          '${_fmt(example['actual'])} | ${_fmt(example['evidenceTargetGap'])} | '
+          '${_pct(example['localBelowThresholdShare10Km'])} | '
+          '${_fmt(example['supportingEvidenceCount'])} | '
+          '${_fmt(example['supportingEvidenceQuadrantCoverage'])} | '
+          '${_fmt(example['supportingEvidenceMaxSpreadKm'])} | '
+          '${example['plumOnlyFalsePositive']} |',
+        );
+      }
+    }
+    buffer.writeln();
+  }
+
+  buffer
+    ..writeln('## Decision')
+    ..writeln()
+    ..writeln(
+      '- This report stays diagnostic-only. It does not tune PLUM, suppress '
+      'predictions, or authorize production UI/wording/notification changes.',
+    )
+    ..writeln(
+      '- Use this drilldown to decide whether the next step should be '
+      'non-suppressive robustness scoring or a region-specific calibration, '
+      'not a hard gate.',
+    )
+    ..writeln();
+  return buffer.toString();
+}
+
+class _SplitAccumulator {
+  int variantCount = 0;
+  int stationForecastCount = 0;
+  final thresholds = <String, _ThresholdAccumulator>{};
+
+  _ThresholdAccumulator threshold(String label) =>
+      thresholds.putIfAbsent(label, _ThresholdAccumulator.new);
+}
+
+class _ThresholdAccumulator {
+  final focus = <_ShapeSample>[];
+
+  void add(_ShapeSample sample) => focus.add(sample);
+
+  Map<String, Object?> toJson() {
+    final truePositives = [
+      for (final sample in focus) if (sample.actualPositive) sample,
+    ];
+    final falsePositives = [
+      for (final sample in focus) if (!sample.actualPositive) sample,
+    ];
+    return {
+      'focusSampleCount': focus.length,
+      'truePositiveCount': truePositives.length,
+      'falsePositiveCount': falsePositives.length,
+      'precision': focus.isEmpty ? 0.0 : truePositives.length / focus.length,
+      'plumOnlyFalsePositiveCount': falsePositives
+          .where((sample) => sample.plumOnlyFalsePositive)
+          .length,
+      'outcomes': {
+        'truePositive': _OutcomeSummary(truePositives).toJson(),
+        'falsePositive': _OutcomeSummary(falsePositives).toJson(),
+      },
+      'falsePositiveExamples': [
+        for (final sample in _rankExamples(falsePositives))
+          sample.toExampleJson(),
+      ],
+    };
+  }
+}
+
+class _OutcomeSummary {
+  final List<_ShapeSample> samples;
+
+  _OutcomeSummary(this.samples);
+
+  Map<String, Object?> toJson() => {
+    'count': samples.length,
+    'features': {
+      'strongestEvidenceIntensity': _mean(
+        samples.map((sample) => sample.strongestEvidenceIntensity),
+      ),
+      'actualIntensity': _mean(samples.map((sample) => sample.actual)),
+      'evidenceTargetGap': _mean(
+        samples.map((sample) => sample.evidenceTargetGap),
+      ),
+      'localBelowThresholdShare10Km': _mean(
+        samples.map((sample) => sample.localBelowThresholdShare10Km),
+      ),
+      'localBelowThresholdShare20Km': _mean(
+        samples.map((sample) => sample.localBelowThresholdShare20Km),
+      ),
+      'supportingEvidenceCount': _mean(
+        samples.map((sample) => sample.supportingEvidenceCount.toDouble()),
+      ),
+      'supportingEvidenceQuadrantCoverage': _mean(
+        samples.map(
+          (sample) => sample.supportingEvidenceQuadrantCoverage.toDouble(),
+        ),
+      ),
+      'supportingEvidenceCentroidOffsetKm': _mean(
+        samples.map((sample) => sample.supportingEvidenceCentroidOffsetKm),
+      ),
+      'supportingEvidenceMeanDistanceKm': _mean(
+        samples.map((sample) => sample.supportingEvidenceMeanDistanceKm),
+      ),
+      'supportingEvidenceMaxSpreadKm': _mean(
+        samples.map((sample) => sample.supportingEvidenceMaxSpreadKm),
+      ),
+    },
+  };
+}
+
+Iterable<_ShapeSample> _rankExamples(List<_ShapeSample> samples) {
+  final sorted = [...samples]..sort((left, right) {
+    final byGap = right.evidenceTargetGap.compareTo(left.evidenceTargetGap);
+    if (byGap != 0) return byGap;
+    final byLocal = right.localBelowThresholdShare10Km.compareTo(
+      left.localBelowThresholdShare10Km,
+    );
+    if (byLocal != 0) return byLocal;
+    return right.plum.compareTo(left.plum);
+  });
+  return sorted.take(_exampleLimit);
+}
+
+class _ShapeSample {
+  final String eventId;
+  final String variantId;
+  final String stationId;
+  final double thresholdValue;
+  final double actual;
+  final double plum;
+  final double jma;
+  final int evidenceCount;
+  final double nearestEvidenceDistanceKm;
+  final double? strongestEvidenceIntensity;
+  final double evidenceTargetGap;
+  final int localNeighborCount10Km;
+  final double localBelowThresholdShare10Km;
+  final int localNeighborCount20Km;
+  final double localBelowThresholdShare20Km;
+  final int supportingEvidenceCount;
+  final int supportingEvidenceQuadrantCoverage;
+  final double supportingEvidenceCentroidOffsetKm;
+  final double supportingEvidenceMeanDistanceKm;
+  final double supportingEvidenceMaxSpreadKm;
+
+  const _ShapeSample({
+    required this.eventId,
+    required this.variantId,
+    required this.stationId,
+    required this.thresholdValue,
+    required this.actual,
+    required this.plum,
+    required this.jma,
+    required this.evidenceCount,
+    required this.nearestEvidenceDistanceKm,
+    required this.strongestEvidenceIntensity,
+    required this.evidenceTargetGap,
+    required this.localNeighborCount10Km,
+    required this.localBelowThresholdShare10Km,
+    required this.localNeighborCount20Km,
+    required this.localBelowThresholdShare20Km,
+    required this.supportingEvidenceCount,
+    required this.supportingEvidenceQuadrantCoverage,
+    required this.supportingEvidenceCentroidOffsetKm,
+    required this.supportingEvidenceMeanDistanceKm,
+    required this.supportingEvidenceMaxSpreadKm,
+  });
+
+  bool get actualPositive => actual >= thresholdValue;
+
+  bool get plumOnlyFalsePositive =>
+      !actualPositive && plum >= thresholdValue && jma < thresholdValue;
+
+  Map<String, Object?> toExampleJson() => {
+    'eventId': eventId,
+    'variantId': variantId,
+    'stationId': stationId,
+    'actual': actual,
+    'plum': plum,
+    'jma': jma,
+    'evidenceCount': evidenceCount,
+    'nearestEvidenceDistanceKm': nearestEvidenceDistanceKm,
+    'strongestEvidenceIntensity': strongestEvidenceIntensity,
+    'evidenceTargetGap': evidenceTargetGap,
+    'localNeighborCount10Km': localNeighborCount10Km,
+    'localBelowThresholdShare10Km': localBelowThresholdShare10Km,
+    'localNeighborCount20Km': localNeighborCount20Km,
+    'localBelowThresholdShare20Km': localBelowThresholdShare20Km,
+    'supportingEvidenceCount': supportingEvidenceCount,
+    'supportingEvidenceQuadrantCoverage': supportingEvidenceQuadrantCoverage,
+    'supportingEvidenceCentroidOffsetKm': supportingEvidenceCentroidOffsetKm,
+    'supportingEvidenceMeanDistanceKm': supportingEvidenceMeanDistanceKm,
+    'supportingEvidenceMaxSpreadKm': supportingEvidenceMaxSpreadKm,
+    'plumOnlyFalsePositive': plumOnlyFalsePositive,
+  };
+}
+
+class _EvidenceStation {
+  final StaticIntensityStation station;
+  final double targetDistanceKm;
+  final double propagatedIntensity;
+
+  const _EvidenceStation({
+    required this.station,
+    required this.targetDistanceKm,
+    required this.propagatedIntensity,
+  });
+}
+
+class _NeighborSummary {
+  final int count;
+  final double belowThresholdShare;
+
+  const _NeighborSummary({required this.count, required this.belowThresholdShare});
+}
+
+_NeighborSummary _localNeighborSummary(
+  List<StaticIntensityStation> stations,
+  StaticIntensityStation target,
+  double threshold,
+  double radiusKm,
+) {
+  var count = 0;
+  var below = 0;
+  for (final station in stations) {
+    if (station.stationId == target.stationId) continue;
+    final distance = QuakeCalculator.haversineDistance(
+      target.latitude,
+      target.longitude,
+      station.latitude,
+      station.longitude,
+    );
+    if (distance > radiusKm) continue;
+    count++;
+    if (station.intensity < threshold) below++;
+  }
+  return _NeighborSummary(
+    count: count,
+    belowThresholdShare: count == 0 ? 0.0 : below / count,
+  );
+}
+
+class _SupportShape {
+  final int quadrantCoverage;
+  final double centroidOffsetKm;
+  final double meanDistanceKm;
+  final double maxSpreadKm;
+
+  const _SupportShape({
+    required this.quadrantCoverage,
+    required this.centroidOffsetKm,
+    required this.meanDistanceKm,
+    required this.maxSpreadKm,
+  });
+}
+
+_SupportShape _supportShape({
+  required StaticIntensityStation targetStation,
+  required List<_EvidenceStation> evidenceStations,
+}) {
+  if (evidenceStations.isEmpty) {
+    return const _SupportShape(
+      quadrantCoverage: 0,
+      centroidOffsetKm: 0.0,
+      meanDistanceKm: 0.0,
+      maxSpreadKm: 0.0,
+    );
+  }
+  final quadrants = <int>{};
+  var latSum = 0.0;
+  var lngSum = 0.0;
+  var distanceSum = 0.0;
+  var maxSpread = 0.0;
+  for (final evidence in evidenceStations) {
+    quadrants.add(
+      _quadrant(
+        targetLat: targetStation.latitude,
+        targetLng: targetStation.longitude,
+        lat: evidence.station.latitude,
+        lng: evidence.station.longitude,
+      ),
+    );
+    latSum += evidence.station.latitude;
+    lngSum += evidence.station.longitude;
+    distanceSum += evidence.targetDistanceKm;
+  }
+  for (var i = 0; i < evidenceStations.length; i++) {
+    for (var j = i + 1; j < evidenceStations.length; j++) {
+      final distance = QuakeCalculator.haversineDistance(
+        evidenceStations[i].station.latitude,
+        evidenceStations[i].station.longitude,
+        evidenceStations[j].station.latitude,
+        evidenceStations[j].station.longitude,
+      );
+      if (distance > maxSpread) maxSpread = distance;
+    }
+  }
+  final centroidLat = latSum / evidenceStations.length;
+  final centroidLng = lngSum / evidenceStations.length;
+  return _SupportShape(
+    quadrantCoverage: quadrants.length,
+    centroidOffsetKm: QuakeCalculator.haversineDistance(
+      targetStation.latitude,
+      targetStation.longitude,
+      centroidLat,
+      centroidLng,
+    ),
+    meanDistanceKm: distanceSum / evidenceStations.length,
+    maxSpreadKm: maxSpread,
+  );
+}
+
+int _quadrant({
+  required double targetLat,
+  required double targetLng,
+  required double lat,
+  required double lng,
+}) {
+  final north = lat >= targetLat;
+  final east = lng >= targetLng;
+  if (north && east) return 0;
+  if (north && !east) return 1;
+  if (!north && east) return 2;
+  return 3;
+}
+
+class _Threshold {
+  final String label;
+  final double value;
+
+  const _Threshold(this.label, this.value);
+}
+
+Map<String, Object?> _emptyReport({
+  required List<String> errors,
+  required String dataDirectory,
+  required String modelPath,
+}) => {
+  'schemaVersion': 'plum_tohoku_propagation_shape_diagnostic_v1',
+  'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
+  'status': 'fail',
+  'policy': {
+    'method': 'PLUM Tohoku strong-nearby-evidence propagation-shape diagnostic',
+    'rawPredictedIntensityMutated': false,
+    'frozenTestEvaluated': true,
+    'productionReady': false,
+    'productionUiConnected': false,
+    'diagnosticOnly': true,
+    'parametersTuned': false,
+    'suppressionApplied': false,
+    'plumRadiusKm': _plumRadiusKm,
+    'plumDampingPer10Km': _plumDampingPer10Km,
+  },
+  'inputs': {
+    'dataDirectory': dataDirectory,
+    'modelPath': modelPath,
+    'splits': ['validation', 'test'],
+  },
+  'focusFilter': {
+    'estimatedSourceRegion': _focusRegion,
+    'minimumEvidenceCount': _focusMinimumEvidenceCount,
+    'maximumNearestEvidenceDistanceKm': _focusNearestEvidenceKm,
+    'minimumPredictionMarginShindo': _focusMinimumMargin,
+    'neighborWindowsKm': [_localNeighbor10Km, _localNeighbor20Km],
+    'supportingEvidenceDefinition':
+        'observed station within 30 km whose propagated contribution alone '
+        'crosses the target threshold',
+  },
+  'coverage': {
+    'validationVariants': 0,
+    'testVariants': 0,
+    'validationStationForecasts': 0,
+    'testStationForecasts': 0,
+    'skippedMissingMagnitudeEvents': 0,
+    'skippedNoSourceEstimateVariants': 0,
+  },
+  'thresholds': const {},
+  'errors': errors,
+};
+
+StaticAttenuationModel _modelFromJson(Map<String, Object?> json) {
+  return StaticAttenuationModel(
+    modelId: json['modelId']?.toString() ?? 'static_intensity_attenuation_v1',
+    logDistanceCoefficient: _number(json['logDistanceCoefficient']),
+    linearDistanceCoefficient: _number(json['linearDistanceCoefficient']),
+    nearDistanceKm: _number(json['nearDistanceKm']),
+    huberDelta: _number(json['huberDelta']),
+    residualScale: _number(json['residualScale']),
+    centroidPenaltyPerKm: _number(json['centroidPenaltyPerKm']),
+    depthClassesKm: [
+      for (final raw in _list(json['depthClassesKm'])) _number(raw),
+    ],
+  );
+}
+
+String _eventLatitudeBucket(double latitude) {
+  if (latitude >= 41) return 'hokkaido';
+  if (latitude >= 37.5) return 'tohoku';
+  if (latitude >= 34.5) return 'kanto_chubu';
+  return 'west_south';
+}
+
+String? _argument(List<String> args, String name) {
+  for (var i = 0; i < args.length; i++) {
+    final arg = args[i];
+    if (arg == name && i + 1 < args.length) return args[i + 1];
+    if (arg.startsWith('$name=')) return arg.substring(name.length + 1);
+  }
+  return null;
+}
+
+Map<String, Object?> _map(Object? value) =>
+    value is Map ? value.cast<String, Object?>() : const {};
+
+List<Object?> _list(Object? value) =>
+    value is List ? value.cast<Object?>() : const [];
+
+double _number(Object? value) => value is num ? value.toDouble() : 0.0;
+
+double _mean(Iterable<double?> values) {
+  var sum = 0.0;
+  var count = 0;
+  for (final value in values) {
+    if (value == null || !value.isFinite) continue;
+    sum += value;
+    count++;
+  }
+  return count == 0 ? 0.0 : sum / count;
+}
+
+String _pct(Object? value) {
+  final number = _number(value);
+  return '${(number * 100).toStringAsFixed(1)}%';
+}
+
+String _fmt(Object? value) {
+  final number = _number(value);
+  if (!number.isFinite) return '0.00';
+  return number.toStringAsFixed(2);
+}

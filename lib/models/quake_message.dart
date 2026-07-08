@@ -668,6 +668,8 @@ class QuakeMessage {
           ? DateTime.parse(map['reportTime'])
           : null,
       province: map['province'],
+      nodalPlane1: map['nodalPlane1'],
+      nodalPlane2: map['nodalPlane2'],
       isWarn: map['isWarn'] == 1,
       isFinal: map['isFinal'] == 1,
       isCanceled: map['isCanceled'] == 1,

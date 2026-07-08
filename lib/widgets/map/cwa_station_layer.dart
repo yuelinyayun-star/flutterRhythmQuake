@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../../services/sources/cwa_station_service.dart';
+import 'station_dot_painter_layer.dart';
 
 class CwaStationLayer extends StatefulWidget {
   final List<CwaStation>? stations;
@@ -75,9 +76,7 @@ class _CwaStationLayerState extends State<CwaStationLayer> {
     final idleDotSize = (1.0 + overview * 4.0).clamp(1.0, 5.0);
     final idleBorderWidth = (0.35 + overview * 0.55).clamp(0.35, 0.9);
 
-    final alertStations = data
-        .where((s) => s.hasAlert && s.alertIntensity >= 0)
-        .toList();
+    final alertStations = data.where((s) => s.hasAlert).toList();
     _syncHeldGridCells(alertStations);
     final showGrids = _heldGridCells.isNotEmpty && !widget.hideGrid;
 
@@ -87,41 +86,35 @@ class _CwaStationLayerState extends State<CwaStationLayer> {
       callback(centers);
     }
 
-    final dotMarkers = <Marker>[];
+    final dots = <StationDot>[];
     final iconMarkers = <Marker>[];
 
-    final sorted = List<CwaStation>.from(data)
-      ..sort((a, b) => a.alertIntensity.compareTo(b.alertIntensity));
-
-    for (var station in sorted) {
-      final I = station.alertIntensity;
-      final active = station.work && I >= 0;
+    for (var station in data) {
+      final intensity = station.currentIntensity;
+      final active = station.work && intensity >= 0;
 
       if (active) {
         iconMarkers.add(
           Marker(
-            width: _getSize(I),
-            height: _getSize(I),
+            width: _getSize(intensity),
+            height: _getSize(intensity),
             point: station.coordinate,
             child: _CwaIntensityMarker(
-              color: _getColor(I),
-              label: _getLabel(I),
-              intensity: I,
+              color: _getColor(intensity),
+              label: _getLabel(intensity),
+              intensity: intensity,
             ),
           ),
         );
       } else {
-        dotMarkers.add(
-          Marker(
-            width: idleDotSize,
-            height: idleDotSize,
-            point: station.coordinate,
-            child: _SoftStationDot(
-              color: _idleColor,
-              fillOpacity: 0.08 + overview * 0.10,
-              borderOpacity: 0.22 + overview * 0.38,
-              borderWidth: idleBorderWidth,
-            ),
+        dots.add(
+          StationDot(
+            coordinate: station.coordinate,
+            color: _idleColor,
+            radius: idleDotSize / 2,
+            fillOpacity: 0.08 + overview * 0.10,
+            borderOpacity: 0.22 + overview * 0.38,
+            borderWidth: idleBorderWidth,
           ),
         );
       }
@@ -131,7 +124,8 @@ class _CwaStationLayerState extends State<CwaStationLayer> {
       children: [
         if (showGrids)
           PolygonLayer(polygons: _buildGridPolygons(widget.blinkOn)),
-        MarkerLayer(markers: [...dotMarkers, ...iconMarkers]),
+        StationDotPainterLayer(dots: dots),
+        if (iconMarkers.isNotEmpty) MarkerLayer(markers: iconMarkers),
       ],
     );
   }
@@ -157,6 +151,7 @@ class _CwaStationLayerState extends State<CwaStationLayer> {
       _hadAlertStations = true;
     }
 
+    final currentGridCells = <String, _CwaGridCell>{};
     for (final station in alertStations) {
       final latRounded = _roundCoord(
         station.coordinate.latitude,
@@ -167,15 +162,21 @@ class _CwaStationLayerState extends State<CwaStationLayer> {
         _gridDecimal[1],
       );
       final key = '$latRounded,$lngRounded';
-      final level = (station.alertIntensity + 3) * 2;
-      final existing = _heldGridCells[key];
+      final level = CwaStationService.gridLevelFromInstShindo(
+        station.alertIntensity,
+      );
+      final existing = currentGridCells[key];
       if (existing == null || level > existing.level) {
-        _heldGridCells[key] = _CwaGridCell(
+        currentGridCells[key] = _CwaGridCell(
           LatLng(latRounded, lngRounded),
           level,
         );
       }
     }
+
+    _heldGridCells
+      ..clear()
+      ..addAll(currentGridCells);
   }
 
   List<Polygon> _buildGridPolygons(bool blinkOn) {
@@ -197,7 +198,7 @@ class _CwaStationLayerState extends State<CwaStationLayer> {
           ],
           borderStrokeWidth: 2.0,
           borderColor: color.withValues(alpha: 0.8 * blinkAlpha),
-          color: color.withValues(alpha: 0.25 * blinkAlpha),
+          color: Colors.transparent,
         ),
       );
     }
@@ -222,17 +223,17 @@ class _CwaStationLayerState extends State<CwaStationLayer> {
     return (fraction * 10).roundToDouble() / 10;
   }
 
-  Color _getColor(int I) {
-    final idx = (I + 3).clamp(0, _cwaColors.length - 1);
+  Color _getColor(double intensity) {
+    final idx = (intensity.round() + 3).clamp(0, _cwaColors.length - 1);
     return _cwaColors[idx];
   }
 
-  String _getLabel(int I) {
-    final idx = (I + 3).clamp(0, _cwaLabels.length - 1);
+  String _getLabel(double intensity) {
+    final idx = (intensity.round() + 3).clamp(0, _cwaLabels.length - 1);
     return _cwaLabels[idx];
   }
 
-  double _getSize(int I) {
+  double _getSize(double intensity) {
     return 14.0;
   }
 
@@ -241,38 +242,10 @@ class _CwaStationLayerState extends State<CwaStationLayer> {
   }
 }
 
-class _SoftStationDot extends StatelessWidget {
-  final Color color;
-  final double fillOpacity;
-  final double borderOpacity;
-  final double borderWidth;
-
-  const _SoftStationDot({
-    required this.color,
-    required this.fillOpacity,
-    required this.borderOpacity,
-    required this.borderWidth,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: fillOpacity.clamp(0.0, 1.0)),
-        shape: BoxShape.circle,
-        border: Border.all(
-          color: color.withValues(alpha: borderOpacity.clamp(0.0, 1.0)),
-          width: borderWidth,
-        ),
-      ),
-    );
-  }
-}
-
 class _CwaIntensityMarker extends StatelessWidget {
   final Color color;
   final String label;
-  final int intensity;
+  final double intensity;
 
   const _CwaIntensityMarker({
     required this.color,
@@ -292,21 +265,6 @@ class _CwaIntensityMarker extends StatelessWidget {
           color: isHigh ? Colors.white : Colors.white.withValues(alpha: 0.5),
           width: isHigh ? 2.0 : 1.0,
         ),
-        boxShadow: isHigh
-            ? [
-                BoxShadow(
-                  color: color.withValues(alpha: 0.6),
-                  blurRadius: 10,
-                  spreadRadius: 2,
-                ),
-              ]
-            : [
-                BoxShadow(
-                  color: color.withValues(alpha: 0.3),
-                  blurRadius: 3,
-                  spreadRadius: 1,
-                ),
-              ],
       ),
       child: Center(
         child: Text(

@@ -1,0 +1,71 @@
+{
+  "schemaVersion": "source_candidate_region_validation_manifest_v1",
+  "description": "Machine-readable coverage manifest for diagnostic-only candidate-region validation. Cases here must not allow production coordinate switching.",
+  "cases": [
+    {
+      "caseId": "20260621_fukushima_offshore_m32_eq6",
+      "role": "offshore_false_recovery_guard",
+      "benchmarkInput": ".dart_tool/source_estimation_benchmark/20260621_fukushima_offshore_m32_eq6.reference.json",
+      "expectations": {
+        "localSupportConfirmedCount": 0,
+        "confirmedDelayedCount": 0,
+        "confirmedImmediateCount": 0,
+        "coordinateSwitchAllowedCount": 0
+      }
+    },
+    {
+      "caseId": "20260622_kushiro_offshore_m30_jma",
+      "role": "residual_delayed_positive_guard",
+      "benchmarkInput": ".dart_tool/source_estimation_benchmark/20260622_kushiro_offshore_m30_jma.reference.json",
+      "expectations": {
+        "localSupportConfirmedCount": 0,
+        "confirmedDelayedCount": 1,
+        "residualConfirmedDelayedCount": 1,
+        "localSupportConfirmedDelayedCount": 0,
+        "confirmedImmediateCount": 4,
+        "coordinateSwitchAllowedCount": 0
+      }
+    },
+    {
+      "caseId": "20260622_tomakomai_south_offshore_m35_hinet",
+      "role": "residual_immediate_positive_guard",
+      "benchmarkInput": ".dart_tool/source_estimation_benchmark/20260622_tomakomai_south_offshore_m35_hinet.reference.json",
+      "expectations": {
+        "localSupportConfirmedCount": 0,
+        "confirmedImmediateCount": 3,
+        "coordinateSwitchAllowedCount": 0
+      }
+    },
+    {
+      "caseId": "20260623_tokachi_southeast_offshore_m34_hinet",
+      "role": "hokkaido_no_candidate_region_control",
+      "benchmarkInput": ".dart_tool/source_estimation_benchmark/20260623_tokachi_southeast_offshore_m34_hinet.reference.json",
+      "expectations": {
+        "frameCount": 0,
+        "coordinateSwitchAllowedCount": 0
+      }
+    },
+    {
+      "caseId": "20260624_fukushima_aizu_m32_jma_eq5",
+      "role": "inland_surrounded_control",
+      "benchmarkInput": ".dart_tool/source_estimation_benchmark/20260624_fukushima_aizu_m32_jma_eq5.reference.json",
+      "expectations": {
+        "frameCount": 0,
+        "coordinateSwitchAllowedCount": 0
+      }
+    },
+    {
+      "caseId": "20260625_iwate_offshore_m32_jma",
+      "role": "local_support_delayed_positive_guard",
+      "benchmarkInput": ".dart_tool/source_estimation_benchmark/20260625_iwate_offshore_m32_jma.reference.json",
+      "expectations": {
+        "pendingCount": 3,
+        "localSupportConfirmedCount": 1,
+        "confirmedDelayedCount": 1,
+        "residualConfirmedDelayedCount": 0,
+        "localSupportConfirmedDelayedCount": 1,
+        "coordinateSwitchAllowedCount": 0
+      }
+    }
+  ]
+}

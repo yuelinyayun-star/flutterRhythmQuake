@@ -8,6 +8,7 @@ import '../../models/quake_message.dart';
 import '../../core/utils/quake_time.dart';
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
+import 'ui_scale.dart';
 
 /// 地震列表面板组件
 ///
@@ -26,7 +27,9 @@ import 'package:latlong2/latlong.dart';
 /// - JMA震度: 日本气象厅震度等级 (1-7)
 /// - CSIS烈度: 中国地震烈度等级 (I-XII)
 class EqlistPanel extends StatefulWidget {
-  const EqlistPanel({super.key});
+  final bool embedded;
+
+  const EqlistPanel({super.key, this.embedded = false});
 
   @override
   State<EqlistPanel> createState() => _EqlistPanelState();
@@ -35,13 +38,15 @@ class EqlistPanel extends StatefulWidget {
 class _EqlistPanelState extends State<EqlistPanel> {
   /// 滚动控制器
   final ScrollController _scrollController = ScrollController();
+  bool _isCollapsed = false;
 
   /// 参考宽度，用于响应式缩放计算
   static const double _refWidth = 1700.0;
 
   /// 计算缩放比例
-  double _scale(BuildContext c) =>
-      (MediaQuery.of(c).size.width / _refWidth).clamp(0.55, 1.0);
+  double _scale(BuildContext c) => widget.embedded
+      ? UiScale.phone(c)
+      : (MediaQuery.of(c).size.width / _refWidth).clamp(0.55, 1.0);
 
   /// 应用缩放到尺寸值
   double _s(double v, BuildContext c) => v * _scale(c);
@@ -54,46 +59,165 @@ class _EqlistPanelState extends State<EqlistPanel> {
 
   @override
   Widget build(BuildContext context) {
-    final scale = _scale(context);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final scale = _scale(context);
+        final fallbackWidth = _s(420, context);
+        final panelWidth = widget.embedded && constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : fallbackWidth;
+        final tabSize = _s(20, context);
+        final expandedWidth = widget.embedded
+            ? panelWidth
+            : panelWidth + _s(26, context);
 
-    return Consumer<QuakeProvider>(
-      builder: (context, provider, _) {
-        final items = provider.historyList;
-        final sourceBuckets = provider.historyBySource;
+        return Selector<QuakeProvider, int>(
+          selector: (context, provider) {
+            final buckets = provider.historyBySource;
+            final sourceFilter = provider.sourceFilter.toList()..sort();
+            return Object.hash(
+              identityHashCode(provider.historyList),
+              provider.magFilter,
+              Object.hashAll(
+                buckets.entries.map(
+                  (entry) => Object.hash(
+                    entry.key,
+                    identityHashCode(entry.value),
+                    entry.value.length,
+                  ),
+                ),
+              ),
+              Object.hashAll(sourceFilter),
+            );
+          },
+          builder: (context, _, child) {
+            final provider = context.read<QuakeProvider>();
+            final items = provider.historyList;
+            final sourceBuckets = provider.historyBySource;
 
-        return SizedBox(
-          width: _s(420, context),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildFilterBar(context, provider, sourceBuckets, scale),
-              if (items.isEmpty)
-                _buildEmpty(context, scale)
-              else
-                Flexible(
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.vertical(
-                      bottom: Radius.circular(_s(10, context)),
-                    ),
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                      child: Container(
-                        decoration: _listBg(context),
-                        child: ListView.builder(
-                          controller: _scrollController,
-                          padding: EdgeInsets.zero,
-                          itemCount: items.length,
-                          itemBuilder: (_, i) =>
-                              _EqCard(eq: items[i], scale: scale, scaleFn: _s),
+            return AnimatedContainer(
+              duration: const Duration(milliseconds: 260),
+              curve: Curves.easeOutCubic,
+              width: _isCollapsed && !widget.embedded ? tabSize : expandedWidth,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  AnimatedPositioned(
+                    duration: const Duration(milliseconds: 260),
+                    curve: Curves.easeOutCubic,
+                    left: _isCollapsed && !widget.embedded ? -panelWidth : 0,
+                    top: 0,
+                    bottom: 0,
+                    width: panelWidth,
+                    child: IgnorePointer(
+                      ignoring: _isCollapsed && !widget.embedded,
+                      child: AnimatedOpacity(
+                        duration: const Duration(milliseconds: 180),
+                        opacity: _isCollapsed && !widget.embedded ? 0 : 1,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _buildFilterBar(
+                              context,
+                              provider,
+                              sourceBuckets,
+                              scale,
+                            ),
+                            if (items.isEmpty)
+                              _buildEmpty(context, scale, panelWidth)
+                            else
+                              Flexible(
+                                child: RepaintBoundary(
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.vertical(
+                                      bottom: Radius.circular(_s(10, context)),
+                                    ),
+                                    child: BackdropFilter(
+                                      filter: ImageFilter.blur(
+                                        sigmaX: 10,
+                                        sigmaY: 10,
+                                      ),
+                                      child: Container(
+                                        decoration: _listBg(context),
+                                        child: ListView.builder(
+                                          controller: _scrollController,
+                                          padding: EdgeInsets.zero,
+                                          itemCount: items.length,
+                                          itemBuilder: (_, i) => _EqCard(
+                                            eq: items[i],
+                                            scale: scale,
+                                            scaleFn: _s,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
                       ),
                     ),
                   ),
-                ),
-            ],
-          ),
+                  if (!widget.embedded)
+                    Positioned(
+                      top: _s(6, context),
+                      right: _isCollapsed ? 0 : _s(6, context),
+                      child: _buildCollapseButton(context),
+                    ),
+                ],
+              ),
+            );
+          },
         );
       },
+    );
+  }
+
+  Widget _buildCollapseButton(BuildContext context) {
+    final expanded = !_isCollapsed;
+    return Material(
+      color: Colors.transparent,
+      child: Tooltip(
+        message: expanded ? '隐藏地震列表' : '显示地震列表',
+        waitDuration: const Duration(milliseconds: 500),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(_s(8, context)),
+          onTap: () => setState(() => _isCollapsed = !_isCollapsed),
+          child: RepaintBoundary(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(_s(8, context)),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                child: Container(
+                  width: _s(20, context),
+                  height: _s(26, context),
+                  decoration: BoxDecoration(
+                    color: const Color(0xCC141416),
+                    borderRadius: BorderRadius.circular(_s(5, context)),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.08),
+                      width: 0.6,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.22),
+                        blurRadius: _s(8, context),
+                        offset: Offset(0, _s(2, context)),
+                      ),
+                    ],
+                  ),
+                  child: Icon(
+                    expanded ? Icons.chevron_left : Icons.chevron_right,
+                    size: _s(18, context),
+                    color: Colors.white.withValues(alpha: 0.82),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -141,83 +265,85 @@ class _EqlistPanelState extends State<EqlistPanel> {
       8.0,
     ];
 
-    return ClipRRect(
-      borderRadius: BorderRadius.vertical(
-        top: Radius.circular(_s(10, context)),
-      ),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: Container(
-          padding: EdgeInsets.symmetric(
-            horizontal: _s(12, context),
-            vertical: _s(6, context),
-          ),
-          decoration: BoxDecoration(
-            color: const Color(0xCC141416),
-            borderRadius: BorderRadius.vertical(
-              top: Radius.circular(_s(10, context)),
+    return RepaintBoundary(
+      child: ClipRRect(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(_s(10, context)),
+        ),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+          child: Container(
+            padding: EdgeInsets.symmetric(
+              horizontal: _s(12, context),
+              vertical: _s(6, context),
             ),
-            border: Border.all(
-              color: Colors.white.withValues(alpha: 0.06),
-              width: 0.5,
-            ),
-          ),
-          child: Row(
-            children: [
-              _dropdown<String>(
-                value: provider.magFilter == 0
-                    ? 'All'
-                    : 'M${provider.magFilter.toStringAsFixed(1)}+',
-                items: magOptions
-                    .map((m) => m == 0 ? 'All' : 'M${m.toStringAsFixed(1)}+')
-                    .toList(),
-                onChanged: (v) {
-                  final idx = [
-                    'All',
-                    ...magOptions
-                        .where((m) => m > 0)
-                        .map((m) => 'M${m.toStringAsFixed(1)}+'),
-                  ].indexOf(v!);
-                  provider.setMagFilter(idx <= 0 ? 0 : magOptions[idx]);
-                },
-                scale: scale,
+            decoration: BoxDecoration(
+              color: const Color(0xCC141416),
+              borderRadius: BorderRadius.vertical(
+                top: Radius.circular(_s(10, context)),
               ),
-              SizedBox(width: _s(8, context)),
-              Expanded(
-                child: ScrollConfiguration(
-                  behavior: ScrollConfiguration.of(context).copyWith(
-                    dragDevices: {
-                      PointerDeviceKind.touch,
-                      PointerDeviceKind.mouse,
-                      PointerDeviceKind.trackpad,
-                    },
-                  ),
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    physics: const BouncingScrollPhysics(
-                      parent: AlwaysScrollableScrollPhysics(),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.06),
+                width: 0.5,
+              ),
+            ),
+            child: Row(
+              children: [
+                _dropdown<String>(
+                  value: provider.magFilter == 0
+                      ? 'All'
+                      : 'M${provider.magFilter.toStringAsFixed(1)}+',
+                  items: magOptions
+                      .map((m) => m == 0 ? 'All' : 'M${m.toStringAsFixed(1)}+')
+                      .toList(),
+                  onChanged: (v) {
+                    final idx = [
+                      'All',
+                      ...magOptions
+                          .where((m) => m > 0)
+                          .map((m) => 'M${m.toStringAsFixed(1)}+'),
+                    ].indexOf(v!);
+                    provider.setMagFilter(idx <= 0 ? 0 : magOptions[idx]);
+                  },
+                  scale: scale,
+                ),
+                SizedBox(width: _s(8, context)),
+                Expanded(
+                  child: ScrollConfiguration(
+                    behavior: ScrollConfiguration.of(context).copyWith(
+                      dragDevices: {
+                        PointerDeviceKind.touch,
+                        PointerDeviceKind.mouse,
+                        PointerDeviceKind.trackpad,
+                      },
                     ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: sourceLabels.entries.map((e) {
-                        final enabled = provider.sourceFilter.contains(e.key);
-                        final count = buckets[e.key]?.length ?? 0;
-                        return Padding(
-                          padding: EdgeInsets.only(right: _s(5, context)),
-                          child: _sourceChip(
-                            label: '${e.value}($count)',
-                            color: Color(sourceColors[e.key]!),
-                            selected: enabled,
-                            onTap: () => provider.toggleSource(e.key),
-                            scale: scale,
-                          ),
-                        );
-                      }).toList(),
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      physics: const BouncingScrollPhysics(
+                        parent: AlwaysScrollableScrollPhysics(),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: sourceLabels.entries.map((e) {
+                          final enabled = provider.sourceFilter.contains(e.key);
+                          final count = buckets[e.key]?.length ?? 0;
+                          return Padding(
+                            padding: EdgeInsets.only(right: _s(5, context)),
+                            child: _sourceChip(
+                              label: '${e.value}($count)',
+                              color: Color(sourceColors[e.key]!),
+                              selected: enabled,
+                              onTap: () => provider.toggleSource(e.key),
+                              scale: scale,
+                            ),
+                          );
+                        }).toList(),
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -301,9 +427,9 @@ class _EqlistPanelState extends State<EqlistPanel> {
   }
 
   /// 构建空状态提示
-  Widget _buildEmpty(BuildContext context, double scale) {
+  Widget _buildEmpty(BuildContext context, double scale, double panelWidth) {
     return Container(
-      width: _s(420, context),
+      width: panelWidth,
       padding: EdgeInsets.symmetric(vertical: _s(24, context)),
       decoration: _listBg(context),
       child: Center(
@@ -487,11 +613,23 @@ class _EqCardState extends State<_EqCard> {
         : '規模調査中';
     final depthStr = eq.depth > 0
         ? '深度${eq.depth.toStringAsFixed(0)}km'
-        : eq.depth == 0 ? '極浅' : '';
-    final timeStr = DateFormat('yyyy-MM-dd HH:mm').format(QuakeTime.displayClock(eq));
+        : eq.depth == 0
+        ? '極浅'
+        : '';
+    final timeStr = DateFormat(
+      'yyyy-MM-dd HH:mm',
+    ).format(QuakeTime.displayClock(eq));
     final zoneStr = QuakeTime.zoneLabel(eq);
     final source = _sourceLabelStatic(eq.source);
-    final parts = [intLabel, magStr, eq.location, timeStr, '($zoneStr)', depthStr, source].where((p) => p.isNotEmpty);
+    final parts = [
+      intLabel,
+      magStr,
+      eq.location,
+      timeStr,
+      '($zoneStr)',
+      depthStr,
+      source,
+    ].where((p) => p.isNotEmpty);
     return '[RhythmQuake] ${parts.join(' ')}';
   }
 
@@ -500,7 +638,10 @@ class _EqCardState extends State<_EqCard> {
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('已复制: ${_buildCopyText()}', style: const TextStyle(fontSize: 12)),
+        content: Text(
+          '已复制: ${_buildCopyText()}',
+          style: const TextStyle(fontSize: 12),
+        ),
         duration: const Duration(seconds: 2),
         behavior: SnackBarBehavior.floating,
         margin: const EdgeInsets.only(bottom: 60, left: 20, right: 20),
@@ -524,7 +665,9 @@ class _EqCardState extends State<_EqCard> {
 
   @override
   Widget build(BuildContext context) {
-    final isDisplayed = context.watch<MapStateProvider>().isSelectedHistoryEvent(eq);
+    final isDisplayed = context
+        .watch<MapStateProvider>()
+        .isSelectedHistoryEvent(eq);
     return Container(
       decoration: BoxDecoration(
         border: Border(
@@ -553,10 +696,7 @@ class _EqCardState extends State<_EqCard> {
             mapState.animatedMove(LatLng(eq.latitude, eq.longitude), 7.0);
           },
           child: Container(
-            margin: EdgeInsets.symmetric(
-              vertical: _s(2),
-              horizontal: _s(4),
-            ),
+            margin: EdgeInsets.symmetric(vertical: _s(2), horizontal: _s(4)),
             decoration: BoxDecoration(
               border: Border.all(
                 color: _borderColor.withValues(alpha: 0.25),
@@ -621,7 +761,9 @@ class _EqCardState extends State<_EqCard> {
                                         : '極浅',
                                     style: TextStyle(
                                       fontSize: _s(13),
-                                      color: Colors.white.withValues(alpha: 0.5),
+                                      color: Colors.white.withValues(
+                                        alpha: 0.5,
+                                      ),
                                     ),
                                   ),
                                 const Spacer(),
@@ -642,11 +784,14 @@ class _EqCardState extends State<_EqCard> {
                                           (eq.source == QuakeSourceType.cenc
                                                   ? const Color(0xFF2ECC71)
                                                   : eq.reviewType == '正式测定' ||
-                                                        eq.reviewType == 'reviewed'
+                                                        eq.reviewType ==
+                                                            'reviewed'
                                                   ? const Color(0xFF2ECC71)
                                                   : const Color(0xFFE67E22))
                                               .withValues(alpha: 0.15),
-                                      borderRadius: BorderRadius.circular(_s(3)),
+                                      borderRadius: BorderRadius.circular(
+                                        _s(3),
+                                      ),
                                     ),
                                     child: Text(
                                       eq.source == QuakeSourceType.cenc &&
@@ -697,23 +842,27 @@ class _EqCardState extends State<_EqCard> {
                 ),
                 if (_hovered)
                   Positioned.fill(
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(_s(6)),
-                      child: BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 2, sigmaY: 2),
-                        child: Container(
-                          color: const Color(0xCC0D0D0D).withValues(alpha: 0.7),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              _actionButton(label: '复制信息', onTap: _copyInfo),
-                              SizedBox(width: _s(8)),
-                              _actionButton(
-                                label: isDisplayed ? '取消显示' : '地图显示',
-                                onTap: _showOnMap,
-                                highlight: isDisplayed,
-                              ),
-                            ],
+                    child: RepaintBoundary(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(_s(6)),
+                        child: BackdropFilter(
+                          filter: ImageFilter.blur(sigmaX: 2, sigmaY: 2),
+                          child: Container(
+                            color: const Color(
+                              0xCC0D0D0D,
+                            ).withValues(alpha: 0.7),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                _actionButton(label: '复制信息', onTap: _copyInfo),
+                                SizedBox(width: _s(8)),
+                                _actionButton(
+                                  label: isDisplayed ? '取消显示' : '地图显示',
+                                  onTap: _showOnMap,
+                                  highlight: isDisplayed,
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       ),
@@ -731,29 +880,67 @@ class _EqCardState extends State<_EqCard> {
     final label = _isJma
         ? (eq.jmaShindo ?? _magShindoStatic(eq.magnitude))
         : _csisLabelStatic(eq);
+    final hasShindoSuffix =
+        _isJma &&
+        label.length > 1 &&
+        (label.contains('+') || label.contains('-'));
+    final mainLabel = hasShindoSuffix ? label.substring(0, 1) : label;
+    final suffixLabel = hasShindoSuffix ? label.substring(1) : '';
     return Container(
       width: _s(60),
       height: _s(60),
       decoration: BoxDecoration(
         color: _borderColor.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(_s(4)),
-        border: Border.all(color: _borderColor.withValues(alpha: 0.3), width: 0.5),
+        border: Border.all(
+          color: _borderColor.withValues(alpha: 0.3),
+          width: 0.5,
+        ),
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: _isJma ? _s(24) : _s(28),
-                fontWeight: FontWeight.w900,
-                color: _borderColor,
-                height: 1.0,
+          if (hasShindoSuffix)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  mainLabel,
+                  style: TextStyle(
+                    fontSize: _s(28),
+                    fontWeight: FontWeight.w900,
+                    color: _borderColor,
+                    height: 1.0,
+                  ),
+                ),
+                Padding(
+                  padding: EdgeInsets.only(top: _s(1)),
+                  child: Text(
+                    suffixLabel,
+                    style: TextStyle(
+                      fontSize: _s(20),
+                      fontWeight: FontWeight.w900,
+                      color: _borderColor,
+                      height: 1.0,
+                    ),
+                  ),
+                ),
+              ],
+            )
+          else
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                mainLabel,
+                style: TextStyle(
+                  fontSize: _isJma ? _s(24) : _s(28),
+                  fontWeight: FontWeight.w900,
+                  color: _borderColor,
+                  height: 1.0,
+                ),
               ),
             ),
-          ),
           Text(
             _isJma ? '震度' : '烈度',
             style: TextStyle(

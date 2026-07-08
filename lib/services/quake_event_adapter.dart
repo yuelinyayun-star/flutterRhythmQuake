@@ -269,17 +269,32 @@ class QuakeEventAdapter {
     Map<String, dynamic> data,
     int origin,
   ) {
-    final shindoText = (data['MaxIntensity'] ?? data['jmaShindo']) as String?;
+    final shindoText = _stringValue(
+      data['MaxIntensity'] ?? data['jmaShindo'] ?? data['maxIntensity'],
+    );
     final useShindo = true;
     final className = _setClassName(shindoText, useShindo, false);
-    final isCanceled = data['isCancel'] == true;
+    final isCanceled = data['isCancel'] == true || data['cancel'] == true;
     final isWarn = _isCwaWarn(shindoText);
     final cancelTitle = shindoText == 'Cancel' || isCanceled;
+    final eventId =
+        _stringValue(
+          data['EventID'] ?? data['ID'] ?? data['eventId'] ?? data['id'],
+        ) ??
+        '';
+    final hypocenter =
+        _stringValue(
+          data['HypoCenter'] ??
+              data['Hypocenter'] ??
+              data['placeName'] ??
+              data['location'],
+        ) ??
+        '';
 
     return UnifiedQuakeData(
       source: source,
       origin: origin,
-      eventId: '${data['EventID'] ?? data['ID'] ?? data['eventId'] ?? ''}',
+      eventId: eventId,
       isEew: true,
       timeZone: 8,
       titleText: cancelTitle ? '中央氣象署 地震預警（キャンセル）' : '中央氣象署 地震預警',
@@ -289,11 +304,18 @@ class QuakeEventAdapter {
       useShindo: useShindo,
       maxIntensity: cancelTitle ? 'なし' : _normalizeJmaShindo(shindoText),
       className: cancelTitle ? 'dark-gray' : className,
-      hypocenter: cancelTitle
-          ? '取り消されました'
-          : '${data['HypoCenter'] ?? data['Hypocenter'] ?? data['location'] ?? ''}',
+      hypocenter: cancelTitle ? '取り消されました' : hypocenter,
       originTime: _parseTime(
-        (data['OriginTime'] ?? data['originTime']) as String?,
+        (data['OriginTime'] ?? data['originTime'] ?? data['shockTime'])
+            as String?,
+        8,
+      ),
+      reportTime: _parseTime(
+        (data['ReportTime'] ??
+                data['reportTime'] ??
+                data['createTime'] ??
+                data['shockTime'])
+            as String?,
         8,
       ),
       magnitude: _parseDouble(data['Magunitude'] ?? data['magnitude']) ?? -1,
@@ -305,7 +327,7 @@ class QuakeEventAdapter {
       lat: _parseDouble(data['Latitude'] ?? data['latitude']) ?? 0,
       lng: _parseDouble(data['Longitude'] ?? data['longitude']) ?? 0,
       isWarn: isWarn,
-      isFinal: data['isFinal'] == true,
+      isFinal: data['isFinal'] == true || data['final'] == true,
       isCanceled: cancelTitle,
       isAssumption: false,
     );
@@ -638,10 +660,14 @@ class QuakeEventAdapter {
     final earthquake = data['earthquake'] as Map<String, dynamic>?;
     if (issue == null) return null;
 
+    final rawHypocenter = earthquake?['hypocenter'];
+    final hypocenter = rawHypocenter is Map
+        ? Map<String, dynamic>.from(rawHypocenter)
+        : null;
+    final hasHypocenter = _hasValidP2pHypocenter(hypocenter);
     final issueType = issue['type'] as String? ?? '';
     final isScalePrompt = issueType == 'ScalePrompt';
     final isDestination = issueType == 'Destination';
-    final isForeignPrompt = issueType == 'Foreign';
 
     final useShindo = true;
     String hypocent;
@@ -649,32 +675,45 @@ class QuakeEventAdapter {
     String maxIntensityStr;
 
     if (isScalePrompt) {
-      hypocent = earthquake?['hypocenter']?['name'] as String? ?? '';
-      mag = -1;
-      maxIntensityStr = _extractScalePromptShindo(data);
+      hypocent = hasHypocenter ? (hypocenter?['name']?.toString() ?? '') : '';
+      mag = hasHypocenter ? _parseDouble(hypocenter?['magnitude']) ?? -1 : -1;
+      final maxScale = _parseInt(earthquake?['maxScale']);
+      maxIntensityStr = _p2pMaxScaleToShindo(maxScale);
+      if (maxIntensityStr == '不明') {
+        maxIntensityStr = _extractScalePromptShindo(data);
+      }
     } else if (isDestination) {
-      hypocent = earthquake?['hypocenter']?['name'] as String? ?? '';
-      mag = _parseDouble(earthquake?['hypocenter']?['magnitude']) ?? -1;
-      maxIntensityStr = '不明';
-    } else if (isForeignPrompt) {
-      hypocent = earthquake?['hypocenter']?['name'] as String? ?? '';
-      mag = _parseDouble(earthquake?['hypocenter']?['magnitude']) ?? -1;
-      maxIntensityStr = '不明';
+      hypocent = hypocenter?['name']?.toString() ?? '';
+      mag = _parseDouble(hypocenter?['magnitude']) ?? -1;
+      final maxScale = _parseInt(earthquake?['maxScale']);
+      maxIntensityStr = _p2pMaxScaleToShindo(maxScale);
     } else {
-      hypocent = earthquake?['hypocenter']?['name'] as String? ?? '';
-      mag = _parseDouble(earthquake?['hypocenter']?['magnitude']) ?? -1;
+      hypocent = hypocenter?['name']?.toString() ?? '';
+      mag = _parseDouble(hypocenter?['magnitude']) ?? -1;
       final maxScale = _parseInt(earthquake?['maxScale']);
       maxIntensityStr = _p2pMaxScaleToShindo(maxScale);
     }
 
     final timeStr = earthquake?['time'] as String? ?? issue['time'] as String?;
+    final eventId =
+        (earthquake?['time'] as String?)?.replaceAll('/', '-').trim() ??
+        '${issue['eventId'] ?? data['_id'] ?? ''}';
 
     final warnArea = _parseP2pPoints(data);
+    final double depth = hasHypocenter || !isScalePrompt
+        ? _parseDouble(hypocenter?['depth']) ?? -1
+        : -1;
+    final double? lat = hasHypocenter || !isScalePrompt
+        ? _parseDouble(hypocenter?['latitude'])
+        : null;
+    final double? lng = hasHypocenter || !isScalePrompt
+        ? _parseDouble(hypocenter?['longitude'])
+        : null;
 
     return UnifiedQuakeData(
       source: source,
       origin: _originP2p,
-      eventId: '${issue['eventId'] ?? data['_id'] ?? ''}',
+      eventId: eventId,
       isEew: false,
       timeZone: 9,
       titleText: _p2pTitleText(issueType),
@@ -686,19 +725,27 @@ class QuakeEventAdapter {
       originTime: _parseTime(timeStr, 9),
       reportTime: _parseTime(issue['time'] as String?, 9),
       magnitude: mag,
-      depth: _parseDouble(earthquake?['hypocenter']?['depth']) ?? -1,
-      depthText: _formatDepthText(
-        _parseDouble(earthquake?['hypocenter']?['depth']) ?? -1,
-        9,
-      ),
-      lat: isScalePrompt
-          ? null
-          : _parseDouble(earthquake?['hypocenter']?['latitude']),
-      lng: isScalePrompt
-          ? null
-          : _parseDouble(earthquake?['hypocenter']?['longitude']),
+      depth: depth,
+      depthText: _formatDepthText(depth, 9),
+      lat: lat,
+      lng: lng,
       warnArea: warnArea,
     );
+  }
+
+  static bool _hasValidP2pHypocenter(Map<String, dynamic>? hypocenter) {
+    if (hypocenter == null) return false;
+    final name = hypocenter['name']?.toString().trim() ?? '';
+    final lat = _parseDouble(hypocenter['latitude']);
+    final lng = _parseDouble(hypocenter['longitude']);
+    return name.isNotEmpty &&
+        !_isInvestigatingText(name) &&
+        lat != null &&
+        lng != null &&
+        lat >= -90 &&
+        lat <= 90 &&
+        lng >= -180 &&
+        lng <= 180;
   }
 
   static String _parseP2pPoints(Map<String, dynamic> data) {
@@ -748,10 +795,10 @@ class QuakeEventAdapter {
     if (s < 2.5) return "2";
     if (s < 3.5) return "3";
     if (s < 4.5) return "4";
-    if (s < 5.0) return "5弱";
-    if (s < 5.5) return "5强";
-    if (s < 6.0) return "6弱";
-    if (s < 6.5) return "6强";
+    if (s < 5.0) return "5-";
+    if (s < 5.5) return "5+";
+    if (s < 6.0) return "6-";
+    if (s < 6.5) return "6+";
     return "7";
   }
 
@@ -766,10 +813,14 @@ class QuakeEventAdapter {
         return '震度速報';
       case 'Destination':
         return '震源に関する情報';
+      case 'ScaleAndDestination':
+        return '震度・震源に関する情報';
       case 'DetailScale':
         return '各地の震度に関する情報';
       case 'Foreign':
         return '遠地地震に関する情報';
+      case 'Other':
+        return 'その他の情報';
       default:
         return '地震情報';
     }
@@ -809,10 +860,8 @@ class QuakeEventAdapter {
       className: _setClassName(shindoText, useShindo, false),
       hypocenter: '${data['location'] ?? ''}',
       originTime: _parseTime(data['originTime'] as String?, 8),
-      // 参照 kanameishi: CWA 没有报告时间，用发震时间 + 5分钟估算
-      reportTime:
-          _parseTime(data['createTime'] as String?, 8) ??
-          _addMinutes(_parseTime(data['originTime'] as String?, 8), 5),
+      // 参照 kanameishi: CWA 用发震时间 + 5分钟估算报告时间。
+      reportTime: _addMinutes(_parseTime(data['originTime'] as String?, 8), 5),
       magnitude: _parseDouble(data['magnitude']) ?? -1,
       depth: _parseDouble(data['depth']) ?? -1,
       depthText: _formatDepthText(_parseDouble(data['depth']) ?? -1, 8),
@@ -838,6 +887,19 @@ class QuakeEventAdapter {
     final magnitude =
         _parseDouble(data['magnitude'] ?? data['Magnitude']) ?? -1;
     final depth = _parseDouble(data['depth'] ?? data['Depth']) ?? -1;
+    final originTime = _parseTime(
+      (data['originTime'] ?? data['shockTime'] ?? data['time']) as String?,
+      8,
+    );
+    final lat = _parseDouble(data['latitude'] ?? data['Latitude']) ?? 0;
+    final lng = _parseDouble(data['longitude'] ?? data['Longitude']) ?? 0;
+    final reportTime = _parseTime(
+      (origin == 0
+              ? data['ReportTime']
+              : data['createTime'] ?? data['updateTime'] ?? data['ReportTime'])
+          as String?,
+      8,
+    );
 
     String maxIntensityStr;
     String className;
@@ -855,7 +917,7 @@ class QuakeEventAdapter {
     return UnifiedQuakeData(
       source: source,
       origin: origin,
-      eventId: '${data['eventId'] ?? data['md5'] ?? data['ID'] ?? ''}',
+      eventId: _cencInfoEventId(data, originTime, lat, lng),
       isEew: false,
       timeZone: 8,
       titleText: '中国地震台网地震信息',
@@ -865,21 +927,44 @@ class QuakeEventAdapter {
       className: className,
       hypocenter:
           '${data['location'] ?? data['placeName'] ?? data['HypoCenter'] ?? ''}',
-      originTime: _parseTime(data['originTime'] ?? data['time'] as String?, 8),
+      originTime: originTime,
       // 参照 kanameishi: Wolfx(origin=0) 用 ReportTime，FAN(origin=1) 用 createTime
-      reportTime: _parseTime(
-        (origin == 0
-                ? data['ReportTime']
-                : data['createTime'] ?? data['ReportTime'])
-            as String?,
-        8,
-      ),
+      reportTime: reportTime ?? originTime,
       magnitude: magnitude,
       depth: depth,
       depthText: _formatDepthText(depth, 8),
-      lat: _parseDouble(data['latitude'] ?? data['Latitude']) ?? 0,
-      lng: _parseDouble(data['longitude'] ?? data['Longitude']) ?? 0,
+      lat: lat,
+      lng: lng,
     );
+  }
+
+  static String _cencInfoEventId(
+    Map<String, dynamic> data,
+    DateTime? originTime,
+    double lat,
+    double lng,
+  ) {
+    final eventId = '${data['eventId'] ?? data['EventID'] ?? ''}'.trim();
+    if (eventId.isNotEmpty) return eventId;
+
+    // Wolfx cenc_eqlist 没有稳定 eventId；md5 是更新校验，不能作为事件身份。
+    // 用发震时间 + 坐标锁定同一地震，避免 automatic/reviewed md5 变化导致重复事件。
+    final timeKey =
+        originTime?.toIso8601String() ??
+        '${data['originTime'] ?? data['shockTime'] ?? data['time'] ?? ''}';
+    final latKey = lat.toStringAsFixed(3);
+    final lngKey = lng.toStringAsFixed(3);
+    if (timeKey.trim().isNotEmpty && (lat != 0 || lng != 0)) {
+      return 'cenc_${timeKey}_${latKey}_$lngKey';
+    }
+
+    final location = '${data['location'] ?? data['placeName'] ?? ''}'.trim();
+    final magnitude = '${data['magnitude'] ?? data['Magnitude'] ?? ''}'.trim();
+    if (timeKey.trim().isNotEmpty && location.isNotEmpty) {
+      return 'cenc_${timeKey}_${location}_M$magnitude';
+    }
+
+    return '${data['md5'] ?? data['ID'] ?? ''}';
   }
 
   static UnifiedQuakeData? _kmaEqlist(
@@ -1171,6 +1256,8 @@ class QuakeEventAdapter {
       depthText: _formatDepthText(_parseDouble(data['depth']) ?? -1, 8),
       lat: _parseDouble(data['latitude']) ?? 0,
       lng: _parseDouble(data['longitude']) ?? 0,
+      nodalPlane1: data['nodalPlane1']?.toString(),
+      nodalPlane2: data['nodalPlane2']?.toString(),
     );
   }
 
@@ -1186,8 +1273,25 @@ class QuakeEventAdapter {
     required int timeZone,
   }) {
     final intensityRaw = _parseDouble(data['maxIntensity']);
-    final magnitude = _parseDouble(data['magnitude']) ?? -1;
+    final magnitude =
+        _parseDouble(data['magnitude'] ?? data['magnitudel']) ?? -1;
     final depth = _parseDouble(data['depth']) ?? -1;
+    final eventId =
+        _stringValue(data['eventId'] ?? data['id'] ?? data['ID']) ?? '';
+    final location =
+        _stringValue(
+          data['location'] ??
+              data['placeName'] ??
+              data['HypoCenter'] ??
+              data['title'],
+        ) ??
+        '';
+    final originTimeText = _stringValue(
+      data['originTime'] ?? data['shockTime'] ?? data['time'],
+    );
+    final reportTimeText = _stringValue(
+      data['createTime'] ?? data['updateTime'] ?? data['reportTime'],
+    );
 
     String maxIntensityStr;
     String className;
@@ -1205,7 +1309,7 @@ class QuakeEventAdapter {
     return UnifiedQuakeData(
       source: source,
       origin: origin,
-      eventId: '${data['eventId'] ?? ''}',
+      eventId: eventId,
       isEew: false,
       timeZone: timeZone,
       titleText: title,
@@ -1213,12 +1317,9 @@ class QuakeEventAdapter {
       useShindo: false,
       maxIntensity: maxIntensityStr,
       className: className,
-      hypocenter: '${data['location'] ?? ''}',
-      originTime: _parseTime(data['originTime'] as String?, timeZone),
-      // 参照 kanameishi: 优先 createTime，fallback 到 shockTime（发震时间）
-      reportTime:
-          _parseTime(data['createTime'] as String?, timeZone) ??
-          _parseTime(data['shockTime'] as String?, timeZone),
+      hypocenter: location,
+      originTime: _parseTime(originTimeText, timeZone),
+      reportTime: _parseTime(reportTimeText, timeZone),
       magnitude: magnitude,
       depth: depth,
       depthText: _formatDepthText(depth, timeZone),
@@ -1296,16 +1397,22 @@ class QuakeEventAdapter {
         return 3.0;
       case '4':
         return 4.0;
+      case '5':
+        return 5.0;
       case '5弱':
       case '5-':
         return 5.0;
       case '5強':
+      case '5强':
       case '5+':
         return 5.5;
+      case '6':
+        return 6.0;
       case '6弱':
       case '6-':
         return 6.0;
       case '6強':
+      case '6强':
       case '6+':
         return 6.5;
       case '7':
@@ -1313,7 +1420,10 @@ class QuakeEventAdapter {
       default:
         final cleaned = trimmed
             .replaceAll('強', '+')
+            .replaceAll('强', '+')
             .replaceAll('弱', '-')
+            .replaceAll('−', '-')
+            .replaceAll('＋', '+')
             .replaceAll('級', '');
         switch (cleaned) {
           case '5-':
@@ -1339,20 +1449,41 @@ class QuakeEventAdapter {
     if (trimmed == '2') return '2';
     if (trimmed == '3') return '3';
     if (trimmed == '4') return '4';
-    if (trimmed == '5弱' || trimmed == '5-' || trimmed == '5−') return '5弱';
-    if (trimmed == '5強' || trimmed == '5+' || trimmed == '5＋') return '5強';
-    if (trimmed == '6弱' || trimmed == '6-' || trimmed == '6−') return '6弱';
-    if (trimmed == '6強' || trimmed == '6+' || trimmed == '6＋') return '6強';
+    if (trimmed == '5') return '5';
+    if (trimmed == '5弱' || trimmed == '5-' || trimmed == '5−') return '5-';
+    if (trimmed == '5強' ||
+        trimmed == '5强' ||
+        trimmed == '5+' ||
+        trimmed == '5＋') {
+      return '5+';
+    }
+    if (trimmed == '6') return '6';
+    if (trimmed == '6弱' || trimmed == '6-' || trimmed == '6−') return '6-';
+    if (trimmed == '6強' ||
+        trimmed == '6强' ||
+        trimmed == '6+' ||
+        trimmed == '6＋') {
+      return '6+';
+    }
     if (trimmed == '7') return '7';
     final cleaned = trimmed
         .replaceAll('強', '+')
+        .replaceAll('强', '+')
         .replaceAll('弱', '-')
+        .replaceAll('−', '-')
+        .replaceAll('＋', '+')
         .replaceAll('級', '');
-    if (cleaned == '5-') return '5弱';
-    if (cleaned == '5+') return '5強';
-    if (cleaned == '6-') return '6弱';
-    if (cleaned == '6+') return '6強';
+    if (cleaned == '5-') return '5-';
+    if (cleaned == '5+') return '5+';
+    if (cleaned == '6-') return '6-';
+    if (cleaned == '6+') return '6+';
     return shindo;
+  }
+
+  static String? _stringValue(Object? value) {
+    if (value == null) return null;
+    final text = value.toString().trim();
+    return text.isEmpty ? null : text;
   }
 
   static bool _isUnknownJmaShindo(String? shindo) {
@@ -1386,9 +1517,18 @@ class QuakeEventAdapter {
   }
 
   static String _infoTitleSuffix(Map<String, dynamic> data) {
-    final verify = data['verify'] as String?;
+    final verify = data['verify']?.toString();
+    if (verify == 'Y' || verify == '已核实') return '已核实';
+    if (verify == 'N' || verify == '待核实') return '待核实';
     if (verify == 'passed' || verify == 'reviewed') return '正式测定';
     if (verify == 'unverified' || verify == 'automatic') return '自动测定';
+
+    final reviewType =
+        data['reviewType']?.toString() ?? data['type']?.toString();
+    if (reviewType == '已核实') return '已核实';
+    if (reviewType == '待核实') return '待核实';
+    if (reviewType == 'reviewed' || reviewType == '正式测定') return '正式测定';
+    if (reviewType == 'automatic' || reviewType == '自动测定') return '自动测定';
     return '';
   }
 
@@ -1515,7 +1655,12 @@ class QuakeEventAdapter {
       items.add(
         QuakeMessage(
           source: QuakeSourceType.cenc,
-          eventId: '${entry['eventId'] ?? entry['md5'] ?? entry['ID'] ?? ''}',
+          eventId: _cencInfoEventId(
+            entry,
+            _parseTime((entry['originTime'] ?? entry['time']) as String?, 8),
+            _parseDouble(entry['latitude'] ?? entry['Latitude']) ?? 0,
+            _parseDouble(entry['longitude'] ?? entry['Longitude']) ?? 0,
+          ),
           location: '${entry['location'] ?? entry['placeName'] ?? ''}',
           magnitude: magnitude,
           latitude: _parseDouble(entry['latitude'] ?? entry['Latitude']) ?? 0,

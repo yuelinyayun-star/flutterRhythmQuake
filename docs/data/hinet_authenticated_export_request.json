@@ -1,0 +1,154 @@
+{
+  "schemaVersion": "hinet_authenticated_export_request_v1",
+  "policy": "This file defines the event-level rows that must be exported from authenticated Hi-net/JMA catalog pages before any pending Hi-net reference case can be accepted. It must not contain credentials, cookies, screenshots, or copied prose without a source URL and reviewer metadata.",
+  "sourcePaths": [
+    {
+      "sourceType": "hinet_preliminary_catalog",
+      "sourceUrl": "https://hinetwww11.bosai.go.jp/auth/hinet_hypolist/?LANG=en",
+      "accessRequirement": "authenticated_hinet_session",
+      "acceptanceRole": "supporting_preliminary_source_only",
+      "notes": "A preliminary Hi-net row can support review but is not final catalog truth by itself."
+    },
+    {
+      "sourceType": "hinet_jma_unified_catalog",
+      "sourceUrl": "https://hinetwww11.bosai.go.jp/auth/JMA/?LANG=en",
+      "accessRequirement": "authenticated_hinet_session",
+      "acceptanceRole": "preferred_event_level_catalog_source",
+      "notes": "An event-level JMA unified row can be used for constrained reference review when source/version and reviewer metadata are recorded."
+    }
+  ],
+  "requiredExportFields": [
+    "caseId",
+    "sourceType",
+    "sourceUrl",
+    "sourceVersionOrPageDate",
+    "checkedAtUtc",
+    "reviewer",
+    "originTimeJst",
+    "latitude",
+    "longitude",
+    "depthKm",
+    "magnitude",
+    "region",
+    "rawRowText"
+  ],
+  "rejectionRules": [
+    "reject_if_source_url_missing",
+    "reject_if_reviewer_or_checked_at_missing",
+    "reject_if_raw_row_text_missing",
+    "reject_if_row_is_only_public_hypomap",
+    "reject_if_row_is_only_jma_daily_hypocenter_list",
+    "reject_if_row_is_user_screenshot_without_source_url",
+    "reject_if_row_is_equake_estimate"
+  ],
+  "requests": [
+    {
+      "caseId": "20260622_iwate_east_offshore_m30_hinet",
+      "priority": 1,
+      "targetOriginTimeJst": "2026-06-22T11:26:50",
+      "queryWindowJst": {
+        "start": "2026-06-22T11:21:50",
+        "end": "2026-06-22T11:31:50"
+      },
+      "targetLatitude": 39.91,
+      "targetLongitude": 142.347,
+      "targetDepthKm": 42.4,
+      "targetMagnitude": 3.0,
+      "targetRegion": "Iwate east offshore",
+      "preferredSourceType": "hinet_jma_unified_catalog",
+      "fallbackSourceType": "hinet_preliminary_catalog",
+      "status": "pending_authenticated_export",
+      "notes": "JMA daily list has a nearby official row, but acceptance still needs an authenticated event-level Hi-net/JMA row or final catalog record."
+    },
+    {
+      "caseId": "20260622_tomakomai_south_offshore_m35_hinet",
+      "priority": 1,
+      "targetOriginTimeJst": "2026-06-22T20:37:47",
+      "queryWindowJst": {
+        "start": "2026-06-22T20:32:47",
+        "end": "2026-06-22T20:42:47"
+      },
+      "targetLatitude": 42.063,
+      "targetLongitude": 141.347,
+      "targetDepthKm": 100.0,
+      "targetMagnitude": 3.5,
+      "targetRegion": "Tomakomai south offshore",
+      "preferredSourceType": "hinet_jma_unified_catalog",
+      "fallbackSourceType": "hinet_preliminary_catalog",
+      "status": "pending_authenticated_export",
+      "notes": "Magnitude differs between the user-provided Hi-net label and JMA daily row; authenticated event-level evidence is required before review."
+    },
+    {
+      "caseId": "20260623_tokachi_southeast_offshore_m34_hinet",
+      "priority": 1,
+      "targetOriginTimeJst": "2026-06-23T23:13:06",
+      "queryWindowJst": {
+        "start": "2026-06-23T23:08:06",
+        "end": "2026-06-23T23:18:06"
+      },
+      "targetLatitude": 42.497,
+      "targetLongitude": 143.647,
+      "targetDepthKm": 55.5,
+      "targetMagnitude": 3.4,
+      "targetRegion": "Tokachi southeast offshore",
+      "preferredSourceType": "hinet_jma_unified_catalog",
+      "fallbackSourceType": "hinet_preliminary_catalog",
+      "status": "pending_authenticated_export",
+      "notes": "The EQuake final report remains source-estimation reference text only; authenticated catalog evidence is still required."
+    },
+    {
+      "caseId": "20260621_fukushima_offshore_m32_eq6",
+      "priority": 1,
+      "targetOriginTimeJst": "2026-06-21T23:41:12",
+      "queryWindowJst": {
+        "start": "2026-06-21T23:36:12",
+        "end": "2026-06-21T23:46:12"
+      },
+      "targetLatitude": 37.616,
+      "targetLongitude": 142.279,
+      "targetDepthKm": 29.8,
+      "targetMagnitude": 3.2,
+      "targetRegion": "Miyagi southeast offshore",
+      "preferredSourceType": "hinet_jma_unified_catalog",
+      "fallbackSourceType": "hinet_preliminary_catalog",
+      "status": "pending_authenticated_export",
+      "notes": "Known candidate-region false-recovery guard. Catalog-truth flag mismatch must be resolved before this case can clear Hi-net truth-quality review. Authenticated event-level row required to verify user-provided Hi-net hypocenter source quality."
+    },
+    {
+      "caseId": "20260622_iwate_offshore_m30_eq10",
+      "priority": 1,
+      "targetOriginTimeJst": "2026-06-22T09:28:23",
+      "queryWindowJst": {
+        "start": "2026-06-22T09:23:23",
+        "end": "2026-06-22T09:33:23"
+      },
+      "targetLatitude": 40.392,
+      "targetLongitude": 142.341,
+      "targetDepthKm": 50.2,
+      "targetMagnitude": 3.4,
+      "targetRegion": "Iwate northeast offshore",
+      "preferredSourceType": "hinet_jma_unified_catalog",
+      "fallbackSourceType": "hinet_preliminary_catalog",
+      "status": "pending_authenticated_export",
+      "notes": "Catalog-truth flag mismatch must be resolved. EQuake reports M3.0 depth 22 km; user-provided Hi-net reports M3.4 depth 50.2 km. Authenticated event-level row required to verify source quality and resolve magnitude/depth discrepancy."
+    },
+    {
+      "caseId": "20260622_wakayama_south_m25_hinet",
+      "priority": 1,
+      "targetOriginTimeJst": "2026-06-22T09:51:17",
+      "queryWindowJst": {
+        "start": "2026-06-22T09:46:17",
+        "end": "2026-06-22T09:56:17"
+      },
+      "targetLatitude": 33.58,
+      "targetLongitude": 135.791,
+      "targetDepthKm": 28.1,
+      "targetMagnitude": 2.5,
+      "targetRegion": "Wakayama south",
+      "preferredSourceType": "hinet_jma_unified_catalog",
+      "fallbackSourceType": "hinet_preliminary_catalog",
+      "status": "pending_authenticated_export",
+      "notes": "Catalog-truth flag mismatch must be resolved. Pure Hi-net label with no EQuake cross-check; authenticated event-level row required to verify source quality."
+    }
+  ]
+}

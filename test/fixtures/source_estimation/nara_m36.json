@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "caseId": "20260610_nara_m36",
+  "caseType": "event",
+  "captureDirectory": "tmp/captures/20260610_180130_jst_nara_m36",
+  "timeZone": "Asia/Tokyo",
+  "gifNamePattern": "{stamp}.lmoni.{layer}.gif",
+  "startTimeJst": "2026-06-10T18:01:20",
+  "endTimeJst": "2026-06-10T18:02:10",
+  "sensitivity": 2,
+  "truth": {
+    "originTimeJst": "2026-06-10T18:01:30",
+    "latitude": 34.2,
+    "longitude": 135.8,
+    "depthKm": null,
+    "magnitude": 3.6,
+    "source": "existing_project_replay_label"
+  },
+  "eventLabels": {
+    "catalogEvent": true,
+    "catalogTruthVerified": false,
+    "observableEvent": true,
+    "detectableEvent": true,
+    "includeInDetectionMetrics": true
+  }
+}

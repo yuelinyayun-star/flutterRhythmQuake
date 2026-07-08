@@ -6,6 +6,8 @@ import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 
 class FdsnStation {
+  static const motionRetention = Duration(minutes: 3);
+
   final String network;
   final String station;
   final String location;
@@ -39,7 +41,13 @@ class FdsnStation {
   String get code => '$network.$station';
   bool get isMotionActive =>
       lastMotionUpdate != null &&
-      DateTime.now().difference(lastMotionUpdate!).inSeconds <= 30;
+      DateTime.now().difference(lastMotionUpdate!) <= motionRetention;
+  bool get hasMotionMeasurement =>
+      lastMotionUpdate != null ||
+      pga != null ||
+      pgv != null ||
+      intensity != null;
+  bool get hasActiveMotionMeasurement => isMotionActive && hasMotionMeasurement;
 
   FdsnStation copyWith({
     double? pga,
@@ -84,7 +92,6 @@ class FdsnStationService {
     endpoint: const FdsnStationEndpoint(
       name: 'EarthScope',
       stationUrl: 'https://service.earthscope.org/fdsnws/station/1/query',
-      query: {'network': 'IU,II,IC,CU,US,TA,AK,CI,NC,NN,PN,PB,UW'},
     ),
   );
 
@@ -92,7 +99,6 @@ class FdsnStationService {
     endpoint: const FdsnStationEndpoint(
       name: 'GEOFON',
       stationUrl: 'https://geofon.gfz-potsdam.de/fdsnws/station/1/query',
-      query: {'network': 'GE'},
     ),
   );
 

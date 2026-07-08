@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "caseId": "20260620_satsuma_m26_d179",
+  "caseType": "event",
+  "captureDirectory": "tmp/captures/20260620_115047_jst_satsuma_m26_d179",
+  "timeZone": "Asia/Tokyo",
+  "gifNamePattern": "{stamp}.{layer}.gif",
+  "startTimeJst": "2026-06-20T11:50:17",
+  "endTimeJst": "2026-06-20T11:52:47",
+  "sensitivity": 2,
+  "truth": {
+    "originTimeJst": "2026-06-20T11:50:47",
+    "latitude": 31.11,
+    "longitude": 130.06,
+    "depthKm": 179,
+    "magnitude": 2.6,
+    "source": "user_provided_equake_screenshot"
+  },
+  "eventLabels": {
+    "catalogEvent": true,
+    "catalogTruthVerified": false,
+    "observableEvent": null,
+    "detectableEvent": null,
+    "includeInDetectionMetrics": false
+  }
+}

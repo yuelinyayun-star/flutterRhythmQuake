@@ -1,0 +1,40 @@
+{
+  "schemaVersion": "source_estimation_quiet_window_capture_plan_v1",
+  "purpose": "Plan for collecting independent quiet-window NIED GIF replay cases before tuning source-trigger thresholds or physical-layer scoring.",
+  "targetIndependentQuietWindowCount": 2,
+  "minimumDurationSeconds": 300,
+  "captureMode": "live",
+  "captureScript": "tools/capture_nied_gif_live.ps1",
+  "recommendedCommandTemplate": "powershell -NoProfile -ExecutionPolicy Bypass -File tools\\capture_nied_gif_live.ps1 -CaseId quiet_<yyyyMMdd_HHmmss>_jst_live -DurationSeconds 300 -Layers jma_s,jma_b,acmap_s,acmap_b,vcmap_s,vcmap_b,dcmap_s,dcmap_b",
+  "caseIdPattern": "quiet_<yyyyMMdd_HHmmss>_jst_live",
+  "requiredLayerFamilies": [
+    "jma",
+    "acmap",
+    "vcmap",
+    "dcmap"
+  ],
+  "layers": [
+    "jma_s",
+    "jma_b",
+    "acmap_s",
+    "acmap_b",
+    "vcmap_s",
+    "vcmap_b",
+    "dcmap_s",
+    "dcmap_b"
+  ],
+  "acceptanceCriteria": [
+    "capture_manifest.json exists and captureInProgress is false",
+    "failedGifCount is 0",
+    "eventLabels.catalogEvent is false",
+    "eventLabels.includeInDetectionMetrics is false",
+    "source-estimation replay produces zero source estimates for the quiet case",
+    "event-detection replay produces zero candidate and confirmed frames for the quiet case"
+  ],
+  "postCaptureSteps": [
+    "Create a source_estimation fixture with caseType=noise and splitStatus=unassigned_reference until reviewed",
+    "Run tools\\validate_source_estimation_split_audit.ps1",
+    "Only add the quiet case to train/validation/test after manual review confirms it is independent of existing quiet windows"
+  ],
+  "plannedCaptures": []
+}

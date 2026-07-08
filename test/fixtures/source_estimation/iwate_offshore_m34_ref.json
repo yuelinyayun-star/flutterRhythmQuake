@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "caseId": "20260620_iwate_offshore_m34_ref",
+  "caseType": "event",
+  "captureDirectory": "tmp/captures/20260620_212527_jst_iwate_offshore_m34_ref",
+  "timeZone": "Asia/Tokyo",
+  "gifNamePattern": "{stamp}.{layer}.gif",
+  "startTimeJst": "2026-06-20T21:24:57",
+  "endTimeJst": "2026-06-20T21:27:27",
+  "sensitivity": 2,
+  "truth": {
+    "originTimeJst": "2026-06-20T21:25:27",
+    "latitude": 39.893,
+    "longitude": 142.512,
+    "depthKm": 38.0,
+    "magnitude": 3.4,
+    "source": "hinet_hypocenter_information"
+  },
+  "eventLabels": {
+    "catalogEvent": true,
+    "catalogTruthVerified": false,
+    "observableEvent": true,
+    "detectableEvent": true,
+    "includeInDetectionMetrics": false
+  },
+  "classification": {
+    "region": "Iwate offshore",
+    "captureSource": "EQuake final report 2026-06-20 20:25:27 UTC+8; updated with Hi-net hypocenter information",
+    "truthQuality": "hinet_preliminary_reference",
+    "notes": "Hi-net reference event captured for replay expansion. Hi-net automatic hypocenter information is preliminary and must not be marked as JMA final catalog truth. Keep outside split metrics until local observability and split assignment are reviewed."
+  },
+  "splitStatus": "unassigned_reference"
+}

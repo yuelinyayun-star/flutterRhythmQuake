@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "datasetId": "source_estimation_p1",
+  "frozenAt": "2026-06-20",
+  "splitPolicy": "event-level split; test cases are not used by baseline or parameter-tuning suites",
+  "splits": {
+    "train": [
+      "nara_m36.json",
+      "quiet_20260614_175544.json"
+    ],
+    "validation": [
+      "satsuma_m26_d179.json",
+      "kyoto_s_m18_d12.json",
+      "fukushima_offshore_m22_20260622_eq4.json",
+      "noto_m27_20260621_jma_eq5.json",
+      "iwate_east_offshore_m30_20260622_hinet.json",
+      "iwate_offshore_m30_20260622_eq10.json",
+      "tomakomai_south_offshore_m35_20260622_hinet.json",
+      "wakayama_south_m25_20260622_hinet.json",
+      "tokachi_southeast_offshore_m34_20260623_hinet.json"
+    ],
+    "test": [
+      "ibaraki_offshore_m19_ref.json"
+    ]
+  }
+}

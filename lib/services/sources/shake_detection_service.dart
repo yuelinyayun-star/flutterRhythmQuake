@@ -3,9 +3,11 @@ import 'dart:math' as math;
 
 import 'package:latlong2/latlong.dart';
 
-import '../../core/source_estimation/station_event_tracker.dart';
+import '../../core/event_detection/event_detection_models.dart';
+import '../../core/event_detection/legacy_shake_event_detector_adapter.dart';
 import '../../../core/nied_replay_logger.dart';
 import 'jp_shindo_scale.dart';
+import 'nied_background_worker.dart';
 import 'nied_monitor.dart';
 
 enum ShakeDetectStage { idle, weak, detected, strong }
@@ -80,6 +82,14 @@ class ShakeDetectionService {
   factory ShakeDetectionService() => _instance;
   ShakeDetectionService._internal();
 
+  static const ShakeDetectionSnapshot idleSnapshot = ShakeDetectionSnapshot(
+    stage: ShakeDetectStage.idle,
+    weakCount: 0,
+    detectedCount: 0,
+    strongCount: 0,
+    maxShindo: -1,
+  );
+
   static const int nearbyLength = 6;
   static const double _denseNearbyKm = 30.0;
   static const double _sparseFallbackNearbyKm = 40.0;
@@ -107,25 +117,137 @@ class ShakeDetectionService {
   bool _shake2Notified = false;
   bool _focused = false;
   Timer? _expireCheckTimer;
+  bool _useBackgroundWorker = false;
+  bool _backgroundDetectionRunning = false;
+  bool _backgroundDetectionPending = false;
+  final LegacyShakeEventDetectorAdapter _legacyEventDetector =
+      LegacyShakeEventDetectorAdapter();
+  Future<List<int>?>? _backgroundDetectorInit;
+  int _configuredStationCount = -1;
+  NiedStation? _configuredFirstStation;
+  NiedStation? _configuredMiddleStation;
+  NiedStation? _configuredLastStation;
+  bool _configuredForBackground = false;
+  bool _backgroundExpireApplied = false;
 
   void Function(int shindo)? onShakeDetected;
   void Function()? onShakeExpired;
   void Function(String title, String body)? onNotification;
   void Function()? onFocusWindow;
   void Function(ShakeDetectionSnapshot snapshot)? onDetectionSnapshotChanged;
+  void Function(EventDetection detection)? onEventDetectionChanged;
 
-  void setStations(List<NiedStation> stations) {
+  void reset({
+    bool clearStationState = true,
+    bool clearStationValues = false,
+    bool detachStations = false,
+    bool emitSnapshot = true,
+  }) {
+    final hadActive =
+        _prevMaxShindo >= 0 ||
+        _gridCells.isNotEmpty ||
+        (_stations?.any((station) => station.isActive) ?? false);
+
+    if (clearStationState) {
+      _clearStationRuntimeState(clearValues: clearStationValues);
+    }
+
+    _gridCells.clear();
+    _gridDecimal = const [0.0, 0.0];
+    _prevMaxShindo = -1;
+    _lastSnapshotKey = '';
+    _shake1Notified = false;
+    _shake2Notified = false;
+    _focused = false;
+    _backgroundDetectionRunning = false;
+    _backgroundDetectionPending = false;
+    _backgroundExpireApplied = false;
+    _legacyEventDetector.reset();
+
+    if (detachStations) {
+      _stations = null;
+      _adjStationIds = [];
+      _distMatrix = [];
+      _lastStationSignature = '';
+      _backgroundDetectorInit = null;
+      _configuredStationCount = -1;
+      _configuredFirstStation = null;
+      _configuredMiddleStation = null;
+      _configuredLastStation = null;
+      _configuredForBackground = false;
+      _useBackgroundWorker = false;
+      _expireCheckTimer?.cancel();
+      _expireCheckTimer = null;
+    }
+
+    if (emitSnapshot) {
+      final observedAt = DateTime.now();
+      onDetectionSnapshotChanged?.call(idleSnapshot);
+      onEventDetectionChanged?.call(
+        EventDetection(
+          detectorId: 'legacy_shake_detection_adapter',
+          sourceId: 'nied',
+          eventId: null,
+          state: EventDetectionState.idle,
+          observedAt: observedAt,
+          metadata: const {'reset': true},
+        ),
+      );
+    }
+    if (hadActive) {
+      onShakeExpired?.call();
+    }
+  }
+
+  void setStations(List<NiedStation> stations, {bool background = false}) {
     _stations = stations;
-    final signature = stations
-        .map(
-          (s) =>
-              '${s.id}:${s.code}:${s.coordinate.latitude.toStringAsFixed(3)},'
-              '${s.coordinate.longitude.toStringAsFixed(3)}',
-        )
-        .join('|');
-    if (signature != _lastStationSignature) {
+    _useBackgroundWorker =
+        background && NiedBackgroundWorker.instance.supported;
+    final middleStation = stations.isEmpty
+        ? null
+        : stations[stations.length ~/ 2];
+    final configUnchanged =
+        _configuredForBackground == _useBackgroundWorker &&
+        stations.length == _configuredStationCount &&
+        (stations.isEmpty ||
+            (identical(stations.first, _configuredFirstStation) &&
+                identical(middleStation, _configuredMiddleStation) &&
+                identical(stations.last, _configuredLastStation)));
+    if (!configUnchanged) {
+      final signature = stations
+          .map(
+            (s) =>
+                '${s.id}:${s.code}:${s.coordinate.latitude.toStringAsFixed(3)},'
+                '${s.coordinate.longitude.toStringAsFixed(3)}',
+          )
+          .join('|');
       _lastStationSignature = signature;
-      _buildAdjacency();
+      _configuredStationCount = stations.length;
+      _configuredFirstStation = stations.isEmpty ? null : stations.first;
+      _configuredMiddleStation = middleStation;
+      _configuredLastStation = stations.isEmpty ? null : stations.last;
+      _configuredForBackground = _useBackgroundWorker;
+      _backgroundExpireApplied = false;
+      if (_useBackgroundWorker) {
+        _backgroundDetectorInit = NiedBackgroundWorker.instance
+            .configureDetector(
+              signature: signature,
+              stations: [
+                for (final station in stations)
+                  [
+                    station.id,
+                    station.coordinate.latitude,
+                    station.coordinate.longitude,
+                    _clusterKey(station),
+                  ],
+              ],
+            );
+        _adjStationIds = [];
+        _distMatrix = [];
+      } else {
+        _backgroundDetectorInit = null;
+        _buildAdjacency();
+      }
       _gridCells.clear();
       _gridDecimal = const [0.0, 0.0];
       _prevMaxShindo = -1;
@@ -133,15 +255,50 @@ class ShakeDetectionService {
       _shake1Notified = false;
       _shake2Notified = false;
       _focused = false;
+      _legacyEventDetector.reset();
     }
     _startExpireCheck();
+  }
+
+  void _clearStationRuntimeState({required bool clearValues}) {
+    final stations = _stations;
+    if (stations == null) return;
+    for (final station in stations) {
+      station.activeTimer?.cancel();
+      station.isActive = false;
+      station.detectState = 0;
+      station.detectReason = '';
+      station.ascend = 0;
+      station.activity = 0;
+      station.recentLevel.clear();
+      station.recentDetectLevel.clear();
+      station.expireSeconds = station.defaultExpireSeconds;
+      if (clearValues) {
+        station.level = -1;
+        station.detectLevel = -1;
+      }
+    }
   }
 
   void setSensitivity(int level) {
     _sensitivity = level.clamp(1, 3);
   }
 
-  void processUpdate() {
+  void processUpdate({bool background = false}) {
+    if (background &&
+        _useBackgroundWorker &&
+        NiedBackgroundWorker.instance.supported) {
+      if (_backgroundDetectionRunning) {
+        _backgroundDetectionPending = true;
+        return;
+      }
+      unawaited(_processUpdateInBackground());
+      return;
+    }
+    _processUpdateSync();
+  }
+
+  void _processUpdateSync() {
     final stations = _stations;
     if (stations == null || stations.isEmpty) return;
     if (_adjStationIds.length != stations.length) {
@@ -259,6 +416,105 @@ class ShakeDetectionService {
 
     _refreshDetectionGrids();
     _checkShakeNotification();
+  }
+
+  Future<void> _processUpdateInBackground() async {
+    final stations = _stations;
+    if (stations == null || stations.isEmpty) return;
+    _backgroundDetectionRunning = true;
+    try {
+      do {
+        _backgroundDetectionPending = false;
+        final currentStations = _stations;
+        if (currentStations == null || currentStations.isEmpty) return;
+        final signature = _lastStationSignature;
+        try {
+          final expireSeconds = await _backgroundDetectorInit;
+          if (!_backgroundExpireApplied &&
+              expireSeconds != null &&
+              expireSeconds.isNotEmpty &&
+              expireSeconds.length == currentStations.length) {
+            for (var i = 0; i < currentStations.length; i++) {
+              final expire = expireSeconds[i];
+              currentStations[i]
+                ..defaultExpireSeconds = expire
+                ..expireSeconds = expire;
+            }
+            _backgroundExpireApplied = true;
+          }
+          if (signature != _lastStationSignature ||
+              !identical(currentStations, _stations)) {
+            continue;
+          }
+
+          for (final station in currentStations) {
+            if (!station.isActive) {
+              station.detectState = 0;
+              station.detectReason = '';
+            }
+          }
+          final result = await NiedBackgroundWorker.instance.detect(
+            stations: [
+              for (final station in currentStations)
+                NiedDetectionInput(
+                  detectLevel: station.detectLevel,
+                  activity: station.activity,
+                  ascend: station.ascend,
+                  isActive: station.isActive,
+                  continuousShindo: station.continuousShindo,
+                ),
+            ],
+            sensitivity: _sensitivity,
+            hadActiveGrid: _gridCells.isNotEmpty,
+          );
+          if (result == null ||
+              signature != _lastStationSignature ||
+              !identical(currentStations, _stations)) {
+            _processUpdateSync();
+            continue;
+          }
+
+          final strongestIndex = result.strongestIndex;
+          if (strongestIndex != null &&
+              strongestIndex >= 0 &&
+              strongestIndex < currentStations.length) {
+            final strongest = currentStations[strongestIndex];
+            _gridDecimal = [
+              _gridDecimalPart(strongest.coordinate.latitude),
+              _gridDecimalPart(strongest.coordinate.longitude),
+            ];
+          }
+          for (final index in result.activeIndices) {
+            if (index < 0 || index >= currentStations.length) continue;
+            final station = currentStations[index];
+            final jmaShindo = station.detectLevel >= 0
+                ? JpShindoScale.jmaNumberFromKanameishiLevel(
+                    station.detectLevel,
+                  )
+                : -1;
+            station.detectState = jmaShindo >= 4
+                ? 6
+                : jmaShindo >= 1
+                ? 5
+                : jmaShindo >= 0
+                ? 1
+                : 0;
+            station.detectReason = 'kanameishi-chain';
+            station.setActive(_handleStationExpired);
+          }
+          _refreshDetectionGrids();
+          _checkShakeNotification();
+        } catch (_) {
+          _processUpdateSync();
+        }
+      } while (_backgroundDetectionPending);
+    } finally {
+      _backgroundDetectionRunning = false;
+      if (_backgroundDetectionPending) {
+        _backgroundDetectionPending = false;
+        unawaited(_processUpdateInBackground());
+      }
+    }
   }
 
   void _buildAdjacency() {
@@ -437,36 +693,28 @@ class ShakeDetectionService {
               return latest;
             }) ??
         DateTime.now();
-    StationEventTracker.instance.ingestNiedFrame(
-      stations: stations,
-      observedAt: observedAt,
+    final eventDetection = _legacyEventDetector.ingestLegacyState(
       stageName: stage.name,
-      maxShindo: maxShindo,
+      observedAt: observedAt,
+      stationIds: entries.map((entry) => entry.code),
+      maxIntensity: maxShindo,
+      weakCount: weak,
+      detectedCount: detected,
+      strongCount: strong,
       metadata: {
-        'weak_count': weak,
-        'detected_count': detected,
-        'strong_count': strong,
-        'grid_cell_count': _gridCells.length,
+        'legacy_stage': stage.name,
+        'legacy_max_shindo': maxShindo,
+        'legacy_grid_cell_count': _gridCells.length,
       },
     );
-    final estimate =
-        StationEventTracker.instance.currentNiedEvent.value?.estimate;
-
     final gridKey = _gridCells.entries
         .map((e) => '${e.key}:${e.value.level}')
         .join(',');
     final stationKey = entries
         .map((e) => '${e.code}:${e.level}:${e.jmaShindo}:${e.detectState}')
         .join(',');
-    final estimateKey = estimate == null
-        ? 'none'
-        : '${estimate.latitude.toStringAsFixed(3)},'
-              '${estimate.longitude.toStringAsFixed(3)},'
-              '${(estimate.depthKm ?? -1).toStringAsFixed(1)},'
-              '${estimate.confidence.toStringAsFixed(2)},'
-              '${estimate.method}';
     final key =
-        '${stage.name}|${entries.length}|$strong|$maxShindo|$gridKey|$stationKey|$estimateKey';
+        '${stage.name}|${entries.length}|$strong|$maxShindo|$gridKey|$stationKey';
     if (key == _lastSnapshotKey) return;
     _lastSnapshotKey = key;
 
@@ -477,14 +725,11 @@ class ShakeDetectionService {
       strongCount: strong,
       maxShindo: maxShindo,
       detectedStations: entries,
-      hypoLat: estimate?.latitude,
-      hypoLng: estimate?.longitude,
-      hypoDepth: estimate?.depthKm,
-      hypoConfidence: estimate?.confidence,
       gridCells: Map<String, NiedDetectionGridCell>.from(_gridCells),
     );
     NiedReplayLogger.instance.logDetection(snapshot);
     onDetectionSnapshotChanged?.call(snapshot);
+    onEventDetectionChanged?.call(eventDetection);
   }
 
   void _checkShakeNotification() {

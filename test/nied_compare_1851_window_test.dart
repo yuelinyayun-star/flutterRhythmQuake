@@ -1,22 +1,15 @@
-import 'dart:convert';
+// ignore_for_file: avoid_print
+
 import 'dart:io';
-import 'dart:typed_data';
-import 'dart:ui' as ui;
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:latlong2/latlong.dart';
 
-import 'package:flutterrhythmquake/models/nied_station_db.dart';
 import 'package:flutterrhythmquake/services/sources/jp_shindo_scale.dart';
 import 'package:flutterrhythmquake/services/sources/lmoni_image_service.dart';
 import 'package:flutterrhythmquake/services/sources/nied_monitor.dart';
 import 'package:flutterrhythmquake/services/sources/shake_detection_service.dart';
 
-class _DecodedGifFrame {
-  final List<int> packedRgb;
-  final Uint8List gifBytes;
-  const _DecodedGifFrame({required this.packedRgb, required this.gifBytes});
-}
+import 'support/nied_replay_fixture.dart';
 
 class _FrameReport {
   final DateTime jst;
@@ -38,46 +31,6 @@ class _FrameReport {
   });
 }
 
-Future<_DecodedGifFrame?> _decodeGifFile(File file) async {
-  if (!file.existsSync()) return null;
-  final bytes = await file.readAsBytes();
-  final codec = await ui.instantiateImageCodec(bytes);
-  final frame = await codec.getNextFrame();
-  final image = frame.image;
-  final byteData = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
-  if (byteData == null) {
-    image.dispose();
-    codec.dispose();
-    return null;
-  }
-
-  final pixels = List<int>.filled(image.width * image.height, 0);
-  for (var i = 0; i < pixels.length; i++) {
-    final offset = i * 4;
-    final r = byteData.getUint8(offset);
-    final g = byteData.getUint8(offset + 1);
-    final b = byteData.getUint8(offset + 2);
-    pixels[i] = (r << 16) | (g << 8) | b;
-  }
-
-  image.dispose();
-  codec.dispose();
-  return _DecodedGifFrame(
-    packedRgb: pixels,
-    gifBytes: Uint8List.fromList(bytes),
-  );
-}
-
-double _roundTo1(double v) => (v * 10).roundToDouble() / 10;
-
-String _formatTimeKey(DateTime jst) {
-  final ymd =
-      '${jst.year}${jst.month.toString().padLeft(2, '0')}${jst.day.toString().padLeft(2, '0')}';
-  final hms =
-      '${jst.hour.toString().padLeft(2, '0')}${jst.minute.toString().padLeft(2, '0')}${jst.second.toString().padLeft(2, '0')}';
-  return '$ymd$hms';
-}
-
 double _maxStationShindo(List<NiedStation> stations) {
   var max = -3.0;
   for (final s in stations) {
@@ -89,68 +42,12 @@ double _maxStationShindo(List<NiedStation> stations) {
 }
 
 List<String> _topStationSummaries(List<NiedStation> stations) {
-  final active =
-      stations.where((s) => s.level >= 0).toList()
-        ..sort((a, b) => b.level.compareTo(a.level));
+  final active = stations.where((s) => s.level >= 0).toList()
+    ..sort((a, b) => b.level.compareTo(a.level));
   return active.take(8).map((s) {
     final shindo = JpShindoScale.rawShindoFromLevel(s.level);
     return '${s.code}:${shindo.toStringAsFixed(2)}';
   }).toList();
-}
-
-Future<List<NiedStation>> _buildYahooStations(File sitelistFile) async {
-  final data =
-      jsonDecode(await sitelistFile.readAsString()) as Map<String, dynamic>;
-  final items = data['items'] as List<dynamic>? ?? const [];
-  final db = NiedStationDb.stations;
-  final list = <NiedStation>[];
-  var k = -1;
-
-  for (int i = 0; i < items.length; i++) {
-    final item = items[i] as List<dynamic>;
-    final targetLat = _roundTo1((item[0] as num).toDouble());
-    final targetLng = _roundTo1((item[1] as num).toDouble());
-
-    int? matchedIdx;
-    for (int j = 0; j < 10 && (k + j + 1) < db.length; j++) {
-      final s = db[k + j + 1];
-      final lat = _roundTo1((s['lat'] as num).toDouble());
-      final lng = _roundTo1((s['lng'] as num).toDouble());
-      if (lat == targetLat && lng == targetLng) {
-        matchedIdx = k + j + 1;
-        break;
-      }
-    }
-
-    if (matchedIdx != null) {
-      k = matchedIdx;
-      final s = db[matchedIdx];
-      list.add(
-        NiedStation(
-          id: i,
-          code: s['code'] as String,
-          name: s['name'] as String,
-          coordinate: LatLng(
-            (s['lat'] as num).toDouble(),
-            (s['lng'] as num).toDouble(),
-          ),
-          network: (s['network'] as String?) ?? 'K-NET',
-          prefecture: (s['pref'] as String?) ?? '',
-          expireSeconds: 30,
-        ),
-      );
-    }
-  }
-  return list;
-}
-
-Future<Map<String, dynamic>> _readJsonFile(File file) async {
-  final bytes = await file.readAsBytes();
-  List<int> decoded = bytes;
-  if (bytes.length >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b) {
-    decoded = gzip.decode(bytes);
-  }
-  return jsonDecode(utf8.decode(decoded)) as Map<String, dynamic>;
 }
 
 Future<List<_FrameReport>> _runGifWindow(
@@ -179,10 +76,14 @@ Future<List<_FrameReport>> _runGifWindow(
   final reports = <_FrameReport>[];
   for (var i = 0; i < seconds; i++) {
     final jst = startJst.add(Duration(seconds: i));
-    final stamp = _formatTimeKey(jst);
-    final surface = await _decodeGifFile(File('${dir.path}\\$stamp.jma_s.gif'));
+    final stamp = formatNiedTimeKey(jst);
+    final surface = await decodeNiedGifFile(
+      File('${dir.path}\\$stamp.jma_s.gif'),
+    );
     if (surface == null) continue;
-    final borehole = await _decodeGifFile(File('${dir.path}\\$stamp.jma_b.gif'));
+    final borehole = await decodeNiedGifFile(
+      File('${dir.path}\\$stamp.jma_b.gif'),
+    );
     service.processPixels(
       surface.packedRgb,
       boreholePackedRgb: borehole?.packedRgb,
@@ -214,7 +115,9 @@ Future<List<_FrameReport>> _runYahooWindow(
   int seconds,
   Directory dir,
 ) async {
-  final stations = await _buildYahooStations(File('${dir.path}\\sitelist.json'));
+  final stations = await buildYahooReplayStations(
+    File('${dir.path}\\sitelist.json'),
+  );
   final detector = ShakeDetectionService()..setSensitivity(2);
   ShakeDetectionSnapshot latestSnapshot = const ShakeDetectionSnapshot(
     stage: ShakeDetectStage.idle,
@@ -228,22 +131,11 @@ Future<List<_FrameReport>> _runYahooWindow(
   final reports = <_FrameReport>[];
   for (var i = 0; i < seconds; i++) {
     final jst = startJst.add(Duration(seconds: i));
-    final stamp = _formatTimeKey(jst);
+    final stamp = formatNiedTimeKey(jst);
     final file = File('${dir.path}\\$stamp.json');
     if (!file.existsSync()) continue;
-    final data = await _readJsonFile(file);
-    final rtData = data['realTimeData'] as Map<String, dynamic>?;
-    final intensityStr = rtData?['intensity'] as String?;
-    if (intensityStr == null) continue;
-
-    final now = DateTime.now();
-    for (int idx = 0; idx < stations.length && idx < intensityStr.length; idx++) {
-      final detectLevel = intensityStr.codeUnitAt(idx) - 100;
-      final level = JpShindoScale.levelFromKanameishiLevel(detectLevel);
-      final station = stations[idx];
-      station.update(level, newDetectLevel: detectLevel);
-      station.lastUpdate = now;
-    }
+    final data = await readNiedJsonFile(file);
+    if (!applyYahooReplayFrame(stations, data, jst)) continue;
     detector.setStations(stations);
     detector.processUpdate();
     reports.add(
@@ -282,17 +174,21 @@ void _printSummary(String label, List<_FrameReport> reports) {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('compare 2026-06-09 18:51 JST GIF vs Yahoo offline window', () async {
-    final dir = Directory('.dart_tool\\nied_compare_recent\\202606091851');
-    if (!dir.existsSync()) {
-      markTestSkipped('Missing offline replay directory: ${dir.path}');
-      return;
-    }
-    final start = DateTime(2026, 6, 9, 18, 51, 0);
-    const seconds = 91;
-    final gifReports = await _runGifWindow(start, seconds, dir);
-    final yahooReports = await _runYahooWindow(start, seconds, dir);
-    _printSummary('GIF', gifReports);
-    _printSummary('Yahoo', yahooReports);
-  }, timeout: const Timeout(Duration(minutes: 10)));
+  test(
+    'compare 2026-06-09 18:51 JST GIF vs Yahoo offline window',
+    () async {
+      final dir = Directory('.dart_tool\\nied_compare_recent\\202606091851');
+      if (!dir.existsSync()) {
+        markTestSkipped('Missing offline replay directory: ${dir.path}');
+        return;
+      }
+      final start = DateTime(2026, 6, 9, 18, 51, 0);
+      const seconds = 91;
+      final gifReports = await _runGifWindow(start, seconds, dir);
+      final yahooReports = await _runYahooWindow(start, seconds, dir);
+      _printSummary('GIF', gifReports);
+      _printSummary('Yahoo', yahooReports);
+    },
+    timeout: const Timeout(Duration(minutes: 10)),
+  );
 }

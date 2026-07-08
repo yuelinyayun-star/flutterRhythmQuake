@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "caseId": "20260626_yamanashi_east_fuji_five_lakes_m26_jma_p2p",
+  "caseType": "event",
+  "captureDirectory": "tmp/captures/20260626_yamanashi_east_fuji_five_lakes_m26_jma_p2p",
+  "timeZone": "Asia/Tokyo",
+  "gifNamePattern": "{stamp}.{layer}.gif",
+  "startTimeJst": "2026-06-26T23:03:30",
+  "endTimeJst": "2026-06-26T23:06:00",
+  "sensitivity": 2,
+  "truth": {
+    "originTimeJst": "2026-06-26T23:04:00",
+    "latitude": 35.6,
+    "longitude": 139.0,
+    "depthKm": 20.0,
+    "magnitude": 2.6,
+    "source": "jma_source_and_intensity_information"
+  },
+  "eventLabels": {
+    "catalogEvent": true,
+    "catalogTruthVerified": false,
+    "observableEvent": true,
+    "detectableEvent": true,
+    "includeInDetectionMetrics": false
+  },
+  "classification": {
+    "region": "Yamanashi east / Fuji Five Lakes",
+    "captureSource": "User-provided JMA source/intensity information and P2PQuake detail-scale reference; local KMoni GIF capture package.",
+    "truthQuality": "jma_source_and_intensity_reference_pending_final_catalog",
+    "plannedUse": "plum_like_replay_leadtime_moderate_reference",
+    "maxShindoLabel": "1",
+    "notes": "Reference-only replay fixture for PLUM-like lead-time diagnostics. Do not use as catalog-verified frozen metric until a versioned JMA final catalog row is linked."
+  },
+  "splitStatus": "unassigned_reference"
+}

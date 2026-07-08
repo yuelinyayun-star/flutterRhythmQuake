@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "caseId": "20260622_wakayama_south_m25_hinet",
+  "caseType": "event",
+  "captureDirectory": "tmp/captures/wakayama_south_m25_20260622_085117_multilayer",
+  "timeZone": "Asia/Tokyo",
+  "gifNamePattern": "{stamp}.{layer}.gif",
+  "startTimeJst": "2026-06-22T09:50:47",
+  "endTimeJst": "2026-06-22T09:53:17",
+  "sensitivity": 2,
+  "truth": {
+    "originTimeJst": "2026-06-22T09:51:17",
+    "latitude": 33.58,
+    "longitude": 135.791,
+    "depthKm": 28.1,
+    "magnitude": 2.5,
+    "source": "user_provided_hinet_hypocenter"
+  },
+  "eventLabels": {
+    "catalogEvent": true,
+    "catalogTruthVerified": false,
+    "observableEvent": true,
+    "detectableEvent": true,
+    "includeInDetectionMetrics": false
+  },
+  "classification": {
+    "region": "Wakayama south",
+    "captureSource": "User-provided Hi-net hypocenter, 2026-06-22 08:51:17 UTC+8",
+    "truthQuality": "hinet_user_provided",
+    "notes": "Hi-net label: Wakayama south, 33.580N 135.791E, M2.5, depth 28.1 km, origin 2026-06-22 08:51:17 UTC+8. Keep outside frozen split metrics until event-level split assignment is reviewed."
+  },
+  "splitStatus": "validation_reference"
+}

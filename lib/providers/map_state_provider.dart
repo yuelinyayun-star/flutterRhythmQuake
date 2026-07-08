@@ -18,7 +18,6 @@ class MapStateProvider with ChangeNotifier {
   static const double defaultZoom = 4.0;
 
   MapController? _mapController;
-  TickerProvider? _vsync;
   QuakeMessage? _selectedHistoryEvent;
   String _tileKey = 'petalLight';
   final Map<String, bool> _overlayEnabled = {
@@ -27,6 +26,7 @@ class MapStateProvider with ChangeNotifier {
     'rainLayer': false,
     'cnContour': false,
     'volcanoLayer': false,
+    'typhoonLayer': true,
     'fdsnEarthScope': false,
     'fdsnGeofon': false,
   };
@@ -34,9 +34,11 @@ class MapStateProvider with ChangeNotifier {
   bool _showEstimatedEpicenter = false;
   bool get showEstimatedEpicenter => _showEstimatedEpicenter;
 
+  static const int _cameraAnimationFps = 60;
+
   bool _isAutoZoom = true;
   Timer? _autoZoomResumeTimer;
-  AnimationController? _moveAnimationController;
+  Timer? _moveAnimationTimer;
   MapCameraMode _cameraMode = MapCameraMode.autoFollow;
   final Map<String, DateTime> _lastMoveBySource = {};
   String? _lastCameraKey;
@@ -57,7 +59,33 @@ class MapStateProvider with ChangeNotifier {
     if (_tileKey == normalized) return;
     _tileKey = normalized;
     MapConfig.currentTileUrl = MapConfig.urlByKey(normalized);
+    _logBaseTileState('changed');
     notifyListeners();
+  }
+
+  void refreshTileConfig() {
+    MapConfig.currentTileUrl = MapConfig.urlByKey(_tileKey);
+    _logBaseTileState('refreshed');
+    notifyListeners();
+  }
+
+  void _logBaseTileState(String action) {
+    if (_tileKey == MapConfig.tencentJsMapKey) {
+      debugPrint(
+        '[MapTile] base tile $action: key=$_tileKey mode=js-api '
+        'apiKey=${MapConfig.hasTencentWmtsApiKey ? "set" : "empty"}',
+      );
+      return;
+    }
+    if (_tileKey == MapConfig.tencentStaticMapKey ||
+        _tileKey == MapConfig.tencentWmtsKey) {
+      debugPrint(
+        '[MapTile] base tile $action: key=$_tileKey '
+        'url=${MapConfig.redactTencentWmtsUrl(MapConfig.currentTileUrl)}',
+      );
+      return;
+    }
+    debugPrint('[MapTile] base tile $action: key=$_tileKey');
   }
 
   void setOverlayEnabled(String key, bool enabled) {
@@ -96,9 +124,12 @@ class MapStateProvider with ChangeNotifier {
 
   MapController? get mapController => _mapController;
 
-  void setController(MapController controller, TickerProvider vsync) {
+  void setController(MapController controller, TickerProvider _) {
+    final changed = !identical(_mapController, controller);
     _mapController = controller;
-    _vsync = vsync;
+    if (changed) {
+      notifyListeners();
+    }
   }
 
   void pauseAutoZoom({Duration resumeAfter = const Duration(seconds: 60)}) {
@@ -123,17 +154,17 @@ class MapStateProvider with ChangeNotifier {
 
   void recenterToDefaultView({bool animate = true}) {
     pauseAutoZoom();
-    if (_mapController == null || _vsync == null) return;
+    if (_mapController == null) return;
     _doAnimatedMove(defaultCenter, defaultZoom, animate, wrapLongitude: false);
   }
 
   void animatedMove(LatLng destLocation, double destZoom) {
-    if (_mapController == null || _vsync == null) return;
+    if (_mapController == null) return;
     _doAnimatedMove(destLocation, destZoom, true);
   }
 
   void animatedMoveNoAnimate(LatLng destLocation, double destZoom) {
-    if (_mapController == null || _vsync == null) return;
+    if (_mapController == null) return;
     _doAnimatedMove(destLocation, destZoom, false);
   }
 
@@ -143,7 +174,7 @@ class MapStateProvider with ChangeNotifier {
     } else {
       _cameraMode = MapCameraMode.autoFollow;
     }
-    if (_mapController == null || _vsync == null) return;
+    if (_mapController == null) return;
     _doAnimatedMove(defaultCenter, defaultZoom, animate, wrapLongitude: false);
   }
 
@@ -152,7 +183,7 @@ class MapStateProvider with ChangeNotifier {
     double destZoom,
     Offset screenOffset,
   ) {
-    if (_mapController == null || _vsync == null) return;
+    if (_mapController == null) return;
 
     final currCenter = _mapController!.camera.center;
     final wrappedFocus = LatLng(
@@ -208,43 +239,34 @@ class MapStateProvider with ChangeNotifier {
     );
     final zoomTween = Tween<double>(begin: currZoom, end: destZoom);
 
-    final animationController = AnimationController(
-      duration: const Duration(milliseconds: 800),
-      vsync: _vsync!,
-    );
-    _moveAnimationController = animationController;
+    const duration = Duration(milliseconds: 800);
+    final stopwatch = Stopwatch()..start();
 
-    final animation = CurvedAnimation(
-      parent: animationController,
-      curve: Curves.fastOutSlowIn,
-    );
-
-    animationController.addListener(() {
+    void tick() {
+      final rawT = stopwatch.elapsedMicroseconds / duration.inMicroseconds;
+      final t = rawT.clamp(0.0, 1.0);
+      final eased = Curves.fastOutSlowIn.transform(t);
       _mapController!.move(
-        LatLng(latTween.evaluate(animation), lngTween.evaluate(animation)),
-        zoomTween.evaluate(animation),
+        LatLng(latTween.transform(eased), lngTween.transform(eased)),
+        zoomTween.transform(eased),
       );
-    });
-
-    animation.addStatusListener((status) {
-      if (status == AnimationStatus.completed ||
-          status == AnimationStatus.dismissed) {
-        if (_moveAnimationController == animationController) {
-          _moveAnimationController = null;
-          animationController.dispose();
-        }
+      if (t >= 1.0) {
+        _stopMoveAnimation();
       }
-    });
+    }
 
-    animationController.forward();
+    tick();
+    _moveAnimationTimer = Timer.periodic(
+      const Duration(milliseconds: 1000 ~/ _cameraAnimationFps),
+      (_) => tick(),
+    );
   }
 
   void _stopMoveAnimation() {
-    final controller = _moveAnimationController;
-    if (controller == null) return;
-    _moveAnimationController = null;
-    controller.stop();
-    controller.dispose();
+    final timer = _moveAnimationTimer;
+    if (timer == null) return;
+    _moveAnimationTimer = null;
+    timer.cancel();
   }
 
   LatLngBounds? calcBoundsForEvents(List<QuakeMessage> events) {

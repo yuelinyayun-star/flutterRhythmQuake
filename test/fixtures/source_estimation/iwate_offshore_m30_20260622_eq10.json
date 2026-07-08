@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "caseId": "20260622_iwate_offshore_m30_eq10",
+  "caseType": "event",
+  "captureDirectory": "tmp/captures/iwate_offshore_m30_20260622_082823_multilayer",
+  "timeZone": "Asia/Tokyo",
+  "gifNamePattern": "{stamp}.{layer}.gif",
+  "startTimeJst": "2026-06-22T09:27:53",
+  "endTimeJst": "2026-06-22T09:30:23",
+  "sensitivity": 2,
+  "truth": {
+    "originTimeJst": "2026-06-22T09:28:23",
+    "latitude": 40.392,
+    "longitude": 142.341,
+    "depthKm": 50.2,
+    "magnitude": 3.4,
+    "source": "user_provided_hinet_hypocenter"
+  },
+  "eventLabels": {
+    "catalogEvent": true,
+    "catalogTruthVerified": false,
+    "observableEvent": true,
+    "detectableEvent": true,
+    "includeInDetectionMetrics": false
+  },
+  "classification": {
+    "region": "Iwate northeast offshore",
+    "captureSource": "User-provided EQuake source-estimation report 10 final, 2026-06-22 08:28:23 UTC+8; user-provided Hi-net hypocenter, 2026-06-22 08:28:23 UTC+8",
+    "truthQuality": "hinet_user_provided",
+    "notes": "Hi-net label: Iwate northeast offshore, 40.392N 142.341E, M3.4, depth 50.2 km, origin 2026-06-22 08:28:23 UTC+8. EQuake reported final M3.0, depth 22 km, quality A 80.8%, RMS 0.72 s, azimuthal gap 234 deg, 52 triggered stations (P:4 S:38 O:10), and 37 magnitude stations. The EQuake hypocenter 40.38N 142.39E is retained only as source-estimation reference text, not truth. Keep outside frozen split metrics until split assignment is reviewed."
+  },
+  "splitStatus": "validation_reference"
+}

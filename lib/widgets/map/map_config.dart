@@ -1,3 +1,9 @@
+import 'dart:convert';
+import 'dart:math' as math;
+
+import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
+
 /// 地图瓦片配置类
 ///
 /// 该类定义了应用中使用的各种地图瓦片源URL模板。
@@ -10,6 +16,264 @@
 /// - {s}: 服务器子域名 (用于并行加载)
 /// - {r}: Retina高清标识
 class MapConfig {
+  static const String mapboxEewceDarkKey = 'mapboxEewceDark';
+  static const String mapboxUsernameKey = 'mapbox_username';
+  static const String mapboxStyleIdKey = 'mapbox_style_id';
+  static const String mapboxAccessTokenKey = 'mapbox_access_token';
+  static const String tencentWmtsKey = 'tencentWmts';
+  static const String tencentStaticMapKey = 'tencentStaticMap';
+  static const String tencentJsMapKey = 'tencentJsMap';
+  static const String tencentStaticMapTemplate =
+      'tencent-static-map://tile/{z}/{x}/{y}';
+  static const String tencentWmtsApiKeyKey = 'tencent_wmts_api_key';
+  static const String tencentWmtsSecretKeyKey = 'tencent_wmts_secret_key';
+  static const String _mapboxDefaultUsername = 'mapbox';
+  static const String _mapboxDefaultStyleId = 'dark-v11';
+
+  static String _mapboxUsername = _mapboxDefaultUsername;
+  static String _mapboxStyleId = _mapboxDefaultStyleId;
+  static String _mapboxAccessToken = '';
+  static String _tencentWmtsApiKey = '';
+  static String _tencentWmtsSecretKey = '';
+  static String? _lastTencentWmtsStateLogKey;
+  static bool _loggedTencentWmtsFallback = false;
+
+  static String get mapboxUsername => _mapboxUsername;
+  static String get mapboxStyleId => _mapboxStyleId;
+  static String get mapboxAccessToken => _mapboxAccessToken;
+  static bool get hasMapboxAccessToken => _mapboxAccessToken.isNotEmpty;
+  static String get tencentWmtsApiKey => _tencentWmtsApiKey;
+  static String get tencentWmtsSecretKey => _tencentWmtsSecretKey;
+  static bool get hasTencentWmtsApiKey => _tencentWmtsApiKey.isNotEmpty;
+  static bool get hasTencentWmtsSecretKey => _tencentWmtsSecretKey.isNotEmpty;
+
+  static void configureMapbox({
+    required String username,
+    required String styleId,
+    required String accessToken,
+  }) {
+    _mapboxUsername = _mapboxNamePart(username, _mapboxDefaultUsername);
+    _mapboxStyleId = _mapboxNamePart(styleId, _mapboxDefaultStyleId);
+    _mapboxAccessToken = accessToken.trim();
+  }
+
+  static void configureMapboxFromPrefs(Map<String, Object?> prefs) {
+    configureMapbox(
+      username: prefs[mapboxUsernameKey]?.toString() ?? _mapboxDefaultUsername,
+      styleId: prefs[mapboxStyleIdKey]?.toString() ?? _mapboxDefaultStyleId,
+      accessToken: prefs[mapboxAccessTokenKey]?.toString() ?? '',
+    );
+  }
+
+  static void configureTencentWmts({
+    required String apiKey,
+    String secretKey = '',
+  }) {
+    _tencentWmtsApiKey = apiKey.trim();
+    _tencentWmtsSecretKey = secretKey.trim();
+    _lastTencentWmtsStateLogKey = null;
+    _loggedTencentWmtsFallback = false;
+    debugPrint(
+      '[TencentMap] configured: '
+      'apiKey=${_maskSecret(_tencentWmtsApiKey)}, '
+      'sk=${hasTencentWmtsSecretKey ? "set" : "empty"}',
+    );
+  }
+
+  static String _mapboxNamePart(String value, String fallback) {
+    final cleaned = value
+        .trim()
+        .replaceFirst('mapbox://styles/', '')
+        .replaceFirst('https://api.mapbox.com/styles/v1/', '')
+        .split('?')
+        .first;
+    final parts = cleaned.split('/').where((part) => part.isNotEmpty).toList();
+    if (parts.isEmpty) return fallback;
+    return parts.last;
+  }
+
+  static String get mapboxEewceDark {
+    if (!hasMapboxAccessToken) return petalDark;
+    final token = Uri.encodeQueryComponent(_mapboxAccessToken);
+    return 'https://api.mapbox.com/styles/v1/'
+        '$_mapboxUsername/$_mapboxStyleId/tiles/512/{z}/{x}/{y}'
+        '?access_token=$token';
+  }
+
+  static String get tencentWmts {
+    if (!hasTencentWmtsApiKey) {
+      if (!_loggedTencentWmtsFallback) {
+        _loggedTencentWmtsFallback = true;
+        debugPrint('[TencentWMTS] APIKEY empty; fallback to Petal Light.');
+      }
+      return petalLight;
+    }
+    return 'https://apis.map.qq.com/maptile/base/wmts?'
+        'SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&'
+        'LAYER=default&STYLE=default&FORMAT=image/png&'
+        'TILEMATRIXSET=EPSG:3857&'
+        'TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&'
+        'key=${Uri.encodeQueryComponent(_tencentWmtsApiKey)}';
+  }
+
+  static String get tencentStaticMap {
+    if (!hasTencentWmtsApiKey) {
+      if (!_loggedTencentWmtsFallback) {
+        _loggedTencentWmtsFallback = true;
+        debugPrint('[TencentStaticMap] APIKEY empty; fallback to Petal Light.');
+      }
+      return petalLight;
+    }
+    return tencentStaticMapTemplate;
+  }
+
+  static bool isTencentStaticMapTemplate(String url) {
+    return url.startsWith('tencent-static-map://tile/');
+  }
+
+  static bool isTencentStaticMapUrl(String url) {
+    final uri = Uri.tryParse(url);
+    return uri?.scheme == 'https' &&
+        uri?.host == 'apis.map.qq.com' &&
+        uri?.path == '/ws/staticmap/v2/';
+  }
+
+  static String tencentStaticMapTileUrl({
+    required int z,
+    required int x,
+    required int y,
+  }) {
+    if (!hasTencentWmtsApiKey) return petalLight;
+    final center = _tileCenter(z: z, x: x, y: y);
+    final zoom = z.clamp(4, 18);
+    final params = <String, String>{
+      'center':
+          '${center.latitude.toStringAsFixed(6)},${center.longitude.toStringAsFixed(6)}',
+      'key': _tencentWmtsApiKey,
+      'maptype': 'roadmap',
+      'scale': '1',
+      'size': '256*256',
+      'zoom': '$zoom',
+    };
+    return _signedTencentServiceUrl(
+      path: '/ws/staticmap/v2/',
+      params: params,
+      logPrefix: 'TencentStaticMap',
+    );
+  }
+
+  static bool isTencentWmtsUrl(String url) {
+    final uri = Uri.tryParse(url);
+    return uri?.scheme == 'https' &&
+        uri?.host == 'apis.map.qq.com' &&
+        uri?.path == '/maptile/base/wmts';
+  }
+
+  static String signedTencentWmtsUrl(String url) {
+    if (!isTencentWmtsUrl(url)) return url;
+    if (!hasTencentWmtsSecretKey) {
+      _logTencentWmtsRequestState(
+        'unsigned:${_maskSecret(_tencentWmtsApiKey)}',
+        'SN disabled or SK empty; request without sig. '
+            'sample=${redactTencentWmtsUrl(url)}',
+      );
+      return url;
+    }
+    final uri = Uri.parse(url);
+    return _signedTencentServiceUrl(
+      path: uri.path,
+      params: Map<String, String>.from(uri.queryParameters)..remove('sig'),
+      logPrefix: 'TencentWMTS',
+    );
+  }
+
+  static String _signedTencentServiceUrl({
+    required String path,
+    required Map<String, String> params,
+    required String logPrefix,
+  }) {
+    final queryEntries = params.entries.toList()
+      ..sort((a, b) => a.key.compareTo(b.key));
+    final rawSortedQuery = queryEntries
+        .map((entry) => '${entry.key}=${entry.value}')
+        .join('&');
+    if (!hasTencentWmtsSecretKey) {
+      return 'https://apis.map.qq.com$path?${_encodedQuery(queryEntries)}';
+    }
+    final signatureSource = '$path?$rawSortedQuery$_tencentWmtsSecretKey';
+    final sig = md5.convert(utf8.encode(signatureSource)).toString();
+    final signedUrl =
+        'https://apis.map.qq.com$path?${_encodedQuery(queryEntries)}&sig=$sig';
+    _logTencentWmtsRequestState(
+      '$logPrefix:signed-v3-official-ordinal:${_maskSecret(_tencentWmtsApiKey)}:${_maskSecret(_tencentWmtsSecretKey)}',
+      'SN enabled; sig appended from raw query. '
+          'source=${_redactTencentSignatureSource(signatureSource)} '
+          'sample=${redactTencentServiceUrl(signedUrl)}',
+    );
+    return signedUrl;
+  }
+
+  static String _encodedQuery(List<MapEntry<String, String>> queryEntries) {
+    return queryEntries
+        .map(
+          (entry) =>
+              '${Uri.encodeQueryComponent(entry.key)}='
+              '${Uri.encodeQueryComponent(entry.value)}',
+        )
+        .join('&');
+  }
+
+  static void _logTencentWmtsRequestState(String key, String message) {
+    if (_lastTencentWmtsStateLogKey == key) return;
+    _lastTencentWmtsStateLogKey = key;
+    debugPrint('[TencentWMTS] $message');
+  }
+
+  static String redactTencentWmtsUrl(String url) =>
+      redactTencentServiceUrl(url);
+
+  static String redactTencentServiceUrl(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null ||
+        (!isTencentWmtsUrl(url) && !isTencentStaticMapUrl(url))) {
+      return url;
+    }
+    final params = Map<String, String>.from(uri.queryParameters);
+    if (params.containsKey('key')) {
+      params['key'] = _maskSecret(params['key'] ?? '');
+    }
+    if (params.containsKey('sig')) {
+      params['sig'] = _maskSecret(params['sig'] ?? '');
+    }
+    return uri.replace(queryParameters: params).toString();
+  }
+
+  static ({double latitude, double longitude}) _tileCenter({
+    required int z,
+    required int x,
+    required int y,
+  }) {
+    final n = math.pow(2.0, z).toDouble();
+    final longitude = (x + 0.5) / n * 360.0 - 180.0;
+    final mercator = math.pi * (1.0 - 2.0 * (y + 0.5) / n);
+    final sinh = (math.exp(mercator) - math.exp(-mercator)) / 2.0;
+    final latRad = math.atan(sinh);
+    final latitude = latRad * 180.0 / math.pi;
+    return (latitude: latitude, longitude: longitude);
+  }
+
+  static String _redactTencentSignatureSource(String source) {
+    return source
+        .replaceAll(_tencentWmtsApiKey, _maskSecret(_tencentWmtsApiKey))
+        .replaceAll(_tencentWmtsSecretKey, '<SK>');
+  }
+
+  static String _maskSecret(String value) {
+    if (value.isEmpty) return 'empty';
+    if (value.length <= 8) return '${value.substring(0, 2)}***';
+    return '${value.substring(0, 4)}...${value.substring(value.length - 4)}';
+  }
+
   /// FanStudio瓦片服务基础URL
   static const String _fanBase = 'https://tilemap.fanstudio.tech';
 
@@ -76,7 +340,9 @@ class MapConfig {
     'ArcGIS 山体阴影': 'arcgisHillshade',
     'DEM 高程数据': 'demElevation',
     'CartoDB 深色': 'cartoDark',
+    'Mapbox Dark': mapboxEewceDarkKey,
     'OpenStreetMap': 'osmTileUrl',
+    '腾讯地图': tencentJsMapKey,
   };
 
   /// 可选叠加图层 (显示名 -> 图层键名)
@@ -92,6 +358,11 @@ class MapConfig {
   }
 
   static String normalizeBaseTileKey(String key) {
+    if (key == 'tencentVector' ||
+        key == tencentWmtsKey ||
+        key == tencentStaticMapKey) {
+      return tencentJsMapKey;
+    }
     return isBaseTileKey(key) ? key : 'petalLight';
   }
 
@@ -120,10 +391,33 @@ class MapConfig {
         return cnContour;
       case 'cartoDark':
         return cartoDark;
+      case mapboxEewceDarkKey:
+        return mapboxEewceDark;
       case 'osmTileUrl':
         return osmTileUrl;
+      case tencentJsMapKey:
+        return petalLight;
+      case tencentStaticMapKey:
+        return tencentStaticMap;
+      case tencentWmtsKey:
+      case 'tencentVector':
+        return tencentWmts;
       default:
         return petalLight;
+    }
+  }
+
+  static bool isTmsTileKey(String key) {
+    return false;
+  }
+
+  static List<String> subdomainsByKey(String key) {
+    switch (key) {
+      case 'cartoDark':
+      case 'osmTileUrl':
+        return const ['a', 'b', 'c'];
+      default:
+        return const [];
     }
   }
 

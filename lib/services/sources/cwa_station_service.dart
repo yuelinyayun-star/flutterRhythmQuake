@@ -10,6 +10,8 @@
 ///
 /// 自动多域名重试 + JWT 认证
 
+library;
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -25,7 +27,7 @@ class CwaStation {
   double pga;
   double pgv;
   double intensity;
-  int alertIntensity;
+  double alertIntensity;
   bool hasAlert;
   DateTime? lastUpdate;
 
@@ -38,10 +40,12 @@ class CwaStation {
     this.pga = 0,
     this.pgv = 0,
     this.intensity = -3,
-    this.alertIntensity = -3,
+    this.alertIntensity = -3.1,
     this.hasAlert = false,
     this.lastUpdate,
   });
+
+  double get currentIntensity => hasAlert ? alertIntensity : intensity;
 }
 
 class CwaStationService {
@@ -83,6 +87,7 @@ class CwaStationService {
   Timer? _tokenRefreshTimer;
   HttpClient? _client;
   bool _running = false;
+  bool _fetchingRts = false;
   int _consecutiveFailures = 0;
   bool _isConnected = false;
   static const int _maxFailures = 3;
@@ -95,12 +100,37 @@ class CwaStationService {
   bool _isLoggingIn = false;
 
   void Function(bool connected)? onStatusChanged;
-  void Function(int alertIntensity)? onShakeDetected;
+  void Function(int maxShindo)? onShakeDetected;
   void Function()? onShakeExpired;
 
-  int _prevMaxAlert = -1;
+  int _prevMaxAlertShindo = -1;
   bool _shake1Notified = false;
   bool _shake2Notified = false;
+  DateTime? _lastRtsDataTime;
+
+  static int gridLevelFromInstShindo(num instShindo) {
+    final value = instShindo.toDouble();
+    if (value < -3.0) return -1;
+    if (value == -3.0) return 0;
+    if (value >= 6.5) return 20;
+    return (value * 2 + 7).floor();
+  }
+
+  static int shindoFromGridLevel(int level) {
+    if (level < 0) return -1;
+    if (level <= 7) return 0;
+    if (level <= 9) return 1;
+    if (level <= 11) return 2;
+    if (level <= 13) return 3;
+    if (level <= 15) return 4;
+    if (level <= 17) return 5;
+    if (level <= 19) return 6;
+    return 7;
+  }
+
+  static int shindoFromInstShindo(num instShindo) {
+    return shindoFromGridLevel(gridLevelFromInstShindo(instShindo));
+  }
 
   void setCredentials(String email, String password) {
     _email = email;
@@ -108,14 +138,14 @@ class CwaStationService {
   }
 
   bool get hasCredentials => _email != null && _password != null;
+  bool get isRunning => _running;
 
   void start() {
     if (_running) return;
     _running = true;
     _consecutiveFailures = 0;
     _isConnected = false;
-    _client = HttpClient()
-      ..badCertificateCallback = (cert, host, port) => true;
+    _client = HttpClient()..badCertificateCallback = (cert, host, port) => true;
     _client!.connectionTimeout = const Duration(seconds: 8);
     _loginAndStart();
   }
@@ -124,8 +154,12 @@ class CwaStationService {
     if (hasCredentials) {
       await _tryLogin();
     }
+    if (!_running) return;
     _fetchStationList();
-    _stationListTimer = Timer.periodic(const Duration(minutes: 10), (_) => _fetchStationList());
+    _stationListTimer = Timer.periodic(
+      const Duration(minutes: 10),
+      (_) => _fetchStationList(),
+    );
     _rtsTimer = Timer.periodic(const Duration(seconds: 1), (_) => _fetchRts());
   }
 
@@ -153,7 +187,9 @@ class CwaStationService {
           _token = data['token'] as String?;
           _refreshToken = data['refresh_token'] as String?;
           final expiresAt = data['expires_at'] as String?;
-          _tokenExpiresAt = expiresAt != null ? DateTime.tryParse(expiresAt) : null;
+          _tokenExpiresAt = expiresAt != null
+              ? DateTime.tryParse(expiresAt)
+              : null;
           if (_token != null) {
             _scheduleTokenRefresh();
             debugPrint('CWA login OK: $host');
@@ -172,7 +208,11 @@ class CwaStationService {
   }
 
   Future<bool> _refreshTokenIfNeeded() async {
-    if (_token != null && _tokenExpiresAt != null && DateTime.now().isBefore(_tokenExpiresAt!.subtract(const Duration(minutes: 5)))) {
+    if (_token != null &&
+        _tokenExpiresAt != null &&
+        DateTime.now().isBefore(
+          _tokenExpiresAt!.subtract(const Duration(minutes: 5)),
+        )) {
       return true;
     }
     if (_refreshToken != null) return _tryRefresh();
@@ -197,7 +237,9 @@ class CwaStationService {
         final data = jsonDecode(body) as Map<String, dynamic>;
         _token = data['token'] as String?;
         final expiresAt = data['expires_at'] as String?;
-        _tokenExpiresAt = expiresAt != null ? DateTime.tryParse(expiresAt) : null;
+        _tokenExpiresAt = expiresAt != null
+            ? DateTime.tryParse(expiresAt)
+            : null;
         if (_token != null) {
           _scheduleTokenRefresh();
           return true;
@@ -217,7 +259,10 @@ class CwaStationService {
     final remaining = _tokenExpiresAt!.difference(DateTime.now());
     if (remaining.isNegative) return;
     final refreshIn = remaining ~/ 2;
-    _tokenRefreshTimer = Timer(Duration(seconds: refreshIn.inSeconds), _tryRefresh);
+    _tokenRefreshTimer = Timer(
+      Duration(seconds: refreshIn.inSeconds),
+      _tryRefresh,
+    );
   }
 
   Future<HttpClientResponse?> _authRequest(String host, String path) async {
@@ -277,7 +322,9 @@ class CwaStationService {
   }
 
   void stop() {
+    final wasConnected = _isConnected;
     _running = false;
+    _fetchingRts = false;
     _rtsTimer?.cancel();
     _rtsTimer = null;
     _stationListTimer?.cancel();
@@ -286,10 +333,16 @@ class CwaStationService {
     _tokenRefreshTimer = null;
     _client?.close();
     _client = null;
+    _lastRtsDataTime = null;
+    _isConnected = false;
+    _clearRuntimeState(emitStations: true);
+    if (wasConnected) {
+      onStatusChanged?.call(false);
+    }
   }
 
   Future<void> _fetchStationList() async {
-    if (_client == null) return;
+    if (!_running || _client == null) return;
     try {
       final resp = await _tryRequest(_stationPath);
       if (resp == null || resp.statusCode != 200) return;
@@ -314,8 +367,20 @@ class CwaStationService {
         if (lat == 0 && lon == 0) continue;
 
         final existing = _stationMap[id];
-        newMap[id] = existing?.copyWith(code: code, net: net, work: work, coordinate: LatLng(lat, lon)) ??
-            CwaStation(id: id, code: code, net: net, coordinate: LatLng(lat, lon), work: work);
+        newMap[id] =
+            existing?.copyWith(
+              code: code,
+              net: net,
+              work: work,
+              coordinate: LatLng(lat, lon),
+            ) ??
+            CwaStation(
+              id: id,
+              code: code,
+              net: net,
+              coordinate: LatLng(lat, lon),
+              work: work,
+            );
       }
       _stationMap = newMap;
     } catch (e) {
@@ -324,7 +389,10 @@ class CwaStationService {
   }
 
   Future<void> _fetchRts() async {
-    if (_client == null || _stationMap.isEmpty) return;
+    if (!_running || _fetchingRts || _client == null || _stationMap.isEmpty) {
+      return;
+    }
+    _fetchingRts = true;
     try {
       final resp = await _tryRequest(_rtsPath);
       if (resp == null || resp.statusCode != 200) {
@@ -342,6 +410,15 @@ class CwaStationService {
         _handleFailure();
         return;
       }
+      final dataTime = _parseRtsTime(data['time']);
+      if (dataTime != null) {
+        final last = _lastRtsDataTime;
+        if (last != null && !dataTime.isAfter(last)) {
+          _handleSuccess();
+          return;
+        }
+        _lastRtsDataTime = dataTime;
+      }
 
       final now = DateTime.now();
       final updated = <CwaStation>[];
@@ -352,10 +429,15 @@ class CwaStationService {
         final existing = _stationMap[id];
         if (existing == null) continue;
 
-        final pga = double.tryParse(vals['pga']?.toString() ?? '') ?? existing.pga;
-        final pgv = double.tryParse(vals['pgv']?.toString() ?? '') ?? existing.pgv;
-        final i = double.tryParse(vals['i']?.toString() ?? '') ?? existing.intensity;
-        final I = int.tryParse(vals['I']?.toString() ?? '') ?? existing.alertIntensity;
+        final pga =
+            double.tryParse(vals['pga']?.toString() ?? '') ?? existing.pga;
+        final pgv =
+            double.tryParse(vals['pgv']?.toString() ?? '') ?? existing.pgv;
+        final i =
+            double.tryParse(vals['i']?.toString() ?? '') ?? existing.intensity;
+        final I =
+            double.tryParse(vals['I']?.toString() ?? '') ??
+            existing.alertIntensity;
         final alert = vals['alert'] != null;
         existing.pga = pga;
         existing.pgv = pgv;
@@ -373,30 +455,76 @@ class CwaStationService {
       _handleSuccess();
     } catch (e) {
       _handleFailure();
+    } finally {
+      _fetchingRts = false;
     }
   }
 
   void _checkShakeNotification() {
-    int currentMax = -1;
+    var currentMaxLevel = -1;
     for (final s in _stations) {
-      if (s.hasAlert && s.alertIntensity > currentMax) {
-        currentMax = s.alertIntensity;
+      if (!s.hasAlert) continue;
+      final level = gridLevelFromInstShindo(s.alertIntensity);
+      if (level > currentMaxLevel) {
+        currentMaxLevel = level;
       }
     }
-    if (currentMax > _prevMaxAlert) {
-      if (currentMax >= 1 && !_shake1Notified) {
+    final currentMaxShindo = shindoFromGridLevel(currentMaxLevel);
+    if (currentMaxShindo > _prevMaxAlertShindo) {
+      if (currentMaxShindo >= 1 && currentMaxShindo <= 3 && !_shake1Notified) {
         _shake1Notified = true;
-        onShakeDetected?.call(currentMax);
-      } else if (currentMax >= 4 && !_shake2Notified) {
+        onShakeDetected?.call(currentMaxShindo);
+      } else if (currentMaxShindo >= 4 && !_shake2Notified) {
+        _shake1Notified = true;
         _shake2Notified = true;
-        onShakeDetected?.call(currentMax);
+        onShakeDetected?.call(currentMaxShindo);
       }
-    } else if (currentMax == -1 && _prevMaxAlert >= 0) {
+    } else if (currentMaxShindo == -1 && _prevMaxAlertShindo >= 0) {
       _shake1Notified = false;
       _shake2Notified = false;
       onShakeExpired?.call();
     }
-    _prevMaxAlert = currentMax;
+    _prevMaxAlertShindo = currentMaxShindo;
+  }
+
+  DateTime? _parseRtsTime(Object? value) {
+    if (value == null) return null;
+    if (value is num) return _dateTimeFromEpoch(value);
+    if (value is String) {
+      final numeric = num.tryParse(value);
+      if (numeric != null) return _dateTimeFromEpoch(numeric);
+      return DateTime.tryParse(value);
+    }
+    return null;
+  }
+
+  DateTime _dateTimeFromEpoch(num value) {
+    final raw = value.toInt();
+    final millis = raw > 100000000000 ? raw : raw * 1000;
+    return DateTime.fromMillisecondsSinceEpoch(millis);
+  }
+
+  void _clearRuntimeState({bool emitStations = false}) {
+    final hadActive =
+        _prevMaxAlertShindo >= 0 || _stations.any((s) => s.hasAlert);
+    _prevMaxAlertShindo = -1;
+    _shake1Notified = false;
+    _shake2Notified = false;
+    for (final station in _stationMap.values) {
+      station.pga = 0;
+      station.pgv = 0;
+      station.intensity = -3.1;
+      station.alertIntensity = -3.1;
+      station.hasAlert = false;
+      station.lastUpdate = null;
+    }
+    _stations = _stationMap.values.toList(growable: false);
+    if (emitStations) {
+      _stationController.add(_stations);
+    }
+    if (hadActive) {
+      onShakeExpired?.call();
+    }
   }
 
   void _handleSuccess() {

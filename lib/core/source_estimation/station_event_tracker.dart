@@ -1,15 +1,19 @@
 import 'package:flutter/foundation.dart';
 
 import '../../services/sources/jp_shindo_scale.dart';
+import '../../services/sources/nied_gif_observation.dart';
 import '../../services/sources/nied_monitor.dart';
 import 'seismic_source_tracker.dart';
 import 'source_estimation_models.dart';
 import 'source_estimator.dart';
+import '../event_detection/event_detection_models.dart';
 
 class StationEventTracker {
   static final StationEventTracker instance = StationEventTracker._internal();
 
   static const String niedSourceId = 'nied';
+  static const SourceEstimateStabilityConfig niedStabilityConfig =
+      SourceEstimateStabilityConfig();
 
   StationEventTracker._internal() {
     useDefaultNiedEstimator();
@@ -27,23 +31,22 @@ class StationEventTracker {
   }
 
   void useDefaultNiedEstimator() {
-    _tracker.setEstimator(
-      niedSourceId,
-      const NiedGifHybridSourceEstimator(
-        fallback: WeightedCentroidSourceEstimator(),
-      ),
-    );
+    _tracker
+      ..setEstimator(niedSourceId, NiedDartHypSourceEstimator())
+      ..setStabilityConfig(niedSourceId, niedStabilityConfig);
   }
 
   void useDepthSearchNiedEstimator() {
-    _tracker.setEstimator(
-      niedSourceId,
-      const TriggerTimeDepthGridSearchEstimator(
-        fallback: TriggerTimeGridSearchEstimator(
-          fallback: WeightedCentroidSourceEstimator(),
+    _tracker
+      ..setEstimator(
+        niedSourceId,
+        const TriggerTimeDepthGridSearchEstimator(
+          fallback: TriggerTimeGridSearchEstimator(
+            fallback: WeightedCentroidSourceEstimator(),
+          ),
         ),
-      ),
-    );
+      )
+      ..setStabilityConfig(niedSourceId, niedStabilityConfig);
   }
 
   ValueNotifier<SeismicActiveEvent?> currentEventNotifier(String sourceId) =>
@@ -68,6 +71,7 @@ class StationEventTracker {
     required String stageName,
     required int maxShindo,
     required List<SeismicStationSample> samples,
+    String? eventId,
     Map<String, Object?> metadata = const {},
   }) {
     _tracker.ingestFrame(
@@ -76,6 +80,7 @@ class StationEventTracker {
       stageName: stageName,
       maxShindo: maxShindo,
       samples: samples,
+      eventId: eventId,
       metadata: metadata,
     );
   }
@@ -86,24 +91,44 @@ class StationEventTracker {
     required String stageName,
     required int maxShindo,
     String sourceId = niedSourceId,
+    String? eventId,
     Map<String, Object?> metadata = const {},
   }) {
     final samples = stations
         .map((station) {
+          final dataTime =
+              station.lastDataTime ?? station.lastUpdate ?? observedAt;
           return SeismicStationSample(
             descriptor: _descriptorFromNiedStation(station, sourceId: sourceId),
-            observedAt: observedAt,
+            observedAt: dataTime,
+            receivedAt: station.lastReceivedAt ?? observedAt,
             valueType: StationValueType.jmaShindo,
             value: _stationComparableValue(station),
-            observedPga: station.gifObservation?.pga,
-            observedPgv: station.gifObservation?.pgv,
-            observedPgd: station.gifObservation?.pgd,
+            observedPga: station.pgaObservation?.pga,
+            observedPgv: station.pgvObservation?.pgv,
+            observedPgd: station.pgdObservation?.pgd,
             rawLevel: station.level >= 0 ? station.level : null,
             detectLevel: station.detectLevel >= 0 ? station.detectLevel : null,
             activity: station.activity,
             ascend: station.ascend,
             isTriggered: station.isActive,
-            qualityFlags: _qualityFlagsFromNiedStation(station),
+            firstTriggerInterval: station.triggerStamp > 0
+                ? ObservationTimeInterval(
+                    start: DateTime.fromMillisecondsSinceEpoch(
+                      station.triggerStamp,
+                      isUtc: false,
+                    ),
+                    end: DateTime.fromMillisecondsSinceEpoch(
+                      station.triggerStamp,
+                      isUtc: false,
+                    ),
+                  )
+                : null,
+            qualityFlags: _qualityFlagsFromNiedStation(
+              station,
+              frameDataTime: observedAt,
+            ),
+            provenance: _provenanceFromNiedStation(station),
           );
         })
         .toList(growable: false);
@@ -114,6 +139,7 @@ class StationEventTracker {
       stageName: stageName,
       maxShindo: maxShindo,
       samples: samples,
+      eventId: eventId,
       metadata: {
         'source_family': 'nied',
         'nied_input_kind': _detectNiedInputKind(stations),
@@ -140,19 +166,25 @@ class StationEventTracker {
       sourceId: sourceId,
       network: station.network,
       coordinate: station.coordinate,
-      sensorRole: isKik
-          ? StationSensorRole.borehole
-          : StationSensorRole.surface,
+      sensorRole: StationSensorRole.surface,
       tags: {
         'prefecture': station.prefecture,
+        'scratch_station_index': '${station.id + 1}',
+        'threshold_code': '${station.thresholdCode}',
         'pixel_x': '${station.pixelX}',
         'pixel_y': '${station.pixelY}',
+        'gif_display_primary_layer': 'jma_s',
+        'physical_sensor_role': isKik ? 'kik_surface_or_borehole' : 'surface',
       },
     );
   }
 
-  Set<String> _qualityFlagsFromNiedStation(NiedStation station) {
+  Set<String> _qualityFlagsFromNiedStation(
+    NiedStation station, {
+    required DateTime frameDataTime,
+  }) {
     final flags = <String>{};
+    final stationDataTime = station.lastDataTime ?? station.lastUpdate;
     if (station.lastUpdate != null) {
       flags.add('has_station_timestamp');
     }
@@ -165,8 +197,42 @@ class StationEventTracker {
     if (station.network.toLowerCase().contains('kik')) {
       flags.add('kik');
     }
+    for (final entry in station.gifLayerQualityFlags.entries) {
+      flags.addAll(
+        entry.value.map((flag) => 'gif_layer:${entry.key.id}:$flag'),
+      );
+    }
+    if (stationDataTime != null &&
+        frameDataTime.difference(stationDataTime) >
+            const Duration(seconds: 2)) {
+      flags.add('stale_observation');
+    }
     return flags;
   }
+
+  Map<StationValueType, ObservationProvenance> _provenanceFromNiedStation(
+    NiedStation station,
+  ) {
+    return {
+      for (final observation in station.gifObservations.values)
+        _quantityForLayer(observation.layer): ObservationProvenance(
+          origin: ObservationOrigin.niedGifLayer,
+          quantity: _quantityForLayer(observation.layer),
+          layerId: observation.layer.id,
+          isIndependentPhysicalMeasurement: true,
+          qualityFlags:
+              station.gifLayerQualityFlags[observation.layer] ?? const {},
+        ),
+    };
+  }
+
+  StationValueType _quantityForLayer(NiedGifLayer layer) => switch (layer) {
+    NiedGifLayer.realtimeShindo => StationValueType.jmaShindo,
+    NiedGifLayer.peakAcceleration => StationValueType.pga,
+    NiedGifLayer.peakVelocity => StationValueType.pgv,
+    NiedGifLayer.peakDisplacement => StationValueType.pgd,
+    _ => StationValueType.custom,
+  };
 
   double? _stationComparableValue(NiedStation station) {
     final gifObservation = station.gifObservation;

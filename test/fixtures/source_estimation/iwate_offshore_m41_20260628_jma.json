@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "caseId": "20260628_iwate_offshore_m41_jma",
+  "caseType": "event",
+  "captureDirectory": "tmp/captures/20260628_iwate_offshore_m41_jma",
+  "timeZone": "Asia/Tokyo",
+  "gifNamePattern": "{stamp}.{layer}.gif",
+  "startTimeJst": "2026-06-28T14:39:07",
+  "endTimeJst": "2026-06-28T14:41:37",
+  "sensitivity": 2,
+  "truth": {
+    "originTimeJst": "2026-06-28T14:39:37",
+    "originTimeUtc8": "2026-06-28T13:39:37",
+    "latitude": 40.1,
+    "longitude": 142.4,
+    "depthKm": 40.0,
+    "magnitude": 4.1,
+    "maxJmaIntensity": 1,
+    "region": "岩手県沖",
+    "tsunamiConcern": false,
+    "source": "jma_source_and_intensity_information"
+  },
+  "referenceEstimate": {
+    "source": "EQuake final report 13",
+    "originTimeUtc8": "2026-06-28T13:39:31",
+    "originTimeJst": "2026-06-28T14:39:31",
+    "latitude": 40.14,
+    "longitude": 142.45,
+    "depthKm": 22.0,
+    "magnitude": 4.0,
+    "magnitudeStationCount": 87,
+    "observedMaxShindo": 1,
+    "observedMaxShindoValue": 1.2,
+    "estimatedMaxShindo": 2,
+    "estimatedMaxShindoRange": {
+      "lower": 1.5,
+      "upper": 2.4
+    },
+    "quality": "A",
+    "confidencePercent": 80.5,
+    "rmsSeconds": 0.87,
+    "azimuthalGapDegrees": 163.0,
+    "triggerCount": 196,
+    "phaseCounts": {
+      "P": 87,
+      "S": 83,
+      "O": 26
+    }
+  },
+  "capture": {
+    "directory": "tmp/captures/20260628_iwate_offshore_m41_jma",
+    "startTimeJst": "2026-06-28T14:39:07+09:00",
+    "endTimeJst": "2026-06-28T14:41:37+09:00",
+    "timestampCount": 151,
+    "layerCount": 2,
+    "gifCount": 302,
+    "missingGifCount": 0,
+    "decoderVersion": "nied_gif_layered_v2"
+  },
+  "eventLabels": {
+    "catalogEvent": true,
+    "catalogTruthVerified": true,
+    "observableEvent": true,
+    "detectableEvent": true,
+    "includeInDetectionMetrics": false
+  },
+  "classification": {
+    "region": "Iwate offshore",
+    "captureSource": "User-provided JMA source and intensity information, 2026-06-28 13:39:37 UTC+8; user-provided EQuake source-estimation report 13 final, 2026-06-28 13:39:31 UTC+8",
+    "truthQuality": "jma_source_and_intensity_verified_user_provided",
+    "notes": "JMA event: Iwate offshore, 40.1N 142.4E, M4.1, depth 40 km, maximum shindo 1, origin 2026-06-28 13:39:37 UTC+8. No tsunami concern. EQuake final report 13 reference: Iwate offshore, 40.14N 142.45E, M4.0, depth 22 km, quality A 80.5%, RMS 0.87 s, azimuthal gap 163 deg, 196 triggered stations (P:87 S:83 O:26), and 87 magnitude stations. EQuake values are reference-only and must not replace JMA truth. Local NIED two-layer GIF replay package is complete at tmp/captures/20260628_iwate_offshore_m41_jma with 302/302 GIFs and 0 failures. Keep outside frozen metrics until capture provenance and event-level split assignment are reviewed."
+  },
+  "splitStatus": "unassigned_reference"
+}

@@ -8,6 +8,9 @@
 // it for both the runner and the Flutter library.
 void CreateAndAttachConsole();
 
+// Requests Windows efficiency mode for this process when supported.
+void EnableProcessEfficiencyMode();
+
 // Takes a null-terminated wchar_t* encoded in UTF-16 and returns a std::string
 // encoded in UTF-8. Returns an empty std::string on failure.
 std::string Utf8FromUtf16(const wchar_t* utf16_string);

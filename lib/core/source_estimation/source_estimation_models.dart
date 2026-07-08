@@ -1,10 +1,62 @@
 import 'package:latlong2/latlong.dart';
 
+import '../event_detection/event_detection_models.dart';
+import 'station_observation_history.dart';
+
 enum StationValueType { jmaShindo, mmi, pga, pgv, pgd, custom }
 
 enum StationSensorRole { unspecified, surface, borehole, offshore, mobile }
 
 enum StationLifecycleState { idle, rising, triggered, strong, ended }
+
+enum ObservationOrigin {
+  niedGifLayer,
+  officialWaveform,
+  stationFeed,
+  derived,
+  unknown,
+}
+
+class ObservationProvenance {
+  const ObservationProvenance({
+    required this.origin,
+    required this.quantity,
+    this.layerId,
+    this.isIndependentPhysicalMeasurement = false,
+    this.qualityFlags = const {},
+  });
+
+  final ObservationOrigin origin;
+  final StationValueType quantity;
+  final String? layerId;
+  final bool isIndependentPhysicalMeasurement;
+  final Set<String> qualityFlags;
+
+  bool get mayBeUsedAsIndependentEvidence =>
+      isIndependentPhysicalMeasurement &&
+      origin != ObservationOrigin.derived &&
+      !qualityFlags.contains('derived_from_shindo');
+}
+
+class SensorSelection {
+  const SensorSelection({
+    this.allowedRoles = const {
+      StationSensorRole.surface,
+      StationSensorRole.borehole,
+      StationSensorRole.offshore,
+      StationSensorRole.mobile,
+      StationSensorRole.unspecified,
+    },
+  });
+
+  const SensorSelection.surfaceOnly()
+    : allowedRoles = const {StationSensorRole.surface};
+
+  final Set<StationSensorRole> allowedRoles;
+
+  bool accepts(SeismicStationDescriptor descriptor) =>
+      allowedRoles.contains(descriptor.sensorRole);
+}
 
 class SeismicStationDescriptor {
   final String stationId;
@@ -31,6 +83,7 @@ class SeismicStationDescriptor {
 class SeismicStationSample {
   final SeismicStationDescriptor descriptor;
   final DateTime observedAt;
+  final DateTime? receivedAt;
   final StationValueType valueType;
   final double? value;
   final double? observedPga;
@@ -41,11 +94,15 @@ class SeismicStationSample {
   final double activity;
   final int ascend;
   final bool isTriggered;
+  final ObservationTimeInterval? firstRiseInterval;
+  final ObservationTimeInterval? firstTriggerInterval;
   final Set<String> qualityFlags;
+  final Map<StationValueType, ObservationProvenance> provenance;
 
   const SeismicStationSample({
     required this.descriptor,
     required this.observedAt,
+    this.receivedAt,
     required this.valueType,
     this.value,
     this.observedPga,
@@ -56,15 +113,18 @@ class SeismicStationSample {
     this.activity = 0,
     this.ascend = 0,
     this.isTriggered = false,
+    this.firstRiseInterval,
+    this.firstTriggerInterval,
     this.qualityFlags = const {},
+    this.provenance = const {},
   });
 }
 
 class SeismicStationEventRecord {
   final SeismicStationDescriptor descriptor;
   DateTime firstObservedAt;
-  DateTime? firstRiseAt;
-  DateTime? firstTriggerAt;
+  ObservationTimeInterval? firstRiseInterval;
+  ObservationTimeInterval? firstTriggerInterval;
   DateTime? peakAt;
   DateTime? lastObservedAt;
   DateTime? endAt;
@@ -80,12 +140,16 @@ class SeismicStationEventRecord {
   int sampleCount;
   StationLifecycleState state;
   final Set<String> qualityFlags;
+  final StationObservationHistory observationHistory;
+  final Map<StationValueType, ObservationProvenance> provenance;
 
   SeismicStationEventRecord({
     required this.descriptor,
     required this.firstObservedAt,
-    this.firstRiseAt,
-    this.firstTriggerAt,
+    DateTime? firstRiseAt,
+    DateTime? firstTriggerAt,
+    ObservationTimeInterval? firstRiseInterval,
+    ObservationTimeInterval? firstTriggerInterval,
     this.peakAt,
     this.lastObservedAt,
     this.endAt,
@@ -101,19 +165,32 @@ class SeismicStationEventRecord {
     this.sampleCount = 0,
     this.state = StationLifecycleState.idle,
     Set<String>? qualityFlags,
-  }) : qualityFlags = qualityFlags ?? <String>{};
+    StationObservationHistory? observationHistory,
+    Map<StationValueType, ObservationProvenance>? provenance,
+  }) : firstRiseInterval = firstRiseInterval ?? _pointInterval(firstRiseAt),
+       firstTriggerInterval =
+           firstTriggerInterval ?? _pointInterval(firstTriggerAt),
+       qualityFlags = qualityFlags ?? <String>{},
+       observationHistory = observationHistory ?? StationObservationHistory(),
+       provenance = provenance ?? <StationValueType, ObservationProvenance>{};
 
-  bool get hasTriggered => firstTriggerAt != null;
+  DateTime? get firstRiseAt => firstRiseInterval?.end;
+  DateTime? get firstTriggerAt => firstTriggerInterval?.end;
+  bool get hasTriggered => firstTriggerInterval != null;
   bool get isActiveLike =>
       state == StationLifecycleState.rising ||
       state == StationLifecycleState.triggered ||
       state == StationLifecycleState.strong;
 }
 
+ObservationTimeInterval? _pointInterval(DateTime? value) =>
+    value == null ? null : ObservationTimeInterval(start: value, end: value);
+
 class SourceEstimate {
   final double latitude;
   final double longitude;
   final double? depthKm;
+  final double? magnitude;
   final DateTime? originTime;
   final double confidence;
   final String method;
@@ -124,6 +201,7 @@ class SourceEstimate {
     required this.latitude,
     required this.longitude,
     this.depthKm,
+    this.magnitude,
     this.originTime,
     required this.confidence,
     required this.method,
@@ -140,6 +218,7 @@ class SourceEstimationRequest {
   final int maxShindo;
   final List<SeismicStationEventRecord> stations;
   final Map<String, Object?> metadata;
+  final SensorSelection sensorSelection;
 
   const SourceEstimationRequest({
     required this.sourceId,
@@ -149,6 +228,7 @@ class SourceEstimationRequest {
     required this.maxShindo,
     required this.stations,
     this.metadata = const {},
+    this.sensorSelection = const SensorSelection(),
   });
 }
 

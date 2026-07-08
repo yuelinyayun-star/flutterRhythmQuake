@@ -1,0 +1,163 @@
+{
+  "schemaVersion": "hinet_truth_quality_review_decisions_v1",
+  "policy": "Hi-net user-provided or automatic hypocenter labels are preliminary reference metadata. A case can clear Hi-net truth-quality review only after this file records an explicit accepted decision with reviewer evidence. Pending decisions must not clear blockers or create split recommendations.",
+  "cases": [
+    {
+      "caseId": "20260620_iwate_offshore_m34_ref",
+      "decisionStatus": "pending_manual_review",
+      "acceptedForConstrainedReferenceSplit": false,
+      "reviewedAtUtc": null,
+      "reviewer": null,
+      "evidence": [],
+      "blockingEvidence": [
+        {
+          "type": "capture_repair_attempt",
+          "checkedAtUtc": "2026-06-25T18:10:00Z",
+          "url": "https://smi.lmoniexp.bosai.go.jp/data/map_img/RealTimeImg/jma_b/20260620/20260620212727.jma_b.gif",
+          "result": "http_404_not_found",
+          "affectedFile": "20260620212727.jma_b.gif"
+        }
+      ],
+      "requiredActions": [
+        "verify_hinet_preliminary_or_revised_source",
+        "resolve_capture_manifest_failure_before_split"
+      ],
+      "notes": "Capture manifest still has a failed GIF, and a repair attempt for 20260620212727.jma_b.gif returned HTTP 404. This case cannot be accepted even if the preliminary source is later approved unless the missing GIF is repaired from another source or the case is explicitly excluded from constrained split use."
+    },
+    {
+      "caseId": "20260621_fukushima_offshore_m32_eq6",
+      "decisionStatus": "accepted_constrained_reference",
+      "acceptedForConstrainedReferenceSplit": true,
+      "reviewedAtUtc": "2026-06-29T13:20:00Z",
+      "reviewer": "codex_user_authenticated_review",
+      "evidence": [
+        "Authenticated JMA unified arrival-time row origin 2026-06-21T23:41:11.87 JST falls within the target query window 2026-06-21T23:36:12..2026-06-21T23:46:12 JST.",
+        "Authenticated row location 37.624333N, 142.278167E is near the target reference location 37.616N, 142.279E.",
+        "Authenticated row reports M3.2 and depth 32.88 km; preliminary fixture recorded M3.2 and depth 29.8 km. Authenticated region is SE OFF MIYAGI PREF."
+      ],
+      "requiredActions": [
+        "resolve_catalog_truth_verified_flag_mismatch",
+        "verify_hinet_user_provided_source_quality"
+      ],
+      "notes": "Accepted as constrained reference evidence only. Magnitude matches the preliminary fixture; depth differs slightly. The authenticated region (SE OFF MIYAGI PREF) refines the preliminary Fukushima-offshore label. This decision does not promote final catalog truth, split assignment, metric eligibility, or production behavior.",
+      "decisionImport": {
+        "source": "source_hinet_reviewer_decision_import",
+        "evidenceType": "authenticated_hinet_export_row",
+        "splitAssignmentAllowed": false,
+        "metricPromotionAllowed": false
+      }
+    },
+    {
+      "caseId": "20260622_iwate_east_offshore_m30_hinet",
+      "decisionStatus": "accepted_constrained_reference",
+      "acceptedForConstrainedReferenceSplit": true,
+      "reviewedAtUtc": "2026-06-27T05:53:20.8714211Z",
+      "reviewer": "codex_user_authenticated_review",
+      "evidence": [
+        "Authenticated JMA unified arrival-time row origin 2026-06-22T11:26:50.10 JST matches the target event time.",
+        "Authenticated row location 39.914N, 142.394833E is near the Iwate east offshore reference location.",
+        "Authenticated row reports M2.8 and depth 37.78 km; preliminary text was M3.0 and 42.4 km."
+      ],
+      "requiredActions": [
+        "verify_hinet_preliminary_or_revised_source"
+      ],
+      "notes": "Accepted as constrained reference evidence only. Magnitude and depth differ slightly from the preliminary text; this decision does not promote final catalog truth, split assignment, metric eligibility, or production behavior.",
+      "decisionImport": {
+        "source": "source_hinet_reviewer_decision_import",
+        "evidenceType": "authenticated_hinet_export_row",
+        "splitAssignmentAllowed": false,
+        "metricPromotionAllowed": false
+      }
+    },
+    {
+      "caseId": "20260622_iwate_offshore_m30_eq10",
+      "decisionStatus": "accepted_constrained_reference",
+      "acceptedForConstrainedReferenceSplit": true,
+      "reviewedAtUtc": "2026-06-29T13:20:00Z",
+      "reviewer": "codex_user_authenticated_review",
+      "evidence": [
+        "Authenticated JMA unified arrival-time row origin 2026-06-22T09:28:23.11 JST falls within the target query window 2026-06-22T09:23:23..2026-06-22T09:33:23 JST.",
+        "Authenticated row location 40.393167N, 142.385333E is near the target reference location 40.392N, 142.341E.",
+        "Authenticated row reports M3.2 and depth 42.69 km; preliminary fixture recorded M3.4 and depth 50.2 km. Authenticated region is NE OFF IWATE PREF."
+      ],
+      "requiredActions": [
+        "resolve_catalog_truth_verified_flag_mismatch",
+        "verify_hinet_user_provided_source_quality"
+      ],
+      "notes": "Accepted as constrained reference evidence only. Magnitude and depth differ from the preliminary fixture; this decision does not promote final catalog truth, split assignment, metric eligibility, or production behavior.",
+      "decisionImport": {
+        "source": "source_hinet_reviewer_decision_import",
+        "evidenceType": "authenticated_hinet_export_row",
+        "splitAssignmentAllowed": false,
+        "metricPromotionAllowed": false
+      }
+    },
+    {
+      "caseId": "20260622_tomakomai_south_offshore_m35_hinet",
+      "decisionStatus": "accepted_constrained_reference",
+      "acceptedForConstrainedReferenceSplit": true,
+      "reviewedAtUtc": "2026-06-27T05:53:20.8714211Z",
+      "reviewer": "codex_user_authenticated_review",
+      "evidence": [
+        "Authenticated JMA unified arrival-time row origin 2026-06-22T20:37:46.97 JST matches the target event time.",
+        "Authenticated row location 42.069333N, 141.383333E is in the south-off-Tomakomai target region.",
+        "Authenticated row reports M2.8 and depth 99.21 km; preliminary text was M3.5 and 112.7 km."
+      ],
+      "requiredActions": [
+        "verify_hinet_preliminary_or_revised_source"
+      ],
+      "notes": "Accepted as constrained reference evidence only. Magnitude and depth differ from the preliminary reference, so this is not treated as final magnitude/depth truth and does not promote split assignment, metric eligibility, or production behavior.",
+      "decisionImport": {
+        "source": "source_hinet_reviewer_decision_import",
+        "evidenceType": "authenticated_hinet_export_row",
+        "splitAssignmentAllowed": false,
+        "metricPromotionAllowed": false
+      }
+    },
+    {
+      "caseId": "20260622_wakayama_south_m25_hinet",
+      "decisionStatus": "accepted_constrained_reference",
+      "acceptedForConstrainedReferenceSplit": true,
+      "reviewedAtUtc": "2026-06-29T13:20:00Z",
+      "reviewer": "codex_user_authenticated_review",
+      "evidence": [
+        "Authenticated JMA unified arrival-time row origin 2026-06-22T09:51:16.91 JST falls within the target query window 2026-06-22T09:46:17..2026-06-22T09:56:17 JST.",
+        "Authenticated row location 33.5615N, 135.7995E is near the target reference location 33.58N, 135.791E.",
+        "Authenticated row reports M2.5 and depth 31.22 km; preliminary fixture recorded M2.5 and depth 28.1 km. Authenticated region is SOUTHERN WAKAYAMA PREF."
+      ],
+      "requiredActions": [
+        "resolve_catalog_truth_verified_flag_mismatch",
+        "verify_hinet_user_provided_source_quality"
+      ],
+      "notes": "Accepted as constrained reference evidence only. Magnitude matches the preliminary fixture; depth differs slightly. This decision does not promote final catalog truth, split assignment, metric eligibility, or production behavior.",
+      "decisionImport": {
+        "source": "source_hinet_reviewer_decision_import",
+        "evidenceType": "authenticated_hinet_export_row",
+        "splitAssignmentAllowed": false,
+        "metricPromotionAllowed": false
+      }
+    },
+    {
+      "caseId": "20260623_tokachi_southeast_offshore_m34_hinet",
+      "decisionStatus": "accepted_constrained_reference",
+      "acceptedForConstrainedReferenceSplit": true,
+      "reviewedAtUtc": "2026-06-27T05:53:20.8714211Z",
+      "reviewer": "codex_user_authenticated_review",
+      "evidence": [
+        "Authenticated JMA unified arrival-time row origin 2026-06-23T23:13:05.79 JST matches the target event time.",
+        "Authenticated row location 42.499333N, 143.681667E and depth 55.92 km closely match the southeast Tokachi offshore reference.",
+        "Authenticated row reports M3.0; preliminary text was M3.4."
+      ],
+      "requiredActions": [
+        "verify_hinet_preliminary_or_revised_source"
+      ],
+      "notes": "Accepted as constrained reference evidence only. Magnitude differs from the preliminary M3.4 text; this decision does not promote final catalog truth, split assignment, metric eligibility, or production behavior.",
+      "decisionImport": {
+        "source": "source_hinet_reviewer_decision_import",
+        "evidenceType": "authenticated_hinet_export_row",
+        "splitAssignmentAllowed": false,
+        "metricPromotionAllowed": false
+      }
+    }
+  ]
+}

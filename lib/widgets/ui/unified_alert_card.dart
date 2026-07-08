@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:ui';
 import '../../models/unified_quake_data.dart';
 
-class UnifiedAlertCard extends StatefulWidget {
+class UnifiedAlertCard extends StatelessWidget {
   final UnifiedQuakeData event;
   final int eventCount;
   final int currentIndex;
@@ -18,15 +18,6 @@ class UnifiedAlertCard extends StatefulWidget {
     this.onNext,
   });
 
-  @override
-  State<UnifiedAlertCard> createState() => _UnifiedAlertCardState();
-}
-
-class _UnifiedAlertCardState extends State<UnifiedAlertCard>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _flashController;
-  late Animation<double> _flashAnimation;
-
   static const double _refWidth = 1700.0;
 
   double _scale(BuildContext c) {
@@ -35,42 +26,6 @@ class _UnifiedAlertCardState extends State<UnifiedAlertCard>
   }
 
   double _s(double v, BuildContext c) => v * _scale(c);
-
-  @override
-  void initState() {
-    super.initState();
-    _flashController = AnimationController(
-      duration: const Duration(milliseconds: 500),
-      vsync: this,
-    );
-    _flashAnimation = Tween(begin: 0.3, end: 0.9).animate(
-      CurvedAnimation(parent: _flashController, curve: Curves.easeInOut),
-    );
-  }
-
-  @override
-  void didUpdateWidget(covariant UnifiedAlertCard oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    _updateFlash();
-  }
-
-  void _updateFlash() {
-    if (widget.event.isRed) {
-      if (!_flashController.isAnimating) {
-        _flashController.repeat(reverse: true);
-      }
-    } else {
-      if (_flashController.isAnimating) {
-        _flashController.stop();
-      }
-    }
-  }
-
-  @override
-  void dispose() {
-    _flashController.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -93,27 +48,20 @@ class _UnifiedAlertCardState extends State<UnifiedAlertCard>
   }
 
   Border _buildBorder(BuildContext context) {
-    if (widget.event.isRed) {
-      return Border.all(
-        color: Colors.red.withAlpha(
-          (_flashAnimation.value * 255).round(),
-        ),
-        width: _s(1.2, context),
-      );
+    if (event.isRed) {
+      return Border.all(color: Colors.red, width: _s(1.2, context));
     }
     return Border.all(
-      color: _colorFromClass(widget.event.className).withAlpha(80),
+      color: _colorFromClass(event.className).withAlpha(80),
       width: _s(1.0, context),
     );
   }
 
   List<BoxShadow> _buildShadow(BuildContext context) {
-    if (widget.event.isRed) {
+    if (event.isRed) {
       return [
         BoxShadow(
-          color: Colors.red.withAlpha(
-            (40 * _flashAnimation.value).round(),
-          ),
+          color: Colors.red.withAlpha(40),
           blurRadius: _s(20, context),
           spreadRadius: _s(1, context),
         ),
@@ -125,22 +73,17 @@ class _UnifiedAlertCardState extends State<UnifiedAlertCard>
   Widget _buildContent(BuildContext context) {
     return Column(
       mainAxisSize: MainAxisSize.min,
-      children: [
-        _buildTopBar(context),
-        _buildBottomSection(context),
-      ],
+      children: [_buildTopBar(context), _buildBottomSection(context)],
     );
   }
 
   Widget _buildTopBar(BuildContext context) {
-    final headerColor = _colorFromClass(widget.event.className);
-    final showCarousel = widget.eventCount > 1 && !widget.event.isEmpty;
+    final headerColor = _colorFromClass(event.className);
+    final showCarousel = eventCount > 1 && !event.isEmpty;
 
     return Container(
       height: _s(28, context),
-      decoration: BoxDecoration(
-        color: headerColor.withAlpha(200),
-      ),
+      decoration: BoxDecoration(color: headerColor.withAlpha(200)),
       child: Row(
         children: [
           SizedBox(width: _s(10, context)),
@@ -155,7 +98,7 @@ class _UnifiedAlertCardState extends State<UnifiedAlertCard>
           SizedBox(width: _s(8, context)),
           Expanded(
             child: Text(
-              widget.event.titleText,
+              event.titleText,
               style: TextStyle(
                 color: Colors.white,
                 fontSize: _s(11, context),
@@ -175,24 +118,29 @@ class _UnifiedAlertCardState extends State<UnifiedAlertCard>
       mainAxisSize: MainAxisSize.min,
       children: [
         GestureDetector(
-          onTap: widget.onPrev,
+          onTap: onPrev,
           child: Padding(
             padding: EdgeInsets.all(_s(4, context)),
-            child: Icon(Icons.chevron_left, size: _s(14, context), color: Colors.white70),
+            child: Icon(
+              Icons.chevron_left,
+              size: _s(14, context),
+              color: Colors.white70,
+            ),
           ),
         ),
         Text(
-          '${widget.currentIndex + 1}/${widget.eventCount}',
-          style: TextStyle(
-            color: Colors.white70,
-            fontSize: _s(10, context),
-          ),
+          '${currentIndex + 1}/$eventCount',
+          style: TextStyle(color: Colors.white70, fontSize: _s(10, context)),
         ),
         GestureDetector(
-          onTap: widget.onNext,
+          onTap: onNext,
           child: Padding(
             padding: EdgeInsets.all(_s(4, context)),
-            child: Icon(Icons.chevron_right, size: _s(14, context), color: Colors.white70),
+            child: Icon(
+              Icons.chevron_right,
+              size: _s(14, context),
+              color: Colors.white70,
+            ),
           ),
         ),
         SizedBox(width: _s(6, context)),
@@ -215,16 +163,18 @@ class _UnifiedAlertCardState extends State<UnifiedAlertCard>
   }
 
   Widget _buildBadge(BuildContext context) {
-    if (widget.event.useShindo) {
+    if (event.useShindo) {
       return _buildShindoBadge(context);
     }
     return _buildIntensityBadge(context);
   }
 
   Widget _buildIntensityBadge(BuildContext context) {
-    final color = _colorFromClass(widget.event.className);
-    final value = double.tryParse(widget.event.maxIntensity);
-    final display = value != null ? value.toInt().toString() : widget.event.maxIntensity;
+    final color = _colorFromClass(event.className);
+    final value = double.tryParse(event.maxIntensity);
+    final display = value != null
+        ? value.toInt().toString()
+        : event.maxIntensity;
     final isNumeric = value != null;
     return Container(
       width: _s(48, context),
@@ -269,9 +219,10 @@ class _UnifiedAlertCardState extends State<UnifiedAlertCard>
   }
 
   Widget _buildShindoBadge(BuildContext context) {
-    final color = _colorFromClass(widget.event.className);
-    final text = widget.event.maxIntensity;
-    final hasSubscript = text.length > 1 && (text.contains('弱') || text.contains('強'));
+    final color = _colorFromClass(event.className);
+    final text = event.maxIntensity;
+    final hasSubscript =
+        text.length > 1 && (text.contains('-') || text.contains('+'));
     final mainChar = hasSubscript ? text.substring(0, 1) : text;
     final subChar = hasSubscript ? text.substring(1) : '';
 
@@ -281,7 +232,10 @@ class _UnifiedAlertCardState extends State<UnifiedAlertCard>
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(_s(8, context)),
-        border: Border.all(color: color.withValues(alpha: 0.4), width: _s(1.2, context)),
+        border: Border.all(
+          color: color.withValues(alpha: 0.4),
+          width: _s(1.2, context),
+        ),
       ),
       alignment: Alignment.center,
       child: Column(
@@ -302,13 +256,13 @@ class _UnifiedAlertCardState extends State<UnifiedAlertCard>
               ),
               if (subChar.isNotEmpty)
                 Padding(
-                  padding: EdgeInsets.only(top: _s(1, context)),
+                  padding: EdgeInsets.only(top: _s(0.5, context)),
                   child: Text(
                     subChar,
                     style: TextStyle(
                       color: color,
-                      fontSize: _s(13, context),
-                      fontWeight: FontWeight.w700,
+                      fontSize: _s(16, context),
+                      fontWeight: FontWeight.w900,
                       height: 1.0,
                     ),
                   ),
@@ -331,15 +285,16 @@ class _UnifiedAlertCardState extends State<UnifiedAlertCard>
   }
 
   Widget _buildInfoColumn(BuildContext context) {
-    final event = widget.event;
-    final isScalePrompt = event.magnitude < 0 && event.hypocenter.isEmpty;
+    final currentEvent = event;
+    final isScalePrompt =
+        currentEvent.magnitude < 0 && currentEvent.hypocenter.isEmpty;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          isScalePrompt ? '震源 調査中' : event.hypocenter,
+          isScalePrompt ? '震源 調査中' : currentEvent.hypocenter,
           style: TextStyle(
             color: Colors.white,
             fontSize: _s(13, context),
@@ -349,24 +304,18 @@ class _UnifiedAlertCardState extends State<UnifiedAlertCard>
         ),
         SizedBox(height: _s(3, context)),
         Text(
-          _formatMagDepth(event, context),
-          style: TextStyle(
-            color: Colors.white70,
-            fontSize: _s(11, context),
-          ),
+          _formatMagDepth(currentEvent, context),
+          style: TextStyle(color: Colors.white70, fontSize: _s(11, context)),
         ),
         SizedBox(height: _s(3, context)),
         Text(
-          _formatTime(event, context),
-          style: TextStyle(
-            color: Colors.white54,
-            fontSize: _s(10, context),
-          ),
+          _formatTime(currentEvent, context),
+          style: TextStyle(color: Colors.white54, fontSize: _s(10, context)),
         ),
-        if (event.apiTypeLabel.isNotEmpty) ...[
+        if (currentEvent.apiTypeLabel.isNotEmpty) ...[
           SizedBox(height: _s(2, context)),
           Text(
-            event.apiTypeLabel,
+            currentEvent.apiTypeLabel,
             style: TextStyle(
               color: Colors.white38,
               fontSize: _s(8, context),

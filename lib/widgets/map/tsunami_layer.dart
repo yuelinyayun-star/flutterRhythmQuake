@@ -1,7 +1,7 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import '../../core/utils/topojson_loader.dart';
+import '../../core/event_animation_clock.dart';
 import '../../models/tsunami_message.dart';
 
 class TsunamiLayer extends StatefulWidget {
@@ -18,8 +18,7 @@ class _TsunamiLayerState extends State<TsunamiLayer> {
   TopoJsonData? _topoData;
   bool _loading = false;
   String _lastSource = '';
-  int _flickerCounter = 0;
-  Timer? _flickerTimer;
+  EventAnimationLease? _clockLease;
 
   static const Map<String, int> _tsunamiColors = {
     'blue': 0xFF3399FF,
@@ -33,13 +32,7 @@ class _TsunamiLayerState extends State<TsunamiLayer> {
   void initState() {
     super.initState();
     _loadData();
-    _flickerTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
-      if (mounted) {
-        setState(() {
-          _flickerCounter = (_flickerCounter + 1) % 6;
-        });
-      }
-    });
+    _syncClock();
   }
 
   @override
@@ -48,12 +41,24 @@ class _TsunamiLayerState extends State<TsunamiLayer> {
     if (oldWidget.source != widget.source) {
       _loadData();
     }
+    if (oldWidget.tsunami?.isActive != widget.tsunami?.isActive) {
+      _syncClock();
+    }
   }
 
   @override
   void dispose() {
-    _flickerTimer?.cancel();
+    _clockLease?.dispose();
     super.dispose();
+  }
+
+  void _syncClock() {
+    if (widget.tsunami?.isActive == true) {
+      _clockLease ??= EventAnimationClock.instance.acquire();
+    } else {
+      _clockLease?.dispose();
+      _clockLease = null;
+    }
   }
 
   Future<void> _loadData() async {
@@ -88,8 +93,6 @@ class _TsunamiLayerState extends State<TsunamiLayer> {
     }
 
     // 6帧闪烁：5帧显示，1帧隐藏
-    final showFlicker = _flickerCounter != 0;
-
     double zoom = 4.0;
     try {
       final camera = MapCamera.maybeOf(context);
@@ -132,10 +135,13 @@ class _TsunamiLayerState extends State<TsunamiLayer> {
 
     if (polylines.isEmpty) return const SizedBox.shrink();
 
-    return AnimatedOpacity(
-      opacity: showFlicker ? 1.0 : 0.0,
-      duration: const Duration(milliseconds: 200),
+    return ValueListenableBuilder<int>(
+      valueListenable: EventAnimationClock.instance.blink2Fps,
       child: PolylineLayer(polylines: polylines),
+      builder: (context, tick, child) => Opacity(
+        opacity: tick % 6 != 0 ? 1.0 : 0.0,
+        child: child,
+      ),
     );
   }
 }

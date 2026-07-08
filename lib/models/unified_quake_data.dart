@@ -36,6 +36,8 @@ class UnifiedQuakeData {
   final bool isAssumption;
   final String warnArea;
   final String apiTypeLabel;
+  final String? nodalPlane1;
+  final String? nodalPlane2;
   final QuakeMessage? rawEvent;
   final DateTime? arrivedAt;
 
@@ -64,6 +66,8 @@ class UnifiedQuakeData {
     this.isAssumption = false,
     this.warnArea = '',
     this.apiTypeLabel = '',
+    this.nodalPlane1,
+    this.nodalPlane2,
     this.rawEvent,
     this.arrivedAt,
   });
@@ -84,7 +88,8 @@ class UnifiedQuakeData {
 
   bool get isEmpty => origin == -1;
 
-  bool get isRed => className == 'red' || className == 'dark-red' || className == 'purple';
+  bool get isRed =>
+      className == 'red' || className == 'dark-red' || className == 'purple';
   bool get isOrange => className == 'orange' || className == 'dark-orange';
   bool get isDarkGray => className == 'dark-gray';
 
@@ -113,6 +118,8 @@ class UnifiedQuakeData {
     bool? isAssumption,
     String? warnArea,
     String? apiTypeLabel,
+    String? nodalPlane1,
+    String? nodalPlane2,
     QuakeMessage? rawEvent,
     DateTime? arrivedAt,
   }) {
@@ -141,6 +148,8 @@ class UnifiedQuakeData {
       isAssumption: isAssumption ?? this.isAssumption,
       warnArea: warnArea ?? this.warnArea,
       apiTypeLabel: apiTypeLabel ?? this.apiTypeLabel,
+      nodalPlane1: nodalPlane1 ?? this.nodalPlane1,
+      nodalPlane2: nodalPlane2 ?? this.nodalPlane2,
       rawEvent: rawEvent ?? this.rawEvent,
       arrivedAt: arrivedAt ?? this.arrivedAt,
     );

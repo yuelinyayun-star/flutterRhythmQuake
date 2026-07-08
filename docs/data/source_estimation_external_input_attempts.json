@@ -1,0 +1,272 @@
+{
+  "schemaVersion": "source_estimation_external_input_attempts_v1",
+  "policy": "Attempts are operational notes only. A failed local or remote search never clears an external input, never edits split manifests, never edits review ledgers and never changes production source-estimation behavior.",
+  "attempts": [
+    {
+      "attemptId": "20260626_iwate_m34_missing_jma_b_workspace_downloads_pictures_scan",
+      "inputType": "missing_gif_archive_copy",
+      "caseId": "20260620_iwate_offshore_m34_ref",
+      "attemptedAtUtc": "2026-06-26T09:35:00Z",
+      "method": "local_exact_filename_scan",
+      "target": "20260620212727.jma_b.gif",
+      "scannedRoots": [
+        "tmp/captures",
+        "tmp/quarantine",
+        "test/fixtures/source_estimation",
+        "C:/Users/Rhythm/Downloads",
+        "C:/Users/Rhythm/Pictures"
+      ],
+      "result": "not_found",
+      "evidenceStrength": "negative_attempt_only",
+      "automaticClearance": false,
+      "notes": "Exact filename scan found the same timestamp jma_s GIF in the affected capture directory, but no matching jma_b GIF under the configured repair scan roots or common local user directories."
+    },
+    {
+      "attemptId": "20260626_iwate_m34_missing_jma_b_kmoni_remote_recheck",
+      "inputType": "missing_gif_archive_copy",
+      "caseId": "20260620_iwate_offshore_m34_ref",
+      "attemptedAtUtc": "2026-06-26T09:37:00Z",
+      "method": "remote_hint_recheck",
+      "target": "https://www.kmoni.bosai.go.jp/data/map_img/RealTimeImg/jma_b/2026/06/20/20260620212727.jma_b.gif",
+      "result": "connection_failed_or_timed_out",
+      "evidenceStrength": "negative_attempt_only",
+      "automaticClearance": false,
+      "notes": "HEAD timed out and GET could not connect from the current environment. This is weaker than a 404 and must not be treated as proof that the frame is permanently unavailable."
+    },
+    {
+      "attemptId": "20260626_iwate_m34_missing_jma_b_repeat_local_scan",
+      "inputType": "missing_gif_archive_copy",
+      "caseId": "20260620_iwate_offshore_m34_ref",
+      "attemptedAtUtc": "2026-06-26T09:44:39Z",
+      "method": "local_exact_filename_rescan",
+      "target": "20260620212727.jma_b.gif",
+      "scannedRoots": [
+        "tmp/captures",
+        "tmp/quarantine",
+        "test/fixtures/source_estimation",
+        "C:/Users/Rhythm/Downloads",
+        "C:/Users/Rhythm/Pictures"
+      ],
+      "result": "not_found",
+      "evidenceStrength": "negative_attempt_only",
+      "automaticClearance": false,
+      "notes": "Repeated exact filename scan after the worklist was added found no valid local jma_b copy under the configured repair scan roots or common user directories."
+    },
+    {
+      "attemptId": "20260626_iwate_m34_missing_jma_b_extended_user_roots_scan",
+      "inputType": "missing_gif_archive_copy",
+      "caseId": "20260620_iwate_offshore_m34_ref",
+      "attemptedAtUtc": "2026-06-26T15:24:54Z",
+      "method": "local_exact_filename_extended_scan",
+      "target": "20260620212727.jma_b.gif",
+      "scannedRoots": [
+        "D:/flutterApp/flutterrhythmquake",
+        "D:/Users/Rhythm/Downloads",
+        "C:/Users/Rhythm/Downloads",
+        "C:/Users/Rhythm/Documents",
+        "C:/Users/Rhythm/Desktop",
+        "C:/Users/Rhythm/AppData/Local/Temp"
+      ],
+      "result": "not_found",
+      "evidenceStrength": "negative_attempt_only",
+      "automaticClearance": false,
+      "notes": "Extended exact filename scan found no matching jma_b GIF in the workspace, alternate D:/Users download root, user Downloads, Documents, Desktop or AppData Local Temp. This does not prove the frame is impossible to obtain and must not clear the repair blocker."
+    },
+    {
+      "attemptId": "20260626_iwate_m46_reference_capture_local_scan",
+      "inputType": "local_jma_reference_capture_package",
+      "caseId": "20260625_iwate_offshore_m46_jma_eqsc9",
+      "attemptedAtUtc": "2026-06-26T09:44:39Z",
+      "method": "local_timestamp_keyword_capture_scan",
+      "target": "202606260110*, 202606260111*, 202606260112*, iwate, 岩手",
+      "scannedRoots": [
+        "tmp/captures",
+        "tmp/quarantine",
+        "test/fixtures/source_estimation",
+        "C:/Users/Rhythm/Downloads",
+        "C:/Users/Rhythm/Pictures"
+      ],
+      "result": "not_found",
+      "evidenceStrength": "negative_attempt_only",
+      "automaticClearance": false,
+      "notes": "Local scan found no replay or capture package for the 2026-06-26 01:11 JST Iwate offshore M4.6 reference event. This does not prove the package is impossible to obtain and must not associate the reference event automatically."
+    },
+    {
+      "attemptId": "20260626_yamanashi_m26_reference_capture_local_scan",
+      "inputType": "local_jma_reference_capture_package",
+      "caseId": "20260626_yamanashi_central_west_m26_jma_equake5",
+      "attemptedAtUtc": "2026-06-26T09:44:39Z",
+      "method": "local_timestamp_keyword_capture_scan",
+      "target": "202606261540*, 202606261541*, 202606261542*, yamanashi, 山梨",
+      "scannedRoots": [
+        "tmp/captures",
+        "tmp/quarantine",
+        "test/fixtures/source_estimation",
+        "C:/Users/Rhythm/Downloads",
+        "C:/Users/Rhythm/Pictures"
+      ],
+      "result": "not_found",
+      "evidenceStrength": "negative_attempt_only",
+      "automaticClearance": false,
+      "notes": "Local scan found no replay or capture package for the 2026-06-26 15:41 JST Yamanashi central-west M2.6 reference event. This does not prove the package is impossible to obtain and must not associate the reference event automatically."
+    },
+    {
+      "attemptId": "20260626_yamanashi_fuji_lakes_m56_reference_capture_local_scan",
+      "inputType": "local_jma_reference_capture_package",
+      "caseId": "20260626_yamanashi_east_fuji_five_lakes_m56_jma_equake21",
+      "attemptedAtUtc": "2026-06-26T14:20:00Z",
+      "method": "local_timestamp_keyword_capture_scan",
+      "target": "202606262228*, 202606262229*, 202606262230*, yamanashi, fuji, \u5c71\u68a8, \u5bcc\u58eb",
+      "scannedRoots": [
+        "tmp/captures",
+        "tmp/quarantine",
+        "test/fixtures/source_estimation",
+        "C:/Users/Rhythm/Downloads",
+        "C:/Users/Rhythm/Pictures"
+      ],
+      "result": "not_found",
+      "evidenceStrength": "negative_attempt_only",
+      "automaticClearance": false,
+      "notes": "Local scan found no replay or capture package for the 2026-06-26 22:29 JST Yamanashi east / Fuji Five Lakes M5.6 reference event. The user-provided EQuake screenshot is not a replay package and must not associate the reference event automatically."
+    },
+    {
+      "attemptId": "20260626_yamanashi_fuji_lakes_m33_reference_capture_local_scan",
+      "inputType": "local_jma_reference_capture_package",
+      "caseId": "20260626_yamanashi_east_fuji_five_lakes_m33_jma_equake8",
+      "attemptedAtUtc": "2026-06-26T14:24:00Z",
+      "method": "local_timestamp_keyword_capture_scan",
+      "target": "202606262316*, 202606262317*, 202606262318*, yamanashi, fuji, \u5c71\u68a8, \u5bcc\u58eb",
+      "scannedRoots": [
+        "tmp/captures",
+        "tmp/quarantine",
+        "test/fixtures/source_estimation",
+        "C:/Users/Rhythm/Downloads",
+        "C:/Users/Rhythm/Pictures"
+      ],
+      "result": "not_found",
+      "evidenceStrength": "negative_attempt_only",
+      "automaticClearance": false,
+      "notes": "Local scan found no replay or capture package for the 2026-06-26 23:17 JST Yamanashi east / Fuji Five Lakes M3.3 reference event. The EQuake final report text is source-estimation reference metadata only and must not associate the reference event automatically."
+    },
+    {
+      "attemptId": "20260626_iwate_east_m30_authenticated_export_login_page_check",
+      "inputType": "authenticated_hinet_export_row",
+      "caseId": "20260622_iwate_east_offshore_m30_hinet",
+      "attemptedAtUtc": "2026-06-26T09:55:55Z",
+      "method": "authenticated_source_login_page_check",
+      "target": "https://hinetwww11.bosai.go.jp/auth/JMA/?LANG=en; https://hinetwww11.bosai.go.jp/auth/hinet_hypolist/?LANG=en",
+      "result": "login_required_no_exported_row",
+      "evidenceStrength": "negative_attempt_only",
+      "automaticClearance": false,
+      "notes": "Both authenticated Hi-net/JMA source paths returned the registered-user login page from the current command environment, so no event-level row could be exported for this case. This does not reject the case and does not make the public JMA daily row acceptable evidence."
+    },
+    {
+      "attemptId": "20260626_tomakomai_m35_authenticated_export_login_page_check",
+      "inputType": "authenticated_hinet_export_row",
+      "caseId": "20260622_tomakomai_south_offshore_m35_hinet",
+      "attemptedAtUtc": "2026-06-26T09:55:55Z",
+      "method": "authenticated_source_login_page_check",
+      "target": "https://hinetwww11.bosai.go.jp/auth/JMA/?LANG=en; https://hinetwww11.bosai.go.jp/auth/hinet_hypolist/?LANG=en",
+      "result": "login_required_no_exported_row",
+      "evidenceStrength": "negative_attempt_only",
+      "automaticClearance": false,
+      "notes": "Both authenticated Hi-net/JMA source paths returned the registered-user login page from the current command environment, so no event-level row could be exported for this case. This does not reject the case and does not make the public JMA daily row acceptable evidence."
+    },
+    {
+      "attemptId": "20260626_tokachi_m34_authenticated_export_login_page_check",
+      "inputType": "authenticated_hinet_export_row",
+      "caseId": "20260623_tokachi_southeast_offshore_m34_hinet",
+      "attemptedAtUtc": "2026-06-26T09:55:55Z",
+      "method": "authenticated_source_login_page_check",
+      "target": "https://hinetwww11.bosai.go.jp/auth/JMA/?LANG=en; https://hinetwww11.bosai.go.jp/auth/hinet_hypolist/?LANG=en",
+      "result": "login_required_no_exported_row",
+      "evidenceStrength": "negative_attempt_only",
+      "automaticClearance": false,
+      "notes": "Both authenticated Hi-net/JMA source paths returned the registered-user login page from the current command environment, so no event-level row could be exported for this case. This does not reject the case and does not make the public JMA daily row acceptable evidence."
+    },
+    {
+      "attemptId": "20260626_iwate_east_m30_authenticated_form_login_retry",
+      "inputType": "authenticated_hinet_export_row",
+      "caseId": "20260622_iwate_east_offshore_m30_hinet",
+      "attemptedAtUtc": "2026-06-26T10:15:07Z",
+      "method": "authenticated_source_form_login_check",
+      "target": "https://hinetwww11.bosai.go.jp/auth/?LANG=en -> https://hinetwww11.bosai.go.jp/auth/JMA/?LANG=en; https://hinetwww11.bosai.go.jp/auth/hinet_hypolist/?LANG=en",
+      "result": "form_login_returned_login_page",
+      "evidenceStrength": "negative_attempt_only",
+      "automaticClearance": false,
+      "notes": "A cookie-backed form login attempt using the registered-user login fields auth_un/auth_pw still redirected both authenticated catalog paths back to the login page. No credentials, cookies or exported row are stored here; this does not reject the case or make public daily rows acceptable evidence."
+    },
+    {
+      "attemptId": "20260626_tomakomai_m35_authenticated_form_login_retry",
+      "inputType": "authenticated_hinet_export_row",
+      "caseId": "20260622_tomakomai_south_offshore_m35_hinet",
+      "attemptedAtUtc": "2026-06-26T10:15:07Z",
+      "method": "authenticated_source_form_login_check",
+      "target": "https://hinetwww11.bosai.go.jp/auth/?LANG=en -> https://hinetwww11.bosai.go.jp/auth/JMA/?LANG=en; https://hinetwww11.bosai.go.jp/auth/hinet_hypolist/?LANG=en",
+      "result": "form_login_returned_login_page",
+      "evidenceStrength": "negative_attempt_only",
+      "automaticClearance": false,
+      "notes": "A cookie-backed form login attempt using the registered-user login fields auth_un/auth_pw still redirected both authenticated catalog paths back to the login page. No credentials, cookies or exported row are stored here; this does not reject the case or make public daily rows acceptable evidence."
+    },
+    {
+      "attemptId": "20260626_tokachi_m34_authenticated_form_login_retry",
+      "inputType": "authenticated_hinet_export_row",
+      "caseId": "20260623_tokachi_southeast_offshore_m34_hinet",
+      "attemptedAtUtc": "2026-06-26T10:15:07Z",
+      "method": "authenticated_source_form_login_check",
+      "target": "https://hinetwww11.bosai.go.jp/auth/?LANG=en -> https://hinetwww11.bosai.go.jp/auth/JMA/?LANG=en; https://hinetwww11.bosai.go.jp/auth/hinet_hypolist/?LANG=en",
+      "result": "form_login_returned_login_page",
+      "evidenceStrength": "negative_attempt_only",
+      "automaticClearance": false,
+      "notes": "A cookie-backed form login attempt using the registered-user login fields auth_un/auth_pw still redirected both authenticated catalog paths back to the login page. No credentials, cookies or exported row are stored here; this does not reject the case or make public daily rows acceptable evidence."
+    },
+    {
+      "attemptId": "20260626_kushiro_m30_jma_final_catalog_availability_check",
+      "inputType": "versioned_jma_final_catalog_record",
+      "caseId": "20260622_kushiro_offshore_m30_jma",
+      "attemptedAtUtc": "2026-06-26T10:30:00Z",
+      "method": "official_jma_final_catalog_availability_check",
+      "target": "https://www.data.jma.go.jp/eqev/data/bulletin/hypo.html",
+      "result": "event_year_not_in_latest_final_catalog",
+      "evidenceStrength": "negative_attempt_only",
+      "automaticClearance": false,
+      "notes": "The official JMA monthly hypocenter bulletin page still exposes 2023 as the latest yearly final-catalog link; this 2026 event cannot be linked to a versioned final catalog yet. This does not clear the blocker and does not promote the JMA source-and-intensity label to final catalog truth."
+    },
+    {
+      "attemptId": "20260626_fukushima_aizu_m32_jma_final_catalog_availability_check",
+      "inputType": "versioned_jma_final_catalog_record",
+      "caseId": "20260624_fukushima_aizu_m32_jma_eq5",
+      "attemptedAtUtc": "2026-06-26T10:30:00Z",
+      "method": "official_jma_final_catalog_availability_check",
+      "target": "https://www.data.jma.go.jp/eqev/data/bulletin/hypo.html",
+      "result": "event_year_not_in_latest_final_catalog",
+      "evidenceStrength": "negative_attempt_only",
+      "automaticClearance": false,
+      "notes": "The official JMA monthly hypocenter bulletin page still exposes 2023 as the latest yearly final-catalog link; this 2026 event cannot be linked to a versioned final catalog yet. This does not clear the blocker and does not promote the JMA source-and-intensity label to final catalog truth."
+    },
+    {
+      "attemptId": "20260626_iwate_m32_jma_final_catalog_availability_check",
+      "inputType": "versioned_jma_final_catalog_record",
+      "caseId": "20260625_iwate_offshore_m32_jma",
+      "attemptedAtUtc": "2026-06-26T10:30:00Z",
+      "method": "official_jma_final_catalog_availability_check",
+      "target": "https://www.data.jma.go.jp/eqev/data/bulletin/hypo.html",
+      "result": "event_year_not_in_latest_final_catalog",
+      "evidenceStrength": "negative_attempt_only",
+      "automaticClearance": false,
+      "notes": "The official JMA monthly hypocenter bulletin page still exposes 2023 as the latest yearly final-catalog link; this 2026 event cannot be linked to a versioned final catalog yet. This does not clear the blocker and does not promote the JMA source-and-intensity label to final catalog truth."
+    },
+    {
+      "attemptId": "20260626_iwate_m33_eq8_final_catalog_or_hinet_revision_check",
+      "inputType": "final_catalog_or_hinet_revision",
+      "caseId": "20260621_iwate_offshore_m33_eq8",
+      "attemptedAtUtc": "2026-06-26T10:34:47Z",
+      "method": "official_jma_final_catalog_and_hinet_revision_availability_check",
+      "target": "https://www.data.jma.go.jp/eqev/data/bulletin/hypo.html; https://hinetwww11.bosai.go.jp/auth/JMA/?LANG=en; https://hinetwww11.bosai.go.jp/auth/hinet_hypolist/?LANG=en",
+      "result": "no_versioned_catalog_or_authenticated_revision_available",
+      "evidenceStrength": "negative_attempt_only",
+      "automaticClearance": false,
+      "notes": "The fixture is still based on a user-provided EQuake final report. JMA final-catalog availability still stops at 2023, and the authenticated Hi-net/JMA paths available to this environment have not produced an event-level revised source row. This does not clear the blocker, does not promote EQuake text to truth and does not assign the event to a split."
+    }
+  ]
+}

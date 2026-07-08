@@ -16,10 +16,34 @@ void main() {
     );
   });
 
+  test('sensor selection explicitly separates surface and borehole roles', () {
+    const selection = SensorSelection.surfaceOnly();
+    const surface = SeismicStationDescriptor(
+      stationId: 'S',
+      code: 'S',
+      sourceId: 'test',
+      network: 'K-NET',
+      coordinate: LatLng(35, 140),
+      sensorRole: StationSensorRole.surface,
+    );
+    const borehole = SeismicStationDescriptor(
+      stationId: 'B',
+      code: 'B',
+      sourceId: 'test',
+      network: 'KiK-net',
+      coordinate: LatLng(35, 140),
+      sensorRole: StationSensorRole.borehole,
+    );
+
+    expect(selection.accepts(surface), isTrue);
+    expect(selection.accepts(borehole), isFalse);
+  });
+
   SeismicStationSample buildSample({
     required String code,
     required double lat,
     required double lng,
+    DateTime? observedAt,
     double value = 1.2,
     double activity = 8,
     int ascend = 2,
@@ -33,7 +57,7 @@ void main() {
         network: 'TEST',
         coordinate: LatLng(lat, lng),
       ),
-      observedAt: DateTime(2026, 6, 10, 16, 0, 0),
+      observedAt: observedAt ?? DateTime(2026, 6, 10, 16, 0, 0),
       valueType: StationValueType.jmaShindo,
       value: value,
       rawLevel: 10,
@@ -46,6 +70,10 @@ void main() {
   }
 
   test('tracks generic non-NIED source event lifecycle', () {
+    var notificationCount = 0;
+    tracker.currentEventNotifier('global-demo').addListener(() {
+      notificationCount++;
+    });
     tracker.ingestFrame(
       sourceId: 'global-demo',
       observedAt: DateTime(2026, 6, 10, 16, 0, 0),
@@ -63,10 +91,35 @@ void main() {
     expect(current!.sourceId, 'global-demo');
     expect(current.records.length, 2);
     expect(
+      current.records.every((r) => r.observationHistory.length == 1),
+      isTrue,
+    );
+    expect(
       current.records.every((r) => r.qualityFlags.contains('synthetic')),
       isTrue,
     );
     expect(current.estimate, isNotNull);
+    expect(current.metadata['estimate_revision'], 1);
+    expect(notificationCount, 1);
+
+    tracker.ingestFrame(
+      sourceId: 'global-demo',
+      observedAt: DateTime(2026, 6, 10, 16, 0, 1),
+      stageName: 'detected',
+      maxShindo: 2,
+      samples: [
+        buildSample(code: 'G01', lat: 10.0, lng: 120.0, value: 1.1),
+        buildSample(code: 'G02', lat: 10.2, lng: 120.2, value: 1.5),
+      ],
+      metadata: const {'network_group': 'demo'},
+    );
+
+    expect(current.metadata['estimate_revision'], 2);
+    expect(notificationCount, 2);
+    expect(
+      current.records.every((r) => r.observationHistory.length == 2),
+      isTrue,
+    );
 
     tracker.ingestFrame(
       sourceId: 'global-demo',
@@ -99,4 +152,540 @@ void main() {
     expect(tracker.history('global-demo'), isNotEmpty);
     expect(tracker.history('global-demo').first.isClosed, isTrue);
   });
+
+  test('missing station frame is retained without deleting event evidence', () {
+    final start = DateTime(2026, 6, 10, 16);
+    final triggered = buildSample(code: 'G01', lat: 10, lng: 120, value: 1.5);
+    tracker.ingestFrame(
+      sourceId: 'global-demo',
+      observedAt: start,
+      stageName: 'detected',
+      maxShindo: 2,
+      samples: [triggered],
+    );
+
+    tracker.ingestFrame(
+      sourceId: 'global-demo',
+      observedAt: start.add(const Duration(seconds: 1)),
+      stageName: 'detected',
+      maxShindo: 2,
+      samples: [
+        SeismicStationSample(
+          descriptor: triggered.descriptor,
+          observedAt: start.add(const Duration(seconds: 1)),
+          valueType: StationValueType.jmaShindo,
+        ),
+      ],
+    );
+
+    final record = tracker.currentEvent('global-demo')!.records.single;
+    expect(record.peakValue, 1.5);
+    expect(record.firstTriggerInterval?.start, start);
+    expect(record.firstTriggerInterval?.end, start);
+    expect(record.observationHistory.length, 2);
+    expect(record.observationHistory.latest!.isMissing, isTrue);
+    expect(record.state, StationLifecycleState.ended);
+  });
+
+  test('rejects physical values without independent provenance', () {
+    final start = DateTime(2026, 6, 10, 16);
+    final base = buildSample(code: 'G01', lat: 10, lng: 120);
+    tracker.ingestFrame(
+      sourceId: 'global-demo',
+      observedAt: start,
+      stageName: 'detected',
+      maxShindo: 2,
+      samples: [
+        SeismicStationSample(
+          descriptor: base.descriptor,
+          observedAt: start,
+          valueType: StationValueType.jmaShindo,
+          value: 1.2,
+          observedPga: 99,
+          rawLevel: 10,
+          detectLevel: 10,
+          isTriggered: true,
+          provenance: const {
+            StationValueType.pga: ObservationProvenance(
+              origin: ObservationOrigin.derived,
+              quantity: StationValueType.pga,
+              layerId: 'jma',
+              qualityFlags: {'derived_from_shindo'},
+            ),
+          },
+        ),
+      ],
+    );
+
+    expect(tracker.currentEvent('global-demo')!.records.single.lastPga, isNull);
+  });
+
+  test('accepts PGA from the independent acmap layer', () {
+    final start = DateTime(2026, 6, 10, 16);
+    final base = buildSample(code: 'G01', lat: 10, lng: 120);
+    tracker.ingestFrame(
+      sourceId: 'global-demo',
+      observedAt: start,
+      stageName: 'detected',
+      maxShindo: 2,
+      samples: [
+        SeismicStationSample(
+          descriptor: base.descriptor,
+          observedAt: start,
+          valueType: StationValueType.pga,
+          value: 12,
+          observedPga: 12,
+          rawLevel: 10,
+          detectLevel: 10,
+          isTriggered: true,
+          provenance: const {
+            StationValueType.pga: ObservationProvenance(
+              origin: ObservationOrigin.niedGifLayer,
+              quantity: StationValueType.pga,
+              layerId: 'acmap',
+              isIndependentPhysicalMeasurement: true,
+            ),
+          },
+        ),
+      ],
+    );
+
+    expect(tracker.currentEvent('global-demo')!.records.single.lastPga, 12);
+  });
+
+  test('stability policy holds a late drifting estimate', () {
+    final start = DateTime(2026, 6, 10, 16);
+    tracker
+      ..setEstimator(
+        'global-demo',
+        _SequenceSourceEstimator([
+          const SourceEstimate(
+            latitude: 35.0,
+            longitude: 140.0,
+            confidence: 0.7,
+            method: 'sequence',
+            supportingStationCount: 2,
+          ),
+          const SourceEstimate(
+            latitude: 35.01,
+            longitude: 140.01,
+            confidence: 0.7,
+            method: 'sequence',
+            supportingStationCount: 2,
+          ),
+          const SourceEstimate(
+            latitude: 37.0,
+            longitude: 142.0,
+            confidence: 0.7,
+            method: 'sequence',
+            supportingStationCount: 2,
+          ),
+        ]),
+      )
+      ..setStabilityConfig(
+        'global-demo',
+        const SourceEstimateStabilityConfig(
+          warmupDuration: Duration(seconds: 1),
+          maxJumpKm: 20,
+          maxAnchorDistanceKm: 40,
+        ),
+      );
+
+    void ingest(DateTime observedAt, double value) {
+      tracker.ingestFrame(
+        sourceId: 'global-demo',
+        observedAt: observedAt,
+        stageName: 'detected',
+        maxShindo: 2,
+        samples: [
+          buildSample(
+            code: 'G01',
+            lat: 35.0,
+            lng: 140.0,
+            observedAt: observedAt,
+            value: value,
+          ),
+          buildSample(
+            code: 'G02',
+            lat: 35.1,
+            lng: 140.1,
+            observedAt: observedAt,
+            value: value + 0.1,
+          ),
+        ],
+      );
+    }
+
+    ingest(start, 1.0);
+    final first = tracker.currentEvent('global-demo')!;
+    expect(first.estimate!.latitude, 35.0);
+    expect(first.metadata['estimate_revision'], 1);
+
+    ingest(start.add(const Duration(seconds: 1)), 1.1);
+    final warmed = tracker.currentEvent('global-demo')!;
+    expect(warmed.estimate!.latitude, 35.01);
+    expect(warmed.metadata['estimate_revision'], 2);
+    expect(warmed.metadata['estimate_held_due_to_stability'], isNull);
+
+    ingest(start.add(const Duration(seconds: 3)), 1.2);
+    final held = tracker.currentEvent('global-demo')!;
+    expect(held.estimate!.latitude, 35.01);
+    expect(held.estimate!.longitude, 140.01);
+    expect(held.metadata['estimate_revision'], 2);
+    expect(held.metadata['estimate_held_due_to_stability'], isTrue);
+    expect(held.metadata['stability_candidate_latitude'], 37.0);
+    expect(held.metadata['stability_candidate_longitude'], 142.0);
+  });
+
+  test(
+    'annotates delayed candidate region without changing estimate location',
+    () {
+      final start = DateTime(2026, 6, 22, 16, 38, 23);
+      tracker.setEstimator(
+        'global-demo',
+        _SequenceSourceEstimator([
+          _candidateEstimate(candidateSupportedByValues: false),
+          _candidateEstimate(candidateSupportedByValues: true),
+        ]),
+      );
+
+      void ingest(DateTime observedAt, double firstValue, double secondValue) {
+        tracker.ingestFrame(
+          sourceId: 'global-demo',
+          observedAt: observedAt,
+          stageName: 'detected',
+          maxShindo: 1,
+          samples: [
+            buildSample(
+              code: 'G01',
+              lat: 0,
+              lng: 0,
+              observedAt: observedAt,
+              value: firstValue,
+            ),
+            buildSample(
+              code: 'G02',
+              lat: 0,
+              lng: 1,
+              observedAt: observedAt,
+              value: secondValue,
+            ),
+          ],
+        );
+      }
+
+      ingest(start, 2, 0);
+      final pending = tracker.currentEvent('global-demo')!;
+      expect(pending.estimate!.latitude, 0);
+      expect(pending.estimate!.longitude, 0);
+      final pendingRegion = pending.metadata['candidate_region'] as Map;
+      expect(pendingRegion['status'], 'pending');
+      expect(pendingRegion['production_coordinate_switch_allowed'], isFalse);
+
+      ingest(start.add(const Duration(seconds: 4)), 0, 2);
+      final confirmed = tracker.currentEvent('global-demo')!;
+      expect(confirmed.estimate!.latitude, 0);
+      expect(confirmed.estimate!.longitude, 0);
+      final confirmedRegion = confirmed.metadata['candidate_region'] as Map;
+      expect(confirmedRegion['status'], 'confirmedDelayed');
+      expect(confirmedRegion['confirmation_delay_seconds'], 4);
+      expect(confirmedRegion['production_coordinate_switch_allowed'], isFalse);
+      final gate = confirmed.metadata['candidate_region_residual_gate'] as Map;
+      expect(gate['residual_supported'], isTrue);
+    },
+  );
+
+  test('does not confirm an unsupported candidate region', () {
+    final start = DateTime(2026, 6, 22, 16, 38, 23);
+    tracker.setEstimator(
+      'global-demo',
+      _SequenceSourceEstimator([
+        _candidateEstimate(candidateSupportedByValues: false),
+        _candidateEstimate(candidateSupportedByValues: false),
+      ]),
+    );
+
+    for (var i = 0; i < 2; i++) {
+      tracker.ingestFrame(
+        sourceId: 'global-demo',
+        observedAt: start.add(Duration(seconds: i)),
+        stageName: 'detected',
+        maxShindo: 1,
+        samples: [
+          buildSample(
+            code: 'G01',
+            lat: 0,
+            lng: 0,
+            observedAt: start.add(Duration(seconds: i)),
+            value: (2 + i).toDouble(),
+          ),
+          buildSample(
+            code: 'G02',
+            lat: 0,
+            lng: 1,
+            observedAt: start.add(Duration(seconds: i)),
+            value: i.toDouble(),
+          ),
+        ],
+      );
+    }
+
+    final current = tracker.currentEvent('global-demo')!;
+    final region = current.metadata['candidate_region'] as Map;
+    expect(region['status'], 'pending');
+    expect(region['production_coordinate_switch_allowed'], isFalse);
+  });
+
+  test(
+    'confirms pending candidate region from local support without coordinate switch',
+    () {
+      final start = DateTime(2026, 6, 25, 19, 21, 43);
+      tracker.setEstimator(
+        'global-demo',
+        _SequenceSourceEstimator([
+          _localSupportCandidateEstimate(),
+          _localSupportConvergedEstimate(),
+        ]),
+      );
+
+      final firstMembers = List.generate(5, (index) => 'LS${index + 1}');
+      final laterMembers = List.generate(10, (index) => 'LS${index + 1}');
+
+      tracker.ingestFrame(
+        sourceId: 'global-demo',
+        eventId: 'iwate-local-support',
+        observedAt: start,
+        stageName: 'detected',
+        maxShindo: 1,
+        samples: [
+          for (var i = 0; i < firstMembers.length; i++)
+            buildSample(
+              code: firstMembers[i],
+              lat: 0.0,
+              lng: i * 0.01,
+              observedAt: start,
+              value: 1.0 + i * 0.1,
+            ),
+        ],
+        metadata: {'source_trigger_member_ids': firstMembers},
+      );
+      final pending = tracker.currentEvent('global-demo')!;
+      final pendingRegion = pending.metadata['candidate_region'] as Map;
+      expect(pendingRegion['status'], 'pending');
+      expect(pending.estimate!.latitude, 0);
+      expect(pending.estimate!.longitude, 1.38);
+
+      tracker.ingestFrame(
+        sourceId: 'global-demo',
+        eventId: 'iwate-local-support',
+        observedAt: start.add(const Duration(seconds: 3)),
+        stageName: 'detected',
+        maxShindo: 1,
+        samples: [
+          for (var i = 0; i < laterMembers.length; i++)
+            buildSample(
+              code: laterMembers[i],
+              lat: 0.0,
+              lng: i * 0.005,
+              observedAt: start.add(const Duration(seconds: 3)),
+              value: 1.0 + i * 0.1,
+            ),
+        ],
+        metadata: {'source_trigger_member_ids': laterMembers},
+      );
+
+      final confirmed = tracker.currentEvent('global-demo')!;
+      expect(confirmed.estimate!.latitude, 0);
+      expect(confirmed.estimate!.longitude, 0.02);
+      final confirmedRegion = confirmed.metadata['candidate_region'] as Map;
+      expect(confirmedRegion['status'], 'confirmedDelayed');
+      expect(
+        confirmedRegion['reason'],
+        'same_region_local_support_confirmation',
+      );
+      expect(confirmedRegion['production_coordinate_switch_allowed'], isFalse);
+      final localGate =
+          confirmed.metadata['candidate_region_local_support_gate'] as Map;
+      expect(localGate['local_support_confirmed'], isTrue);
+      expect(localGate['member_count'], 10);
+      expect(localGate['member_growth_supported'], isTrue);
+    },
+  );
+
+  test('raw detect level alone does not become source timing evidence', () {
+    final start = DateTime(2026, 6, 10, 16);
+    final base = buildSample(code: 'G01', lat: 10, lng: 120);
+    tracker.ingestFrame(
+      sourceId: 'global-demo',
+      observedAt: start,
+      stageName: 'detected',
+      maxShindo: 0,
+      samples: [
+        SeismicStationSample(
+          descriptor: base.descriptor,
+          observedAt: start,
+          valueType: StationValueType.jmaShindo,
+          value: -1.0,
+          rawLevel: 2,
+          detectLevel: 2,
+        ),
+      ],
+    );
+
+    final record = tracker.currentEvent('global-demo')!.records.single;
+    expect(record.state, StationLifecycleState.idle);
+    expect(record.firstRiseAt, isNull);
+    expect(record.firstTriggerAt, isNull);
+    expect(tracker.currentEvent('global-demo')!.estimate, isNull);
+  });
+
+  test('holds the last estimate when active support drops below minimum', () {
+    final start = DateTime(2026, 6, 10, 16);
+    tracker.ingestFrame(
+      sourceId: 'global-demo',
+      observedAt: start,
+      stageName: 'detected',
+      maxShindo: 2,
+      samples: [
+        buildSample(code: 'G01', lat: 10, lng: 120),
+        buildSample(code: 'G02', lat: 10.2, lng: 120.2),
+      ],
+    );
+    final stable = tracker.currentEvent('global-demo')!.estimate;
+
+    tracker.ingestFrame(
+      sourceId: 'global-demo',
+      observedAt: start.add(const Duration(seconds: 1)),
+      stageName: 'detected',
+      maxShindo: 1,
+      samples: [
+        buildSample(
+          code: 'G01',
+          lat: 10,
+          lng: 120,
+          activity: 0,
+          ascend: 0,
+          isTriggered: false,
+        ),
+        buildSample(
+          code: 'G02',
+          lat: 10.2,
+          lng: 120.2,
+          activity: 0,
+          ascend: 0,
+          isTriggered: false,
+        ),
+      ],
+    );
+
+    final current = tracker.currentEvent('global-demo')!;
+    expect(current.estimate, same(stable));
+    expect(current.metadata['estimate_held_due_to_low_support'], isTrue);
+  });
+}
+
+class _SequenceSourceEstimator implements SourceEstimator {
+  _SequenceSourceEstimator(this.estimates);
+
+  final List<SourceEstimate> estimates;
+  var _index = 0;
+
+  @override
+  String get methodId => 'sequence';
+
+  @override
+  bool supports(SourceEstimationRequest request) =>
+      request.stations.length >= 2;
+
+  @override
+  SourceEstimate? estimate(SourceEstimationRequest request) {
+    if (_index >= estimates.length) {
+      return estimates.last;
+    }
+    return estimates[_index++];
+  }
+}
+
+SourceEstimate _candidateEstimate({required bool candidateSupportedByValues}) {
+  return SourceEstimate(
+    latitude: 0,
+    longitude: 0,
+    confidence: 0.4,
+    method: 'sequence',
+    supportingStationCount: 2,
+    diagnostics: {
+      'candidate_corrections': {
+        'one_sided_boundary_centroid_guard': {
+          'latitude': 0.0,
+          'longitude': 1.0,
+        },
+      },
+      'top_timing_picks': [
+        {
+          'code': 'G01',
+          'network': 'TEST',
+          'latitude': 0.0,
+          'longitude': 0.0,
+          'delay_s': 0.0,
+          'value': candidateSupportedByValues ? 0.0 : 2.0,
+        },
+        {
+          'code': 'G02',
+          'network': 'TEST',
+          'latitude': 0.0,
+          'longitude': 1.0,
+          'delay_s': 1.0,
+          'value': candidateSupportedByValues ? 2.0 : 0.0,
+        },
+      ],
+    },
+  );
+}
+
+SourceEstimate _localSupportCandidateEstimate() {
+  return const SourceEstimate(
+    latitude: 0,
+    longitude: 1.38,
+    confidence: 0.4,
+    method: 'sequence',
+    supportingStationCount: 5,
+    diagnostics: {
+      'station_geometry': 'one_sided',
+      'candidate_corrections': {
+        'one_sided_boundary_centroid_guard': {
+          'latitude': 0.0,
+          'longitude': 1.0,
+        },
+      },
+      'top_timing_picks': [
+        {
+          'code': 'G01',
+          'network': 'TEST',
+          'latitude': 0.0,
+          'longitude': 0.0,
+          'delay_s': 0.0,
+          'value': 2.0,
+        },
+        {
+          'code': 'G02',
+          'network': 'TEST',
+          'latitude': 0.0,
+          'longitude': 1.0,
+          'delay_s': 1.0,
+          'value': 0.0,
+        },
+      ],
+    },
+  );
+}
+
+SourceEstimate _localSupportConvergedEstimate() {
+  return const SourceEstimate(
+    latitude: 0,
+    longitude: 0.02,
+    confidence: 0.4,
+    method: 'sequence',
+    supportingStationCount: 10,
+    diagnostics: {'station_geometry': 'surrounded'},
+  );
 }

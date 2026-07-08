@@ -1,14 +1,27 @@
+import os
+
 import requests
 
-USER = "Yun Lin"
-PASS = "mmMCygyw1"
+
+def require_env(name):
+    value = os.environ.get(name)
+    if not value:
+        raise SystemExit(f"Missing required environment variable: {name}")
+    return value
+
+
+USER = require_env("NIED_USERNAME")
+PASS = require_env("NIED_PASSWORD")
 session = requests.Session()
-session.verify = False
-requests.packages.urllib3.disable_warnings()
 
 base = "https://hinetwww11.bosai.go.jp/auth"
-session.get(f"{base}/?LANG=en", timeout=15)
-session.post(f"{base}/?LANG=en", data={'auth_un': USER, 'auth_pw': PASS}, timeout=15)
+session.get(f"{base}/?LANG=en", timeout=15).raise_for_status()
+login_response = session.post(
+    f"{base}/?LANG=en",
+    data={"auth_un": USER, "auth_pw": PASS},
+    timeout=15,
+)
+login_response.raise_for_status()
 
 # NIED might use a different subdomain or path after login
 # Common NIED download systems:
@@ -30,7 +43,5 @@ for url in urls:
     try:
         r = session.get(url, timeout=10, allow_redirects=False)
         print(f"{r.status_code} {url} ({len(r.text)}b)")
-        if r.status_code == 200 and len(r.text) > 500:
-            print(f"  HIT! Content: {r.text[:200]}")
     except Exception as e:
         print(f"ERR {url}: {e}")

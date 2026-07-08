@@ -28,7 +28,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'base_source.dart';
-import '../../models/unified_quake_data.dart';
 import '../quake_event_adapter.dart';
 import '../../models/quake_message.dart';
 import '../../models/source_status.dart';
@@ -191,10 +190,6 @@ class WolfxService extends BaseSourceService {
         case 'jma_eqlist':
           final jmaItems = QuakeEventAdapter.convertWolfxJmaEqlist(json);
           if (jmaItems.isNotEmpty) onJmaEqlistUpdated?.call(jmaItems);
-          final jmaFirst = json['No1'];
-          if (jmaFirst is Map) {
-            _emitUnified('jmaEqlist', Map<String, dynamic>.from(jmaFirst));
-          }
           break;
         case '':
           _handleCwaNoType(json);
@@ -335,7 +330,9 @@ class WolfxService extends BaseSourceService {
         return;
       }
 
-      final originTime = DateTime.tryParse(originTimeStr.replaceAll('/', '-')) ?? DateTime.now();
+      final originTime =
+          DateTime.tryParse(originTimeStr.replaceAll('/', '-')) ??
+          DateTime.now();
       final DateTime? parsedAnnouncedTime = announcedTime.isNotEmpty
           ? DateTime.tryParse(announcedTime.replaceAll('/', '-'))
           : null;
@@ -600,8 +597,8 @@ class WolfxService extends BaseSourceService {
         final DateTime originTime =
             DateTime.tryParse(timeStr.replaceAll(' ', 'T')) ?? DateTime.now();
 
-      // 旧管道已关闭
-      // 旧管道已关闭，统一走新管道 (emitUnified)
+        // 旧管道已关闭
+        // 旧管道已关闭，统一走新管道 (emitUnified)
         emitted++;
       }
       if (emitted > 0) print('Wolfx cenc_eqlist WS: $emitted items');
@@ -643,8 +640,8 @@ class WolfxService extends BaseSourceService {
 
       // CWA MaxIntensity 字符串 -> 符号格式, 仅用于 jmaShindo 震度徽章
       final String maxIntensityRaw = json['MaxIntensity']?.toString() ?? '';
-      final String? jmaShindo = maxIntensityRaw.isNotEmpty 
-          ? _formatShindo(maxIntensityRaw) 
+      final String? jmaShindo = maxIntensityRaw.isNotEmpty
+          ? _formatShindo(maxIntensityRaw)
           : null;
 
       final originTime = DateTime.tryParse(originTimeStr) ?? DateTime.now();
@@ -678,7 +675,7 @@ class WolfxService extends BaseSourceService {
   /// - "6弱" -> "6-"
   String _formatShindo(String intensity) {
     if (intensity.isEmpty) return intensity;
-    
+
     return intensity
         .replaceAll('強', '+')
         .replaceAll('弱', '-')

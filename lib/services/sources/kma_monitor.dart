@@ -37,8 +37,8 @@ class KmaStation {
     intensity = newIntensity;
     final level = newIntensity + 2;
     recentLevel.insert(0, level);
-    if (recentLevel.length > recentSeconds * 4) {
-      recentLevel = recentLevel.sublist(0, recentSeconds * 4);
+    if (recentLevel.length > recentSeconds) {
+      recentLevel = recentLevel.sublist(0, recentSeconds);
     }
 
     if (newIntensity == -3) {
@@ -60,7 +60,7 @@ class KmaStation {
     activityLevel = activityArr.fold(-1, max);
 
     final validPastCount = pastArr.where((l) => l >= 0).length;
-    final pastLevel = validPastCount >= activitySeconds * 3
+    final pastLevel = validPastCount >= activitySeconds * 3.5
         ? pastArr.fold(-1, max)
         : -1;
 
@@ -114,7 +114,7 @@ class KmaMonitorService {
   DateTime _lastMessageAt = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime? _lastDataTimestamp;
   DateTime _lastInvalidMmiLogAt = DateTime.fromMillisecondsSinceEpoch(0);
-  int _prevMaxActiveMmi = -1;
+  int _prevMaxActiveShindo = -1;
   bool get isConnected => _isConnected;
 
   List<List<int>> _adjStationIds = [];
@@ -129,7 +129,7 @@ class KmaMonitorService {
   final _stationController = StreamController<List<KmaStation>>.broadcast();
   Stream<List<KmaStation>> get stationStream => _stationController.stream;
 
-  void Function(int maxMmi)? onShakeDetected;
+  void Function(int maxShindo)? onShakeDetected;
   void Function()? onShakeExpired;
 
   void Function(bool connected)? onStatusChanged;
@@ -242,6 +242,17 @@ class KmaMonitorService {
   void _handleData(dynamic data) {
     if (data is! Map) return;
 
+    final timestamp = _parseTimestamp(data['timestamp']);
+    if (timestamp == null) {
+      _logRejectedFrame('missing timestamp');
+      return;
+    }
+    final previousTimestamp = _lastDataTimestamp;
+    if (previousTimestamp != null && !timestamp.isAfter(previousTimestamp)) {
+      _logRejectedFrame('stale timestamp ${data['timestamp']}');
+      return;
+    }
+
     final mmi = data['mmi'] as List?;
     if (mmi == null) return;
     if (mmi.length != _stations.length) {
@@ -264,7 +275,7 @@ class KmaMonitorService {
     }
 
     final now = DateTime.now();
-    _applyDataGap(_parseTimestamp(data['timestamp']));
+    _applyDataGap(timestamp);
 
     for (int i = 0; i < parsed.length; i++) {
       final val = parsed[i];
@@ -352,20 +363,21 @@ class KmaMonitorService {
     for (int i = 0; i < _stations.length; i++) {
       final distances = <MapEntry<int, double>>[];
       for (int j = 0; j < _stations.length; j++) {
-        if (i == j) continue;
-        final d = _haversine(
-          _stations[i].coordinate.latitude,
-          _stations[i].coordinate.longitude,
-          _stations[j].coordinate.latitude,
-          _stations[j].coordinate.longitude,
-        );
+        final d = i == j
+            ? 0.0
+            : _haversine(
+                _stations[i].coordinate.latitude,
+                _stations[i].coordinate.longitude,
+                _stations[j].coordinate.latitude,
+                _stations[j].coordinate.longitude,
+              );
         _distMatrix[i][j] = d;
         if (d <= 30) {
           distances.add(MapEntry(j, d));
         }
       }
       distances.sort((a, b) => a.value.compareTo(b.value));
-      _adjStationIds[i] = distances.take(6).map((e) => e.key).toList();
+      _adjStationIds[i] = distances.map((e) => e.key).toList();
     }
     _lastStationCount = _stations.length;
   }
@@ -450,13 +462,13 @@ class KmaMonitorService {
             final neighbor = _stations[id];
             if ((neighbor.isActive || neighbor.ascend > 0) &&
                 !activeStations.contains(neighbor)) {
-              neighbor.setActive(_checkShakeState);
+              neighbor.setActive(_handleStationActiveExpired);
               activeStations.add(neighbor);
             }
           }
         }
         if (!activeStations.contains(station)) {
-          station.setActive(_checkShakeState);
+          station.setActive(_handleStationActiveExpired);
           activeStations.add(station);
         }
       }
@@ -465,20 +477,40 @@ class KmaMonitorService {
     _checkShakeState();
   }
 
+  void _handleStationActiveExpired() {
+    _checkShakeState();
+    if (!_stationController.isClosed) {
+      _stationController.add(List.unmodifiable(_stations));
+    }
+  }
+
   void _checkShakeState() {
-    int currentMaxMmi = -1;
+    int currentMaxLevel = -1;
     for (final s in _stations) {
-      if (s.isActive && s.intensity > currentMaxMmi) {
-        currentMaxMmi = s.intensity;
+      if (s.isActive && s.activityLevel > currentMaxLevel) {
+        currentMaxLevel = s.activityLevel;
       }
     }
 
-    if (currentMaxMmi >= 1 && currentMaxMmi > _prevMaxActiveMmi) {
-      onShakeDetected?.call(currentMaxMmi);
-    } else if (currentMaxMmi < 1 && _prevMaxActiveMmi >= 1) {
+    final currentMaxShindo = _shindoFromKmaLevel(currentMaxLevel);
+    if (currentMaxShindo >= 0 && currentMaxShindo > _prevMaxActiveShindo) {
+      onShakeDetected?.call(currentMaxShindo);
+    } else if (currentMaxShindo < 0 && _prevMaxActiveShindo >= 0) {
       onShakeExpired?.call();
     }
-    _prevMaxActiveMmi = currentMaxMmi;
+    _prevMaxActiveShindo = currentMaxShindo;
+  }
+
+  int _shindoFromKmaLevel(int level) {
+    if (level < 0) return -1;
+    if (level <= 3) return 0;
+    if (level <= 4) return 1;
+    if (level <= 6) return 2;
+    if (level <= 7) return 3;
+    if (level <= 8) return 4;
+    if (level <= 10) return 5;
+    if (level <= 11) return 6;
+    return 7;
   }
 
   void _reconnect(int failedUrlIndex) {

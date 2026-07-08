@@ -148,6 +148,7 @@ class ChinaWeatherAlertService {
         latitude: selected.lat,
         longitude: selected.lon,
         type: selected.code,
+        source: WeatherAlarmSource.chinaWeatherLocal,
       );
 
       if (_lastAlarmId != alarm.id) {
@@ -179,7 +180,9 @@ class ChinaWeatherAlertService {
         if (lon == null || lat == null) continue;
         cityCenters.putIfAbsent(name, () => [0.0, 0.0, 0]);
         final c = cityCenters[name]!;
-        c[0] += lat; c[1] += lon; c[2] += 1;
+        c[0] += lat;
+        c[1] += lon;
+        c[2] += 1;
       }
       var bestCityDist = double.infinity;
       for (final entry in cityCenters.entries) {
@@ -197,13 +200,21 @@ class ChinaWeatherAlertService {
       if (bestCityDist > 60) return null;
     }
 
-    _Candidate? best = _pickAlerts(rows, targetProvince, targetCity,
-        provinceLocked);
+    _Candidate? best = _pickAlerts(
+      rows,
+      targetProvince,
+      targetCity,
+      provinceLocked,
+    );
     return best?.selected;
   }
 
-  _Candidate? _pickAlerts(List rows, String? targetProvince,
-      String? cityFilter, bool provinceLocked) {
+  _Candidate? _pickAlerts(
+    List rows,
+    String? targetProvince,
+    String? cityFilter,
+    bool provinceLocked,
+  ) {
     _Candidate? best;
     for (final row in rows) {
       if (row is! List || row.length < 7) continue;
@@ -320,9 +331,7 @@ class ChinaWeatherAlertService {
       }
     }
     // Match city-level suffix: XX市, XX自治州, XX地区, XX盟
-    final cityMatch = RegExp(
-      r'^(.+?(?:市|自治州|地区|盟))',
-    ).firstMatch(rest);
+    final cityMatch = RegExp(r'^(.+?(?:市|自治州|地区|盟))').firstMatch(rest);
     if (cityMatch != null) return cityMatch.group(1);
 
     // Direct municipalities (北京市 etc.) don't have a separate city level
@@ -339,7 +348,10 @@ class ChinaWeatherAlertService {
     if (area.isEmpty) return null;
     String rest = area;
     for (final name in _provinceNames) {
-      if (rest.startsWith(name)) { rest = rest.substring(name.length); break; }
+      if (rest.startsWith(name)) {
+        rest = rest.substring(name.length);
+        break;
+      }
     }
     // Skip the city part
     final cityMatch = RegExp(r'^(.+?(?:市|自治州|地区|盟))').firstMatch(rest);
@@ -458,13 +470,13 @@ class ChinaWeatherAlertService {
     final level = code.substring(code.length - 2);
     switch (level) {
       case '01':
-        return 4; // red
-      case '02':
-        return 3; // orange
-      case '03':
-        return 2; // yellow
-      case '04':
         return 1; // blue
+      case '02':
+        return 2; // yellow
+      case '03':
+        return 3; // orange
+      case '04':
+        return 4; // red
       default:
         return 0;
     }

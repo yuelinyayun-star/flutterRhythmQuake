@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "caseId": "20260622_iwate_east_offshore_m30_hinet",
+  "caseType": "event",
+  "captureDirectory": "tmp/captures/iwate_east_offshore_m30_20260622_102650_multilayer",
+  "timeZone": "Asia/Tokyo",
+  "gifNamePattern": "{stamp}.{layer}.gif",
+  "startTimeJst": "2026-06-22T11:26:20",
+  "endTimeJst": "2026-06-22T11:28:50",
+  "sensitivity": 2,
+  "truth": {
+    "originTimeJst": "2026-06-22T11:26:50",
+    "latitude": 39.91,
+    "longitude": 142.347,
+    "depthKm": 42.4,
+    "magnitude": 3.0,
+    "source": "user_provided_hinet_hypocenter"
+  },
+  "eventLabels": {
+    "catalogEvent": true,
+    "catalogTruthVerified": false,
+    "observableEvent": true,
+    "detectableEvent": true,
+    "includeInDetectionMetrics": false
+  },
+  "classification": {
+    "region": "Iwate east offshore",
+    "captureSource": "User-provided Hi-net hypocenter, 2026-06-22 10:26:50 UTC+8",
+    "truthQuality": "hinet_user_provided_preliminary",
+    "notes": "Hi-net preliminary label: Iwate east offshore, 39.910N 142.347E, M3.0, depth 42.4 km, origin 2026-06-22 10:26:50 UTC+8. Keep outside frozen split metrics until event-level split assignment and final-catalog linking are reviewed."
+  },
+  "splitStatus": "validation_reference"
+}

@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "caseId": "20260620_kyoto_s_m18_d12",
+  "caseType": "event",
+  "captureDirectory": "tmp/captures/20260620_141903_jst_kyoto_s_m18_d12",
+  "timeZone": "Asia/Tokyo",
+  "gifNamePattern": "{stamp}.{layer}.gif",
+  "startTimeJst": "2026-06-20T14:18:33",
+  "endTimeJst": "2026-06-20T14:21:03",
+  "sensitivity": 2,
+  "truth": {
+    "originTimeJst": "2026-06-20T14:19:03",
+    "latitude": 35.04,
+    "longitude": 135.54,
+    "depthKm": 12,
+    "magnitude": 1.8,
+    "source": "user_provided_equake_screenshot"
+  },
+  "eventLabels": {
+    "catalogEvent": true,
+    "catalogTruthVerified": false,
+    "observableEvent": null,
+    "detectableEvent": null,
+    "includeInDetectionMetrics": false
+  },
+  "classification": {
+    "region": "Kyoto Prefecture south",
+    "captureSource": "EQuake screenshot 2026-06-20 14:19:45",
+    "notes": "Small shallow inland event captured for event-detection recall testing."
+  }
+}

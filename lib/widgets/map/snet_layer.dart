@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import '../../models/snet_station.dart';
 import '../../services/sources/jp_shindo_scale.dart';
+import 'station_dot_painter_layer.dart';
 
 class SnetLayer extends StatelessWidget {
   final List<SnetStation>? stations;
@@ -59,43 +60,41 @@ class SnetLayer extends StatelessWidget {
     final dotOpacity = (0.08 + overview * 0.62).clamp(0.08, 0.78);
     final dotBorderWidth = (0.35 + overview * 0.55).clamp(0.35, 0.9);
 
-    final dotMarkers = <Marker>[];
+    final dots = <StationDot>[];
     final iconMarkers = <Marker>[];
 
     final sorted = List<SnetStation>.from(data)
-      ..sort((a, b) => a.level.compareTo(b.level));
+      ..sort((a, b) {
+        final rankCompare = _drawRank(a).compareTo(_drawRank(b));
+        if (rankCompare != 0) return rankCompare;
+        return a.code.compareTo(b.code);
+      });
 
     for (var station in sorted) {
       final level = station.level;
 
       if (!station.isActive || level < 0) {
-        dotMarkers.add(
-          Marker(
-            width: dotSize,
-            height: dotSize,
-            point: station.coordinate,
-            child: _SnetDot(
-              color: _idleColor,
-              fillOpacity: dotOpacity * 0.12,
-              outlineOpacity: dotOpacity * 0.32,
-              borderWidth: dotBorderWidth,
-            ),
+        dots.add(
+          StationDot(
+            coordinate: station.coordinate,
+            color: _idleColor,
+            radius: dotSize / 2,
+            fillOpacity: dotOpacity * 0.12,
+            borderOpacity: dotOpacity * 0.32,
+            borderWidth: dotBorderWidth,
           ),
         );
       } else if (level <= 5) {
         final dotColor =
             _snDotColors[level.clamp(0, _snDotColors.length - 1).toInt()];
-        dotMarkers.add(
-          Marker(
-            width: dotSize,
-            height: dotSize,
-            point: station.coordinate,
-            child: _SnetDot(
-              color: dotColor,
-              fillOpacity: dotOpacity * 0.22,
-              outlineOpacity: dotOpacity * 0.68,
-              borderWidth: dotBorderWidth,
-            ),
+        dots.add(
+          StationDot(
+            coordinate: station.coordinate,
+            color: dotColor,
+            radius: dotSize / 2,
+            fillOpacity: dotOpacity * 0.22,
+            borderOpacity: dotOpacity * 0.68,
+            borderWidth: dotBorderWidth,
           ),
         );
       } else {
@@ -120,39 +119,21 @@ class SnetLayer extends StatelessWidget {
       }
     }
 
-    return MarkerLayer(markers: [...dotMarkers, ...iconMarkers]);
+    return Stack(
+      children: [
+        StationDotPainterLayer(dots: dots),
+        if (iconMarkers.isNotEmpty) MarkerLayer(markers: iconMarkers),
+      ],
+    );
   }
 
   static double _overviewFactor(double zoom) {
     return ((zoom - 3.2) / 3.8).clamp(0.0, 1.0).toDouble();
   }
-}
 
-class _SnetDot extends StatelessWidget {
-  final Color color;
-  final double fillOpacity;
-  final double outlineOpacity;
-  final double borderWidth;
-
-  const _SnetDot({
-    required this.color,
-    required this.fillOpacity,
-    required this.outlineOpacity,
-    required this.borderWidth,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: fillOpacity.clamp(0.0, 1.0)),
-        shape: BoxShape.circle,
-        border: Border.all(
-          color: color.withValues(alpha: outlineOpacity.clamp(0.0, 1.0)),
-          width: borderWidth,
-        ),
-      ),
-    );
+  static double _drawRank(SnetStation station) {
+    if (!station.isActive || station.level < 0) return -1;
+    return station.shindo;
   }
 }
 
@@ -177,13 +158,6 @@ class _SnetShindoMarker extends StatelessWidget {
         color: color,
         shape: BoxShape.circle,
         border: Border.all(color: Colors.white, width: isStrong ? 1.5 : 1.0),
-        boxShadow: [
-          BoxShadow(
-            color: color.withValues(alpha: 0.5),
-            blurRadius: isStrong ? 6.0 : 3.0,
-            spreadRadius: 1.0,
-          ),
-        ],
       ),
       child: Center(
         child: Text(

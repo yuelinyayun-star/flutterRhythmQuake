@@ -7,17 +7,16 @@ import '../../models/nied_calibration.dart';
 import 'nied_gif_observation.dart';
 import 'nied_gif_value_decoder.dart';
 import 'nied_monitor.dart';
+import 'nied_background_worker.dart';
 import 'shindo_color_util.dart';
 
 class NiedGifFrame {
   final DateTime dataTime;
   final Uint8List surfaceGifBytes;
-  final Uint8List? boreholeGifBytes;
 
   const NiedGifFrame({
     required this.dataTime,
     required this.surfaceGifBytes,
-    this.boreholeGifBytes,
   });
 }
 
@@ -48,6 +47,11 @@ class LmoniImageService {
   void Function(bool connected)? onStatusChanged;
 
   List<NiedStation>? _stations;
+  List<NiedScanConfig> _backgroundScanConfigs = const [];
+  String _backgroundScanConfigSignature = '';
+
+  List<NiedScanConfig> get backgroundScanConfigs => _backgroundScanConfigs;
+  String get backgroundScanConfigSignature => _backgroundScanConfigSignature;
 
   void start() {
     if (_isRunning) return;
@@ -57,8 +61,14 @@ class LmoniImageService {
 
   void stop() {
     _isRunning = false;
+    for (final station in _stations ?? const <NiedStation>[]) {
+      station.terminate();
+    }
     _lastFrameTime = null;
+    _lastGifFrame = null;
     _stations = null;
+    _backgroundScanConfigs = const [];
+    _backgroundScanConfigSignature = '';
   }
 
   void dispose() {
@@ -104,6 +114,20 @@ class LmoniImageService {
     }
 
     _stations = list;
+    _backgroundScanConfigs = List<NiedScanConfig>.unmodifiable([
+      for (final station in list)
+        NiedScanConfig(
+          pixelX: station.pixelX,
+          pixelY: station.pixelY,
+        ),
+    ]);
+    _backgroundScanConfigSignature = list
+        .map(
+          (station) =>
+              '${station.code}:${station.pixelX}:${station.pixelY}:'
+              's',
+        )
+        .join('|');
     // debugPrint('Lmoni: ${list.length} stations (scan-position mapped only)');
   }
 
@@ -113,37 +137,26 @@ class LmoniImageService {
     Uint8List? surfaceGifBytes,
     Uint8List? boreholeGifBytes,
     DateTime? dataTime,
+    DateTime? receivedAt,
+    bool publish = true,
   }) {
     if (!_isRunning || _stations == null || _stations!.isEmpty) return;
     if (packedRgb.length != _imgW * _imgH) return;
-    if (boreholePackedRgb != null &&
-        boreholePackedRgb.length != _imgW * _imgH) {
-      boreholePackedRgb = null;
-    }
 
     final stamp = dataTime ?? DateTime.now();
-    final receivedAt = DateTime.now();
+    final frameReceivedAt = receivedAt ?? DateTime.now();
     _applyFrameGap(stamp);
 
     for (int i = 0; i < _stations!.length; i++) {
       final s = _stations![i];
-      final isKik = s.network.toLowerCase().contains('kik');
-      final useBoreholePrimary = isKik && boreholePackedRgb != null;
 
-      int rawLevel = useBoreholePrimary
-          ? _sampleRawLevel(boreholePackedRgb, s)
-          : _sampleRawLevel(packedRgb, s);
-      final boreholeLooksEmpty =
-          useBoreholePrimary && rawLevel == 0 && s.continuousShindo <= -2.99;
-      if ((rawLevel == -1 || boreholeLooksEmpty) && useBoreholePrimary) {
-        rawLevel = _sampleRawLevel(packedRgb, s);
-      }
+      final rawLevel = _sampleRawLevel(packedRgb, s);
       if (rawLevel == -1) {
         s.updateFromContinuousShindo(-1, null);
         s
           ..lastUpdate = stamp
           ..lastDataTime = stamp
-          ..lastReceivedAt = receivedAt;
+          ..lastReceivedAt = frameReceivedAt;
         continue;
       }
 
@@ -153,21 +166,121 @@ class LmoniImageService {
       s
         ..lastUpdate = stamp
         ..lastDataTime = stamp
-        ..lastReceivedAt = receivedAt;
+        ..lastReceivedAt = frameReceivedAt;
     }
 
     if (surfaceGifBytes != null) {
       final gifFrame = NiedGifFrame(
         dataTime: stamp,
         surfaceGifBytes: Uint8List.fromList(surfaceGifBytes),
-        boreholeGifBytes: boreholeGifBytes == null
-            ? null
-            : Uint8List.fromList(boreholeGifBytes),
       );
       _lastGifFrame = gifFrame;
       _gifFrameController.add(gifFrame);
     }
 
+    if (publish) publishStations();
+  }
+
+  void processSampledFrame(
+    NiedFrameScanResult frame, {
+    required Uint8List surfaceGifBytes,
+    DateTime? dataTime,
+    DateTime? receivedAt,
+    bool publish = true,
+  }) {
+    if (!_isRunning || _stations == null || _stations!.isEmpty) return;
+    if (frame.width != _imgW ||
+        frame.height != _imgH ||
+        frame.samples.length != _stations!.length) {
+      return;
+    }
+
+    final stamp = dataTime ?? DateTime.now();
+    final frameReceivedAt = receivedAt ?? DateTime.now();
+    _applyFrameGap(stamp);
+
+    for (var i = 0; i < _stations!.length; i++) {
+      final station = _stations![i];
+      final sample = frame.samples[i];
+      final rawLevel = sample.surfaceRawLevel;
+      final position = sample.surfacePosition;
+
+      if (rawLevel == -1 || position == null) {
+        station.clearGifObservation(
+          NiedGifLayer.realtimeShindo,
+          qualityFlag: 'pixel_undecodable',
+        );
+        station.updateFromContinuousShindo(-1, null);
+      } else {
+        final observation = NiedGifValueDecoder.decodeObservationFromPosition(
+          position,
+          layer: NiedGifLayer.realtimeShindo,
+        );
+        station.updateGifObservation(observation);
+        station.updateFromContinuousShindo(rawLevel, observation.shindo);
+      }
+      station
+        ..lastUpdate = stamp
+        ..lastDataTime = stamp
+        ..lastReceivedAt = frameReceivedAt;
+    }
+
+    final gifFrame = NiedGifFrame(
+      dataTime: stamp,
+      surfaceGifBytes: Uint8List.fromList(surfaceGifBytes),
+    );
+    _lastGifFrame = gifFrame;
+    _gifFrameController.add(gifFrame);
+    if (publish) publishStations();
+  }
+
+  void processPhysicalLayerPixels({
+    required NiedGifLayer layer,
+    required DateTime dataTime,
+    required DateTime receivedAt,
+    List<int>? surfacePackedRgb,
+  }) {
+    if (!_isRunning || _stations == null || _stations!.isEmpty) return;
+    if (layer == NiedGifLayer.realtimeShindo) {
+      throw ArgumentError.value(
+        layer,
+        'layer',
+        'Use the realtime shindo path.',
+      );
+    }
+    if (surfacePackedRgb != null && surfacePackedRgb.length != _imgW * _imgH) {
+      surfacePackedRgb = null;
+    }
+
+    for (final station in _stations!) {
+      final currentDataTime = station.lastDataTime;
+      if (currentDataTime != null && dataTime.isBefore(currentDataTime)) {
+        continue;
+      }
+      final selectedPixels = surfacePackedRgb;
+      if (selectedPixels == null) {
+        station.clearGifObservation(layer, qualityFlag: 'layer_missing');
+        continue;
+      }
+      final position = _sampleColorPosition(selectedPixels, station);
+      if (position == null) {
+        station.clearGifObservation(layer, qualityFlag: 'pixel_undecodable');
+        continue;
+      }
+      station.updateGifObservation(
+        NiedGifValueDecoder.decodeObservationFromPosition(
+          position,
+          layer: layer,
+        ),
+      );
+      station
+        ..lastDataTime = dataTime
+        ..lastReceivedAt = receivedAt;
+    }
+  }
+
+  void publishStations() {
+    if (!_isRunning || _stations == null) return;
     _stationController.add(List.unmodifiable(_stations!));
     _statusController.add(true);
     onStatusChanged?.call(true);
@@ -191,11 +304,20 @@ class LmoniImageService {
     final g = (rgb >> 8) & 0xFF;
     final b = rgb & 0xFF;
     final shindo = ShindoColorUtil.rgbaToShindo(r, g, b);
-    if (shindo == null) return -1;
+    if (shindo == null) {
+      station.clearGifObservation(
+        NiedGifLayer.realtimeShindo,
+        qualityFlag: 'pixel_undecodable',
+      );
+      return -1;
+    }
     final position = ShindoColorUtil.rgbaToPosition(r, g, b);
     if (position != null && position.isFinite && position > 0) {
       station.updateGifObservation(
-        NiedGifValueDecoder.decodeObservationFromPosition(position),
+        NiedGifValueDecoder.decodeObservationFromPosition(
+          position,
+          layer: NiedGifLayer.realtimeShindo,
+        ),
       );
     } else {
       station.updateGifObservation(NiedGifObservation(shindo: shindo));
@@ -209,6 +331,22 @@ class LmoniImageService {
     }
     return -1;
   }
+
+  double? _sampleColorPosition(List<int> sourcePixels, NiedStation station) {
+    final x = station.pixelX;
+    final y = station.pixelY;
+    if (x < 0 || x >= _imgW || y < 0 || y >= _imgH) return null;
+    final rgb = sourcePixels[y * _imgW + x];
+    final position = ShindoColorUtil.rgbaToPosition(
+      (rgb >> 16) & 0xFF,
+      (rgb >> 8) & 0xFF,
+      rgb & 0xFF,
+    );
+    return position != null && position.isFinite ? position : null;
+  }
+
+  @visibleForTesting
+  void applyFrameGapForTest(DateTime stamp) => _applyFrameGap(stamp);
 
   void _applyFrameGap(DateTime stamp) {
     final previous = _lastFrameTime;
@@ -271,10 +409,6 @@ class LmoniImageService {
 
       if (stale) {
         station.isActive = false;
-        station.activeTimer?.cancel();
-        station.ascend = 0;
-        station.activity = 0;
-        station.detectLevel = -1;
       }
     }
   }

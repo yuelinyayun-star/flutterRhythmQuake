@@ -1,0 +1,71 @@
+{
+  "schemaVersion": "source_hinet_no_row_found_findings_v1",
+  "policy": "This file stores manual no-row-found findings for authenticated Hi-net/JMA searches. Submitted findings do not accept truth quality, do not assign splits, and do not replace authenticated event rows. They only document that a reviewer searched an authenticated event-level page and did not find a matching row.",
+  "acceptedSourceTypes": [
+    "hinet_jma_unified_catalog",
+    "hinet_preliminary_catalog"
+  ],
+  "submittedFindingRequiredFields": [
+    "caseId",
+    "sourceType",
+    "sourceUrl",
+    "checkedAtUtc",
+    "reviewer",
+    "queryWindowJst",
+    "searchResult",
+    "searchedOriginTimeJst",
+    "searchedLatitude",
+    "searchedLongitude",
+    "searchedMagnitude",
+    "notes"
+  ],
+  "findingStatuses": [
+    "pending_finding",
+    "submitted_no_row_found",
+    "rejected"
+  ],
+  "findings": [
+    {
+      "caseId": "20260622_iwate_east_offshore_m30_hinet",
+      "status": "pending_finding",
+      "submittedFinding": null,
+      "rejectionReason": null,
+      "decisionImpact": "none_pending_only"
+    },
+    {
+      "caseId": "20260622_tomakomai_south_offshore_m35_hinet",
+      "status": "pending_finding",
+      "submittedFinding": null,
+      "rejectionReason": null,
+      "decisionImpact": "none_pending_only"
+    },
+    {
+      "caseId": "20260623_tokachi_southeast_offshore_m34_hinet",
+      "status": "pending_finding",
+      "submittedFinding": null,
+      "rejectionReason": null,
+      "decisionImpact": "none_pending_only"
+    },
+    {
+      "caseId": "20260621_fukushima_offshore_m32_eq6",
+      "status": "pending_finding",
+      "submittedFinding": null,
+      "rejectionReason": null,
+      "decisionImpact": "none_pending_only"
+    },
+    {
+      "caseId": "20260622_iwate_offshore_m30_eq10",
+      "status": "pending_finding",
+      "submittedFinding": null,
+      "rejectionReason": null,
+      "decisionImpact": "none_pending_only"
+    },
+    {
+      "caseId": "20260622_wakayama_south_m25_hinet",
+      "status": "pending_finding",
+      "submittedFinding": null,
+      "rejectionReason": null,
+      "decisionImpact": "none_pending_only"
+    }
+  ]
+}

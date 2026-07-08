@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "caseId": "20260630_fukushima_hamadori_m35_hinet_equake10",
+  "caseType": "event",
+  "captureDirectory": "C:/Users/Rhythm/Desktop/nied_capture_20260630_110914/raw/jma_s",
+  "timeZone": "Asia/Tokyo",
+  "gifNamePattern": "{stamp}.{layer}.gif",
+  "startTimeJst": "2026-06-30T12:08:45",
+  "endTimeJst": "2026-06-30T12:09:50",
+  "sensitivity": 2,
+  "truth": {
+    "originTimeJst": "2026-06-30T12:08:36",
+    "latitude": 37.354,
+    "longitude": 141.003,
+    "depthKm": 64.0,
+    "magnitude": 3.5,
+    "source": "user_provided_hinet_hypocenter"
+  },
+  "eventLabels": {
+    "catalogEvent": true,
+    "catalogTruthVerified": false,
+    "observableEvent": true,
+    "detectableEvent": true,
+    "includeInDetectionMetrics": false
+  },
+  "classification": {
+    "region": "Fukushima Hamadori",
+    "captureSource": "User-provided live NIED jma_s GIF capture, C:/Users/Rhythm/Desktop/nied_capture_20260630_110914/raw/jma_s; user-provided EQuake final report 10 and Hi-net hypocenter text.",
+    "truthQuality": "hinet_user_provided_preliminary",
+    "notes": "Hi-net reference: Fukushima east offshore, 37.354N 141.003E, M3.5, depth 64.0 km, origin 2026-06-30 11:08:36 UTC+8. EQuake final report 10 is retained as GIF-derived source-estimation reference only: Fukushima Hamadori, 37.35N 140.97E, M3.6, depth 67 km, quality A 76.6%, RMS 0.84 s, azimuthal gap 143 deg, 129 triggered stations (P:33 S:75 O:21), final report time 2026-06-30 11:08:36 UTC+8. JMA source/intensity reference: Fukushima Hamadori, 37.3N 141.0E, M3.4, depth 70 km, origin 2026-06-30 11:08:45 UTC+8. Capture is jma_s surface-image only; keep outside frozen metrics until event-level split assignment and capture provenance are reviewed."
+  },
+  "splitStatus": "unassigned_reference"
+}

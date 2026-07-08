@@ -37,7 +37,11 @@ class IntensityCalculator {
     return inside;
   }
 
-  static bool pointInAnyPolygon(double lat, double lng, List<List<LatLng>> polygons) {
+  static bool pointInAnyPolygon(
+    double lat,
+    double lng,
+    List<List<LatLng>> polygons,
+  ) {
     for (final polygon in polygons) {
       if (pointInPolygon(lat, lng, polygon)) return true;
     }
@@ -55,7 +59,7 @@ class IntensityCalculator {
     }
     if (intLocPoints != null && intLocPoints.isNotEmpty) {
       double minDist = double.infinity;
-      for (final (lat, lng) in intLocPoints) {
+      for (final (lng, lat) in intLocPoints) {
         final d = haversineDistance(hypoLat, hypoLng, lat, lng);
         if (d < minDist) minDist = d;
       }
@@ -116,7 +120,9 @@ class IntensityCalculator {
   static double _calcLineDis(double dep, double dis) {
     final theta = dis / _earthRadius;
     final a = _earthRadius - dep;
-    return sqrt(a * a + _earthRadius * _earthRadius - 2 * a * _earthRadius * cos(theta));
+    return sqrt(
+      a * a + _earthRadius * _earthRadius - 2 * a * _earthRadius * cos(theta),
+    );
   }
 
   static double _calcCeaCsis(double m, double dis) {
@@ -135,15 +141,23 @@ class IntensityCalculator {
   static int calcCwbLevel(double magnitude, double depth, double distance) {
     if (magnitude.isNaN || distance.isNaN) return 0;
     if (distance < 1) distance = 1;
-    
+
     double intensity = magnitude * 0.8 - log(distance) / ln10 * 1.2 + 1.0;
-    
+
     if (intensity.isNaN || intensity.isInfinite) return 0;
-    
+
     return intensity.clamp(0, 7).round();
   }
 
-  static double calcJmaShindo(double mj, double dep, double hypoLat, double hypoLng, double locLat, double locLng, {double arv = 1.0}) {
+  static double calcJmaShindo(
+    double mj,
+    double dep,
+    double hypoLat,
+    double hypoLng,
+    double locLat,
+    double locLng, {
+    double arv = 1.0,
+  }) {
     if (mj.isNaN || dep.isNaN) return -3.0;
     if (mj < 0 || dep < 0) return -3.0;
 
@@ -156,12 +170,13 @@ class IntensityCalculator {
 
     final x = max(hypoDist, 3);
 
-    final pgv600 = pow(10, 
-      0.58 * mw + 
-      0.0038 * dep - 
-      1.29 - 
-      log(x + 0.0028 * pow(10, 0.5 * mw)) / ln10 - 
-      0.002 * x
+    final pgv600 = pow(
+      10,
+      0.58 * mw +
+          0.0038 * dep -
+          1.29 -
+          log(x + 0.0028 * pow(10, 0.5 * mw)) / ln10 -
+          0.002 * x,
     ).toDouble();
 
     final pgv400 = pgv600 * 1.307;
@@ -202,7 +217,10 @@ class IntensityCalculator {
     return (level - 7) / 2.0;
   }
 
-  static JmaShindoLevel getJmaShindoInfo(double instShindo, {bool useSymbol = true}) {
+  static JmaShindoLevel getJmaShindoInfo(
+    double instShindo, {
+    bool useSymbol = true,
+  }) {
     final level = getJmaShindoLevel(instShindo, useSymbol: useSymbol);
     return _jmaShindoMap[level] ?? JmaShindoLevel("?", "不明", 0xFF666666, -1);
   }
@@ -259,30 +277,60 @@ class IntensityCalculator {
     return info?.colorHex ?? 0xFF666666;
   }
 
-  static double haversineDistance(double lat1, double lon1, double lat2, double lon2) {
+  static double haversineDistance(
+    double lat1,
+    double lon1,
+    double lat2,
+    double lon2,
+  ) {
     final dLat = (lat2 - lat1) * pi / 180;
     final dLon = (lon2 - lon1) * pi / 180;
-    final a = sin(dLat / 2) * sin(dLat / 2) +
-        cos(lat1 * pi / 180) * cos(lat2 * pi / 180) * sin(dLon / 2) * sin(dLon / 2);
+    final a =
+        sin(dLat / 2) * sin(dLat / 2) +
+        cos(lat1 * pi / 180) *
+            cos(lat2 * pi / 180) *
+            sin(dLon / 2) *
+            sin(dLon / 2);
     final c = 2 * atan2(sqrt(a), sqrt(1 - a));
     return _earthRadius * c;
   }
 
-  static double calcMaxJmaShindo(double mj, double dep, double hypoLat, double hypoLng, List<Map<String, dynamic>> locations) {
+  static double calcMaxJmaShindo(
+    double mj,
+    double dep,
+    double hypoLat,
+    double hypoLng,
+    List<Map<String, dynamic>> locations,
+  ) {
     double maxShindo = -3.0;
     for (final loc in locations) {
       final lat = loc['lat'] as double?;
       final lng = loc['lng'] as double?;
       final arv = (loc['arv'] as double?) ?? 1.0;
       if (lat == null || lng == null) continue;
-      
-      final shindo = calcJmaShindo(mj, dep, hypoLat, hypoLng, lat, lng, arv: arv);
+
+      final shindo = calcJmaShindo(
+        mj,
+        dep,
+        hypoLat,
+        hypoLng,
+        lat,
+        lng,
+        arv: arv,
+      );
       if (shindo > maxShindo) maxShindo = shindo;
     }
     return maxShindo;
   }
 
-  static String calcMaxJmaShindoLevel(double mj, double dep, double hypoLat, double hypoLng, List<Map<String, dynamic>> locations, {bool useSymbol = true}) {
+  static String calcMaxJmaShindoLevel(
+    double mj,
+    double dep,
+    double hypoLat,
+    double hypoLng,
+    List<Map<String, dynamic>> locations, {
+    bool useSymbol = true,
+  }) {
     final maxShindo = calcMaxJmaShindo(mj, dep, hypoLat, hypoLng, locations);
     return getJmaShindoLevel(maxShindo, useSymbol: useSymbol);
   }
@@ -296,19 +344,26 @@ class IntensityCalculator {
     bool useJma = false,
   }) {
     final result = <String, double>{};
-    
+
     for (final entry in regionCenters.entries) {
       final name = entry.key;
       final (lat, lng) = entry.value;
-      
+
       if (useJma) {
-        result[name] = calcJmaShindo(magnitude, depth, hypoLat, hypoLng, lat, lng);
+        result[name] = calcJmaShindo(
+          magnitude,
+          depth,
+          hypoLat,
+          hypoLng,
+          lat,
+          lng,
+        );
       } else {
         final dist = haversineDistance(hypoLat, hypoLng, lat, lng);
         result[name] = calcCsis(magnitude, depth, dist);
       }
     }
-    
+
     return result;
   }
 
@@ -328,9 +383,10 @@ class IntensityCalculator {
       regionCenters: regionCenters,
       useJma: true,
     );
-    
-    return intensities.map((name, shindo) => 
-      MapEntry(name, getJmaShindoLevel(shindo, useSymbol: useSymbol))
+
+    return intensities.map(
+      (name, shindo) =>
+          MapEntry(name, getJmaShindoLevel(shindo, useSymbol: useSymbol)),
     );
   }
 
@@ -349,9 +405,9 @@ class IntensityCalculator {
       regionCenters: regionCenters,
       useJma: false,
     );
-    
-    return intensities.map((name, csis) => 
-      MapEntry(name, csis.clamp(0, 12).round())
+
+    return intensities.map(
+      (name, csis) => MapEntry(name, csis.clamp(0, 12).round()),
     );
   }
 }

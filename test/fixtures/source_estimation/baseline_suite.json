@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "suiteId": "source_estimation_p0",
+  "cases": [
+    "nara_m36.json",
+    "satsuma_m26_d179.json",
+    "quiet_20260614_175544.json"
+  ]
+}

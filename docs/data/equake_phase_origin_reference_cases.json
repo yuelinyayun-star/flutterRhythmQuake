@@ -1,0 +1,211 @@
+{
+  "schemaVersion": "equake_phase_origin_reference_cases_v1",
+  "createdFrom": "user_provided_local_equake_text_packets",
+  "policy": {
+    "referenceOnly": true,
+    "notCatalogTruth": true,
+    "gifDerived": true,
+    "doNotUseForFrozenMetricTruth": true,
+    "purpose": "Compare phase-origin and P/S/O tendencies against EQuake/JQ-style GIF-derived reference reports."
+  },
+  "cases": [
+    {
+      "caseId": "equake_20260630_iwate_offshore_m38_report17",
+      "sourcePacket": {
+        "localFolder": "C:/Users/Rhythm/Pictures/新建文件夹 (4)",
+        "textFile": "新建 文本文档.txt"
+      },
+      "region": "岩手県沖",
+      "equakeFinalReport": {
+        "reportNo": 17,
+        "timeUtcPlus8": "2026-06-30T12:22:48",
+        "timeJst": "2026-06-30T13:22:48",
+        "latitude": 40.3,
+        "longitude": 142.53,
+        "magnitude": 3.8,
+        "magnitudeStationCount": 87,
+        "depthKm": 13.0,
+        "observedMaxShindo": 1,
+        "observedMaxShindoValue": 0.8,
+        "estimatedMaxShindo": 1,
+        "qualityRank": "A",
+        "qualityPercent": 80.4,
+        "rmsSeconds": 0.6,
+        "azimuthalGapDeg": 239.0,
+        "triggeredStationCount": 113,
+        "phaseCounts": {
+          "p": 58,
+          "s": 37,
+          "other": 18
+        }
+      },
+      "catalogReference": {
+        "source": "user_provided_hinet_hypocenter",
+        "timeUtcPlus8": "2026-06-30T12:22:49",
+        "timeJst": "2026-06-30T13:22:49",
+        "region": "岩手県北東沖",
+        "latitude": 40.233,
+        "longitude": 142.428,
+        "magnitude": 3.8,
+        "depthKm": 48.2
+      },
+      "localReplay": {
+        "hypBenchmarkCaseIds": [],
+        "currentCaptureCaseIds": [],
+        "notes": "No matching local HYP/JQ replay row is known in the current benchmark. Do not pair this with 20260630_iwate_offshore_m36; that is the earlier 11:24 UTC+8 event."
+      },
+      "phaseProgression": [
+        {"reportNo": 1, "depthKm": 30.0, "triggeredStationCount": 6, "p": 6, "s": 0, "other": 0},
+        {"reportNo": 2, "depthKm": 40.0, "triggeredStationCount": 8, "p": 7, "s": 0, "other": 1},
+        {"reportNo": 3, "depthKm": 40.0, "triggeredStationCount": 12, "p": 12, "s": 0, "other": 0},
+        {"reportNo": 4, "depthKm": 40.0, "triggeredStationCount": 14, "p": 13, "s": 0, "other": 1},
+        {"reportNo": 5, "depthKm": 37.0, "triggeredStationCount": 17, "p": 15, "s": 0, "other": 2},
+        {"reportNo": 6, "depthKm": 37.0, "triggeredStationCount": 22, "p": 21, "s": 0, "other": 1},
+        {"reportNo": 7, "depthKm": 37.0, "triggeredStationCount": 33, "p": 28, "s": 0, "other": 5},
+        {"reportNo": 8, "depthKm": 37.0, "triggeredStationCount": 48, "p": 39, "s": 0, "other": 9},
+        {"reportNo": 9, "depthKm": 25.0, "triggeredStationCount": 52, "p": 46, "s": 0, "other": 6},
+        {"reportNo": 10, "depthKm": 17.0, "triggeredStationCount": 55, "p": 44, "s": 3, "other": 8},
+        {"reportNo": 11, "depthKm": 23.0, "triggeredStationCount": 60, "p": 50, "s": 3, "other": 7},
+        {"reportNo": 12, "depthKm": 2.0, "triggeredStationCount": 63, "p": 52, "s": 1, "other": 10},
+        {"reportNo": 13, "depthKm": 17.0, "triggeredStationCount": 65, "p": 53, "s": 4, "other": 8},
+        {"reportNo": 14, "depthKm": 14.0, "triggeredStationCount": 70, "p": 54, "s": 7, "other": 9},
+        {"reportNo": 15, "depthKm": 5.0, "triggeredStationCount": 73, "p": 56, "s": 8, "other": 9},
+        {"reportNo": 16, "depthKm": 14.0, "triggeredStationCount": 86, "p": 55, "s": 18, "other": 13},
+        {"reportNo": 17, "depthKm": 13.0, "triggeredStationCount": 113, "p": 58, "s": 37, "other": 18}
+      ]
+    },
+    {
+      "caseId": "equake_20260630_fukushima_hamadori_m36_report10",
+      "sourcePacket": {
+        "localFolder": "C:/Users/Rhythm/Pictures/新建文件夹 (5)",
+        "textFile": "新建 文本文档.txt"
+      },
+      "region": "福島県浜通り",
+      "equakeFinalReport": {
+        "reportNo": 10,
+        "timeUtcPlus8": "2026-06-30T11:08:36",
+        "timeJst": "2026-06-30T12:08:36",
+        "latitude": 37.35,
+        "longitude": 140.97,
+        "magnitude": 3.6,
+        "magnitudeStationCount": 82,
+        "depthKm": 67.0,
+        "observedMaxShindo": 1,
+        "observedMaxShindoValue": 0.9,
+        "estimatedMaxShindo": 1,
+        "qualityRank": "A",
+        "qualityPercent": 76.6,
+        "rmsSeconds": 0.84,
+        "azimuthalGapDeg": 143.0,
+        "triggeredStationCount": 129,
+        "phaseCounts": {
+          "p": 33,
+          "s": 75,
+          "other": 21
+        }
+      },
+      "catalogReference": {
+        "source": "user_provided_hinet_hypocenter",
+        "timeUtcPlus8": "2026-06-30T11:08:36",
+        "timeJst": "2026-06-30T12:08:36",
+        "region": "福島県東方沖",
+        "latitude": 37.354,
+        "longitude": 141.003,
+        "magnitude": 3.5,
+        "depthKm": 64.0
+      },
+      "secondaryCatalogReference": {
+        "source": "user_provided_jma_source_intensity_information",
+        "timeUtcPlus8": "2026-06-30T11:08:45",
+        "timeJst": "2026-06-30T12:08:45",
+        "region": "福島県浜通り",
+        "latitude": 37.3,
+        "longitude": 141.0,
+        "magnitude": 3.4,
+        "depthKm": 70.0,
+        "maxShindo": 1
+      },
+      "localReplay": {
+        "hypBenchmarkCaseIds": [
+          "20260630_fukushima_hamadori_m35_hinet_equake10"
+        ],
+        "currentCaptureCaseIds": [
+          "20260630_fukushima_hamadori_m34"
+        ],
+        "notes": "Current capture replay exists and a surface-image-only HYP/JQ experiment fixture is available. The fixture points to the local jma_s capture directory and must be skipped if that local directory is absent."
+      },
+      "phaseProgression": [
+        {"reportNo": 1, "depthKm": 113.0, "triggeredStationCount": 10, "p": 9, "s": 0, "other": 1},
+        {"reportNo": 2, "depthKm": 164.0, "triggeredStationCount": 17, "p": 16, "s": 0, "other": 1},
+        {"reportNo": 3, "depthKm": 64.0, "triggeredStationCount": 20, "p": 19, "s": 0, "other": 1},
+        {"reportNo": 4, "depthKm": 64.0, "triggeredStationCount": 22, "p": 21, "s": 0, "other": 1},
+        {"reportNo": 5, "depthKm": 71.0, "triggeredStationCount": 29, "p": 27, "s": 1, "other": 1},
+        {"reportNo": 6, "depthKm": 67.0, "triggeredStationCount": 40, "p": 31, "s": 5, "other": 4},
+        {"reportNo": 7, "depthKm": 68.0, "triggeredStationCount": 45, "p": 31, "s": 8, "other": 6},
+        {"reportNo": 8, "depthKm": 67.0, "triggeredStationCount": 82, "p": 32, "s": 35, "other": 15},
+        {"reportNo": 9, "depthKm": 64.0, "triggeredStationCount": 98, "p": 33, "s": 47, "other": 18},
+        {"reportNo": 10, "depthKm": 67.0, "triggeredStationCount": 129, "p": 33, "s": 75, "other": 21}
+      ]
+    },
+    {
+      "caseId": "equake_20260622_tomakomai_south_offshore_m29_report10",
+      "sourcePacket": {
+        "localFolder": "C:/Users/Rhythm/Pictures/新建文件夹 (6)",
+        "textFile": "新建 文本文档.txt"
+      },
+      "region": "苫小牧沖",
+      "equakeFinalReport": {
+        "reportNo": 10,
+        "timeUtcPlus8": "2026-06-22T19:37:45",
+        "timeJst": "2026-06-22T20:37:45",
+        "latitude": 42.14,
+        "longitude": 141.22,
+        "magnitude": 2.9,
+        "magnitudeStationCount": 37,
+        "depthKm": 118.0,
+        "observedMaxShindo": 0,
+        "observedMaxShindoValue": -0.6,
+        "estimatedMaxShindo": null,
+        "qualityRank": "S",
+        "qualityPercent": 87.8,
+        "rmsSeconds": 0.64,
+        "azimuthalGapDeg": 118.0,
+        "triggeredStationCount": 49,
+        "phaseCounts": {
+          "p": 10,
+          "s": 33,
+          "other": 6
+        }
+      },
+      "catalogReference": {
+        "source": "user_provided_hinet_hypocenter",
+        "timeUtcPlus8": "2026-06-22T19:37:47",
+        "timeJst": "2026-06-22T20:37:47",
+        "region": "苫小牧南方沖",
+        "latitude": 42.063,
+        "longitude": 141.347,
+        "magnitude": 3.5,
+        "depthKm": 100.0
+      },
+      "localReplay": {
+        "hypBenchmarkCaseIds": [
+          "20260622_tomakomai_south_offshore_m35_hinet"
+        ],
+        "currentCaptureCaseIds": [],
+        "notes": "Complete local replay exists in the HYP/JMA2001 experiment benchmark."
+      },
+      "phaseProgression": [
+        {"reportNo": 1, "depthKm": 12.0, "triggeredStationCount": 10, "p": 7, "s": 2, "other": 1},
+        {"reportNo": 2, "depthKm": 12.0, "triggeredStationCount": 11, "p": 9, "s": 0, "other": 2},
+        {"reportNo": 3, "depthKm": 92.0, "triggeredStationCount": 15, "p": 9, "s": 3, "other": 3},
+        {"reportNo": 4, "depthKm": 76.0, "triggeredStationCount": 18, "p": 9, "s": 5, "other": 4},
+        {"reportNo": 5, "depthKm": 83.0, "triggeredStationCount": 23, "p": 10, "s": 8, "other": 5},
+        {"reportNo": 6, "depthKm": 94.0, "triggeredStationCount": 26, "p": 9, "s": 11, "other": 6},
+        {"reportNo": 7, "depthKm": 90.0, "triggeredStationCount": 36, "p": 9, "s": 19, "other": 8},
+        {"reportNo": 8, "depthKm": 89.0, "triggeredStationCount": 42, "p": 10, "s": 26, "other": 6},
+        {"reportNo": 9, "depthKm": 119.0, "triggeredStationCount": 42, "p": 10, "s": 25, "other": 7},
+        {"reportNo": 10, "depthKm": 118.0, "triggeredStationCount": 49, "p": 10, "s": 33, "other": 6}
+      ]
+    }
+  ]
+}

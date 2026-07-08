@@ -52,12 +52,14 @@ class AlertVoiceHelper {
       return '$source，海啸预警已经解除。';
     }
 
-    final grade = switch (message.grade) {
-      TsunamiGrade.majorWarning => '大海啸警报',
-      TsunamiGrade.warning => '海啸警报',
-      TsunamiGrade.watch => '海啸注意报',
-      TsunamiGrade.none => '海啸预警解除',
-    };
+    final grade = message.title.trim().isNotEmpty
+        ? message.title.trim()
+        : switch (message.grade) {
+            TsunamiGrade.majorWarning => '大海啸警报',
+            TsunamiGrade.warning => '海啸警报',
+            TsunamiGrade.watch => '海啸注意报',
+            TsunamiGrade.none => '海啸预警解除',
+          };
     final action = isUpdate ? '更新' : '发布';
     final areas = message.areas
         .where(
@@ -68,7 +70,7 @@ class AlertVoiceHelper {
         .join('、');
     return areas.isEmpty
         ? '$source$action$grade。'
-        : '$source$action$grade。対象区域：$areas。';
+        : '$source$action$grade。预警区域：$areas。';
   }
 
   static String _generateEewText(
@@ -147,6 +149,7 @@ class AlertVoiceHelper {
       'kmaEew' || 'kmaEqlist' => '韩国气象厅',
       'cencEqlist' => '中国地震台网',
       'usgsEqlist' => 'USGS',
+      'globalQuake' || 'globalQuakeEew' => 'GlobalQuake',
       'fssnEqlist' => 'FSSN',
       'emscEqlist' || 'emsc' => 'EMSC',
       _ => source.isEmpty ? '地震信息源' : source,

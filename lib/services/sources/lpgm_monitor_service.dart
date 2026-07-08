@@ -31,6 +31,7 @@ class LpgmSnapshot {
   final double maxSva;
   final int maxClass;
   final List<LpgmStationReading> topStations;
+
   /// Original RGB color at the max-SVA station position on the GIF image
   final int? maxRawRgb;
 
@@ -76,12 +77,17 @@ class LpgmMonitorService {
 
   bool _running = false;
   bool get isRunning => _running;
+  bool _isTicking = false;
 
   Timer? _timer;
   String? _lastStamp;
   LpgmSnapshot? _latestSnapshot;
   LpgmInputFrame? _latestInputFrame;
   List<_LpgmPoint> _points = const [];
+  final HttpClient _client = HttpClient()
+    ..badCertificateCallback = ((X509Certificate cert, String host, int port) =>
+        true)
+    ..connectionTimeout = const Duration(seconds: 8);
 
   /// 多项式拟合系数（Approach G: 分段 H→pos + 正向最小距离红色区）
   /// 从 LPGM 色标图片采样后用最小二乘法拟合
@@ -137,22 +143,29 @@ class LpgmMonitorService {
 
   final _snapshotController = StreamController<LpgmSnapshot>.broadcast();
   final _frameController = StreamController<LpgmInputFrame>.broadcast();
+  Duration _interval = const Duration(seconds: 1);
   Stream<LpgmSnapshot> get snapshotStream => _snapshotController.stream;
   Stream<LpgmInputFrame> get inputFrameStream => _frameController.stream;
   LpgmSnapshot? get latestSnapshot => _latestSnapshot;
   LpgmInputFrame? get latestInputFrame => _latestInputFrame;
 
-  Future<void> start() async {
-    if (_running) return;
+  Future<void> start({Duration interval = const Duration(seconds: 1)}) async {
+    if (_running && _interval == interval) return;
+    if (_running) {
+      stop();
+    }
+    _interval = interval;
     _running = true;
     _buildPoints();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
+    _timer = Timer.periodic(_interval, (_) => _tick());
+    unawaited(_tick());
   }
 
   void stop() {
     _timer?.cancel();
     _timer = null;
     _running = false;
+    _isTicking = false;
     _lastStamp = null;
   }
 
@@ -162,8 +175,28 @@ class LpgmMonitorService {
     _frameController.close();
   }
 
+  Future<void> refreshDebugFrame() async {
+    if (!_frameController.hasListener) return;
+    try {
+      final stamp = await _fetchLatestStamp();
+      if (stamp == null) return;
+      final time = _parseStamp(stamp);
+      if (time == null) return;
+      final frame = await _fetchGif(_buildRtImageUrl(stamp));
+      if (frame == null) return;
+      _latestInputFrame = LpgmInputFrame(
+        dataTime: time,
+        imageBytes: frame.gifBytes,
+      );
+      _frameController.add(_latestInputFrame!);
+    } catch (_) {
+      // Debug-only frame refresh failure should not affect monitoring.
+    }
+  }
+
   Future<void> _tick() async {
-    if (!_running) return;
+    if (!_running || _isTicking) return;
+    _isTicking = true;
     try {
       final stamp = await _fetchLatestStamp();
       if (stamp == null || stamp == _lastStamp) return;
@@ -172,30 +205,38 @@ class LpgmMonitorService {
       final frame = await _fetchGif(_buildRtImageUrl(stamp));
       if (frame == null) return;
       _lastStamp = stamp;
-      _latestInputFrame = LpgmInputFrame(
-        dataTime: time,
-        imageBytes: frame.gifBytes,
-      );
-      _frameController.add(_latestInputFrame!);
+      if (_frameController.hasListener) {
+        _latestInputFrame = LpgmInputFrame(
+          dataTime: time,
+          imageBytes: frame.gifBytes,
+        );
+        _frameController.add(_latestInputFrame!);
+      } else {
+        _latestInputFrame = null;
+      }
       _parseFrame(frame.packedRgb, time);
     } catch (_) {
       // keep silent for now; caller can observe stream gaps.
+    } finally {
+      _isTicking = false;
     }
   }
 
   Future<String?> _fetchLatestStamp() async {
-    final nowSec = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-    final url = '$_latestUrl?_=$nowSec';
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final url = '$_latestUrl?_=$nowMs';
     final text = await _fetchText(url);
     if (text == null) return null;
-    final latestTag = '"latest_time":';
-    final idx = text.indexOf(latestTag);
-    if (idx < 0) return null;
-    final from = text.indexOf('"', idx + latestTag.length);
-    if (from < 0) return null;
-    final to = text.indexOf('"', from + 1);
-    if (to < 0) return null;
-    final latest = text.substring(from + 1, to).trim();
+    String latest;
+    try {
+      final decoded = jsonDecode(text);
+      if (decoded is! Map<String, dynamic>) return null;
+      final value = decoded['latest_time'];
+      if (value is! String) return null;
+      latest = value.trim();
+    } catch (_) {
+      return null;
+    }
     return latest.replaceAll('/', '').replaceAll(' ', '').replaceAll(':', '');
   }
 
@@ -339,9 +380,13 @@ class LpgmMonitorService {
     double d = a + phi * (b - a);
     for (int iter = 0; iter < 30; iter++) {
       if (distAt(c) < distAt(d)) {
-        b = d; d = c; c = b - phi * (b - a);
+        b = d;
+        d = c;
+        c = b - phi * (b - a);
       } else {
-        a = c; c = d; d = a + phi * (b - a);
+        a = c;
+        c = d;
+        d = a + phi * (b - a);
       }
     }
     return ((a + b) / 2).clamp(0.80, 1.0);
@@ -431,20 +476,17 @@ class LpgmMonitorService {
   }
 
   Future<String?> _fetchText(String url) async {
-    final client = HttpClient()
-      ..badCertificateCallback =
-          ((X509Certificate cert, String host, int port) => true);
     try {
-      final req = await client.getUrl(Uri.parse(url));
+      final req = await _client.getUrl(Uri.parse(url));
       req.headers.set('Referer', 'https://www.lmoni.bosai.go.jp/monitor/');
       req.headers.set('User-Agent', _ua);
+      req.headers.set('Cache-Control', 'no-cache');
+      req.headers.set('Pragma', 'no-cache');
       final res = await req.close();
       if (res.statusCode != 200) return null;
       return await utf8.decoder.bind(res).join();
     } catch (_) {
       return null;
-    } finally {
-      client.close();
     }
   }
 
@@ -455,13 +497,12 @@ class LpgmMonitorService {
   }
 
   Future<(List<int>, int, int, Uint8List)?> _fetchGifOrPng(String url) async {
-    final client = HttpClient()
-      ..badCertificateCallback =
-          ((X509Certificate cert, String host, int port) => true);
     try {
-      final req = await client.getUrl(Uri.parse(url));
+      final req = await _client.getUrl(Uri.parse(url));
       req.headers.set('Referer', 'https://www.lmoni.bosai.go.jp/monitor/');
       req.headers.set('User-Agent', _ua);
+      req.headers.set('Cache-Control', 'no-cache');
+      req.headers.set('Pragma', 'no-cache');
       final res = await req.close();
       if (res.statusCode != 200) return null;
       final bytes = await consolidateHttpClientResponseBytes(res);
@@ -489,8 +530,6 @@ class LpgmMonitorService {
       return (out, w, h, Uint8List.fromList(bytes));
     } catch (_) {
       return null;
-    } finally {
-      client.close();
     }
   }
 
@@ -531,14 +570,36 @@ class LpgmMonitorService {
 
 /// LPGM 色标 SVA 值（从下到上，等距排列的 1-2-5 工程刻度）
 const List<double> _svaScaleValues = [
-  0.001, 0.01, 0.1, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0,
+  0.001,
+  0.01,
+  0.1,
+  1.0,
+  2.0,
+  5.0,
+  10.0,
+  20.0,
+  50.0,
+  100.0,
+  200.0,
+  500.0,
   1000.0,
 ];
 
 /// 预计算的 log10(SVA) 值，用于对数线性插值
 const List<double> _log10SvaScale = [
-  -3.0, -2.0, -1.0, 0.0, 0.30103, 0.69897, 1.0, 1.30103, 1.69897, 2.0,
-  2.30103, 2.69897, 3.0,
+  -3.0,
+  -2.0,
+  -1.0,
+  0.0,
+  0.30103,
+  0.69897,
+  1.0,
+  1.30103,
+  1.69897,
+  2.0,
+  2.30103,
+  2.69897,
+  3.0,
 ];
 
 class _LpgmPoint {

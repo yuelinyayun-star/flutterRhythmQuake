@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import '../../services/sources/seisjs_service.dart';
+import 'station_dot_painter_layer.dart';
 
 class SeisJsLayer extends StatelessWidget {
   final List<SeisJsStation>? stations;
@@ -21,7 +22,16 @@ class SeisJsLayer extends StatelessWidget {
   ];
 
   static const List<String> _shindoLabels = [
-    '0', '1', '2', '3', '4', '5弱', '5強', '6弱', '6強', '7',
+    '0',
+    '1',
+    '2',
+    '3',
+    '4',
+    '5弱',
+    '5強',
+    '6弱',
+    '6強',
+    '7',
   ];
 
   static const Color _idleColor = Color(0x804466AA);
@@ -31,7 +41,7 @@ class SeisJsLayer extends StatelessWidget {
     final data = stations;
     if (data == null || data.isEmpty) return const SizedBox.shrink();
 
-    final dotMarkers = <Marker>[];
+    final dots = <StationDot>[];
     final iconMarkers = <Marker>[];
 
     for (var station in data) {
@@ -39,33 +49,39 @@ class SeisJsLayer extends StatelessWidget {
       final active = shindo >= 0;
 
       if (active) {
-        iconMarkers.add(Marker(
-          width: _getSize(shindo) * 0.75,
-          height: _getSize(shindo) * 0.75,
-          point: station.coordinate,
-          child: _ShindoMarker(
-            color: _getColor(shindo),
-            label: _getLabel(shindo),
-            intensity: shindo,
-            isSeisJs: true,
-          ),
-        ));
-      } else {
-        dotMarkers.add(Marker(
-          width: 2.5,
-          height: 2.5,
-          point: station.coordinate,
-          child: Container(
-            decoration: BoxDecoration(
-              color: _idleColor,
-              shape: BoxShape.circle,
+        iconMarkers.add(
+          Marker(
+            width: _getSize(shindo) * 0.75,
+            height: _getSize(shindo) * 0.75,
+            point: station.coordinate,
+            child: _ShindoMarker(
+              color: _getColor(shindo),
+              label: _getLabel(shindo),
+              intensity: shindo,
+              isSeisJs: true,
             ),
           ),
-        ));
+        );
+      } else {
+        dots.add(
+          StationDot(
+            coordinate: station.coordinate,
+            color: _idleColor,
+            radius: 1.25,
+            fillOpacity: 1.0,
+            borderOpacity: 0.0,
+            borderWidth: 0.0,
+          ),
+        );
       }
     }
 
-    return MarkerLayer(markers: [...dotMarkers, ...iconMarkers]);
+    return Stack(
+      children: [
+        StationDotPainterLayer(dots: dots),
+        if (iconMarkers.isNotEmpty) MarkerLayer(markers: iconMarkers),
+      ],
+    );
   }
 
   Color _getColor(int shindo) {
@@ -109,9 +125,6 @@ class _ShindoMarker extends StatelessWidget {
           color: isHigh ? Colors.white : Colors.white.withValues(alpha: 0.4),
           width: isHigh ? 1.5 : 0.8,
         ),
-        boxShadow: isHigh
-            ? [BoxShadow(color: color.withValues(alpha: 0.5), blurRadius: 8, spreadRadius: 1)]
-            : [BoxShadow(color: color.withValues(alpha: 0.2), blurRadius: 2)],
       ),
       child: Center(
         child: Text(

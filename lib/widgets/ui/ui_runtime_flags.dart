@@ -6,4 +6,7 @@ class UiRuntimeFlags {
 
   static final ValueNotifier<bool> sideInfoAutoShowBetaNotifier =
       ValueNotifier<bool>(false);
+
+  static final ValueNotifier<bool> weatherMarqueeEnabledNotifier =
+      ValueNotifier<bool>(false);
 }

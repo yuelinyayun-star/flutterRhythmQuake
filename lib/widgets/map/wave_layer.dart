@@ -1,13 +1,15 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import 'dart:math';
 import '../../models/quake_message.dart';
 import '../../core/calculator.dart';
 import '../../core/travel_time_service.dart';
 import '../../core/utils/world_wrap.dart';
 import '../../services/ntp_service.dart';
 import '../../core/utils/quake_time.dart';
+import '../../core/event_animation_clock.dart';
 
 enum SWaveColorMode { alert, magnitude, intensity }
 
@@ -18,6 +20,10 @@ class QuakeWaveLayer extends StatefulWidget {
   final SWaveColorMode colorMode;
   final double frameRate;
   final bool blinkOn;
+  final Color? pWaveColor;
+  final Color? sWaveColor;
+  final bool showCrosshair;
+  final bool showEpicenterLabel;
 
   const QuakeWaveLayer({
     super.key,
@@ -25,106 +31,82 @@ class QuakeWaveLayer extends StatefulWidget {
     this.showWaves = true,
     this.userPosition,
     this.colorMode = SWaveColorMode.alert,
-    this.frameRate = 10,
+    this.frameRate = 4,
     this.blinkOn = true,
+    this.pWaveColor,
+    this.sWaveColor,
+    this.showCrosshair = true,
+    this.showEpicenterLabel = true,
   });
 
   @override
   State<QuakeWaveLayer> createState() => _QuakeWaveLayerState();
 }
 
-class _QuakeWaveLayerState extends State<QuakeWaveLayer>
-    with SingleTickerProviderStateMixin {
-  AnimationController? _controller;
+class _QuakeWaveLayerState extends State<QuakeWaveLayer> {
+  EventAnimationLease? _clockLease;
 
   @override
   void initState() {
     super.initState();
-    if (widget.showWaves) {
-      _controller = AnimationController(
-        vsync: this,
-        duration: const Duration(milliseconds: 100),
-      )..repeat();
-    }
+    _syncClock();
   }
 
   @override
   void didUpdateWidget(covariant QuakeWaveLayer oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.showWaves && _controller == null) {
-      _controller = AnimationController(
-        vsync: this,
-        duration: const Duration(milliseconds: 100),
-      )..repeat();
-    } else if (!widget.showWaves && _controller != null) {
-      _controller!.dispose();
-      _controller = null;
+    if (oldWidget.showWaves != widget.showWaves ||
+        oldWidget.frameRate != widget.frameRate) {
+      _syncClock();
     }
   }
 
   @override
   void dispose() {
-    _controller?.dispose();
+    _clockLease?.dispose();
     super.dispose();
+  }
+
+  void _syncClock() {
+    if (widget.showWaves) {
+      _clockLease ??= EventAnimationClock.instance.acquire();
+    } else {
+      _clockLease?.dispose();
+      _clockLease = null;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!widget.showWaves) {
-      return Builder(
-        builder: (innerContext) {
-          final camera = MapCamera.of(innerContext);
-          return CustomPaint(
-            painter: WavePainter(
-              event: widget.event,
-              camera: camera,
-              currentTime: NtpService().now,
-              showWaves: false,
-              userPosition: widget.userPosition,
-              colorMode: widget.colorMode,
-              blinkOn: widget.blinkOn,
-            ),
-            size: Size.infinite,
-          );
-        },
-      );
-    }
+    return _buildPaint(context);
+  }
 
-    if (_controller == null) {
-      return Builder(
-        builder: (innerContext) {
-          final camera = MapCamera.of(innerContext);
-          return CustomPaint(
-            painter: WavePainter(
-              event: widget.event,
-              camera: camera,
-              currentTime: NtpService().now,
-              showWaves: true,
-              userPosition: widget.userPosition,
-              colorMode: widget.colorMode,
-              blinkOn: widget.blinkOn,
-            ),
-            size: Size.infinite,
-          );
-        },
-      );
-    }
-
-    return AnimatedBuilder(
-      animation: _controller!,
-      builder: (context, child) {
-        final camera = MapCamera.of(context);
+  Widget _buildPaint(BuildContext context) {
+    return Builder(
+      builder: (innerContext) {
+        final camera = MapCamera.of(innerContext);
+        final repaint = widget.showWaves
+            ? EventAnimationClock.instance.listenableForFrameRate(
+                widget.frameRate,
+              )
+            : null;
         return CustomPaint(
           painter: WavePainter(
             event: widget.event,
             camera: camera,
-            currentTime: NtpService().now,
-            showWaves: true,
+            showWaves: widget.showWaves,
             userPosition: widget.userPosition,
             colorMode: widget.colorMode,
             blinkOn: widget.blinkOn,
+            pWaveColor: widget.pWaveColor,
+            sWaveColor: widget.sWaveColor,
+            showCrosshair: widget.showCrosshair,
+            showEpicenterLabel: widget.showEpicenterLabel,
+            repaint: repaint,
           ),
           size: Size.infinite,
+          isComplex: true,
+          willChange: widget.showWaves,
         );
       },
     );
@@ -134,11 +116,14 @@ class _QuakeWaveLayerState extends State<QuakeWaveLayer>
 class WavePainter extends CustomPainter {
   final QuakeMessage event;
   final MapCamera camera;
-  final DateTime currentTime;
   final bool showWaves;
   final LatLng? userPosition;
   final SWaveColorMode colorMode;
   final bool blinkOn;
+  final Color? pWaveColor;
+  final Color? sWaveColor;
+  final bool showCrosshair;
+  final bool showEpicenterLabel;
 
   static const double _maxRadius1 = 2000;
   static const double _maxRadius2 = 10000;
@@ -146,11 +131,15 @@ class WavePainter extends CustomPainter {
   WavePainter({
     required this.event,
     required this.camera,
-    required this.currentTime,
     this.showWaves = true,
     this.userPosition,
     this.colorMode = SWaveColorMode.alert,
     this.blinkOn = true,
+    this.pWaveColor,
+    this.sWaveColor,
+    this.showCrosshair = true,
+    this.showEpicenterLabel = true,
+    super.repaint,
   });
 
   double _calcMaxWaveRadius() {
@@ -179,11 +168,11 @@ class WavePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final normalizedOrigin = QuakeTime.normalizedOriginLocal(event);
+    final currentTime = NtpService().now;
     final double elapsed = QuakeCalculator.getElapsedSeconds(
       normalizedOrigin,
       currentTime,
     );
-    if (elapsed < 0) return;
 
     final isValidHypo = event.latitude != 0.0 || event.longitude != 0.0;
     if (!isValidHypo) return;
@@ -198,6 +187,11 @@ class WavePainter extends CustomPainter {
         centerPos.dx > size.width + 200 ||
         centerPos.dy < -200 ||
         centerPos.dy > size.height + 200) {
+      return;
+    }
+
+    if (elapsed < 0) {
+      _drawEpicenter(canvas, centerPos);
       return;
     }
 
@@ -259,16 +253,20 @@ class WavePainter extends CustomPainter {
       }
     }
 
-    if (blinkOn) {
-      _drawCrosshair(canvas, centerPos);
-    }
-
     if (showWaves && userPosition != null) {
       _drawUserLocationIndicator(canvas, centerLatLng, elapsed, size);
     }
 
-    if (blinkOn) {
-      _drawEpicenterLabel(canvas, centerPos);
+    _drawEpicenter(canvas, centerPos);
+  }
+
+  void _drawEpicenter(Canvas canvas, Offset center) {
+    if (blinkOn && showCrosshair) {
+      _drawCrosshair(canvas, center);
+    }
+
+    if (blinkOn && showEpicenterLabel) {
+      _drawEpicenterLabel(canvas, center);
     }
   }
 
@@ -279,7 +277,9 @@ class WavePainter extends CustomPainter {
     double opacity,
   ) {
     final pPaint = Paint()
-      ..color = Colors.white.withValues(alpha: opacity.clamp(0.0, 1.0))
+      ..color = (pWaveColor ?? Colors.white).withValues(
+        alpha: opacity.clamp(0.0, 1.0),
+      )
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2;
     canvas.drawCircle(center, radiusPx, pPaint);
@@ -303,11 +303,15 @@ class WavePainter extends CustomPainter {
       case SWaveColorMode.intensity:
         final intensity = event.maxIntensity;
         if (intensity == null) return Colors.orange;
-        if (intensity >= 9) return Colors.purple;
-        if (intensity >= 7) return Colors.red;
-        if (intensity >= 5) return Colors.orange;
-        if (intensity >= 3) return Colors.yellow;
-        return Colors.green;
+        if (intensity <= 0) return Colors.grey;
+        if (intensity <= 2) return const Color(0xFF5FCFFF);
+        if (intensity <= 4) return const Color(0xFF3FAFFF);
+        if (intensity <= 5) return const Color(0xFF5FDF8F);
+        if (intensity <= 6) return const Color(0xFFF7E757);
+        if (intensity <= 7) return const Color(0xFFFF8F00);
+        if (intensity <= 8) return const Color(0xFFFF4F00);
+        if (intensity <= 9) return const Color(0xFFDF0F0F);
+        return const Color(0xFF7F007F);
     }
   }
 
@@ -317,7 +321,7 @@ class WavePainter extends CustomPainter {
     double radiusPx,
     double opacity,
   ) {
-    final Color waveColor = _getSWaveColor();
+    final Color waveColor = sWaveColor ?? _getSWaveColor();
     final sPaint = Paint()
       ..color = waveColor.withValues(alpha: opacity.clamp(0.0, 1.0))
       ..style = PaintingStyle.stroke
@@ -335,7 +339,7 @@ class WavePainter extends CustomPainter {
     double sRadiusKm,
   ) {
     if (!showFill) return;
-    final Color waveColor = _getSWaveColor();
+    final Color waveColor = sWaveColor ?? _getSWaveColor();
     final fillOpacity = _calcOpacity(sRadiusKm, 0, _calcMaxWaveRadius()) * 0.25;
     final gradient = RadialGradient(
       center: Alignment.center,
@@ -571,9 +575,14 @@ class WavePainter extends CustomPainter {
           oldDelegate.userPosition != userPosition ||
           oldDelegate.blinkOn != blinkOn;
     }
-    return oldDelegate.currentTime != currentTime ||
+    return oldDelegate.event != event ||
         oldDelegate.camera != camera ||
         oldDelegate.userPosition != userPosition ||
-        oldDelegate.blinkOn != blinkOn;
+        oldDelegate.colorMode != colorMode ||
+        oldDelegate.blinkOn != blinkOn ||
+        oldDelegate.pWaveColor != pWaveColor ||
+        oldDelegate.sWaveColor != sWaveColor ||
+        oldDelegate.showCrosshair != showCrosshair ||
+        oldDelegate.showEpicenterLabel != showEpicenterLabel;
   }
 }

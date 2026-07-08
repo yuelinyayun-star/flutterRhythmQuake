@@ -1,0 +1,268 @@
+{
+  "schemaVersion": "source_estimation_split_assignment_plan_v1",
+  "purpose": "Machine-readable follow-up plan for source-estimation replay fixtures that are explicitly marked unassigned_reference.",
+  "policy": "Cases listed here stay outside frozen train/validation/test metrics until the requiredBeforeFrozenSplit items are reviewed.",
+  "cases": [
+    {
+      "caseId": "20260620_iwate_offshore_m34_ref",
+      "currentStatus": "unassigned_reference",
+      "plannedUse": "offshore_reference_pool",
+      "requiredBeforeFrozenSplit": [
+        "review_hinet_preliminary_truth_quality",
+        "confirm_capture_provenance",
+        "assign_event_level_split"
+      ]
+    },
+    {
+      "caseId": "20260621_fukushima_offshore_m32_eq6",
+      "currentStatus": "unassigned_reference",
+      "plannedUse": "candidate_region_false_recovery_guard",
+      "requiredBeforeFrozenSplit": [
+        "keep_candidate_region_diagnostic_only",
+        "review_hinet_truth_quality",
+        "keep_candidate_region_false_recovery_diagnostic_only"
+      ]
+    },
+    {
+      "caseId": "20260621_iwate_offshore_m33_eq8",
+      "currentStatus": "unassigned_reference",
+      "plannedUse": "offshore_reference_pool",
+      "requiredBeforeFrozenSplit": [
+        "link_final_catalog_or_hinet_revision",
+        "confirm_capture_provenance",
+        "assign_event_level_split"
+      ]
+    },
+    {
+      "caseId": "20260622_fukushima_offshore_m22_eq4",
+      "currentStatus": "validation_reference",
+      "plannedUse": "small_offshore_reference_pool",
+      "requiredBeforeFrozenSplit": [
+        "review_equake_reference_only_truth",
+        "confirm_capture_provenance",
+        "assign_event_level_split"
+      ],
+      "manualSplitRecommendation": {
+        "suggestedSplit": "validation",
+        "reason": "small_offshore_reference_only_validation_candidate",
+        "constraints": [
+          "keep_include_in_detection_metrics_false",
+          "do_not_treat_as_catalog_truth",
+          "do_not_use_for_final_test_claims"
+        ]
+      }
+    },
+    {
+      "caseId": "20260622_iwate_east_offshore_m30_hinet",
+      "currentStatus": "unassigned_reference",
+      "plannedUse": "offshore_reference_pool",
+      "requiredBeforeFrozenSplit": [
+        "review_hinet_preliminary_truth_quality",
+        "confirm_capture_provenance",
+        "assign_event_level_split"
+      ],
+      "manualSplitRecommendation": {
+        "suggestedSplit": "validation",
+        "reason": "hinet_constrained_offshore_reference_validation_candidate",
+        "constraints": [
+          "hinet_constrained_reference_only",
+          "do_not_treat_as_catalog_truth",
+          "do_not_use_for_final_test_claims"
+        ]
+      }
+    },
+    {
+      "caseId": "20260622_iwate_offshore_m30_eq10",
+      "currentStatus": "unassigned_reference",
+      "plannedUse": "offshore_reference_pool",
+      "requiredBeforeFrozenSplit": [
+        "review_hinet_preliminary_truth_quality",
+        "confirm_capture_provenance",
+        "assign_event_level_split"
+      ],
+      "manualSplitRecommendation": {
+        "suggestedSplit": "validation",
+        "reason": "hinet_constrained_offshore_reference_validation_candidate",
+        "constraints": [
+          "hinet_constrained_reference_only",
+          "do_not_treat_as_catalog_truth",
+          "do_not_use_for_final_test_claims"
+        ]
+      }
+    },
+    {
+      "caseId": "20260622_kushiro_offshore_m30_jma",
+      "currentStatus": "unassigned_reference",
+      "plannedUse": "candidate_region_residual_positive_guard",
+      "requiredBeforeFrozenSplit": [
+        "keep_candidate_region_diagnostic_only",
+        "review_jma_catalog_link",
+        "assign_event_level_split"
+      ]
+    },
+    {
+      "caseId": "20260622_tomakomai_south_offshore_m35_hinet",
+      "currentStatus": "unassigned_reference",
+      "plannedUse": "candidate_region_residual_immediate_guard",
+      "requiredBeforeFrozenSplit": [
+        "review_hinet_preliminary_truth_quality",
+        "confirm_capture_provenance",
+        "assign_event_level_split"
+      ],
+      "manualSplitRecommendation": {
+        "suggestedSplit": "validation",
+        "reason": "hinet_constrained_residual_immediate_guard_validation_candidate",
+        "constraints": [
+          "hinet_constrained_reference_only",
+          "do_not_treat_as_catalog_truth",
+          "do_not_use_for_final_test_claims"
+        ]
+      }
+    },
+    {
+      "caseId": "20260622_wakayama_south_m25_hinet",
+      "currentStatus": "unassigned_reference",
+      "plannedUse": "inland_or_near_coast_reference_pool",
+      "requiredBeforeFrozenSplit": [
+        "review_hinet_preliminary_truth_quality",
+        "confirm_capture_provenance",
+        "assign_event_level_split"
+      ],
+      "manualSplitRecommendation": {
+        "suggestedSplit": "validation",
+        "reason": "hinet_constrained_inland_or_near_coast_reference_validation_candidate",
+        "constraints": [
+          "hinet_constrained_reference_only",
+          "do_not_treat_as_catalog_truth",
+          "do_not_use_for_final_test_claims"
+        ]
+      }
+    },
+    {
+      "caseId": "20260623_tokachi_southeast_offshore_m34_hinet",
+      "currentStatus": "unassigned_reference",
+      "plannedUse": "candidate_region_hokkaido_control",
+      "requiredBeforeFrozenSplit": [
+        "review_hinet_preliminary_truth_quality",
+        "confirm_capture_provenance",
+        "assign_event_level_split"
+      ],
+      "manualSplitRecommendation": {
+        "suggestedSplit": "validation",
+        "reason": "hinet_constrained_hokkaido_control_validation_candidate",
+        "constraints": [
+          "hinet_constrained_reference_only",
+          "do_not_treat_as_catalog_truth",
+          "do_not_use_for_final_test_claims"
+        ]
+      }
+    },
+    {
+      "caseId": "20260624_fukushima_aizu_m32_jma_eq5",
+      "currentStatus": "unassigned_reference",
+      "plannedUse": "inland_surrounded_control",
+      "requiredBeforeFrozenSplit": [
+        "review_jma_catalog_link",
+        "confirm_capture_provenance",
+        "assign_event_level_split"
+      ]
+    },
+    {
+      "caseId": "20260625_iwate_offshore_m32_jma",
+      "currentStatus": "unassigned_reference",
+      "plannedUse": "candidate_region_local_support_positive_guard",
+      "requiredBeforeFrozenSplit": [
+        "keep_candidate_region_diagnostic_only",
+        "review_jma_catalog_link",
+        "assign_event_level_split"
+      ]
+    },
+    {
+      "caseId": "20260626_yamanashi_east_fuji_five_lakes_m56_jma_equake21",
+      "currentStatus": "unassigned_reference",
+      "plannedUse": "plum_like_replay_leadtime_strong_motion_reference",
+      "requiredBeforeFrozenSplit": [
+        "keep_plum_like_diagnostic_only",
+        "review_jma_catalog_link",
+        "confirm_capture_provenance",
+        "assign_event_level_split"
+      ]
+    },
+    {
+      "caseId": "20260626_yamanashi_east_fuji_five_lakes_m33_jma_equake8",
+      "currentStatus": "unassigned_reference",
+      "plannedUse": "plum_like_replay_leadtime_moderate_reference",
+      "requiredBeforeFrozenSplit": [
+        "keep_plum_like_diagnostic_only",
+        "review_jma_catalog_link",
+        "confirm_capture_provenance",
+        "assign_event_level_split"
+      ]
+    },
+    {
+      "caseId": "20260626_yamanashi_east_fuji_five_lakes_m26_jma_p2p",
+      "currentStatus": "unassigned_reference",
+      "plannedUse": "plum_like_replay_leadtime_moderate_reference",
+      "requiredBeforeFrozenSplit": [
+        "keep_plum_like_diagnostic_only",
+        "review_jma_catalog_link",
+        "confirm_capture_provenance",
+        "assign_event_level_split"
+      ]
+    },
+    {
+      "caseId": "20260627_fukushima_aizu_m36_jma_equake17",
+      "currentStatus": "unassigned_reference",
+      "plannedUse": "plum_like_replay_leadtime_moderate_reference",
+      "requiredBeforeFrozenSplit": [
+        "keep_plum_like_diagnostic_only",
+        "review_jma_catalog_link",
+        "confirm_capture_provenance",
+        "assign_event_level_split"
+      ]
+    },
+    {
+      "caseId": "20260627_yamanashi_east_fuji_five_lakes_m24_jma_p2p",
+      "currentStatus": "unassigned_reference",
+      "plannedUse": "plum_like_replay_leadtime_moderate_reference",
+      "requiredBeforeFrozenSplit": [
+        "keep_plum_like_diagnostic_only",
+        "review_jma_catalog_link",
+        "confirm_capture_provenance",
+        "assign_event_level_split"
+      ]
+    },
+    {
+      "caseId": "20260628_iwate_offshore_m41_jma",
+      "currentStatus": "unassigned_reference",
+      "plannedUse": "plum_like_replay_leadtime_moderate_reference",
+      "requiredBeforeFrozenSplit": [
+        "keep_plum_like_diagnostic_only",
+        "review_jma_catalog_link",
+        "confirm_capture_provenance",
+        "assign_event_level_split"
+      ]
+    },
+    {
+      "caseId": "noto_m27_20260621_jma_eq5",
+      "currentStatus": "validation_reference",
+      "plannedUse": "multilayer_gain_probe",
+      "requiredBeforeFrozenSplit": [
+        "review_source_trigger_threshold_effect",
+        "confirm_capture_provenance",
+        "assign_event_level_split"
+      ],
+      "manualSplitRecommendation": {
+        "suggestedSplit": "validation",
+        "reason": "noto_multilayer_gain_probe_reference_only_validation_candidate",
+        "constraints": [
+          "keep_include_in_detection_metrics_false",
+          "do_not_treat_as_catalog_truth",
+          "do_not_use_for_final_test_claims",
+          "physical_fusion_diagnostic_only",
+          "preserve_historical_fetch_warning"
+        ]
+      }
+    }
+  ]
+}

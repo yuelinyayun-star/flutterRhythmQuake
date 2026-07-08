@@ -1,6 +1,5 @@
+import 'dart:developer' as developer;
 import 'dart:math';
-
-import 'package:flutter/foundation.dart';
 
 import 'jp_shindo_scale.dart';
 
@@ -72,7 +71,7 @@ class ShindoColorUtil {
     if (r == 0 && g == 0 && b == 0) {
       lastMatchType = ShindoMatchType.blackPixel;
       if (shouldLog) {
-        debugPrint(
+        _debugPrint(
           '[ShindoColor] #$_logCount RGB($r,$g,$b) -> black pixel -> no data',
         );
       }
@@ -83,7 +82,7 @@ class ShindoColorUtil {
     if (nearest != null) {
       lastMatchType = ShindoMatchType.palette;
       if (shouldLog && nearest > -1.5) {
-        debugPrint(
+        _debugPrint(
           '[ShindoColor] #$_logCount RGB($r,$g,$b) 鈫?palette match 鈫?shindo=$nearest',
         );
       }
@@ -94,7 +93,7 @@ class ShindoColorUtil {
     if (greenAlias != null) {
       lastMatchType = ShindoMatchType.greenAlias;
       if (shouldLog && greenAlias > -1.5) {
-        debugPrint(
+        _debugPrint(
           '[ShindoColor] #$_logCount RGB($r,$g,$b) 鈫?green alias 鈫?shindo=$greenAlias',
         );
       }
@@ -105,7 +104,7 @@ class ShindoColorUtil {
     if (hsv[1] <= 0.85 || hsv[2] <= 0.2) {
       lastMatchType = ShindoMatchType.lowSatVal;
       if (shouldLog) {
-        debugPrint(
+        _debugPrint(
           '[ShindoColor] #$_logCount RGB($r,$g,$b) 鈫?HSV(${hsv[0].toStringAsFixed(3)}, ${hsv[1].toStringAsFixed(3)}, ${hsv[2].toStringAsFixed(3)}) 鈫?saturation/value too low, skipped',
         );
       }
@@ -116,7 +115,7 @@ class ShindoColorUtil {
     if (p <= 0) {
       lastMatchType = ShindoMatchType.zeroPosition;
       if (shouldLog) {
-        debugPrint(
+        _debugPrint(
           '[ShindoColor] #$_logCount RGB($r,$g,$b) 鈫?HSV(${hsv[0].toStringAsFixed(3)}, ${hsv[1].toStringAsFixed(3)}, ${hsv[2].toStringAsFixed(3)}) 鈫?position=${p.toStringAsFixed(4)} (鈮?), skipped',
         );
       }
@@ -128,7 +127,7 @@ class ShindoColorUtil {
     if (expected == null) {
       lastMatchType = ShindoMatchType.noPaletteEntry;
       if (shouldLog) {
-        debugPrint(
+        _debugPrint(
           '[ShindoColor] #$_logCount RGB($r,$g,$b) 鈫?HSV(${hsv[0].toStringAsFixed(3)}, ${hsv[1].toStringAsFixed(3)}, ${hsv[2].toStringAsFixed(3)}) 鈫?p=${p.toStringAsFixed(4)} 鈫?shindo=${shindo.toStringAsFixed(1)} 鈫?no palette entry, skipped',
         );
       }
@@ -144,7 +143,7 @@ class ShindoColorUtil {
         ? ShindoMatchType.hsvAccepted
         : ShindoMatchType.hsvRejected;
     if (shouldLog) {
-      debugPrint(
+      _debugPrint(
         '[ShindoColor] #$_logCount RGB($r,$g,$b) 鈫?HSV(${hsv[0].toStringAsFixed(3)}, ${hsv[1].toStringAsFixed(3)}, ${hsv[2].toStringAsFixed(3)}) 鈫?p=${p.toStringAsFixed(4)} 鈫?shindo=${shindo.toStringAsFixed(1)} 鈫?palette(${expected.$1},${expected.$2},${expected.$3},${expected.$4}) distSq=$distSq threshold=$_strictPaletteDistanceSquared 鈫?${passed ? "ACCEPTED 鈫?level=${shindoToRawLevel(shindo)}" : "REJECTED (distSq too large)"}',
       );
     }
@@ -253,6 +252,10 @@ class ShindoColorUtil {
       p = -0.005171 * pow(v, 2) - 0.3282 * v + 1.2236;
     }
     return p.clamp(0.0, 1.0);
+  }
+
+  static void _debugPrint(String message) {
+    developer.log(message, name: 'ShindoColor');
   }
 
   static final List<(int, int, int, double)> _paletteEntries =

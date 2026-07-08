@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "hinet_capture_provenance_review_decisions_v1",
+  "policy": "This file records explicit repair or exclusion decisions for Hi-net review cases whose local capture packages are incomplete. Pending entries do not clear capture blockers. Excluding a missing frame requires reviewer metadata, reviewed time, excluded file names and a reason.",
+  "cases": [
+    {
+      "caseId": "20260620_iwate_offshore_m34_ref",
+      "decisionStatus": "capture_frame_exclusion_approved",
+      "reviewedAtUtc": "2026-06-29T01:27:36Z",
+      "reviewer": "user_confirmed",
+      "exclusionApproved": true,
+      "excludedFiles": [
+        "20260620212727.jma_b.gif",
+        "missing_frame_1"
+      ],
+      "exclusionReason": "The missing NIED GIF frame 20260620212727.jma_b.gif cannot be repaired: the event origin (2026-06-20 21:25:27 JST) is older than the public KMoni replay retention window, and the recorded NIED repair URL returned HTTP 404. Historical re-download must not be proposed. Exclude this missing frame from constrained split use; keep the case out of catalog-truth validation and metric-bearing split assignment unless replaced by another complete capture with no missing frames.",
+      "requiredActions": [
+        "repair_missing_gif_from_alternate_source",
+        "or_explicitly_exclude_missing_frame_from_constrained_split"
+      ],
+      "notes": "The recorded NIED repair URL returned HTTP 404 for 20260620212727.jma_b.gif. Keep this case blocked until the frame is repaired from another source or a reviewer explicitly approves excluding the missing frame from constrained split use."
+    }
+  ]
+}

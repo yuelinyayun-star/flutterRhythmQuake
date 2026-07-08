@@ -1,14 +1,14 @@
 import 'dart:math';
 import '../services/sources/nied_monitor.dart';
 
-/// Scratch 网格搜索震源推算算法
+/// 旧版 JS 载体中的网格搜索震源推算算法
 ///
-/// 来源: kotoho7/scratch-realtime-earthquake-viewer-page
+/// 代码载体: kotoho7/scratch-realtime-earthquake-viewer-page
 /// sb3 过程: `点-震源 距離計算`, `JMA2001距離近似`, `緯度経度で距離km`
 ///
-/// 使用从 Scratch 项目提取的 188 点扫描线 + 距离最小化评分法。
+/// 注意：这里的 Scratch/TurboWarp 只表示公开 JS/SB3 载体，不表示算法归属。
+/// 本项目按 JQ/JQuake-style GIF 反解参考来理解这条旧算法。
 class HypocenterEstimator {
-
   /// 震源推算结果
   final double latitude;
   final double longitude;
@@ -20,7 +20,7 @@ class HypocenterEstimator {
     this.confidence = 0.0,
   });
 
-  /// 从 scratch sb3 提取的 188 点扫描线坐标
+  /// 从公开 JS/SB3 载体提取的 188 点扫描线坐标
   /// 数据来源: リアルタイム地震ビューアー v1.6.3
   /// 目标: 受信と検出, 过程: 点-震源 距離計算
   /// 计算: lat = _polyLat(n), lng = 135 + lon_offset/100
@@ -215,7 +215,7 @@ class HypocenterEstimator {
     _ScanPoint(35.0979, 122.63),
   ];
 
-  /// 从激活的 NIED 测站列表推算震中位置 (Scratch 网格搜索法)
+  /// 从激活的 NIED 测站列表推算震中位置（旧 JS/SB3 载体网格搜索法）
   ///
   /// [stations] 必须包含 isActive=true 且 level>=0 的站
   /// 返回估算的震中坐标和置信度
@@ -227,12 +227,16 @@ class HypocenterEstimator {
     var bestLng = 0.0;
     var bestScore = double.infinity;
 
-    // 188 点扫描线搜索 (与 Scratch 完全对齐)
+    // 188 点扫描线搜索（与 scratch-realtime-earthquake-viewer-page 载体对齐）
     for (final point in _scanPoints) {
       var totalDist = 0.0;
       for (final s in active) {
         final dist = _jma2001Distance(
-            point.lat, point.lng, s.coordinate.latitude, s.coordinate.longitude);
+          point.lat,
+          point.lng,
+          s.coordinate.latitude,
+          s.coordinate.longitude,
+        );
         // 按震度加权: level 越高贡献越大
         final weight = 1.0 + (s.level / 20.0);
         totalDist += dist * weight;
@@ -247,13 +251,22 @@ class HypocenterEstimator {
 
     // 细搜索: 在最佳点周围 ±0.5° 以 0.05° 步长
     _gridSearch(
-      active, bestLat - 0.5, bestLat + 0.5, bestLng - 0.5, bestLng + 0.5,
-      20, 20,
+      active,
+      bestLat - 0.5,
+      bestLat + 0.5,
+      bestLng - 0.5,
+      bestLng + 0.5,
+      20,
+      20,
       (lat, lng) {
         var totalDist = 0.0;
         for (final s in active) {
           final dist = _jma2001Distance(
-              lat, lng, s.coordinate.latitude, s.coordinate.longitude);
+            lat,
+            lng,
+            s.coordinate.latitude,
+            s.coordinate.longitude,
+          );
           final weight = 1.0 + (s.level / 20.0);
           totalDist += dist * weight;
         }
@@ -265,8 +278,10 @@ class HypocenterEstimator {
       },
     );
 
-    final confidence =
-        (1.0 / (1.0 + bestScore / (active.length * 100))).clamp(0.0, 1.0);
+    final confidence = (1.0 / (1.0 + bestScore / (active.length * 100))).clamp(
+      0.0,
+      1.0,
+    );
 
     return HypocenterEstimator(
       latitude: bestLat,
@@ -299,15 +314,17 @@ class HypocenterEstimator {
   ///
   /// 日本周边使用简化的平面距离公式:
   /// d_km ≈ sqrt((111.0 * dlat)² + (91.0 * dlon)²)
-  /// 与 Scratch 的 JMA2001 表近似公式结果高度一致
+  /// 与 scratch-realtime-earthquake-viewer-page 载体中的 JMA2001 表近似公式结果高度一致
   static double _jma2001Distance(
-      double lat1, double lon1, double lat2, double lon2) {
+    double lat1,
+    double lon1,
+    double lat2,
+    double lon2,
+  ) {
     final dlat = (lat2 - lat1) * 111.0;
     final dlon = (lon2 - lon1) * 91.0;
     return sqrt(dlat * dlat + dlon * dlon);
   }
-
-
 }
 
 class _ScanPoint {

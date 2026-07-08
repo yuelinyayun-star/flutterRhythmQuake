@@ -78,9 +78,10 @@ void main() {
       _feedFrame(stations, List.filled(stations.length, 8));
       final snapshot = _runDetection(stations);
 
-      expect(snapshot.stage, ShakeDetectStage.detected);
+      expect(snapshot.stage, ShakeDetectStage.weak);
       expect(snapshot.maxShindo, 0);
-      expect(snapshot.detectedCount, stations.length);
+      expect(snapshot.weakCount, stations.length);
+      expect(snapshot.detectedCount, 0);
     },
   );
 

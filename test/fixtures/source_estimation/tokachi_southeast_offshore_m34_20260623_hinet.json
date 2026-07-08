@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "caseId": "20260623_tokachi_southeast_offshore_m34_hinet",
+  "caseType": "event",
+  "captureDirectory": "tmp/captures/tokachi_southeast_offshore_m34_20260623_221306_multilayer",
+  "timeZone": "Asia/Tokyo",
+  "gifNamePattern": "{stamp}.{layer}.gif",
+  "startTimeJst": "2026-06-23T23:12:36",
+  "endTimeJst": "2026-06-23T23:15:06",
+  "sensitivity": 2,
+  "truth": {
+    "originTimeJst": "2026-06-23T23:13:06",
+    "latitude": 42.497,
+    "longitude": 143.647,
+    "depthKm": 55.5,
+    "magnitude": 3.4,
+    "source": "user_provided_hinet_hypocenter"
+  },
+  "eventLabels": {
+    "catalogEvent": true,
+    "catalogTruthVerified": false,
+    "observableEvent": true,
+    "detectableEvent": true,
+    "includeInDetectionMetrics": false
+  },
+  "classification": {
+    "region": "Tokachi southeast offshore",
+    "captureSource": "User-provided Hi-net hypocenter, 2026-06-23 22:13:06 UTC+8; user-provided EQuake source-estimation report 11 final, 2026-06-23 22:13:05 UTC+8",
+    "truthQuality": "hinet_user_provided_preliminary",
+    "notes": "Hi-net preliminary label: Tokachi southeast offshore, 42.497N 143.647E, M3.4, depth 55.5 km, origin 2026-06-23 22:13:06 UTC+8. EQuake reported final Tokachi offshore, 42.49N 143.70E, M3.1, depth 61 km, quality B 73.5%, RMS 0.75 s, azimuthal gap 155 deg, 54 triggered stations (P:9 S:33 O:12), and 41 magnitude stations. The EQuake hypocenter is retained only as source-estimation reference text, not truth. Keep outside frozen split metrics until event-level split assignment and final-catalog linking are reviewed."
+  },
+  "splitStatus": "validation_reference"
+}

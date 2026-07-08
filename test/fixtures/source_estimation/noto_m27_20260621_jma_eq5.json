@@ -1,0 +1,58 @@
+{
+  "caseId": "noto_m27_20260621_jma_eq5",
+  "caseType": "event",
+  "originTime": "2026-06-21T13:07:56Z",
+  "truth": {
+    "source": "JMA",
+    "latitude": 37.5,
+    "longitude": 137.2,
+    "depthKm": 10.0,
+    "magnitude": 2.7,
+    "maxJmaIntensity": 1,
+    "region": "石川県能登地方",
+    "tsunamiConcern": false
+  },
+  "referenceEstimate": {
+    "source": "EQuake final report 5",
+    "originTime": "2026-06-21T13:07:54Z",
+    "latitude": 37.47,
+    "longitude": 137.19,
+    "depthKm": 5.0,
+    "magnitude": 2.1,
+    "quality": "A",
+    "confidencePercent": 80.8,
+    "rmsSeconds": 0.53,
+    "azimuthalGapDegrees": 88.0,
+    "magnitudeStationCount": 8,
+    "triggerCount": 20,
+    "phaseCounts": {
+      "P": 2,
+      "S": 15,
+      "O": 3
+    }
+  },
+  "capture": {
+    "directory": "tmp/captures/noto_m27_20260621_210754_multilayer",
+    "startTimeJst": "2026-06-21T22:07:24+09:00",
+    "endTimeJst": "2026-06-21T22:09:54+09:00",
+    "timestampCount": 151,
+    "layerCount": 8,
+    "gifCount": 1208,
+    "missingGifCount": 0,
+    "decoderVersion": "nied_gif_layered_v2"
+  },
+  "eventLabels": {
+    "catalogEvent": true,
+    "catalogTruthVerified": false,
+    "observableEvent": true,
+    "detectableEvent": true,
+    "includeInDetectionMetrics": false
+  },
+  "classification": {
+    "source": "jma_source_and_intensity_reference_pending_final_catalog",
+    "truthQuality": "jma_source_and_intensity_reference_pending_final_catalog",
+    "region": "石川県能登地方"
+  },
+  "splitStatus": "validation_reference",
+  "notes": "JMA source/intensity values are retained as reference labels pending versioned final-catalog linking. EQuake values are reference-only and must not replace JMA reference labels. Keep includeInDetectionMetrics=false and do not use for final test claims."
+}

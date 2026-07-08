@@ -19,7 +19,9 @@ import '../../services/sources/lmoni_image_service.dart';
 import '../../services/sources/nied_monitor.dart';
 import '../../services/sources/lpgm_monitor_service.dart';
 import '../../services/sources/snet_service.dart';
+import '../../services/sources/global_quake_service.dart';
 import '../../core/nied_replay_logger.dart';
+import '../map/map_config.dart';
 import '../map/quake_map_view.dart';
 import 'app_page_background.dart';
 
@@ -56,19 +58,44 @@ class _DebugPageState extends State<DebugPage> {
   double _niedGifMaxPgv = 0.0;
   double _niedGifMaxPgd = 0.0;
   Uint8List? _niedSurfaceGifBytes;
-  Uint8List? _niedBoreholeGifBytes;
   ui.Image? _niedLegendImage;
   _LegendBarGeometry? _niedLegendGeometry;
+  final TextEditingController _mapboxUsernameController =
+      TextEditingController();
+  final TextEditingController _mapboxStyleIdController =
+      TextEditingController();
+  final TextEditingController _mapboxTokenController = TextEditingController();
+  final TextEditingController _tencentWmtsKeyController =
+      TextEditingController();
+  final TextEditingController _tencentWmtsSecretController =
+      TextEditingController();
+  bool _mapboxDebugLoaded = false;
+  bool _tencentWmtsDebugLoaded = false;
+  final GlobalQuakeService _globalQuakeService = GlobalQuakeService();
+  StreamSubscription<void>? _globalQuakeSub;
+  final TextEditingController _globalQuakePrimaryHostController =
+      TextEditingController();
+  final TextEditingController _globalQuakePrimaryPortController =
+      TextEditingController();
+  final TextEditingController _globalQuakeSecondaryHostController =
+      TextEditingController();
+  final TextEditingController _globalQuakeSecondaryPortController =
+      TextEditingController();
+  bool _globalQuakeEnabled = false;
+  bool _globalQuakeLoaded = false;
 
   @override
   void initState() {
     super.initState();
     _latestLpgm = _lpgm.latestSnapshot;
     _latestLpgmFrameBytes = _lpgm.latestInputFrame?.imageBytes;
+    NiedReplayLogger.instance.revision.addListener(_onReplayLoggerChanged);
     _initNiedDebugState();
+    _initGlobalQuakeDebugState();
+    _loadMapboxDebugState();
+    _loadTencentWmtsDebugState();
     _loadNiedLegendAssets();
     _loadLegendGeometry();
-    _lpgm.start();
     _snetUiTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
     });
@@ -82,6 +109,11 @@ class _DebugPageState extends State<DebugPage> {
         _latestLpgmFrameBytes = frame.imageBytes;
       });
     });
+    if (_lpgm.isRunning) {
+      unawaited(_lpgm.refreshDebugFrame());
+    } else {
+      unawaited(_lpgm.start());
+    }
   }
 
   @override
@@ -90,7 +122,18 @@ class _DebugPageState extends State<DebugPage> {
     _lpgmFrameSub?.cancel();
     _niedStationSub?.cancel();
     _niedGifFrameSub?.cancel();
+    _globalQuakeSub?.cancel();
+    _globalQuakePrimaryHostController.dispose();
+    _globalQuakePrimaryPortController.dispose();
+    _globalQuakeSecondaryHostController.dispose();
+    _globalQuakeSecondaryPortController.dispose();
+    _mapboxUsernameController.dispose();
+    _mapboxStyleIdController.dispose();
+    _mapboxTokenController.dispose();
+    _tencentWmtsKeyController.dispose();
+    _tencentWmtsSecretController.dispose();
     _snetUiTimer?.cancel();
+    NiedReplayLogger.instance.revision.removeListener(_onReplayLoggerChanged);
     QuakeMapView.niedSourceNotifier.removeListener(_onNiedSourceChanged);
     _legendImage?.dispose();
     _niedLegendImage?.dispose();
@@ -123,6 +166,10 @@ class _DebugPageState extends State<DebugPage> {
 
                 return ListView(
                   children: [
+                    _buildMapboxPanel(mapState),
+                    const SizedBox(height: 10),
+                    _buildTencentWmtsPanel(mapState),
+                    const SizedBox(height: 10),
                     _buildLpgmPanel(),
                     const SizedBox(height: 10),
                     _buildNiedGifPanelV2(),
@@ -130,6 +177,8 @@ class _DebugPageState extends State<DebugPage> {
                     _buildNiedSourceEstimatePanel(),
                     const SizedBox(height: 10),
                     _buildReplayLoggerToggle(),
+                    const SizedBox(height: 10),
+                    _buildGlobalQuakeToggle(),
                     const SizedBox(height: 10),
                     _buildSnetPanel(),
                     const SizedBox(height: 10),
@@ -162,13 +211,14 @@ class _DebugPageState extends State<DebugPage> {
 
   Future<void> _initNiedDebugState() async {
     final prefs = await SharedPreferences.getInstance();
+    NiedReplayLogger.instance.loadPreferencesFrom(prefs);
     _niedDataSource = prefs.getString('nied_data_source') ?? 'lmoni';
     QuakeMapView.niedSourceNotifier.addListener(_onNiedSourceChanged);
+    _ensureNiedGifMonitorRunning(_niedDataSource);
     final lastFrame = _lmoniImageService.lastGifFrame;
     if (lastFrame != null) {
       _niedGifStamp = lastFrame.dataTime;
       _niedSurfaceGifBytes = lastFrame.surfaceGifBytes;
-      _niedBoreholeGifBytes = lastFrame.boreholeGifBytes;
     }
     _niedStationSub = _lmoniImageService.stationStream.listen((stations) {
       if (!mounted || !_isNiedGifSource(_niedDataSource) || stations == null) {
@@ -205,10 +255,110 @@ class _DebugPageState extends State<DebugPage> {
       setState(() {
         _niedGifStamp = frame.dataTime;
         _niedSurfaceGifBytes = frame.surfaceGifBytes;
-        _niedBoreholeGifBytes = frame.boreholeGifBytes;
       });
     });
     if (mounted) setState(() {});
+  }
+
+  void _onReplayLoggerChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _initGlobalQuakeDebugState() async {
+    final prefs = await SharedPreferences.getInstance();
+    final primaryHost =
+        prefs.getString(GlobalQuakeService.primaryHostPreferenceKey) ??
+        GlobalQuakeService.defaultPrimaryHost;
+    final primaryPort =
+        prefs.getInt(GlobalQuakeService.primaryPortPreferenceKey) ??
+        GlobalQuakeService.defaultPort;
+    final secondaryHost =
+        prefs.getString(GlobalQuakeService.secondaryHostPreferenceKey) ??
+        GlobalQuakeService.defaultSecondaryHost;
+    final secondaryPort =
+        prefs.getInt(GlobalQuakeService.secondaryPortPreferenceKey) ??
+        GlobalQuakeService.defaultPort;
+    _globalQuakeService.configureServers(
+      primaryHost: primaryHost,
+      primaryPort: primaryPort,
+      secondaryHost: secondaryHost,
+      secondaryPort: secondaryPort,
+    );
+    _globalQuakeEnabled =
+        prefs.getBool(GlobalQuakeService.enabledPreferenceKey) ??
+        _globalQuakeService.isEnabled;
+    _globalQuakeSub = _globalQuakeService.onDebugStateChanged.listen((_) {
+      if (mounted) setState(() {});
+    });
+    if (mounted) {
+      setState(() {
+        _globalQuakePrimaryHostController.text = primaryHost;
+        _globalQuakePrimaryPortController.text = primaryPort.toString();
+        _globalQuakeSecondaryHostController.text = secondaryHost;
+        _globalQuakeSecondaryPortController.text = secondaryPort.toString();
+        _globalQuakeLoaded = true;
+      });
+    }
+  }
+
+  Future<void> _setGlobalQuakeEnabled(bool enabled) async {
+    setState(() => _globalQuakeEnabled = enabled);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(GlobalQuakeService.enabledPreferenceKey, enabled);
+    if (enabled) {
+      _globalQuakeService.connect();
+    } else {
+      _globalQuakeService.disconnect();
+    }
+  }
+
+  Future<void> _saveGlobalQuakeServers() async {
+    final primaryHost = _globalQuakePrimaryHostController.text.trim().isEmpty
+        ? GlobalQuakeService.defaultPrimaryHost
+        : _globalQuakePrimaryHostController.text.trim();
+    final primaryPort =
+        int.tryParse(_globalQuakePrimaryPortController.text.trim()) ??
+        GlobalQuakeService.defaultPort;
+    final secondaryHost =
+        _globalQuakeSecondaryHostController.text.trim().isEmpty
+        ? GlobalQuakeService.defaultSecondaryHost
+        : _globalQuakeSecondaryHostController.text.trim();
+    final secondaryPort =
+        int.tryParse(_globalQuakeSecondaryPortController.text.trim()) ??
+        GlobalQuakeService.defaultPort;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      GlobalQuakeService.primaryHostPreferenceKey,
+      primaryHost,
+    );
+    await prefs.setInt(
+      GlobalQuakeService.primaryPortPreferenceKey,
+      primaryPort,
+    );
+    await prefs.setString(
+      GlobalQuakeService.secondaryHostPreferenceKey,
+      secondaryHost,
+    );
+    await prefs.setInt(
+      GlobalQuakeService.secondaryPortPreferenceKey,
+      secondaryPort,
+    );
+    _globalQuakeService.configureServers(
+      primaryHost: primaryHost,
+      primaryPort: primaryPort,
+      secondaryHost: secondaryHost,
+      secondaryPort: secondaryPort,
+    );
+    if (!mounted) return;
+    setState(() {
+      _globalQuakePrimaryHostController.text = primaryHost;
+      _globalQuakePrimaryPortController.text = primaryPort.toString();
+      _globalQuakeSecondaryHostController.text = secondaryHost;
+      _globalQuakeSecondaryPortController.text = secondaryPort.toString();
+    });
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('GlobalQuake servers saved')));
   }
 
   void _onNiedSourceChanged() {
@@ -218,19 +368,25 @@ class _DebugPageState extends State<DebugPage> {
       _niedDataSource = next;
       if (!_isNiedGifSource(next)) {
         _niedSurfaceGifBytes = null;
-        _niedBoreholeGifBytes = null;
       }
     });
     if (_isNiedGifSource(next)) {
+      _ensureNiedGifMonitorRunning(next);
       final frame = _lmoniImageService.lastGifFrame;
       if (frame != null) {
         setState(() {
           _niedGifStamp = frame.dataTime;
           _niedSurfaceGifBytes = frame.surfaceGifBytes;
-          _niedBoreholeGifBytes = frame.boreholeGifBytes;
         });
       }
     }
+  }
+
+  void _ensureNiedGifMonitorRunning(String source) {
+    if (!_isNiedGifSource(source)) return;
+    _lmoniImageService.start();
+    NiedMonitorService().configureEndpoint(source);
+    NiedMonitorService().start();
   }
 
   bool _isNiedGifSource(String source) =>
@@ -250,6 +406,352 @@ class _DebugPageState extends State<DebugPage> {
   String _formatShindoValue(double v) {
     final fixed = v.toStringAsFixed(2);
     return fixed.endsWith('00') ? fixed.substring(0, fixed.length - 3) : fixed;
+  }
+
+  Future<void> _loadMapboxDebugState() async {
+    final prefs = await SharedPreferences.getInstance();
+    final username =
+        prefs.getString(MapConfig.mapboxUsernameKey) ??
+        MapConfig.mapboxUsername;
+    final styleId =
+        prefs.getString(MapConfig.mapboxStyleIdKey) ?? MapConfig.mapboxStyleId;
+    final token =
+        prefs.getString(MapConfig.mapboxAccessTokenKey) ??
+        MapConfig.mapboxAccessToken;
+    MapConfig.configureMapbox(
+      username: username,
+      styleId: styleId,
+      accessToken: token,
+    );
+    if (!mounted) return;
+    setState(() {
+      _mapboxUsernameController.text = MapConfig.mapboxUsername;
+      _mapboxStyleIdController.text = MapConfig.mapboxStyleId;
+      _mapboxTokenController.text = MapConfig.mapboxAccessToken;
+      _mapboxDebugLoaded = true;
+    });
+  }
+
+  Future<void> _saveMapboxDebugState(MapStateProvider mapState) async {
+    final username = _mapboxUsernameController.text.trim();
+    final styleId = _mapboxStyleIdController.text.trim();
+    final token = _mapboxTokenController.text.trim();
+    MapConfig.configureMapbox(
+      username: username,
+      styleId: styleId,
+      accessToken: token,
+    );
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      MapConfig.mapboxUsernameKey,
+      MapConfig.mapboxUsername,
+    );
+    await prefs.setString(MapConfig.mapboxStyleIdKey, MapConfig.mapboxStyleId);
+    if (MapConfig.mapboxAccessToken.isEmpty) {
+      await prefs.remove(MapConfig.mapboxAccessTokenKey);
+    } else {
+      await prefs.setString(
+        MapConfig.mapboxAccessTokenKey,
+        MapConfig.mapboxAccessToken,
+      );
+    }
+    if (!mounted) return;
+    mapState.refreshTileConfig();
+    setState(() {
+      _mapboxUsernameController.text = MapConfig.mapboxUsername;
+      _mapboxStyleIdController.text = MapConfig.mapboxStyleId;
+      _mapboxTokenController.text = MapConfig.mapboxAccessToken;
+    });
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Mapbox config saved')));
+  }
+
+  Future<void> _resetMapboxDebugState(MapStateProvider mapState) async {
+    _mapboxUsernameController.text = 'mapbox';
+    _mapboxStyleIdController.text = 'dark-v11';
+    _mapboxTokenController.clear();
+    await _saveMapboxDebugState(mapState);
+  }
+
+  Future<void> _loadTencentWmtsDebugState() async {
+    final prefs = await SharedPreferences.getInstance();
+    final apiKey =
+        prefs.getString(MapConfig.tencentWmtsApiKeyKey) ??
+        MapConfig.tencentWmtsApiKey;
+    final secretKey =
+        prefs.getString(MapConfig.tencentWmtsSecretKeyKey) ??
+        MapConfig.tencentWmtsSecretKey;
+    MapConfig.configureTencentWmts(apiKey: apiKey, secretKey: secretKey);
+    if (!mounted) return;
+    setState(() {
+      _tencentWmtsKeyController.text = MapConfig.tencentWmtsApiKey;
+      _tencentWmtsSecretController.text = MapConfig.tencentWmtsSecretKey;
+      _tencentWmtsDebugLoaded = true;
+    });
+  }
+
+  Future<void> _saveTencentWmtsDebugState(MapStateProvider mapState) async {
+    final apiKey = _tencentWmtsKeyController.text.trim();
+    final secretKey = _tencentWmtsSecretController.text.trim();
+    MapConfig.configureTencentWmts(apiKey: apiKey, secretKey: secretKey);
+    debugPrint(
+      '[TencentMap] Debug save: '
+      'apiKey=${apiKey.isEmpty ? "empty" : "set"}, '
+      'sk=${secretKey.isEmpty ? "empty" : "set"}',
+    );
+    final prefs = await SharedPreferences.getInstance();
+    if (MapConfig.tencentWmtsApiKey.isEmpty) {
+      await prefs.remove(MapConfig.tencentWmtsApiKeyKey);
+    } else {
+      await prefs.setString(
+        MapConfig.tencentWmtsApiKeyKey,
+        MapConfig.tencentWmtsApiKey,
+      );
+    }
+    if (MapConfig.tencentWmtsSecretKey.isEmpty) {
+      await prefs.remove(MapConfig.tencentWmtsSecretKeyKey);
+    } else {
+      await prefs.setString(
+        MapConfig.tencentWmtsSecretKeyKey,
+        MapConfig.tencentWmtsSecretKey,
+      );
+    }
+    if (!mounted) return;
+    mapState.refreshTileConfig();
+    setState(() {
+      _tencentWmtsKeyController.text = MapConfig.tencentWmtsApiKey;
+      _tencentWmtsSecretController.text = MapConfig.tencentWmtsSecretKey;
+    });
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Tencent Map config saved')));
+  }
+
+  Widget _buildMapboxPanel(MapStateProvider mapState) {
+    final active = mapState.tileKey == MapConfig.mapboxEewceDarkKey;
+    final configured = MapConfig.hasMapboxAccessToken;
+    final fallback = active && !configured;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Mapbox Base Map',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+                Text(
+                  configured ? 'configured' : 'token empty',
+                  style: TextStyle(
+                    color: configured ? const Color(0xFF3AFF6F) : Colors.amber,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              fallback
+                  ? 'Mapbox is selected, but token is empty. Current map falls back to Petal Dark.'
+                  : 'Default EEWCE-like style: mapbox/dark-v11. Replace account, style id, or token here when quota changes.',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.72),
+                fontSize: 11,
+              ),
+            ),
+            const SizedBox(height: 10),
+            if (!_mapboxDebugLoaded)
+              const LinearProgressIndicator(minHeight: 2)
+            else
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  _mapboxField(
+                    label: 'Account',
+                    width: 180,
+                    controller: _mapboxUsernameController,
+                  ),
+                  _mapboxField(
+                    label: 'Style ID',
+                    width: 220,
+                    controller: _mapboxStyleIdController,
+                  ),
+                  _mapboxField(
+                    label: 'Access Token',
+                    width: 360,
+                    controller: _mapboxTokenController,
+                    obscureText: true,
+                  ),
+                ],
+              ),
+            const SizedBox(height: 10),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                OutlinedButton(
+                  onPressed: _mapboxDebugLoaded
+                      ? () => _resetMapboxDebugState(mapState)
+                      : null,
+                  child: const Text('Reset'),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: _mapboxDebugLoaded
+                      ? () => _saveMapboxDebugState(mapState)
+                      : null,
+                  child: const Text('Save'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTencentWmtsPanel(MapStateProvider mapState) {
+    final active =
+        mapState.tileKey == MapConfig.tencentJsMapKey ||
+        mapState.tileKey == MapConfig.tencentStaticMapKey ||
+        mapState.tileKey == MapConfig.tencentWmtsKey;
+    final configured = MapConfig.hasTencentWmtsApiKey;
+    final signed = MapConfig.hasTencentWmtsSecretKey;
+    final fallback = active && !configured;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Tencent Map API',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+                Text(
+                  configured
+                      ? (signed ? 'key set / SK saved' : 'key set')
+                      : 'APIKEY empty',
+                  style: TextStyle(
+                    color: configured ? const Color(0xFF3AFF6F) : Colors.amber,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              fallback
+                  ? 'Tencent Map is selected, but APIKEY is empty. Current map falls back to Petal Light.'
+                  : 'Uses Tencent JavaScript GL API for the base map. SK is only used by legacy WebService diagnostics.',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.72),
+                fontSize: 11,
+              ),
+            ),
+            const SizedBox(height: 10),
+            if (!_tencentWmtsDebugLoaded)
+              const LinearProgressIndicator(minHeight: 2)
+            else
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  _mapboxField(
+                    label: 'APIKEY',
+                    width: 360,
+                    controller: _tencentWmtsKeyController,
+                    obscureText: true,
+                  ),
+                  _mapboxField(
+                    label: 'SK',
+                    width: 300,
+                    controller: _tencentWmtsSecretController,
+                    obscureText: true,
+                  ),
+                ],
+              ),
+            const SizedBox(height: 10),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                ElevatedButton(
+                  onPressed: _tencentWmtsDebugLoaded
+                      ? () => _saveTencentWmtsDebugState(mapState)
+                      : null,
+                  child: const Text('Save'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _mapboxField({
+    required String label,
+    required double width,
+    required TextEditingController controller,
+    bool obscureText = false,
+  }) {
+    return SizedBox(
+      width: width,
+      child: TextField(
+        controller: controller,
+        obscureText: obscureText,
+        style: const TextStyle(color: Colors.white, fontSize: 12),
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: const TextStyle(color: Colors.white54, fontSize: 11),
+          isDense: true,
+          filled: true,
+          fillColor: Colors.white.withValues(alpha: 0.06),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 10,
+            vertical: 10,
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(7),
+            borderSide: const BorderSide(color: Colors.white12),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(7),
+            borderSide: const BorderSide(color: Color(0xFF82B1FF)),
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _loadNiedLegendAssets() async {
@@ -424,16 +926,10 @@ class _DebugPageState extends State<DebugPage> {
               child: Row(
                 children: [
                   Expanded(
+                    flex: 2,
                     child: _buildNiedGifMapCardV2(
                       title: '地表',
                       gifBytes: isGif ? _niedSurfaceGifBytes : null,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: _buildNiedGifMapCardV2(
-                      title: '地下',
-                      gifBytes: isGif ? _niedBoreholeGifBytes : null,
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -675,6 +1171,7 @@ class _DebugPageState extends State<DebugPage> {
                 'Time Score: ${estimate!.diagnostics['time_score']}',
               if (estimate?.diagnostics['rank_score'] != null)
                 'Rank Score: ${estimate!.diagnostics['rank_score']}',
+              ..._sourceCandidateRegionDebugLines(currentEvent?.metadata),
             ];
 
             return DecoratedBox(
@@ -806,6 +1303,76 @@ class _DebugPageState extends State<DebugPage> {
         ],
       ),
     );
+  }
+
+  List<String> _sourceCandidateRegionDebugLines(
+    Map<String, Object?>? metadata,
+  ) {
+    if (metadata == null) return const [];
+    final candidateRegion = _debugMap(metadata['candidate_region']);
+    if (candidateRegion == null) return const [];
+    final residualGate = _debugMap(metadata['candidate_region_residual_gate']);
+    final localSupportGate = _debugMap(
+      metadata['candidate_region_local_support_gate'],
+    );
+    final lines = <String>[
+      'Candidate Region: ${candidateRegion['status'] ?? "--"}'
+          ' / reason ${candidateRegion['reason'] ?? "--"}',
+      'Candidate Region Point: '
+          '${_fmtDebugNumber(candidateRegion['latitude'], digits: 3)}, '
+          '${_fmtDebugNumber(candidateRegion['longitude'], digits: 3)}',
+      'Candidate Coordinate Switch: '
+          '${candidateRegion['production_coordinate_switch_allowed'] == true}',
+    ];
+    if (residualGate != null) {
+      lines.add(
+        'Residual Gate: supported '
+        '${residualGate['residual_supported'] == true}'
+        ' / rank ${_fmtDebugNumber(residualGate['rank_delta'], digits: 3)}'
+        ' / atten ${_fmtDebugNumber(residualGate['attenuation_delta'], digits: 3)}',
+      );
+    }
+    if (localSupportGate != null) {
+      lines.add(
+        'Local Support Gate: confirmed '
+        '${localSupportGate['local_support_confirmed'] == true}'
+        ' / members ${localSupportGate['member_count'] ?? "--"}'
+        ' (${_fmtSignedDebugInt(localSupportGate['member_count_growth'])})',
+      );
+      lines.add(
+        'Local Support Geometry: ${localSupportGate['station_geometry'] ?? "--"}'
+        ' / est-member '
+        '${_fmtDebugNumber(localSupportGate['estimate_member_centroid_distance_km'])} km'
+        ' / convergence '
+        '${_fmtDebugNumber(localSupportGate['convergence_km'])} km',
+      );
+    }
+    return lines;
+  }
+
+  Map<String, Object?>? _debugMap(Object? value) {
+    if (value is Map) return value.cast<String, Object?>();
+    return null;
+  }
+
+  String _fmtDebugNumber(Object? value, {int digits = 1}) {
+    final number = value is num
+        ? value.toDouble()
+        : value is String
+        ? double.tryParse(value)
+        : null;
+    if (number == null || !number.isFinite) return '--';
+    return number.toStringAsFixed(digits);
+  }
+
+  String _fmtSignedDebugInt(Object? value) {
+    final number = value is num
+        ? value.round()
+        : value is String
+        ? int.tryParse(value)
+        : null;
+    if (number == null) return '--';
+    return number > 0 ? '+$number' : '$number';
   }
 
   Widget _buildTimingPickChip(Map<String, Object?> pick) {
@@ -1023,16 +1590,10 @@ class _DebugPageState extends State<DebugPage> {
               child: Row(
                 children: [
                   Expanded(
+                    flex: 2,
                     child: _buildNiedGifMapCard(
                       title: '地表',
                       gifBytes: isGif ? _niedSurfaceGifBytes : null,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: _buildNiedGifMapCard(
-                      title: '地下',
-                      gifBytes: isGif ? _niedBoreholeGifBytes : null,
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -1768,42 +2329,260 @@ class _DebugPageState extends State<DebugPage> {
           color: logger.isEnabled ? Colors.amber : Colors.white12,
         ),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'NIED Replay Logger',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
-                  ),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'NIED Replay Logger',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      logger.isEnabled
+                          ? 'Recording frames to disk...'
+                          : 'Enable to record GIF→Detect→Epicenter logs',
+                      style: TextStyle(color: Colors.white70, fontSize: 11),
+                    ),
+                    if (logger.lastLogPath != null)
+                      Text(
+                        'Last: ${logger.lastLogPath!.split(Platform.pathSeparator).last}',
+                        style: const TextStyle(
+                          color: Colors.white54,
+                          fontSize: 10,
+                        ),
+                      ),
+                  ],
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  logger.isEnabled
-                      ? 'Recording frames to disk...'
-                      : 'Enable to record GIF→Detect→Epicenter logs',
-                  style: TextStyle(color: Colors.white70, fontSize: 11),
-                ),
-                if (logger.lastLogPath != null)
-                  Text(
-                    'Last: ${logger.lastLogPath!.split(Platform.pathSeparator).last}',
-                    style: const TextStyle(color: Colors.white54, fontSize: 10),
-                  ),
-              ],
-            ),
+              ),
+              Switch(
+                value: logger.isEnabled,
+                activeThumbColor: Colors.amber,
+                activeTrackColor: Colors.amber.withValues(alpha: 0.35),
+                onChanged: (v) => setState(() => logger.setEnabled(v)),
+              ),
+            ],
           ),
-          Switch(
-            value: logger.isEnabled,
-            activeThumbColor: Colors.amber,
-            activeTrackColor: Colors.amber.withValues(alpha: 0.35),
-            onChanged: (v) => setState(() => logger.setEnabled(v)),
+          const Divider(height: 18, color: Colors.white12),
+          Row(
+            children: [
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '推算触发自动保存',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      '源推算 confirmed/strong 时自动开启并立即保存 replay log',
+                      style: TextStyle(color: Colors.white70, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+              Switch(
+                value: logger.autoSaveOnSourceTrigger,
+                activeThumbColor: Colors.lightGreenAccent,
+                activeTrackColor: Colors.lightGreenAccent.withValues(
+                  alpha: 0.35,
+                ),
+                onChanged: (v) {
+                  unawaited(
+                    logger.setAutoSaveOnSourceTrigger(v).then((_) {
+                      if (mounted) setState(() {});
+                    }),
+                  );
+                },
+              ),
+            ],
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildGlobalQuakeToggle() {
+    final status = _globalQuakeService.status;
+    final statusColor = switch (status) {
+      SourceStatus.connected => const Color(0xFF3AFF6F),
+      SourceStatus.connecting || SourceStatus.synchronizing => Colors.amber,
+      SourceStatus.error => const Color(0xFFFF6673),
+      SourceStatus.disconnected => Colors.white54,
+    };
+    final lastEvent = _globalQuakeService.lastEvent;
+    final subtitle = _globalQuakeEnabled
+        ? 'Status: ${status.name}  Active: ${_globalQuakeService.localWsUrl}'
+        : 'Connect directly to the GlobalQuake 地震预警 TCP stream.';
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: _globalQuakeEnabled
+            ? const Color(0xFF203A2B).withValues(alpha: 0.35)
+            : Colors.black.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: _globalQuakeEnabled ? statusColor : Colors.white12,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Text(
+                          'GlobalQuake 地震预警',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          status.name,
+                          style: TextStyle(
+                            color: statusColor,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: TextStyle(color: Colors.white70, fontSize: 11),
+                    ),
+                    if (lastEvent != null)
+                      Text(
+                        'Last: ${lastEvent.hypocenter} M${lastEvent.magnitude.toStringAsFixed(1)}',
+                        style: const TextStyle(
+                          color: Colors.white54,
+                          fontSize: 10,
+                        ),
+                      ),
+                    if (_globalQuakeService.lastError != null)
+                      Text(
+                        'Error: ${_globalQuakeService.lastError}',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFFFFA0A8),
+                          fontSize: 10,
+                        ),
+                      )
+                    else if (_globalQuakeService.lastLog != null)
+                      Text(
+                        'Log: ${_globalQuakeService.lastLog}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white54,
+                          fontSize: 10,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              Switch(
+                value: _globalQuakeEnabled,
+                activeThumbColor: statusColor,
+                activeTrackColor: statusColor.withValues(alpha: 0.35),
+                onChanged: _globalQuakeLoaded ? _setGlobalQuakeEnabled : null,
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              _globalQuakeField(
+                label: 'Primary host',
+                width: 260,
+                controller: _globalQuakePrimaryHostController,
+              ),
+              _globalQuakeField(
+                label: 'Primary port',
+                width: 120,
+                controller: _globalQuakePrimaryPortController,
+                keyboardType: TextInputType.number,
+              ),
+              _globalQuakeField(
+                label: 'Secondary host',
+                width: 260,
+                controller: _globalQuakeSecondaryHostController,
+              ),
+              _globalQuakeField(
+                label: 'Secondary port',
+                width: 120,
+                controller: _globalQuakeSecondaryPortController,
+                keyboardType: TextInputType.number,
+              ),
+              ElevatedButton(
+                onPressed: _globalQuakeLoaded ? _saveGlobalQuakeServers : null,
+                child: const Text('Save'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _globalQuakeField({
+    required String label,
+    required double width,
+    required TextEditingController controller,
+    TextInputType? keyboardType,
+  }) {
+    return SizedBox(
+      width: width,
+      child: TextField(
+        controller: controller,
+        keyboardType: keyboardType,
+        style: const TextStyle(color: Colors.white, fontSize: 12),
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: const TextStyle(color: Colors.white54, fontSize: 11),
+          isDense: true,
+          filled: true,
+          fillColor: Colors.white.withValues(alpha: 0.06),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 10,
+            vertical: 10,
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(7),
+            borderSide: const BorderSide(color: Colors.white12),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(7),
+            borderSide: const BorderSide(color: Color(0xFF82B1FF)),
+          ),
+        ),
       ),
     );
   }

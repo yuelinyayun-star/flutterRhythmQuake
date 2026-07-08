@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "caseId": "20260622_fukushima_offshore_m22_eq4",
+  "caseType": "event",
+  "captureDirectory": "tmp/captures/fukushima_offshore_m22_20260622_143656_multilayer",
+  "timeZone": "Asia/Tokyo",
+  "gifNamePattern": "{stamp}.{layer}.gif",
+  "startTimeJst": "2026-06-22T15:36:26",
+  "endTimeJst": "2026-06-22T15:38:56",
+  "sensitivity": 2,
+  "truth": {
+    "originTimeJst": "2026-06-22T15:36:56",
+    "latitude": 37.38,
+    "longitude": 141.27,
+    "depthKm": 23.0,
+    "magnitude": 2.2,
+    "source": "equake_source_estimation_reference"
+  },
+  "eventLabels": {
+    "catalogEvent": false,
+    "catalogTruthVerified": false,
+    "observableEvent": true,
+    "detectableEvent": true,
+    "includeInDetectionMetrics": false
+  },
+  "classification": {
+    "region": "Fukushima offshore",
+    "captureSource": "User-provided EQuake source-estimation report 4, 2026-06-22 14:36:56 UTC+8",
+    "truthQuality": "equake_reference_only",
+    "notes": "EQuake report 4 reference: Fukushima offshore, 37.38N 141.27E, M2.2, depth 23 km, quality C 75%, RMS 0.2 s, azimuthal gap 281 deg, 12 triggered stations (P:1 S:8 O:3), and 5 magnitude stations. Keep outside frozen metrics until linked to Hi-net preliminary or JMA final catalog truth."
+  },
+  "splitStatus": "validation_reference"
+}

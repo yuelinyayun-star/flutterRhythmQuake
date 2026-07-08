@@ -1,0 +1,33 @@
+{
+  "schemaVersion": "plum_replay_capture_gap_decisions_v1",
+  "policy": "This file records explicit exclusion decisions for PLUM replay cases whose local capture packages have failed GIFs. Excluding a gap keeps the case out of complete replay lead-time metrics; it does not repair GIF files or promote the case to complete replay coverage.",
+  "decisions": [
+    {
+      "caseId": "20260626_yamanashi_east_fuji_five_lakes_m33_jma_equake8",
+      "decisionStatus": "capture_gap_exclusion_approved",
+      "exclusionApproved": true,
+      "reviewedAtUtc": "2026-06-28T23:51:00Z",
+      "reviewer": "user_confirmed",
+      "excludedFiles": [
+        "20260626231708.jma_b.gif",
+        "20260626231711.jma_b.gif",
+        "20260626231726.jma_b.gif",
+        "20260626231732.jma_b.gif",
+        "20260626231737.jma_b.gif",
+        "20260626231753.jma_b.gif",
+        "20260626231802.jma_s.gif",
+        "20260626231804.jma_b.gif",
+        "20260626231811.jma_b.gif",
+        "20260626231827.jma_b.gif",
+        "20260626231828.jma_b.gif",
+        "20260626231834.jma_s.gif",
+        "20260626231836.jma_s.gif",
+        "20260626231841.jma_s.gif",
+        "20260626231847.jma_s.gif",
+        "20260626231858.jma_b.gif"
+      ],
+      "exclusionReason": "The capture has 16 failed NIED GIFs and the event origin JST is outside the 3-hour historical GIF repair window. Do not propose historical re-download; keep this case out of complete replay lead-time metrics unless replaced by another complete capture with no missing GIFs.",
+      "notes": "User confirmed the missing-GIF gap is expired and should not be proposed for repair."
+    }
+  ]
+}

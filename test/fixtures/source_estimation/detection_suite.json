@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "suiteId": "event_detection_p0",
+  "cases": [
+    "nara_m36.json",
+    "satsuma_m26_d179.json",
+    "kyoto_s_m18_d12.json",
+    "ibaraki_offshore_m19_ref.json",
+    "quiet_20260614_175544.json"
+  ]
+}

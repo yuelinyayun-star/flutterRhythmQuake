@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
 
 import 'package:flutterrhythmquake/core/source_estimation/station_event_tracker.dart';
+import 'package:flutterrhythmquake/core/source_estimation/source_estimation_models.dart';
 import 'package:flutterrhythmquake/services/sources/nied_gif_observation.dart';
 import 'package:flutterrhythmquake/services/sources/nied_monitor.dart';
 
@@ -37,7 +38,7 @@ void main() {
       ..detectLevel = detectLevel
       ..continuousShindo = shindo
       ..updateGifObservation(
-        NiedGifObservation(shindo: shindo, pga: 0.12, pgv: 0.034, pgd: 0.0045),
+        NiedGifObservation(layer: NiedGifLayer.realtimeShindo, shindo: shindo),
       )
       ..activity = activity
       ..ascend = ascend
@@ -50,6 +51,7 @@ void main() {
     final stations = [
       buildStation(code: 'AAA001', lat: 35.0, lng: 140.0, shindo: 0.3),
       buildStation(code: 'AAA002', lat: 35.2, lng: 140.2, shindo: 0.5),
+      buildStation(code: 'AAA003', lat: 35.1, lng: 140.1, shindo: 0.4),
     ];
 
     tracker.ingestNiedFrame(
@@ -62,12 +64,56 @@ void main() {
     final event = tracker.currentNiedEvent.value;
     expect(event, isNotNull);
     expect(event!.stageName, 'detected');
-    expect(event.stationRecords.length, 2);
+    expect(event.stationRecords.length, 3);
     expect(event.records.every((r) => r.firstTriggerAt != null), isTrue);
-    expect(event.records.first.lastPga, isNotNull);
-    expect(event.records.first.lastPgv, isNotNull);
-    expect(event.records.first.lastPgd, isNotNull);
+    expect(event.records.first.lastPga, isNull);
+    expect(event.records.first.lastPgv, isNull);
+    expect(event.records.first.lastPgd, isNull);
+    expect(
+      event.records.first.provenance[StationValueType.jmaShindo]?.layerId,
+      'jma',
+    );
     expect(event.estimate, isNotNull);
+  });
+
+  test('uses detection event id for source-estimation event id', () {
+    final stations = [
+      buildStation(code: 'AAA001', lat: 35.0, lng: 140.0, shindo: 0.3),
+      buildStation(code: 'AAA002', lat: 35.2, lng: 140.2, shindo: 0.5),
+    ];
+
+    tracker.ingestNiedFrame(
+      stations: stations,
+      observedAt: DateTime(2026, 6, 10, 12, 0, 0),
+      stageName: 'confirmed',
+      maxShindo: 1,
+      eventId: 'nied-detection-event-1',
+    );
+
+    expect(tracker.currentNiedEvent.value?.eventId, 'nied-detection-event-1');
+  });
+
+  test('keeps realtime shindo and acmap as separate layer observations', () {
+    final station = buildStation(code: 'AAA001', lat: 35, lng: 140, shindo: 0.3)
+      ..updateGifObservation(
+        const NiedGifObservation(
+          layer: NiedGifLayer.peakAcceleration,
+          pga: 12.5,
+        ),
+      );
+
+    tracker.ingestNiedFrame(
+      stations: [station],
+      observedAt: DateTime(2026, 6, 10, 12),
+      stageName: 'detected',
+      maxShindo: 1,
+    );
+
+    final record = tracker.currentNiedEvent.value!.records.single;
+    expect(record.lastValue, 0.3);
+    expect(record.lastPga, 12.5);
+    expect(record.provenance[StationValueType.jmaShindo]?.layerId, 'jma');
+    expect(record.provenance[StationValueType.pga]?.layerId, 'acmap');
   });
 
   test('uses detectLevel midpoint when gif observation is absent', () {

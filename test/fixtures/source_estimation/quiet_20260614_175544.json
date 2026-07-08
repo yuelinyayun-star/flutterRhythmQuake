@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "caseId": "20260614_quiet_175544",
+  "caseType": "noise",
+  "captureDirectory": "tmp/captures/20260614_175604_jst_window41",
+  "timeZone": "Asia/Tokyo",
+  "gifNamePattern": "{stamp}.{layer}.gif",
+  "startTimeJst": "2026-06-14T17:55:44",
+  "endTimeJst": "2026-06-14T17:56:24",
+  "sensitivity": 2,
+  "eventLabels": {
+    "catalogEvent": false,
+    "catalogTruthVerified": false,
+    "observableEvent": false,
+    "detectableEvent": false,
+    "includeInDetectionMetrics": false
+  },
+  "classification": {
+    "source": "captured_window_replay",
+    "note": "All 41 GIF frames remain idle under the current detector; use as a quiet-window regression case, not as an externally catalog-verified no-earthquake claim."
+  }
+}

@@ -1,18 +1,27 @@
-import requests, re, os
+import os
+import re
 
-USER = "Yun Lin"
-PASS = "mmMCygyw1"
+import requests
+
 AUTH = "https://hinetwww11.bosai.go.jp/auth/"
 
+
+def require_env(name):
+    value = os.environ.get(name)
+    if not value:
+        raise SystemExit(f"Missing required environment variable: {name}")
+    return value
+
+
+USER = require_env("NIED_USERNAME")
+PASS = require_env("NIED_PASSWORD")
+
 session = requests.Session()
-session.verify = False
-requests.packages.urllib3.disable_warnings()
 
 # Login
-session.get(AUTH, timeout=15)
-print(f"Cookies after GET: {dict(session.cookies)}")
+session.get(AUTH, timeout=15).raise_for_status()
 r = session.post(AUTH, data={"auth_un": USER, "auth_pw": PASS}, timeout=15)
-print(f"Cookies after POST: {dict(session.cookies)}")
+r.raise_for_status()
 print(f"auth_logout.png in response: {'auth_logout.png' in r.text}")
 print(f"Redirect history: {[h.url for h in r.history]}")
 

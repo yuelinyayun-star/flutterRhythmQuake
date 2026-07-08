@@ -136,6 +136,9 @@ class SourceManager {
   /// ```
   Stream<SourceStatusUpdate> get onStatusUpdate => _statusController.stream;
 
+  final List<StreamSubscription<QuakeMessage>> _sourceSubscriptions = [];
+  bool _started = false;
+
   /// 注册数据源服务
   ///
   /// 将数据源服务添加到管理器中进行统一管理。
@@ -168,10 +171,26 @@ class SourceManager {
   /// 2. 订阅数据源的 onEvent 流接收消息
   /// 3. 消息经过去重后发布到事件总线
   void startAll() {
+    if (_started) return;
+    _started = true;
     for (var source in _sources) {
-      source.connect();
-      source.onEvent.listen(_handleIncomingEvent);
+      if (source.autoStart) {
+        source.connect();
+      }
+      _sourceSubscriptions.add(source.onEvent.listen(_handleIncomingEvent));
     }
+  }
+
+  void stopAll() {
+    if (!_started) return;
+    _started = false;
+    for (final source in _sources) {
+      source.disconnect();
+    }
+    for (final subscription in _sourceSubscriptions) {
+      subscription.cancel();
+    }
+    _sourceSubscriptions.clear();
   }
 
   /// 获取指定类型的数据源实例
@@ -218,19 +237,27 @@ class SourceManager {
   /// - [event]: 接收到的地震消息
   void _handleIncomingEvent(QuakeMessage event) {
     if (!event.isHistory) {
-      final int num = event.reportNumber ?? 0;
-      final String dedupeId = "${event.originTime.minute}_${event.latitude.toStringAsFixed(1)}_${event.longitude.toStringAsFixed(1)}_$num";
-
-      if (_processedIds.containsKey(dedupeId)) {
-        return;
+      final dedupeId = _dedupeKey(event);
+      if (dedupeId != null) {
+        if (_processedIds.containsKey(dedupeId)) {
+          return;
+        }
+        _processedIds[dedupeId] = DateTime.now();
       }
-
-      _processedIds[dedupeId] = DateTime.now();
     }
 
     QuakeEventBus().publish(event);
 
-    _processedIds.removeWhere((key, time) =>
-      DateTime.now().difference(time).inHours > 1);
+    _processedIds.removeWhere(
+      (key, time) => DateTime.now().difference(time).inHours > 1,
+    );
+  }
+
+  String? _dedupeKey(QuakeMessage event) {
+    if (event.isInfoEvent) return null;
+    final eventId = event.eventId.trim();
+    if (eventId.isEmpty) return null;
+    final reportNumber = event.reportNumber ?? -1;
+    return '${event.source.name}|$eventId|$reportNumber';
   }
 }

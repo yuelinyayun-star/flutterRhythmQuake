@@ -344,26 +344,21 @@ class TsunamiMessage {
 
     switch (level) {
       case '蓝色':
-        grade = TsunamiGrade.watch;
-        title = rawTitle.isNotEmpty ? rawTitle : '海啸蓝色警报';
-        titleText = '现正发布$title';
-        className = 'blue';
-        break;
       case '黄色':
         grade = TsunamiGrade.watch;
-        title = rawTitle.isNotEmpty ? rawTitle : '海啸黄色警报';
+        title = '海啸注意报';
         titleText = '现正发布$title';
         className = 'yellow';
         break;
       case '橙色':
         grade = TsunamiGrade.warning;
-        title = rawTitle.isNotEmpty ? rawTitle : '海啸橙色警报';
+        title = '海啸警报';
         titleText = '现正发布$title';
         className = 'red';
         break;
       case '红色':
         grade = TsunamiGrade.majorWarning;
-        title = rawTitle.isNotEmpty ? rawTitle : '海啸红色警报';
+        title = '大海啸警报';
         titleText = '现正发布$title';
         className = 'purple';
         break;
@@ -461,16 +456,12 @@ class TsunamiMessage {
   static String? _parseNmefcClassName(String level) {
     switch (level) {
       case '蓝色':
-      case '钃濊壊':
-        return 'blue';
+        return 'yellow';
       case '黄色':
-      case '榛勮壊':
         return 'yellow';
       case '橙色':
-      case '姗欒壊':
         return 'red';
       case '红色':
-      case '绾㈣壊':
         return 'purple';
       default:
         return null;

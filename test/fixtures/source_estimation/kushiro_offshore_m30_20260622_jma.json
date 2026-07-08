@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "caseId": "20260622_kushiro_offshore_m30_jma",
+  "caseType": "event",
+  "captureDirectory": "tmp/captures/kushiro_offshore_m30_20260622_153812_multilayer",
+  "timeZone": "Asia/Tokyo",
+  "gifNamePattern": "{stamp}.{layer}.gif",
+  "startTimeJst": "2026-06-22T16:37:42",
+  "endTimeJst": "2026-06-22T16:40:12",
+  "sensitivity": 2,
+  "truth": {
+    "originTimeJst": "2026-06-22T16:38:12",
+    "latitude": 42.9,
+    "longitude": 144.0,
+    "depthKm": 50.0,
+    "magnitude": 3.0,
+    "source": "jma_source_and_intensity_information"
+  },
+  "eventLabels": {
+    "catalogEvent": true,
+    "catalogTruthVerified": true,
+    "observableEvent": true,
+    "detectableEvent": true,
+    "includeInDetectionMetrics": false
+  },
+  "classification": {
+    "region": "Kushiro offshore",
+    "captureSource": "User-provided JMA source and intensity information, 2026-06-22 15:38:12 UTC+8",
+    "truthQuality": "jma_source_and_intensity_verified",
+    "notes": "JMA event: Kushiro offshore, 42.9N 144.0E, M3.0, depth 50 km, maximum shindo 1, origin 2026-06-22 15:38:12 UTC+8. No tsunami concern. Keep outside frozen metrics until event-level split assignment is reviewed."
+  },
+  "splitStatus": "unassigned_reference"
+}

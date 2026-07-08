@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "caseId": "quiet_20260625_233535_jst_live",
+  "caseType": "noise",
+  "captureDirectory": "tmp/captures/quiet_20260625_233535_jst_live",
+  "timeZone": "Asia/Tokyo",
+  "gifNamePattern": "{stamp}.{layer}.gif",
+  "startTimeJst": "2026-06-25T23:20:49",
+  "endTimeJst": "2026-06-25T23:25:48",
+  "sensitivity": 2,
+  "eventLabels": {
+    "catalogEvent": false,
+    "catalogTruthVerified": false,
+    "observableEvent": false,
+    "detectableEvent": false,
+    "includeInDetectionMetrics": false
+  },
+  "classification": {
+    "source": "captured_live_multilayer_quiet_window",
+    "note": "Five-minute NIED live endpoint quiet-window capture with eight layers and 2400/2400 GIFs. Keep outside frozen split metrics until independent review confirms no catalog event and no detector/source-estimator activation."
+  },
+  "splitStatus": "unassigned_reference"
+}

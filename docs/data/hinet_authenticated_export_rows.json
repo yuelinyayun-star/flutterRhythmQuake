@@ -1,0 +1,156 @@
+{
+  "schemaVersion": "hinet_authenticated_export_rows_v1",
+  "policy": "This file stores event-level rows exported from authenticated Hi-net/JMA catalog pages. Pending rows are placeholders only and must not clear truth-quality review. Submitted rows require source URL, source/version metadata, reviewer, checked time and raw row text before they can be reviewed.",
+  "acceptedSourceTypes": [
+    "hinet_preliminary_catalog",
+    "hinet_jma_unified_catalog"
+  ],
+  "submittedRowRequiredFields": [
+    "caseId",
+    "sourceType",
+    "sourceUrl",
+    "sourceVersionOrPageDate",
+    "checkedAtUtc",
+    "reviewer",
+    "originTimeJst",
+    "latitude",
+    "longitude",
+    "depthKm",
+    "magnitude",
+    "region",
+    "rawRowText"
+  ],
+  "rowStatuses": [
+    "pending_export",
+    "submitted_for_review",
+    "rejected"
+  ],
+  "rows": [
+    {
+      "caseId": "20260622_iwate_east_offshore_m30_hinet",
+      "status": "submitted_for_review",
+      "submittedRow": {
+        "caseId": "20260622_iwate_east_offshore_m30_hinet",
+        "sourceType": "hinet_jma_unified_catalog",
+        "sourceUrl": "https://hinetwww11.bosai.go.jp/auth/JMA/?LANG=en",
+        "sourceVersionOrPageDate": "arrival-time-data 2026-06-22 JST; authenticated JMA unified catalog page listed data through 2026-06-25 JST",
+        "checkedAtUtc": "2026-06-27T03:57:01.5191563Z",
+        "reviewer": "codex_user_authenticated_download",
+        "originTimeJst": "2026-06-22T11:26:50.10",
+        "latitude": 39.914,
+        "longitude": 142.394833333333,
+        "depthKm": 37.78,
+        "magnitude": 2.8,
+        "region": "E OFF IWATE PREF",
+        "rawRowText": "J2026062211265010 007 395484 021 1422369 026 377808428V   711   2 62E OFF IWATE PREF         37K"
+      },
+      "rejectionReason": null,
+      "decisionImpact": "none_review_required"
+    },
+    {
+      "caseId": "20260622_tomakomai_south_offshore_m35_hinet",
+      "status": "submitted_for_review",
+      "submittedRow": {
+        "caseId": "20260622_tomakomai_south_offshore_m35_hinet",
+        "sourceType": "hinet_jma_unified_catalog",
+        "sourceUrl": "https://hinetwww11.bosai.go.jp/auth/JMA/?LANG=en",
+        "sourceVersionOrPageDate": "arrival-time-data 2026-06-22 JST; authenticated JMA unified catalog page listed data through 2026-06-25 JST",
+        "checkedAtUtc": "2026-06-27T03:57:01.5191563Z",
+        "reviewer": "codex_user_authenticated_download",
+        "originTimeJst": "2026-06-22T20:37:46.97",
+        "latitude": 42.069333333333,
+        "longitude": 141.383333333333,
+        "depthKm": 99.21,
+        "magnitude": 2.8,
+        "region": "S OFF TOMAKOMAI",
+        "rawRowText": "J2026062220374697 017 420416 038 1412300 078 992116028V   711   1 31S OFF TOMAKOMAI          40K"
+      },
+      "rejectionReason": null,
+      "decisionImpact": "none_review_required"
+    },
+    {
+      "caseId": "20260623_tokachi_southeast_offshore_m34_hinet",
+      "status": "submitted_for_review",
+      "submittedRow": {
+        "caseId": "20260623_tokachi_southeast_offshore_m34_hinet",
+        "sourceType": "hinet_jma_unified_catalog",
+        "sourceUrl": "https://hinetwww11.bosai.go.jp/auth/JMA/?LANG=en",
+        "sourceVersionOrPageDate": "arrival-time-data 2026-06-23 JST; authenticated JMA unified catalog page listed data through 2026-06-25 JST",
+        "checkedAtUtc": "2026-06-27T05:07:23.3441027Z",
+        "reviewer": "codex_user_authenticated_download",
+        "originTimeJst": "2026-06-23T23:13:05.79",
+        "latitude": 42.499333333333,
+        "longitude": 143.681666666667,
+        "depthKm": 55.92,
+        "magnitude": 3.0,
+        "region": "SE OFF TOKACHI",
+        "rawRowText": "J2026062323130579 011 422996 034 1434090 057 559211230V   711   1 28SE OFF TOKACHI           39K"
+      },
+      "rejectionReason": null,
+      "decisionImpact": "none_review_required"
+    },
+    {
+      "caseId": "20260621_fukushima_offshore_m32_eq6",
+      "status": "submitted_for_review",
+      "submittedRow": {
+        "caseId": "20260621_fukushima_offshore_m32_eq6",
+        "sourceType": "hinet_jma_unified_catalog",
+        "sourceUrl": "https://hinetwww11.bosai.go.jp/auth/JMA/?LANG=en",
+        "sourceVersionOrPageDate": "arrival-time-data 2026-06-21 JST; authenticated JMA unified catalog page listed data through 2026-06-25 JST",
+        "checkedAtUtc": "2026-06-29T02:30:00Z",
+        "reviewer": "user_confirmed",
+        "originTimeJst": "2026-06-21T23:41:11.87",
+        "latitude": 37.624333,
+        "longitude": 142.278167,
+        "depthKm": 32.88,
+        "magnitude": 3.2,
+        "region": "SE OFF MIYAGI PREF",
+        "rawRowText": "J2026062123411187 008 373746 031 1421669 037 328810532V   711   2 68SE OFF MIYAGI PREF       40K"
+      },
+      "rejectionReason": null,
+      "decisionImpact": "none_review_required"
+    },
+    {
+      "caseId": "20260622_iwate_offshore_m30_eq10",
+      "status": "submitted_for_review",
+      "submittedRow": {
+        "caseId": "20260622_iwate_offshore_m30_eq10",
+        "sourceType": "hinet_jma_unified_catalog",
+        "sourceUrl": "https://hinetwww11.bosai.go.jp/auth/JMA/?LANG=en",
+        "sourceVersionOrPageDate": "arrival-time-data 2026-06-22 JST; authenticated JMA unified catalog page listed data through 2026-06-25 JST",
+        "checkedAtUtc": "2026-06-29T02:30:00Z",
+        "reviewer": "user_confirmed",
+        "originTimeJst": "2026-06-22T09:28:23.11",
+        "latitude": 40.393167,
+        "longitude": 142.385333,
+        "depthKm": 42.69,
+        "magnitude": 3.2,
+        "region": "NE OFF IWATE PREF",
+        "rawRowText": "J2026062209282311 009 402359 028 1422312 038 426909432V   711   2 61NE OFF IWATE PREF        40K"
+      },
+      "rejectionReason": null,
+      "decisionImpact": "none_review_required"
+    },
+    {
+      "caseId": "20260622_wakayama_south_m25_hinet",
+      "status": "submitted_for_review",
+      "submittedRow": {
+        "caseId": "20260622_wakayama_south_m25_hinet",
+        "sourceType": "hinet_jma_unified_catalog",
+        "sourceUrl": "https://hinetwww11.bosai.go.jp/auth/JMA/?LANG=en",
+        "sourceVersionOrPageDate": "arrival-time-data 2026-06-22 JST; authenticated JMA unified catalog page listed data through 2026-06-25 JST",
+        "checkedAtUtc": "2026-06-29T02:30:00Z",
+        "reviewer": "user_confirmed",
+        "originTimeJst": "2026-06-22T09:51:16.91",
+        "latitude": 33.5615,
+        "longitude": 135.7995,
+        "depthKm": 31.22,
+        "magnitude": 2.5,
+        "region": "SOUTHERN WAKAYAMA PREF",
+        "rawRowText": "J2026062209511691 003 333369 009 1354797 009 312202425V   711   5192SOUTHERN WAKAYAMA PREF   32K"
+      },
+      "rejectionReason": null,
+      "decisionImpact": "none_review_required"
+    }
+  ]
+}

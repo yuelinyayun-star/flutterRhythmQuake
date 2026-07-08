@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import '../../../core/utils/quake_time.dart';
 import '../../../models/quake_message.dart';
 import 'jma_eqlist_service.dart';
 import 'cenc_eqlist_service.dart';
@@ -88,12 +89,15 @@ class EqlistManager {
 
   /// 任意列表更新时的回调
   void Function()? onAnyUpdated;
+  bool _running = false;
 
   /// 启动所有HTTP轮询服务
   ///
   /// JMA、USGS通过HTTP轮询获取数据
   /// CENC、FSSN、KMA、CWA通过FAN推送获取数据
   void start() {
+    if (_running) return;
+    _running = true;
     jma.onListUpdated = (items) {
       _jmaList
         ..clear()
@@ -140,6 +144,8 @@ class EqlistManager {
 
   /// 停止所有HTTP轮询服务
   void stop() {
+    if (!_running) return;
+    _running = false;
     jma.stop();
     cenc.stop();
     usgs.stop();
@@ -260,10 +266,55 @@ class EqlistManager {
       _ => null,
     };
     if (list == null) return;
-    list.removeWhere((item) => item.eventId == e.eventId);
+    list.removeWhere(
+      (item) =>
+          item.eventId == e.eventId ||
+          (bucket == 'jmaEqlist' && _sameJmaHistoryEvent(item, e)),
+    );
     list.insert(0, e);
     _trim(list);
     onAnyUpdated?.call();
+  }
+
+  bool _sameJmaHistoryEvent(QuakeMessage a, QuakeMessage b) {
+    final keyA = _jmaHistoryDedupeKey(a);
+    final keyB = _jmaHistoryDedupeKey(b);
+    return keyA != null && keyA == keyB;
+  }
+
+  String? _jmaHistoryDedupeKey(QuakeMessage event) {
+    if (!_isJmaHistorySource(event.source)) return null;
+    final location = event.location.trim().replaceAll(RegExp(r'\s+'), '');
+    if (location.isEmpty) return null;
+    final originMinute =
+        _toComparableUtc(event).millisecondsSinceEpoch ~/
+        Duration.millisecondsPerMinute;
+    final magnitude = (event.magnitude * 10).round();
+    final depth = event.depth.round();
+    return '$originMinute|$location|$magnitude|$depth';
+  }
+
+  bool _isJmaHistorySource(QuakeSourceType source) {
+    return source == QuakeSourceType.wolfx ||
+        source == QuakeSourceType.jma_fan ||
+        source == QuakeSourceType.p2p;
+  }
+
+  DateTime _toComparableUtc(QuakeMessage event) {
+    final t = event.originTime;
+    final offset = QuakeTime.isJapanSource(event.source)
+        ? const Duration(hours: 9)
+        : const Duration(hours: 8);
+    return DateTime.utc(
+      t.year,
+      t.month,
+      t.day,
+      t.hour,
+      t.minute,
+      t.second,
+      t.millisecond,
+      t.microsecond,
+    ).subtract(offset);
   }
 
   /// 裁剪列表长度

@@ -3,13 +3,19 @@ import 'package:flutter/material.dart';
 import 'dart:ui';
 import 'package:provider/provider.dart';
 import '../../providers/quake_provider.dart';
+import '../../providers/map_state_provider.dart';
 import '../../services/ntp_service.dart';
 import '../../models/intensity_theme.dart';
 import '../../models/quake_message.dart';
 import '../../models/unified_quake_data.dart';
 import '../../models/weather_alarm.dart';
 import '../../core/intensity_calculator.dart';
+import '../../core/source_estimation/source_estimate_quality.dart';
+import '../../core/source_estimation/source_estimation_models.dart';
+import '../../core/source_estimation/source_station_phase_classifier.dart';
+import '../../core/source_estimation/station_event_tracker.dart';
 import '../../core/utils/quake_time.dart';
+import 'ui_scale.dart';
 
 class AlertModule extends StatefulWidget {
   const AlertModule({super.key});
@@ -18,18 +24,26 @@ class AlertModule extends StatefulWidget {
   State<AlertModule> createState() => _AlertModuleState();
 }
 
-class _AlertModuleState extends State<AlertModule>
-    with TickerProviderStateMixin {
-  late AnimationController _flashController;
+class _AlertModuleState extends State<AlertModule> {
   Timer? _unifiedPageTimer;
+  final ValueNotifier<double> _flashLevel = ValueNotifier<double>(0);
   int _unifiedPageIndex = 0;
   String _unifiedPageSignature = '';
+  final Map<String, DateTime> _sourceUnifiedFirstSeenAtByEvent =
+      <String, DateTime>{};
+  Timer? _sourceUnifiedDismissTimer;
 
+  static const String _sourceEstimationUnifiedSource = 'nied_source_estimation';
+  static const SourceEstimateQualityCalculator _sourceQualityCalculator =
+      SourceEstimateQualityCalculator();
+  static const SourceStationPhaseClassifier _sourcePhaseClassifier =
+      SourceStationPhaseClassifier();
   static const int _unifiedPageSize = 4;
 
   static const double _refWidth = 1700.0;
 
   double _scale(BuildContext c) {
+    if (UiScale.isPhone(c)) return UiScale.phone(c);
     final w = MediaQuery.of(c).size.width;
     return (w / _refWidth).clamp(0.55, 1.0);
   }
@@ -56,47 +70,77 @@ class _AlertModuleState extends State<AlertModule>
   }
 
   @override
-  void initState() {
-    super.initState();
-    _flashController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 500),
-    )..repeat(reverse: true);
-  }
-
-  @override
   void dispose() {
     _stopUnifiedPageTimer();
-    _flashController.dispose();
+    _sourceUnifiedDismissTimer?.cancel();
+    _flashLevel.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<QuakeProvider>(
-      builder: (context, provider, child) {
-        final bool hasUnified = provider.unifiedEvents.isNotEmpty;
-        final Widget alertContent = _buildAlertContent(provider);
+    return Selector<QuakeProvider, int>(
+      selector: (context, provider) => _alertUiSignature(provider),
+      builder: (context, signature, child) {
+        return ValueListenableBuilder<SeismicActiveEvent?>(
+          valueListenable: StationEventTracker.instance.currentNiedEvent,
+          builder: (context, sourceEvent, child) {
+            final provider = context.read<QuakeProvider>();
+            final showSourceEstimationUi = context
+                .watch<MapStateProvider>()
+                .showEstimatedEpicenter;
+            final sourceUnified = showSourceEstimationUi
+                ? _sourceEstimationUnifiedEventV2(sourceEvent)
+                : null;
+            final unifiedCount =
+                provider.unifiedEvents.length + (sourceUnified == null ? 0 : 1);
+            final bool hasUnified = unifiedCount > 0;
+            final Widget alertContent = _buildAlertContent(
+              provider,
+              sourceUnified,
+            );
 
-        // 底部分隔条带仅在统一 UI 模式显示
-        if (!hasUnified) return alertContent;
+            if (!hasUnified) return alertContent;
 
-        final unifiedCount = provider.unifiedEvents.length;
-        final pageIndicator = unifiedCount > _unifiedPageSize
-            ? '${_unifiedPageIndex + 1}/${_unifiedPageCount(unifiedCount)}'
-            : null;
-
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(height: _s(6, context)),
-            alertContent,
-            SizedBox(height: _s(6, context)),
-            _bottomStrip(context, pageText: pageIndicator),
-          ],
+            final pageIndicator = unifiedCount > _unifiedPageSize
+                ? '${_unifiedPageIndex + 1}/${_unifiedPageCount(unifiedCount)}'
+                : null;
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(height: _s(6, context)),
+                alertContent,
+                SizedBox(height: _s(6, context)),
+                _bottomStrip(context, pageText: pageIndicator),
+              ],
+            );
+          },
         );
       },
+    );
+  }
+
+  int _alertUiSignature(QuakeProvider provider) {
+    final unifiedEvents = provider.unifiedEvents;
+    final currentEvent = provider.currentEvent;
+    final countdownTick = currentEvent != null && unifiedEvents.isEmpty
+        ? NtpService().now.millisecondsSinceEpoch ~/ 1000
+        : 0;
+    return Object.hash(
+      Object.hashAll(unifiedEvents.map((event) => event.hashCode)),
+      provider.currentUnifiedIndex,
+      currentEvent?.hashCode,
+      provider.currentDistance,
+      provider.estimatedIntensity,
+      provider.activeWarningCount,
+      provider.activeInfoEventCount,
+      provider.currentWarningIndex,
+      provider.isShowingTempInfo,
+      provider.isShowingInfoEvent,
+      provider.weatherAlarm?.hashCode,
+      provider.shouldShowWeatherAlarm,
+      countdownTick,
     );
   }
 
@@ -149,11 +193,16 @@ class _AlertModuleState extends State<AlertModule>
     );
   }
 
-  Widget _buildAlertContent(QuakeProvider provider) {
-    final hasUnified = provider.unifiedEvents.isNotEmpty;
+  Widget _buildAlertContent(
+    QuakeProvider provider,
+    UnifiedQuakeData? sourceUnified,
+  ) {
+    final hasUnified =
+        provider.unifiedEvents.isNotEmpty || sourceUnified != null;
 
     if (hasUnified) {
-      return _buildStackedUnifiedView(provider);
+      _syncFlashController(false);
+      return _buildStackedUnifiedView(provider, sourceUnified);
     }
 
     _stopUnifiedPageTimer();
@@ -164,6 +213,7 @@ class _AlertModuleState extends State<AlertModule>
     final isShowingInfoEvent = provider.isShowingInfoEvent;
 
     if (event == null) {
+      _syncFlashController(false);
       if (provider.shouldShowWeatherAlarm) {
         return _buildWeatherAlarmCard(context, provider.weatherAlarm!);
       }
@@ -176,6 +226,7 @@ class _AlertModuleState extends State<AlertModule>
       final bool isSerious = intensity >= 5.0;
       final int totalCount = provider.totalDisplayCount;
 
+      _syncFlashController(false);
       return _buildInfoEventCard(
         context,
         event,
@@ -195,49 +246,53 @@ class _AlertModuleState extends State<AlertModule>
     final int countdown = (sArrival - elapsed).floor();
 
     if (countdown < -60 && warningCount == 0) {
+      _syncFlashController(false);
       return _buildStandbyState(context, provider);
     }
 
     final double intensity = _badgeIntensity(event);
     final Color themeColor = IntensityTheme.getColor(intensity);
     final bool isSerious = intensity >= 5.0;
+    _syncFlashController(isSerious);
 
     // 有效预警卡（带闪烁边框）渲染分支。
     return AnimatedBuilder(
-      animation: _flashController,
+      animation: _flashLevel,
       builder: (context, child) {
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(_s(10, context)),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-            child: Container(
-              width: _s(420, context),
-              decoration: BoxDecoration(
-                color: const Color(0xCC0D0D0D),
-                borderRadius: BorderRadius.circular(_s(10, context)),
-                border: Border.all(
-                  color: isSerious
-                      ? Color.lerp(
-                          Colors.red.withValues(alpha: 0.3),
-                          Colors.red.withValues(alpha: 0.9),
-                          _flashController.value,
-                        )!
-                      : themeColor.withValues(alpha: 0.35),
-                  width: _s(1.2, context),
-                ),
-                boxShadow: [
-                  BoxShadow(
+        return RepaintBoundary(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(_s(10, context)),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+              child: Container(
+                width: _s(420, context),
+                decoration: BoxDecoration(
+                  color: const Color(0xCC0D0D0D),
+                  borderRadius: BorderRadius.circular(_s(10, context)),
+                  border: Border.all(
                     color: isSerious
-                        ? Colors.red.withValues(
-                            alpha: _flashController.value * 0.3,
-                          )
-                        : themeColor.withValues(alpha: 0.08),
-                    blurRadius: _s(20, context),
-                    spreadRadius: _s(1, context),
+                        ? Color.lerp(
+                            Colors.red.withValues(alpha: 0.3),
+                            Colors.red.withValues(alpha: 0.9),
+                            _flashLevel.value,
+                          )!
+                        : themeColor.withValues(alpha: 0.35),
+                    width: _s(1.2, context),
                   ),
-                ],
+                  boxShadow: [
+                    BoxShadow(
+                      color: isSerious
+                          ? Colors.red.withValues(
+                              alpha: _flashLevel.value * 0.3,
+                            )
+                          : themeColor.withValues(alpha: 0.08),
+                      blurRadius: _s(20, context),
+                      spreadRadius: _s(1, context),
+                    ),
+                  ],
+                ),
+                child: child,
               ),
-              child: child,
             ),
           ),
         );
@@ -266,8 +321,398 @@ class _AlertModuleState extends State<AlertModule>
     );
   }
 
-  Widget _buildStackedUnifiedView(QuakeProvider provider) {
-    final events = provider.unifiedEvents;
+  void _syncFlashController(bool shouldFlash) {
+    final next = shouldFlash ? 1.0 : 0.0;
+    if (_flashLevel.value != next) {
+      _flashLevel.value = next;
+    }
+  }
+
+  UnifiedQuakeData? _sourceEstimationUnifiedEventV2(
+    SeismicActiveEvent? sourceEvent,
+  ) {
+    final estimate = sourceEvent?.estimate;
+    if (sourceEvent == null || estimate == null) return null;
+    if (!_shouldShowSourceUnifiedEvent(sourceEvent, estimate)) return null;
+
+    final isKotoho7Js = estimate.method == 'nied_gif_kotoho7_js_receiver_v1';
+    final quality = isKotoho7Js
+        ? null
+        : _sourceQualityCalculator.calculate(sourceEvent);
+    final phases = _sourcePhaseClassifier.classify(sourceEvent);
+    final originTime = estimate.originTime ?? sourceEvent.startedAt;
+    final estimatedShindo = isKotoho7Js
+        ? (_sourceDiagnosticDouble(
+                estimate,
+                'js_map_max_shindo_class',
+              )?.floor() ??
+              -1)
+        : sourceEvent.maxShindo;
+    final supportCount = _sourceDisplaySupportCount(estimate);
+    final shindoText = estimatedShindo >= 0 ? '$estimatedShindo' : '?';
+    final qualityText =
+        _sourceJsQualityText(estimate) ??
+        (quality == null
+            ? '\u8d28\u91cf --'
+            : '\u8d28\u91cf ${quality.grade} - '
+                  '${(quality.confidence * 100).toStringAsFixed(1)}% / '
+                  '${_formatSourceResidualV2(quality.rmsResidualSeconds)} / '
+                  '${_formatSourceGapV2(quality.azimuthalGapDegrees)} / '
+                  '${_formatSourceUncertaintyV2(quality.horizontalUncertaintyP90Km)}');
+    final candidateRegionText = isKotoho7Js
+        ? null
+        : _sourceCandidateRegionText(sourceEvent.metadata);
+    final apiTypeLabel = candidateRegionText == null
+        ? qualityText
+        : '$qualityText \u00b7 $candidateRegionText';
+    final triggerText =
+        '\u89e6\u53d1 ${phases.stations.length}\u7ad9 '
+        '(P: ${phases.count(EstimatedStationPhase.p)} | '
+        'S: ${phases.count(EstimatedStationPhase.s)} | '
+        'O: ${phases.count(EstimatedStationPhase.other)})';
+
+    return UnifiedQuakeData(
+      source: _sourceEstimationUnifiedSource,
+      origin: originTime.millisecondsSinceEpoch ~/ 1000,
+      eventId: sourceEvent.eventId,
+      isEew: false,
+      timeZone: 9,
+      titleText: '\u9707\u6e90\u672c\u5730\u63a8\u7b97',
+      reportNumText: '',
+      useShindo: true,
+      maxIntensity: shindoText,
+      className: _sourceShindoClassName(estimatedShindo),
+      hypocenter:
+          '${estimate.latitude.toStringAsFixed(3)}\u00b0N, '
+          '${estimate.longitude.toStringAsFixed(3)}\u00b0E',
+      originTime: originTime,
+      reportTime: sourceEvent.updatedAt,
+      magnitude: estimate.magnitude ?? -1,
+      depth: estimate.depthKm ?? -1,
+      depthText: estimate.depthKm == null
+          ? '\u6df1\u5ea6 -- \u00b7 '
+                '\u652f\u6301 $supportCount\u7ad9 '
+                '\u00b7 ${_sourceMethodLabelV2(estimate.method)}'
+          : '\u6df1\u5ea6 ${estimate.depthKm!.round()}km \u00b7 '
+                '\u652f\u6301 $supportCount\u7ad9 '
+                '\u00b7 ${_sourceMethodLabelV2(estimate.method)}',
+      lat: estimate.latitude,
+      lng: estimate.longitude,
+      isFinal: sourceEvent.isClosed,
+      apiTypeLabel: apiTypeLabel,
+      warnArea: triggerText,
+      arrivedAt: sourceEvent.updatedAt,
+    );
+  }
+
+  bool _shouldShowSourceUnifiedEvent(
+    SeismicActiveEvent sourceEvent,
+    SourceEstimate estimate,
+  ) {
+    final key = '${sourceEvent.sourceId}:${sourceEvent.eventId}';
+    final now = DateTime.now();
+    final firstSeen = _sourceUnifiedFirstSeenAtByEvent.putIfAbsent(
+      key,
+      () => now,
+    );
+    _sourceUnifiedFirstSeenAtByEvent.removeWhere(
+      (eventKey, seenAt) =>
+          eventKey != key &&
+          now.difference(seenAt) > const Duration(minutes: 30),
+    );
+    final ttl = _sourceUnifiedDismissDuration(sourceEvent, estimate);
+    final expiresAt = firstSeen.add(ttl);
+    if (!now.isBefore(expiresAt)) {
+      return false;
+    }
+    _scheduleSourceUnifiedDismiss(expiresAt);
+    return true;
+  }
+
+  Duration _sourceUnifiedDismissDuration(
+    SeismicActiveEvent sourceEvent,
+    SourceEstimate estimate,
+  ) {
+    final jsMaxShindo = estimate.method == 'nied_gif_kotoho7_js_receiver_v1'
+        ? _sourceDiagnosticDouble(estimate, 'js_map_max_shindo_class')?.floor()
+        : null;
+    final maxShindo = estimate.method == 'nied_gif_kotoho7_js_receiver_v1'
+        ? (jsMaxShindo ?? -1)
+        : sourceEvent.maxShindo;
+    final isWarnLike = maxShindo >= 5;
+    // Match QuakeProvider's EEW dismiss duration shape:
+    // normal EEW = max(M, 3) minutes; warning EEW = max(M, 6) minutes.
+    // Source estimation has no JS magnitude yet, so use the EEW minimums.
+    return Duration(minutes: isWarnLike ? 6 : 3);
+  }
+
+  void _scheduleSourceUnifiedDismiss(DateTime expiresAt) {
+    final now = DateTime.now();
+    final remaining = expiresAt.difference(now);
+    final nextDelay = remaining.isNegative ? Duration.zero : remaining;
+    final currentTimer = _sourceUnifiedDismissTimer;
+    if (currentTimer?.isActive == true) return;
+    _sourceUnifiedDismissTimer = Timer(nextDelay, () {
+      _sourceUnifiedDismissTimer = null;
+      if (!mounted) return;
+      setState(() {});
+    });
+  }
+
+  String? _sourceCandidateRegionText(Map<String, Object?> metadata) {
+    final candidateRegion = metadata['candidate_region'];
+    if (candidateRegion is! Map) return null;
+    final allowsCoordinateSwitch =
+        candidateRegion['production_coordinate_switch_allowed'] == true;
+    if (allowsCoordinateSwitch) return null;
+    final status = candidateRegion['status']?.toString();
+    final delay = candidateRegion['confirmation_delay_seconds'];
+    final delayText = delay is num && delay > 0
+        ? ' ${delay.toStringAsFixed(1)}s'
+        : '';
+    final statusText = switch (status) {
+      'pending' => '\u5019\u9009\u533a\u57df \u5f85\u786e\u8ba4',
+      'confirmedDelayed' =>
+        '\u5019\u9009\u533a\u57df \u5ef6\u8fdf\u786e\u8ba4$delayText',
+      'confirmedImmediate' => '\u5019\u9009\u533a\u57df \u5df2\u786e\u8ba4',
+      'expired' => null,
+      _ => null,
+    };
+    if (statusText == null) return null;
+    final localSupportText = _sourceCandidateLocalSupportText(metadata);
+    return localSupportText == null
+        ? statusText
+        : '$statusText \u00b7 $localSupportText';
+  }
+
+  String? _sourceJsQualityText(SourceEstimate estimate) {
+    if (estimate.method != 'nied_gif_kotoho7_js_receiver_v1') return null;
+    final error = _sourceDiagnosticDouble(estimate, 'best_source_error');
+    final support =
+        _sourceDiagnosticInt(estimate, 'best_source_applied_count') ??
+        _sourceDiagnosticInt(estimate, 'peak_estimated_station_count');
+    final processed = _sourceDiagnosticInt(estimate, 'processed_frame_count');
+    final detectionIds = _sourceDiagnosticInt(
+      estimate,
+      'peak_detection_id_count',
+    );
+    final elapsedMs = _sourceDiagnosticInt(estimate, 'bridge_elapsed_ms');
+    final parts = <String>[
+      if (error != null) 'JS\u8bef\u5dee ${error.toStringAsFixed(3)}',
+      if (support != null) '\u652f\u6301 $support\u7ad9',
+      if (processed != null) '\u7b2c$processed\u5e27',
+      if (detectionIds != null) 'ID $detectionIds',
+      if (elapsedMs != null) '${elapsedMs}ms',
+    ];
+    return parts.join(' / ');
+  }
+
+  double? _sourceDiagnosticDouble(SourceEstimate estimate, String key) {
+    final value = estimate.diagnostics[key];
+    if (value is num && value.isFinite) return value.toDouble();
+    if (value is String) return double.tryParse(value);
+    return null;
+  }
+
+  int? _sourceDiagnosticInt(SourceEstimate estimate, String key) {
+    final value = estimate.diagnostics[key];
+    if (value is int) return value;
+    if (value is num && value.isFinite) return value.round();
+    if (value is String) return int.tryParse(value);
+    return null;
+  }
+
+  int _sourceDisplaySupportCount(SourceEstimate estimate) {
+    if (estimate.method != 'nied_gif_kotoho7_js_receiver_v1') {
+      return estimate.supportingStationCount;
+    }
+    return _sourceDiagnosticInt(estimate, 'best_source_applied_count') ??
+        _sourceDiagnosticInt(estimate, 'peak_estimated_station_count') ??
+        _sourceDiagnosticInt(estimate, 'js_applied_count') ??
+        0;
+  }
+
+  String? _sourceCandidateLocalSupportText(Map<String, Object?> metadata) {
+    final gate = metadata['candidate_region_local_support_gate'];
+    if (gate is! Map) return null;
+    final memberCount = gate['member_count'];
+    final memberGrowth = gate['member_count_growth'];
+    final estimateMemberDistance = gate['estimate_member_centroid_distance_km'];
+    final convergence = gate['convergence_km'];
+    if (memberCount is! num) return null;
+
+    final growthText = memberGrowth is num
+        ? ' ${_formatSignedSourceCount(memberGrowth.round())}'
+        : '';
+    final distanceText = estimateMemberDistance is num
+        ? ' / ${estimateMemberDistance.round()}km'
+        : '';
+    final convergenceText = convergence is num
+        ? ' / \u6536\u655b${convergence.round()}km'
+        : '';
+    return '\u672c\u5730\u652f\u6301 ${memberCount.round()}\u7ad9'
+        '$growthText$distanceText$convergenceText';
+  }
+
+  String _formatSignedSourceCount(int value) {
+    if (value > 0) return '+$value';
+    return '$value';
+  }
+
+  String _sourceShindoClassName(int shindo) {
+    if (shindo >= 7) return 'purple';
+    if (shindo >= 6) return 'red';
+    if (shindo >= 5) return 'orange';
+    if (shindo >= 4) return 'yellow';
+    if (shindo >= 3) return 'green';
+    if (shindo >= 2) return 'blue';
+    if (shindo >= 1) return 'gray';
+    if (shindo == 0) return 'dark-gray';
+    return 'gray';
+  }
+
+  String _formatSourceResidualV2(double? value) =>
+      value == null ? '--s' : '${value.toStringAsFixed(2)}s';
+
+  String _formatSourceGapV2(double? value) =>
+      value == null ? '--\u00b0' : '${value.round()}\u00b0';
+
+  String _formatSourceUncertaintyV2(double? value) =>
+      value == null ? 'P90 --km' : 'P90 ${value.round()}km';
+
+  String _sourceMethodLabelV2(String method) => switch (method) {
+    'nied_gif_kotoho7_js_receiver_v1' => 'kotoho7 JS',
+    'nied_dart_hyp_v1' => 'Dart HYP',
+    'nied_gif_hybrid_v1' => 'GIF\u6df7\u5408',
+    'trigger_time_grid_v2' => '\u5230\u65f6\u7f51\u683c',
+    'trigger_time_depth_grid_v3' => '\u6df1\u5ea6\u7f51\u683c',
+    'weighted_centroid_baseline' => '\u52a0\u6743\u8d28\u5fc3',
+    _ => method,
+  };
+
+  UnifiedQuakeData? sourceEstimationUnifiedEventLegacy(
+    SeismicActiveEvent? sourceEvent,
+  ) {
+    final estimate = sourceEvent?.estimate;
+    if (sourceEvent == null || estimate == null) return null;
+
+    final quality = _sourceQualityCalculator.calculate(sourceEvent);
+    final phases = _sourcePhaseClassifier.classify(sourceEvent);
+    final reportNumber = _sourceEstimationReportNumber(sourceEvent, estimate);
+    final originTime = estimate.originTime ?? sourceEvent.startedAt;
+    final grade = quality?.grade ?? '?';
+    final qualityText = quality == null
+        ? '质量 --'
+        : '质量 ${quality.grade} - '
+              '${(quality.confidence * 100).toStringAsFixed(1)}% / '
+              '${_formatSourceResidual(quality.rmsResidualSeconds)} / '
+              '${_formatSourceGap(quality.azimuthalGapDegrees)} / '
+              '${_formatSourceUncertainty(quality.horizontalUncertaintyP90Km)}';
+    final triggerText =
+        '触发 ${phases.stations.length}站 '
+        '(P: ${phases.count(EstimatedStationPhase.p)} | '
+        'S: ${phases.count(EstimatedStationPhase.s)} | '
+        'O: ${phases.count(EstimatedStationPhase.other)})';
+
+    return UnifiedQuakeData(
+      source: _sourceEstimationUnifiedSource,
+      origin: originTime.millisecondsSinceEpoch ~/ 1000,
+      eventId: sourceEvent.eventId,
+      isEew: false,
+      timeZone: 9,
+      titleText: '震源本地推算',
+      reportNumText: '第$reportNumber报',
+      useShindo: false,
+      maxIntensity: grade,
+      className: _sourceQualityClass(grade),
+      hypocenter:
+          '${estimate.latitude.toStringAsFixed(3)}°N, '
+          '${estimate.longitude.toStringAsFixed(3)}°E',
+      originTime: originTime,
+      reportTime: sourceEvent.updatedAt,
+      magnitude: estimate.magnitude ?? -1,
+      depth: estimate.depthKm ?? -1,
+      depthText: estimate.depthKm == null
+          ? '深度 -- · 支持 ${estimate.supportingStationCount}站 · '
+                '${_sourceMethodLabel(estimate.method)}'
+          : '深度 ${estimate.depthKm!.round()}km · '
+                '支持 ${estimate.supportingStationCount}站 · '
+                '${_sourceMethodLabel(estimate.method)}',
+      lat: estimate.latitude,
+      lng: estimate.longitude,
+      isFinal: sourceEvent.isClosed,
+      apiTypeLabel: qualityText,
+      warnArea: triggerText,
+      arrivedAt: sourceEvent.updatedAt,
+    );
+  }
+
+  bool _isSourceEstimationUnified(UnifiedQuakeData event) =>
+      event.source == _sourceEstimationUnifiedSource;
+
+  int _sourceEstimationReportNumber(
+    SeismicActiveEvent sourceEvent,
+    SourceEstimate estimate,
+  ) {
+    final metadataReport = _positiveInt(
+      sourceEvent.metadata['kotoho7_js_receiver_report_number'],
+    );
+    if (metadataReport != null) return metadataReport;
+
+    final processedFrameCount = _positiveInt(
+      estimate.diagnostics['processed_frame_count'],
+    );
+    if (processedFrameCount != null) return processedFrameCount;
+
+    final historyFrameCount = _positiveInt(
+      estimate.diagnostics['history_frame_count'],
+    );
+    if (historyFrameCount != null) return historyFrameCount;
+
+    final revision = sourceEvent.metadata['estimate_revision'];
+    return revision is int && revision > 0 ? revision : 1;
+  }
+
+  int? _positiveInt(Object? value) {
+    if (value is int && value > 0) return value;
+    if (value is num && value > 0) return value.round();
+    if (value is String) {
+      final parsed = int.tryParse(value);
+      if (parsed != null && parsed > 0) return parsed;
+    }
+    return null;
+  }
+
+  String _sourceQualityClass(String grade) => switch (grade) {
+    'S' || 'A' => 'green',
+    'B' => 'yellow',
+    'C' => 'orange',
+    _ => 'red',
+  };
+
+  String _formatSourceResidual(double? value) =>
+      value == null ? '--s' : '${value.toStringAsFixed(2)}s';
+
+  String _formatSourceGap(double? value) =>
+      value == null ? '--°' : '${value.round()}°';
+
+  String _formatSourceUncertainty(double? value) =>
+      value == null ? 'P90 --km' : 'P90 ${value.round()}km';
+
+  String _sourceMethodLabel(String method) => switch (method) {
+    'nied_dart_hyp_v1' => 'Dart HYP',
+    'nied_gif_hybrid_v1' => 'GIF混合',
+    'trigger_time_grid_v2' => '到时网格',
+    'trigger_time_depth_grid_v3' => '深度网格',
+    'weighted_centroid_baseline' => '加权质心',
+    _ => method,
+  };
+
+  Widget _buildStackedUnifiedView(
+    QuakeProvider provider,
+    UnifiedQuakeData? sourceUnified,
+  ) {
+    final events = [...provider.unifiedEvents, ?sourceUnified];
     final eew = events.where((e) => e.isEew).toList();
     final info = events.where((e) => !e.isEew).toList();
     final ordered = [...eew, ...info];
@@ -281,39 +726,15 @@ class _AlertModuleState extends State<AlertModule>
           ]
         : visibleEvents;
 
+    final slotHeight = _compactUnifiedSlotHeight(context);
+
     return SizedBox(
       width: _s(420, context),
-      child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 680),
-        reverseDuration: const Duration(milliseconds: 520),
-        switchInCurve: Curves.easeInOutCubic,
-        switchOutCurve: Curves.easeInOutCubic,
-        transitionBuilder: (child, animation) {
-          final curved = CurvedAnimation(
-            parent: animation,
-            curve: Curves.easeInOutCubic,
-            reverseCurve: Curves.easeInOutCubic,
-          );
-          return FadeTransition(
-            opacity: curved,
-            child: SlideTransition(
-              position: Tween<Offset>(
-                begin: const Offset(0.045, 0),
-                end: Offset.zero,
-              ).animate(curved),
-              child: child,
-            ),
-          );
-        },
-        child: KeyedSubtree(
-          key: ValueKey(
-            'unified_page_${_unifiedPageIndex}_${visibleEvents.map((e) => '${e.source}:${e.eventId}:${e.reportNumText}').join('|')}',
-          ),
-          child: _buildCardColumn(
-            paddedEvents,
-            animateItems: ordered.length <= _unifiedPageSize,
-          ),
+      child: KeyedSubtree(
+        key: ValueKey(
+          'unified_page_${_unifiedPageIndex}_${visibleEvents.map((e) => '${e.source}:${e.eventId}:${e.reportNumText}').join('|')}',
         ),
+        child: _buildCardColumn(paddedEvents, slotHeight),
       ),
     );
   }
@@ -359,7 +780,17 @@ class _AlertModuleState extends State<AlertModule>
     if (_unifiedPageTimer?.isActive == true) return;
     _unifiedPageTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       if (!mounted) return;
-      final count = context.read<QuakeProvider>().unifiedEvents.length;
+      final showSourceEstimationUi = context
+          .read<MapStateProvider>()
+          .showEstimatedEpicenter;
+      final sourceUnified = showSourceEstimationUi
+          ? _sourceEstimationUnifiedEventV2(
+              StationEventTracker.instance.currentNiedEvent.value,
+            )
+          : null;
+      final count =
+          context.read<QuakeProvider>().unifiedEvents.length +
+          (sourceUnified == null ? 0 : 1);
       final nextPageCount = _unifiedPageCount(count);
       if (nextPageCount <= 1) {
         _stopUnifiedPageTimer();
@@ -385,10 +816,11 @@ class _AlertModuleState extends State<AlertModule>
     _unifiedPageTimer = null;
   }
 
-  Widget _buildCardColumn(
-    List<UnifiedQuakeData?> events, {
-    bool animateItems = true,
-  }) {
+  double _compactUnifiedSlotHeight(BuildContext context) {
+    return _s(148, context);
+  }
+
+  Widget _buildCardColumn(List<UnifiedQuakeData?> events, double slotHeight) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -400,7 +832,7 @@ class _AlertModuleState extends State<AlertModule>
         if (event == null) {
           return Padding(
             padding: EdgeInsets.only(bottom: isLast ? 0 : _s(4, context)),
-            child: const SizedBox(height: 90),
+            child: SizedBox(height: slotHeight),
           );
         }
 
@@ -410,23 +842,7 @@ class _AlertModuleState extends State<AlertModule>
             'unified_card_${event.source}_${event.eventId}_${event.reportNumText}',
           ),
           padding: EdgeInsets.only(bottom: isLast ? 0 : _s(4, context)),
-          child: animateItems
-              ? TweenAnimationBuilder<Offset>(
-                  tween: Tween(
-                    begin: const Offset(-1.0, 0.0),
-                    end: Offset.zero,
-                  ),
-                  duration: const Duration(milliseconds: 400),
-                  curve: Curves.easeOut,
-                  builder: (context, offset, child) {
-                    return FractionalTranslation(
-                      translation: offset,
-                      child: child,
-                    );
-                  },
-                  child: card,
-                )
-              : card,
+          child: SizedBox(height: slotHeight, child: card),
         );
       }).toList(),
     );
@@ -435,32 +851,34 @@ class _AlertModuleState extends State<AlertModule>
   Widget _buildCompactUnifiedCard(UnifiedQuakeData event) {
     final color = _uicColorFromClass(event.className);
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(_s(10, context)),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: Container(
-          decoration: BoxDecoration(
-            color: const Color(0xCC0D0D0D),
-            borderRadius: BorderRadius.circular(_s(10, context)),
-            border: Border.all(
-              color: color.withValues(alpha: 0.35),
-              width: _s(1.2, context),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: color.withValues(alpha: 0.08),
-                blurRadius: _s(20, context),
-                spreadRadius: _s(1, context),
+    return RepaintBoundary(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(_s(10, context)),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+          child: Container(
+            decoration: BoxDecoration(
+              color: const Color(0xCC0D0D0D),
+              borderRadius: BorderRadius.circular(_s(10, context)),
+              border: Border.all(
+                color: color.withValues(alpha: 0.35),
+                width: _s(1.2, context),
               ),
-            ],
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildCompactTopBar(event),
-              _buildCompactBottomSection(event),
-            ],
+              boxShadow: [
+                BoxShadow(
+                  color: color.withValues(alpha: 0.08),
+                  blurRadius: _s(20, context),
+                  spreadRadius: _s(1, context),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildCompactTopBar(event),
+                _buildCompactBottomSection(event),
+              ],
+            ),
           ),
         ),
       ),
@@ -519,14 +937,102 @@ class _AlertModuleState extends State<AlertModule>
     );
   }
 
+  Widget _buildSourceEstimationBadge(UnifiedQuakeData event, Color color) {
+    return Container(
+      width: _s(44, context),
+      height: _s(44, context),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(_s(8, context)),
+        border: Border.all(
+          color: color.withValues(alpha: 0.4),
+          width: _s(1.2, context),
+        ),
+      ),
+      alignment: Alignment.center,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            event.maxIntensity,
+            style: TextStyle(
+              fontSize: _s(18, context),
+              fontWeight: FontWeight.w900,
+              color: color,
+              height: 1,
+            ),
+          ),
+          SizedBox(height: _s(1, context)),
+          Text(
+            '\u9707\u5ea6',
+            style: TextStyle(
+              fontSize: _s(6, context),
+              fontWeight: FontWeight.w500,
+              color: color,
+              height: 1,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildCompactBadge(UnifiedQuakeData event) {
     final color = _uicColorFromClass(event.className);
+    if (_isSourceEstimationUnified(event)) {
+      return _buildSourceEstimationBadge(event, color);
+    }
+
+    if (_isSourceEstimationUnified(event)) {
+      return Container(
+        width: _s(44, context),
+        height: _s(44, context),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(_s(8, context)),
+          border: Border.all(
+            color: color.withValues(alpha: 0.4),
+            width: _s(1.2, context),
+          ),
+        ),
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              event.maxIntensity,
+              style: TextStyle(
+                fontSize: _s(18, context),
+                fontWeight: FontWeight.w900,
+                color: color,
+                height: 1,
+              ),
+            ),
+            SizedBox(height: _s(1, context)),
+            Text(
+              '质量',
+              style: TextStyle(
+                fontSize: _s(6, context),
+                fontWeight: FontWeight.w500,
+                color: color,
+                height: 1,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     final label = event.useShindo ? '震度' : '烈度';
 
     if (event.useShindo) {
       final text = event.maxIntensity;
       final hasSubscript =
-          text.length > 1 && (text.contains('弱') || text.contains('強'));
+          text.length > 1 &&
+          (text.contains('-') ||
+              text.contains('+') ||
+              text.contains('弱') ||
+              text.contains('強'));
       final mainChar = hasSubscript ? text.substring(0, 1) : text;
       final subChar = hasSubscript ? text.substring(1) : '';
 
@@ -569,13 +1075,16 @@ class _AlertModuleState extends State<AlertModule>
                       height: 1,
                     ),
                   ),
-                  Text(
-                    subChar,
-                    style: TextStyle(
-                      fontSize: _s(11, context),
-                      fontWeight: FontWeight.w700,
-                      color: color,
-                      height: 1,
+                  Padding(
+                    padding: EdgeInsets.only(top: _s(0.5, context)),
+                    child: Text(
+                      subChar,
+                      style: TextStyle(
+                        fontSize: _s(13, context),
+                        fontWeight: FontWeight.w900,
+                        color: color,
+                        height: 1,
+                      ),
                     ),
                   ),
                 ],
@@ -639,6 +1148,57 @@ class _AlertModuleState extends State<AlertModule>
   }
 
   Widget _buildCompactInfoColumn(UnifiedQuakeData event) {
+    if (_isSourceEstimationUnified(event)) {
+      final timeStr = event.originTime != null
+          ? event.originTime!.toLocal().toString().substring(5, 19)
+          : '--:--:--';
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            event.hypocenter,
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: _s(13, context),
+              fontWeight: FontWeight.w600,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+          SizedBox(height: _s(3, context)),
+          Text(
+            event.depthText,
+            style: TextStyle(
+              color: Colors.white70,
+              fontSize: _s(11, context),
+              fontWeight: FontWeight.w500,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+          SizedBox(height: _s(3, context)),
+          Text(
+            '$timeStr  ${event.apiTypeLabel}',
+            style: TextStyle(
+              color: Colors.white54,
+              fontSize: _s(10, context),
+              fontWeight: FontWeight.w600,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+          SizedBox(height: _s(2, context)),
+          Text(
+            event.warnArea,
+            style: TextStyle(
+              color: const Color(0xFF72F5B2),
+              fontSize: _s(9, context),
+              fontWeight: FontWeight.w700,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      );
+    }
+
     final isScalePrompt = event.magnitude < 0 && event.hypocenter.isEmpty;
     final isAssumption = event.isAssumption;
     final magStr = isScalePrompt
@@ -729,33 +1289,35 @@ class _AlertModuleState extends State<AlertModule>
 
   Widget _buildWeatherAlarmCard(BuildContext context, WeatherAlarm alarm) {
     final themeColor = alarm.levelColor;
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(_s(10, context)),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: Container(
-          width: _s(420, context),
-          decoration: BoxDecoration(
-            color: const Color(0xCC0D0D0D),
-            borderRadius: BorderRadius.circular(_s(10, context)),
-            border: Border.all(
-              color: themeColor.withValues(alpha: 0.3),
-              width: _s(1.2, context),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: themeColor.withValues(alpha: 0.1),
-                blurRadius: _s(20, context),
-                spreadRadius: _s(1, context),
+    return RepaintBoundary(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(_s(10, context)),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+          child: Container(
+            width: _s(420, context),
+            decoration: BoxDecoration(
+              color: const Color(0xCC0D0D0D),
+              borderRadius: BorderRadius.circular(_s(10, context)),
+              border: Border.all(
+                color: themeColor.withValues(alpha: 0.3),
+                width: _s(1.2, context),
               ),
-            ],
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildWeatherHeader(context, alarm),
-              _buildWeatherBody(context, alarm),
-            ],
+              boxShadow: [
+                BoxShadow(
+                  color: themeColor.withValues(alpha: 0.1),
+                  blurRadius: _s(20, context),
+                  spreadRadius: _s(1, context),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildWeatherHeader(context, alarm),
+                _buildWeatherBody(context, alarm),
+              ],
+            ),
           ),
         ),
       ),
@@ -924,28 +1486,30 @@ class _AlertModuleState extends State<AlertModule>
   }
 
   Widget _buildStandbyState(BuildContext context, QuakeProvider provider) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(_s(10, context)),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: Container(
-          width: _s(420, context),
-          padding: EdgeInsets.symmetric(vertical: _s(39, context)),
-          decoration: BoxDecoration(
-            color: const Color(0xCC0D0D0D),
-            borderRadius: BorderRadius.circular(_s(10, context)),
-            border: Border.all(
-              color: Colors.white.withValues(alpha: 0.05),
-              width: 0.5,
+    return RepaintBoundary(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(_s(10, context)),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+          child: Container(
+            width: _s(420, context),
+            padding: EdgeInsets.symmetric(vertical: _s(39, context)),
+            decoration: BoxDecoration(
+              color: const Color(0xCC0D0D0D),
+              borderRadius: BorderRadius.circular(_s(10, context)),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.05),
+                width: 0.5,
+              ),
             ),
-          ),
-          child: Center(
-            child: Text(
-              '当前无预警信息',
-              style: TextStyle(
-                color: Colors.white54,
-                fontSize: _s(14, context),
-                fontWeight: FontWeight.w600,
+            child: Center(
+              child: Text(
+                '当前无预警信息',
+                style: TextStyle(
+                  color: Colors.white54,
+                  fontSize: _s(14, context),
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
           ),
@@ -1262,7 +1826,20 @@ class _AlertModuleState extends State<AlertModule>
 
   bool _isScalePrompt(QuakeMessage event) => event.infoTypeName == '震度速報';
 
-  bool _isDestination(QuakeMessage event) => event.infoTypeName == '震源に関する情報';
+  String _infoEventMaxIntensityText(
+    QuakeMessage event,
+    double intensity,
+    bool useShindo,
+  ) {
+    if (useShindo) {
+      final shindo = event.jmaShindo?.trim();
+      if (shindo != null && shindo.isNotEmpty && shindo != '-') {
+        return '最大震度 $shindo';
+      }
+      return '最大震度: 不明';
+    }
+    return '预估最大烈度 ${intensity.toStringAsFixed(2)}';
+  }
 
   /// 生成信息事件标题
   ///
@@ -1493,7 +2070,7 @@ class _AlertModuleState extends State<AlertModule>
                 Text(
                   subChar,
                   style: TextStyle(
-                    fontSize: _s(16, context),
+                    fontSize: _s(20, context),
                     fontWeight: FontWeight.w900,
                     color: color,
                     height: 1.0,
@@ -1527,41 +2104,43 @@ class _AlertModuleState extends State<AlertModule>
     int totalCount,
     QuakeProvider provider,
   ) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(_s(10, context)),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: Container(
-          width: _s(420, context),
-          decoration: BoxDecoration(
-            color: const Color(0xCC0D0D0D),
-            borderRadius: BorderRadius.circular(_s(10, context)),
-            border: Border.all(
-              color: _isScalePrompt(event)
-                  ? const Color(0xFF666666).withValues(alpha: 0.35)
-                  : themeColor.withValues(alpha: 0.35),
-              width: _s(1.2, context),
+    return RepaintBoundary(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(_s(10, context)),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+          child: Container(
+            width: _s(420, context),
+            decoration: BoxDecoration(
+              color: const Color(0xCC0D0D0D),
+              borderRadius: BorderRadius.circular(_s(10, context)),
+              border: Border.all(
+                color: _isScalePrompt(event)
+                    ? const Color(0xFF666666).withValues(alpha: 0.35)
+                    : themeColor.withValues(alpha: 0.35),
+                width: _s(1.2, context),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: themeColor.withValues(alpha: 0.08),
+                  blurRadius: _s(20, context),
+                  spreadRadius: _s(1, context),
+                ),
+              ],
             ),
-            boxShadow: [
-              BoxShadow(
-                color: themeColor.withValues(alpha: 0.08),
-                blurRadius: _s(20, context),
-                spreadRadius: _s(1, context),
-              ),
-            ],
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildInfoEventHeader(
-                context,
-                event,
-                themeColor,
-                totalCount,
-                provider,
-              ),
-              _buildInfoEventBody(context, event, intensity, themeColor),
-            ],
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildInfoEventHeader(
+                  context,
+                  event,
+                  themeColor,
+                  totalCount,
+                  provider,
+                ),
+                _buildInfoEventBody(context, event, intensity, themeColor),
+              ],
+            ),
           ),
         ),
       ),
@@ -1683,7 +2262,6 @@ class _AlertModuleState extends State<AlertModule>
     final displayTime = QuakeTime.displayClock(event);
     final useShindo = _useShindo(event);
     final isScale = _isScalePrompt(event);
-    final isDest = _isDestination(event);
 
     return Padding(
       padding: EdgeInsets.fromLTRB(
@@ -1772,11 +2350,7 @@ class _AlertModuleState extends State<AlertModule>
               ),
             ),
             child: Text(
-              isDest
-                  ? '最大震度: 不明'
-                  : useShindo
-                  ? '最大震度 ${event.jmaShindo ?? '?'}'
-                  : '预估最大烈度 ${intensity.toStringAsFixed(2)}',
+              _infoEventMaxIntensityText(event, intensity, useShindo),
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: themeColor,
@@ -1792,7 +2366,7 @@ class _AlertModuleState extends State<AlertModule>
 
   String _reportText(QuakeMessage event) {
     final n = event.reportNumber;
-    if (n != null && n > 0) return '第${n}报';
+    if (n != null && n > 0) return '第$n报';
     return '第?报';
   }
 

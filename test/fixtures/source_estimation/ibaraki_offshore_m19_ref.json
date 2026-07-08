@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "caseId": "20260620_ibaraki_offshore_m19_ref",
+  "caseType": "event",
+  "captureDirectory": "tmp/captures/20260620_184442_jst_ibaraki_offshore_m19_ref",
+  "timeZone": "Asia/Tokyo",
+  "gifNamePattern": "{stamp}.{layer}.gif",
+  "startTimeJst": "2026-06-20T18:44:12",
+  "endTimeJst": "2026-06-20T18:46:42",
+  "sensitivity": 2,
+  "truth": {
+    "originTimeJst": "2026-06-20T18:44:42",
+    "latitude": 36.36,
+    "longitude": 141.02,
+    "depthKm": 7,
+    "magnitude": 1.9,
+    "source": "user_provided_equake_reports_low_precision_reference"
+  },
+  "eventLabels": {
+    "catalogEvent": true,
+    "catalogTruthVerified": false,
+    "observableEvent": true,
+    "detectableEvent": true,
+    "includeInDetectionMetrics": true
+  },
+  "classification": {
+    "region": "Ibaraki Prefecture offshore",
+    "captureSource": "User-provided EQuake reports 1-3",
+    "truthQuality": "reference_only",
+    "notes": "EQuake reported M1.7-M1.9, depth 5-8 km, 10-14 triggered stations. Coordinates and source parameters are not final catalog truth."
+  }
+}

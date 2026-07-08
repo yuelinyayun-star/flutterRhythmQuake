@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "caseId": "20260621_iwate_offshore_m33_eq8",
+  "caseType": "event",
+  "captureDirectory": "tmp/captures/iwate_offshore_m33_20260621_103212_eq8",
+  "timeZone": "Asia/Tokyo",
+  "gifNamePattern": "{stamp}.{layer}.gif",
+  "startTimeJst": "2026-06-21T11:31:42",
+  "endTimeJst": "2026-06-21T11:34:12",
+  "sensitivity": 2,
+  "truth": {
+    "originTimeJst": "2026-06-21T11:32:12",
+    "latitude": 40.27,
+    "longitude": 142.79,
+    "depthKm": 11,
+    "magnitude": 3.3,
+    "source": "user_provided_equake_final_report_reference"
+  },
+  "eventLabels": {
+    "catalogEvent": true,
+    "catalogTruthVerified": false,
+    "observableEvent": true,
+    "detectableEvent": true,
+    "includeInDetectionMetrics": false
+  },
+  "classification": {
+    "region": "Iwate offshore",
+    "captureSource": "User-provided EQuake source-estimation report 8 final, 2026-06-21 10:32:12 UTC+8",
+    "truthQuality": "reference_only",
+    "notes": "EQuake reported final M3.3, depth 11 km, quality B 73.4%, 1.05 s, 249 deg, 63 triggered stations (P:4 S:48 O:11). Coordinates and source parameters are not Hi-net or JMA final catalog truth. Keep outside frozen split metrics until catalog verification and split assignment are reviewed."
+  },
+  "splitStatus": "unassigned_reference"
+}

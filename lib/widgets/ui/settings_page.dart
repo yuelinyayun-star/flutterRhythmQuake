@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../providers/quake_provider.dart';
@@ -7,7 +6,7 @@ import '../../providers/map_state_provider.dart';
 import '../../services/location_service.dart';
 import '../../services/tts_service.dart';
 import '../../services/sources/fan_service.dart';
-import '../../services/sources/jma_volcano_service.dart';
+import '../../services/sources/fdsn_motion_service.dart';
 import '../../services/sources/nied_monitor.dart';
 import '../../services/sources/source_manager.dart';
 import '../map/map_config.dart';
@@ -25,6 +24,8 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
+  _SettingsCategory _selectedCategory = _SettingsCategory.data;
+  String _settingsQuery = '';
   int _fanServerIndex = 0;
   String _tileKey = 'petalLight';
   bool _overlayCloud = false;
@@ -32,20 +33,22 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _overlayRain = false;
   bool _overlayCnContour = false;
   bool _overlayJmaVolcano = false;
+  bool _overlayTyphoon = false;
   bool _overlayFdsnEarthScope = false;
   bool _overlayFdsnGeofon = false;
+  int _fdsnStationLimit = FdsnMotionService.defaultStationLimit;
   final Map<String, double> _sourceMagFilters = {};
   String _niedDataSource = 'lmoni';
   bool _niedReplayEnabled = false;
   String _niedReplayStart = '2026-05-30 23:34:00';
   int _niedReplayStepSeconds = 1;
   int _shakeSensitivity = 2;
+  bool _tremStationEnabled = true;
   bool _hideGridOnEew = false;
   bool _sideInfoAutoShowBeta = true;
   bool _showEpicenter = false;
-  bool _showStaleInfoEvent = false;
   static const String _showEpicenterKey = 'show_estimated_epicenter';
-  static const String _showStaleInfoEventKey = 'show_stale_info_event';
+  bool _weatherMarqueeEnabled = false;
   bool _weatherLocalOnly = false;
   String _weatherLocalLevel = 'county';
   bool _ttsEnabled = true;
@@ -61,6 +64,8 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _initialized = false;
   final TextEditingController _niedReplayStartController =
       TextEditingController();
+  final TextEditingController _settingsSearchController =
+      TextEditingController();
   final TextEditingController _gptSovitsUrlController = TextEditingController();
   final TextEditingController _gptSovitsRefAudioController =
       TextEditingController();
@@ -74,8 +79,11 @@ class _SettingsPageState extends State<SettingsPage> {
   static const String _overlayRainKey = 'map_overlay_rainLayer';
   static const String _overlayCnContourKey = 'map_overlay_cnContour';
   static const String _overlayJmaVolcanoKey = 'map_overlay_volcanoLayer';
+  static const String _overlayTyphoonKey = 'map_overlay_typhoonLayer';
   static const String _overlayFdsnEarthScopeKey = 'map_overlay_fdsnEarthScope';
   static const String _overlayFdsnGeofonKey = 'map_overlay_fdsnGeofon';
+  static const String _fdsnStationLimitKey =
+      FdsnMotionService.stationLimitPreferenceKey;
   static const String _magFilterPrefix = 'source_mag_filter_';
   static const String _niedDataSourceKey = 'nied_data_source';
   static const String _niedReplayEnabledKey = 'nied_replay_enabled';
@@ -84,6 +92,7 @@ class _SettingsPageState extends State<SettingsPage> {
   static const String _shakeSensitivityKey = 'shake_sensitivity';
   static const String _hideGridOnEewKey = 'hide_grid_on_eew';
   static const String _sideInfoAutoShowBetaKey = 'side_info_auto_show_beta';
+  static const String _weatherMarqueeEnabledKey = 'weather_marquee_enabled';
   static const String _weatherLocalOnlyKey = 'weather_alarm_local_only';
   static const String _weatherLocalLevelKey = 'weather_alarm_local_level';
   static const String _mapViewLatKey = 'map_view_lat';
@@ -113,6 +122,97 @@ class _SettingsPageState extends State<SettingsPage> {
   static const Color _borderColor = Color.fromRGBO(130, 177, 255, 0.32);
   static const Color _dividerColor = Color.fromRGBO(255, 255, 255, 0.08);
   static const Color _mutedTextColor = Color.fromRGBO(255, 255, 255, 0.58);
+  static const List<_SettingsCategoryInfo> _categories = [
+    _SettingsCategoryInfo(
+      category: _SettingsCategory.data,
+      title: '数据源',
+      subtitle: '连接与实时监测',
+      icon: Icons.hub_outlined,
+      accent: Color(0xFF62C6FF),
+      keywords: ['fan', '服务器', 'nied', 'lmoni', 'kmoni', 'yahoo', '摇晃', '灵敏度'],
+    ),
+    _SettingsCategoryInfo(
+      category: _SettingsCategory.map,
+      title: '地图与测站',
+      subtitle: '底图、图层和定位',
+      icon: Icons.map_outlined,
+      accent: Color(0xFF72D6B1),
+      keywords: [
+        '地图',
+        '底图',
+        '图层',
+        '云图',
+        '风场',
+        '降水',
+        '等高线',
+        '火山',
+        '定位',
+        '经纬度',
+        'fdsn',
+        'earthscope',
+        'geofon',
+        'seedlink',
+        '测站',
+        '连接上限',
+      ],
+    ),
+    _SettingsCategoryInfo(
+      category: _SettingsCategory.alert,
+      title: '预警显示',
+      subtitle: '预警范围与界面行为',
+      icon: Icons.crisis_alert_outlined,
+      accent: Color(0xFFFFC66D),
+      keywords: [
+        '预警',
+        '气象',
+        '当地',
+        '省级',
+        '市级',
+        '县级',
+        '网格',
+        '侧边',
+        '震中',
+        '旧事件',
+        '更新报',
+      ],
+    ),
+    _SettingsCategoryInfo(
+      category: _SettingsCategory.voice,
+      title: '语音播报',
+      subtitle: '音色、内容与语速',
+      icon: Icons.record_voice_over_outlined,
+      accent: Color(0xFFD6A5FF),
+      keywords: [
+        '语音',
+        'tts',
+        'gpt-sovits',
+        '播报',
+        '事件',
+        '倒计时',
+        '更新报',
+        '音色',
+        '语速',
+        '音调',
+        '试听',
+      ],
+    ),
+    _SettingsCategoryInfo(
+      category: _SettingsCategory.filter,
+      title: '信息过滤',
+      subtitle: '按来源过滤事件',
+      icon: Icons.filter_alt_outlined,
+      accent: Color(0xFFFF8F8F),
+      keywords: ['过滤', '震级', '阈值', '信息事件', '来源', '不接收', '不过滤'],
+    ),
+    _SettingsCategoryInfo(
+      category: _SettingsCategory.advanced,
+      title: '高级',
+      subtitle: '回放与开发工具',
+      icon: Icons.tune_outlined,
+      accent: Color(0xFFAEB8CC),
+      keywords: ['高级', 'nied', '回放', '时间', '步长', '调试', '开发'],
+    ),
+  ];
 
   String _magLabel(double v) {
     if (v == -1) return '不接收';
@@ -165,19 +265,27 @@ class _SettingsPageState extends State<SettingsPage> {
       _overlayRain = prefs.getBool(_overlayRainKey) ?? false;
       _overlayCnContour = prefs.getBool(_overlayCnContourKey) ?? false;
       _overlayJmaVolcano = prefs.getBool(_overlayJmaVolcanoKey) ?? false;
+      _overlayTyphoon = prefs.getBool(_overlayTyphoonKey) ?? true;
       _overlayFdsnEarthScope =
           prefs.getBool(_overlayFdsnEarthScopeKey) ?? false;
       _overlayFdsnGeofon = prefs.getBool(_overlayFdsnGeofonKey) ?? false;
+      _fdsnStationLimit = FdsnMotionService.normalizeStationLimit(
+        prefs.getInt(_fdsnStationLimitKey) ??
+            FdsnMotionService.defaultStationLimit,
+      );
       _niedDataSource = prefs.getString(_niedDataSourceKey) ?? 'lmoni';
       _niedReplayEnabled = prefs.getBool(_niedReplayEnabledKey) ?? false;
       _niedReplayStart =
           prefs.getString(_niedReplayStartKey) ?? '2026-05-30 23:34:00';
       _niedReplayStepSeconds = prefs.getInt(_niedReplayStepKey) ?? 1;
       _shakeSensitivity = prefs.getInt(_shakeSensitivityKey) ?? 2;
+      _tremStationEnabled =
+          prefs.getBool(QuakeMapView.tremStationEnabledPreferenceKey) ?? true;
       _hideGridOnEew = prefs.getBool(_hideGridOnEewKey) ?? false;
       _sideInfoAutoShowBeta = prefs.getBool(_sideInfoAutoShowBetaKey) ?? true;
       _showEpicenter = prefs.getBool(_showEpicenterKey) ?? false;
-      _showStaleInfoEvent = prefs.getBool(_showStaleInfoEventKey) ?? false;
+      _weatherMarqueeEnabled =
+          prefs.getBool(_weatherMarqueeEnabledKey) ?? false;
       _weatherLocalOnly = prefs.getBool(_weatherLocalOnlyKey) ?? false;
       _weatherLocalLevel = prefs.getString(_weatherLocalLevelKey) ?? 'county';
       _ttsEnabled = tts.enabled;
@@ -204,7 +312,11 @@ class _SettingsPageState extends State<SettingsPage> {
       _initialized = true;
     });
     QuakeMapView.niedSourceNotifier.value = _niedDataSource;
+    QuakeMapView.shakeSensitivityNotifier.value = _shakeSensitivity;
+    QuakeMapView.tremStationEnabledNotifier.value = _tremStationEnabled;
+    QuakeMapView.fdsnStationLimitNotifier.value = _fdsnStationLimit;
     UiRuntimeFlags.sideInfoAutoShowBetaNotifier.value = _sideInfoAutoShowBeta;
+    UiRuntimeFlags.weatherMarqueeEnabledNotifier.value = _weatherMarqueeEnabled;
     _niedReplayStartController.text = _niedReplayStart;
     _syncNiedReplayConfig();
     final mapState = context.read<MapStateProvider>();
@@ -214,9 +326,11 @@ class _SettingsPageState extends State<SettingsPage> {
     mapState.setOverlayEnabled('rainLayer', _overlayRain);
     mapState.setOverlayEnabled('cnContour', _overlayCnContour);
     mapState.setOverlayEnabled('volcanoLayer', _overlayJmaVolcano);
+    mapState.setOverlayEnabled('typhoonLayer', _overlayTyphoon);
     mapState.setOverlayEnabled('fdsnEarthScope', _overlayFdsnEarthScope);
     mapState.setOverlayEnabled('fdsnGeofon', _overlayFdsnGeofon);
     mapState.setShowEstimatedEpicenter(_showEpicenter);
+    context.read<QuakeProvider>().setTyphoonLayerEnabled(_overlayTyphoon);
     context.read<QuakeProvider>().setWeatherLocalOnly(
       _weatherLocalOnly,
       persist: false,
@@ -230,6 +344,7 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void dispose() {
     _niedReplayStartController.dispose();
+    _settingsSearchController.dispose();
     _gptSovitsUrlController.dispose();
     _gptSovitsRefAudioController.dispose();
     _gptSovitsPromptTextController.dispose();
@@ -249,6 +364,11 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _saveOverlayState(String key, bool enabled) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(key, enabled);
+  }
+
+  Future<void> _saveFdsnStationLimit(int limit) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_fdsnStationLimitKey, limit);
   }
 
   Future<void> _saveSourceMagFilter(String sourceName, double val) async {
@@ -309,6 +429,11 @@ class _SettingsPageState extends State<SettingsPage> {
     await prefs.setInt(_shakeSensitivityKey, level);
   }
 
+  Future<void> _saveTremStationEnabled(bool val) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(QuakeMapView.tremStationEnabledPreferenceKey, val);
+  }
+
   Future<void> _saveHideGridOnEew(bool val) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_hideGridOnEewKey, val);
@@ -324,9 +449,9 @@ class _SettingsPageState extends State<SettingsPage> {
     await prefs.setBool(_showEpicenterKey, val);
   }
 
-  Future<void> _saveShowStaleInfoEvent(bool val) async {
+  Future<void> _saveWeatherMarqueeEnabled(bool val) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_showStaleInfoEventKey, val);
+    await prefs.setBool(_weatherMarqueeEnabledKey, val);
   }
 
   Future<void> _saveWeatherLocalOnly(bool val) async {
@@ -422,25 +547,20 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _autoLocateMapCenter() async {
     try {
-      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        _showToast('定位服务未开启');
+      final pos = await LocationService().requestCurrentPosition();
+      if (pos == null) {
+        final status = LocationService().statusListenable.value;
+        if (status == LocationServiceStatus.serviceDisabled) {
+          _showToast('定位服务未开启');
+        } else if (status == LocationServiceStatus.permissionDenied) {
+          _showToast('定位权限未授予');
+        } else {
+          _showToast('自动获取定位失败');
+        }
         return;
       }
 
-      var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-      if (permission == LocationPermission.deniedForever ||
-          permission == LocationPermission.denied) {
-        _showToast('定位权限未授予');
-        return;
-      }
-
-      final pos = await Geolocator.getCurrentPosition();
       await _saveMapViewCenter(pos.latitude, pos.longitude);
-      await LocationService().init();
       _showToast(
         '已更新默认视角：${pos.latitude.toStringAsFixed(4)}, ${pos.longitude.toStringAsFixed(4)}',
       );
@@ -653,7 +773,15 @@ class _SettingsPageState extends State<SettingsPage> {
       appBar: AppBar(
         backgroundColor: _appBarColor,
         elevation: 0,
-        title: const Text('设置', style: TextStyle(color: _accentColor)),
+        titleSpacing: 4,
+        title: const Text(
+          '设置中心',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
         iconTheme: const IconThemeData(color: _accentColor),
       ),
       body: Stack(
@@ -662,81 +790,40 @@ class _SettingsPageState extends State<SettingsPage> {
           if (_initialized)
             Center(
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 760),
-                child: ListView(
-                  addSemanticIndexes: false,
-                  padding: const EdgeInsets.fromLTRB(16, 18, 16, 28),
-                  children: [
-                    _buildSectionPanel(
-                      icon: Icons.hub_outlined,
-                      title: '数据连接',
-                      children: [_buildFanServerSelector()],
-                    ),
-                    const SizedBox(height: 14),
-                    _buildSectionPanel(
-                      icon: Icons.map_outlined,
-                      title: '地图显示',
-                      children: [
-                        _buildTileSelector(),
-                        const _SettingsDivider(),
-                        _buildMapOverlaySelector(),
-                        const _SettingsDivider(),
-                        _buildMapCenterControls(),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    _buildSectionPanel(
-                      icon: Icons.public_outlined,
-                      title: '全球测站',
-                      children: [_buildFdsnStationSelector()],
-                    ),
-                    const SizedBox(height: 14),
-                    _buildSectionPanel(
-                      icon: Icons.sensors_outlined,
-                      title: '日本强震监测',
-                      children: [
-                        _buildNiedDataSourceSelector(),
-                        const _SettingsDivider(),
-                        _buildNiedReplayControls(),
-                        const _SettingsDivider(),
-                        _buildShakeSensitivitySelector(),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    _buildSectionPanel(
-                      icon: Icons.crisis_alert_outlined,
-                      title: '预警显示',
-                      children: [
-                        _buildWeatherAlarmScopeSelector(),
-                        if (_weatherLocalOnly) ...[
-                          const _SettingsDivider(),
-                          _buildWeatherAlarmLocalLevelSelector(),
+                constraints: const BoxConstraints(maxWidth: 1180),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final wide = constraints.maxWidth >= 860;
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _buildSettingsHeader(),
+                          const SizedBox(height: 14),
+                          if (!wide) ...[
+                            _buildCompactCategoryBar(),
+                            const SizedBox(height: 12),
+                          ],
+                          Expanded(
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                if (wide) ...[
+                                  SizedBox(
+                                    width: 228,
+                                    child: _buildCategoryNavigation(),
+                                  ),
+                                  const SizedBox(width: 14),
+                                ],
+                                Expanded(child: _buildSettingsContent()),
+                              ],
+                            ),
+                          ),
                         ],
-                        const _SettingsDivider(),
-                        _buildHideGridOnEewSwitch(),
-                        const _SettingsDivider(),
-                        _buildSideInfoAutoShowSwitch(),
-                        const _SettingsDivider(),
-                        _buildEpicenterShowSwitch(),
-                        const _SettingsDivider(),
-                        _buildStaleInfoEventSwitch(),
-                        const _SettingsDivider(),
-                        _buildTtsSettings(),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    _buildSectionPanel(
-                      icon: Icons.filter_alt_outlined,
-                      title: '信息事件震级过滤',
-                      children: [_buildMagFilterList()],
-                    ),
-                    const SizedBox(height: 14),
-                    _buildSectionPanel(
-                      icon: Icons.bug_report_outlined,
-                      title: '调试',
-                      children: [_buildDebugPageEntry()],
-                    ),
-                  ],
+                      );
+                    },
+                  ),
                 ),
               ),
             )
@@ -747,6 +834,466 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  Widget _buildSettingsHeader() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 680;
+        final heading = Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '应用设置',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 22,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              '${_categories.length} 个分类',
+              style: const TextStyle(color: _mutedTextColor, fontSize: 12),
+            ),
+          ],
+        );
+        final search = SizedBox(
+          width: compact ? double.infinity : 340,
+          height: 42,
+          child: TextField(
+            controller: _settingsSearchController,
+            style: const TextStyle(color: Colors.white, fontSize: 13),
+            onChanged: (value) => setState(() => _settingsQuery = value.trim()),
+            decoration: InputDecoration(
+              hintText: '搜索设置',
+              hintStyle: const TextStyle(color: _mutedTextColor),
+              prefixIcon: const Icon(
+                Icons.search,
+                size: 19,
+                color: _mutedTextColor,
+              ),
+              suffixIcon: _settingsQuery.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: '清除搜索',
+                      onPressed: () {
+                        _settingsSearchController.clear();
+                        setState(() => _settingsQuery = '');
+                      },
+                      icon: const Icon(
+                        Icons.close,
+                        size: 18,
+                        color: Colors.white70,
+                      ),
+                    ),
+              filled: true,
+              fillColor: _fieldColor,
+              contentPadding: EdgeInsets.zero,
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: _dividerColor),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: _accentColor),
+              ),
+            ),
+          ),
+        );
+
+        if (compact) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [heading, const SizedBox(height: 12), search],
+          );
+        }
+        return Row(
+          children: [
+            Expanded(child: heading),
+            search,
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildCategoryNavigation() {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: _panelColor,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _dividerColor),
+      ),
+      child: ListView(
+        padding: const EdgeInsets.all(8),
+        children: [
+          for (final info in _categories)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: _buildCategoryButton(info, expanded: true),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCompactCategoryBar() {
+    return SizedBox(
+      height: 42,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: _categories.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 7),
+        itemBuilder: (context, index) {
+          return _buildCategoryButton(_categories[index], expanded: false);
+        },
+      ),
+    );
+  }
+
+  Widget _buildCategoryButton(
+    _SettingsCategoryInfo info, {
+    required bool expanded,
+  }) {
+    final selected =
+        _settingsQuery.isEmpty && _selectedCategory == info.category;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(7),
+        onTap: () {
+          _settingsSearchController.clear();
+          setState(() {
+            _settingsQuery = '';
+            _selectedCategory = info.category;
+          });
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          height: expanded ? 58 : 42,
+          padding: EdgeInsets.symmetric(horizontal: expanded ? 12 : 13),
+          decoration: BoxDecoration(
+            color: selected ? info.accent.withValues(alpha: 0.13) : null,
+            borderRadius: BorderRadius.circular(7),
+            border: Border.all(
+              color: selected
+                  ? info.accent.withValues(alpha: 0.48)
+                  : Colors.transparent,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: expanded ? MainAxisSize.max : MainAxisSize.min,
+            children: [
+              Icon(
+                info.icon,
+                size: 19,
+                color: selected ? info.accent : Colors.white60,
+              ),
+              const SizedBox(width: 10),
+              if (expanded)
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        info.title,
+                        style: TextStyle(
+                          color: selected ? Colors.white : Colors.white70,
+                          fontSize: 13.5,
+                          fontWeight: selected
+                              ? FontWeight.w700
+                              : FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        info.subtitle,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: _mutedTextColor,
+                          fontSize: 10.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              else
+                Text(
+                  info.title,
+                  style: TextStyle(
+                    color: selected ? Colors.white : Colors.white70,
+                    fontSize: 12.5,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSettingsContent() {
+    final matches = _settingsQuery.isEmpty
+        ? const <_SettingsCategoryInfo>[]
+        : _categories.where(_categoryMatchesQuery).toList(growable: false);
+    final activeInfo = _categoryInfo(_selectedCategory);
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color.fromRGBO(5, 7, 18, 0.76),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _dividerColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
+            child: Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color:
+                        (_settingsQuery.isEmpty
+                                ? activeInfo.accent
+                                : _accentColor)
+                            .withValues(alpha: 0.13),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    _settingsQuery.isEmpty ? activeInfo.icon : Icons.search,
+                    color: _settingsQuery.isEmpty
+                        ? activeInfo.accent
+                        : _accentColor,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _settingsQuery.isEmpty ? activeInfo.title : '搜索结果',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _settingsQuery.isEmpty
+                            ? activeInfo.subtitle
+                            : matches.isEmpty
+                            ? '未找到“$_settingsQuery”'
+                            : '${matches.length} 个相关分类',
+                        style: const TextStyle(
+                          color: _mutedTextColor,
+                          fontSize: 11.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: _dividerColor),
+          Expanded(
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 180),
+              child: _settingsQuery.isEmpty
+                  ? _buildCategoryScrollView(
+                      key: ValueKey(_selectedCategory),
+                      categories: [_selectedCategory],
+                    )
+                  : matches.isEmpty
+                  ? const _EmptySettingsSearch()
+                  : _buildCategoryScrollView(
+                      key: ValueKey(_settingsQuery),
+                      categories: matches
+                          .map((info) => info.category)
+                          .toList(growable: false),
+                      showCategoryHeaders: true,
+                    ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCategoryScrollView({
+    required Key key,
+    required List<_SettingsCategory> categories,
+    bool showCategoryHeaders = false,
+  }) {
+    return ListView(
+      key: key,
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+      children: [
+        for (var index = 0; index < categories.length; index++) ...[
+          if (showCategoryHeaders)
+            _buildSearchCategoryHeader(_categoryInfo(categories[index])),
+          ..._buildCategoryPanels(categories[index]),
+          if (index != categories.length - 1) const SizedBox(height: 22),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildSearchCategoryHeader(_SettingsCategoryInfo info) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 2, bottom: 9),
+      child: Row(
+        children: [
+          Icon(info.icon, size: 16, color: info.accent),
+          const SizedBox(width: 7),
+          Text(
+            info.title,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  bool _categoryMatchesQuery(_SettingsCategoryInfo info) {
+    final query = _settingsQuery.toLowerCase();
+    final values = [info.title, info.subtitle, ...info.keywords];
+    if (info.category == _SettingsCategory.filter) {
+      values.addAll(
+        QuakeProvider.infoMagFilterSources.expand(
+          (source) => [source.name, source.displayName],
+        ),
+      );
+    }
+    return values.any((value) => value.toLowerCase().contains(query));
+  }
+
+  _SettingsCategoryInfo _categoryInfo(_SettingsCategory category) {
+    return _categories.firstWhere((info) => info.category == category);
+  }
+
+  List<Widget> _buildCategoryPanels(_SettingsCategory category) {
+    switch (category) {
+      case _SettingsCategory.data:
+        return [
+          _buildSectionPanel(
+            icon: Icons.dns_outlined,
+            title: '连接来源',
+            children: [_buildFanServerSelector()],
+          ),
+          const SizedBox(height: 12),
+          _buildSectionPanel(
+            icon: Icons.sensors_outlined,
+            title: '实时强震监测',
+            children: [
+              _buildNiedDataSourceSelector(),
+              const _SettingsDivider(),
+              _buildTremStationEnabledSwitch(),
+              const _SettingsDivider(),
+              _buildShakeSensitivitySelector(),
+            ],
+          ),
+        ];
+      case _SettingsCategory.map:
+        return [
+          _buildSectionPanel(
+            icon: Icons.layers_outlined,
+            title: '地图外观',
+            children: [
+              _buildTileSelector(),
+              const _SettingsDivider(),
+              _buildMapOverlaySelector(),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _buildSectionPanel(
+            icon: Icons.my_location_outlined,
+            title: '地图位置',
+            children: [_buildMapCenterControls()],
+          ),
+          const SizedBox(height: 12),
+          _buildSectionPanel(
+            icon: Icons.public_outlined,
+            title: '全球测站',
+            children: [
+              _buildFdsnStationSelector(),
+              const _SettingsDivider(),
+              _buildFdsnStationLimitSelector(),
+            ],
+          ),
+        ];
+      case _SettingsCategory.alert:
+        return [
+          _buildSectionPanel(
+            icon: Icons.warning_amber_outlined,
+            title: '气象预警',
+            children: [
+              _buildWeatherAlarmScopeSelector(),
+              if (_weatherLocalOnly) ...[
+                const _SettingsDivider(),
+                _buildWeatherAlarmLocalLevelSelector(),
+              ],
+              const _SettingsDivider(),
+              _buildWeatherMarqueeEnabledSwitch(),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _buildSectionPanel(
+            icon: Icons.visibility_outlined,
+            title: '界面行为',
+            children: [
+              _buildHideGridOnEewSwitch(),
+              const _SettingsDivider(),
+              _buildSideInfoAutoShowSwitch(),
+              const _SettingsDivider(),
+              _buildEpicenterShowSwitch(),
+            ],
+          ),
+        ];
+      case _SettingsCategory.voice:
+        return [
+          _buildSectionPanel(
+            icon: Icons.record_voice_over_outlined,
+            title: '语音播报',
+            children: [_buildTtsSettings()],
+          ),
+        ];
+      case _SettingsCategory.filter:
+        return [
+          _buildSectionPanel(
+            icon: Icons.filter_alt_outlined,
+            title: '信息事件震级过滤',
+            children: [_buildMagFilterList()],
+          ),
+        ];
+      case _SettingsCategory.advanced:
+        return [
+          _buildSectionPanel(
+            icon: Icons.history_toggle_off_outlined,
+            title: 'NIED 回放',
+            children: [_buildNiedReplayControls()],
+          ),
+          const SizedBox(height: 12),
+          _buildSectionPanel(
+            icon: Icons.developer_mode_outlined,
+            title: '开发工具',
+            children: [_buildDebugPageEntry()],
+          ),
+        ];
+    }
+  }
+
   Widget _buildSectionPanel({
     required IconData icon,
     required String title,
@@ -754,9 +1301,9 @@ class _SettingsPageState extends State<SettingsPage> {
   }) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: _panelColor,
+        color: const Color.fromRGBO(255, 255, 255, 0.035),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: _borderColor),
+        border: Border.all(color: _dividerColor),
       ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
@@ -894,9 +1441,19 @@ class _SettingsPageState extends State<SettingsPage> {
                 'volcanoLayer',
                 val,
               );
-              if (val) {
-                JmaVolcanoService().fetchNow();
-              }
+            },
+          ),
+          _buildOverlayToggle(
+            label: '台风路径',
+            selected: _overlayTyphoon,
+            onTap: (val) {
+              setState(() => _overlayTyphoon = val);
+              _saveOverlayState(_overlayTyphoonKey, val);
+              context.read<MapStateProvider>().setOverlayEnabled(
+                'typhoonLayer',
+                val,
+              );
+              context.read<QuakeProvider>().setTyphoonLayerEnabled(val);
             },
           ),
         ],
@@ -937,7 +1494,7 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget _buildMapCenterControls() {
     return _buildSettingRow(
       title: '默认视角定位',
-      subtitle: '可自动获取定位，或手动输入经纬度',
+      subtitle: '可自动获取定位，或手动输入经纬度；${_mapCenterText()}',
       leading: Icons.my_location_outlined,
       control: LayoutBuilder(
         builder: (context, constraints) {
@@ -1026,6 +1583,27 @@ class _SettingsPageState extends State<SettingsPage> {
             },
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildFdsnStationLimitSelector() {
+    return _buildSettingRow(
+      title: '连接上限',
+      subtitle: '限制应用内 SeedLink 最多连接的全球实时台站数量',
+      leading: Icons.hub_outlined,
+      control: _buildDropdown<int>(
+        value: _fdsnStationLimit,
+        options: FdsnMotionService.stationLimitOptions
+            .map((limit) => _SelectOption(limit, '$limit'))
+            .toList(growable: false),
+        onChanged: (limit) {
+          if (limit == null) return;
+          final normalized = FdsnMotionService.normalizeStationLimit(limit);
+          setState(() => _fdsnStationLimit = normalized);
+          _saveFdsnStationLimit(normalized);
+          QuakeMapView.fdsnStationLimitNotifier.value = normalized;
+        },
       ),
     );
   }
@@ -1156,7 +1734,31 @@ class _SettingsPageState extends State<SettingsPage> {
           if (val == null) return;
           setState(() => _shakeSensitivity = val);
           _saveShakeSensitivity(val);
+          QuakeMapView.shakeSensitivityNotifier.value = val;
         },
+      ),
+    );
+  }
+
+  Widget _buildTremStationEnabledSwitch() {
+    return _buildSettingRow(
+      title: 'TREM 测站连接',
+      subtitle: '关闭后不连接 ExpTech TREM 测站接口，也不刷新 TREM 测站图层',
+      leading: Icons.sensors_outlined,
+      control: Align(
+        alignment: Alignment.centerRight,
+        child: Switch(
+          value: _tremStationEnabled,
+          activeThumbColor: _accentColor,
+          activeTrackColor: _accentColor.withValues(alpha: 0.38),
+          inactiveThumbColor: Colors.white70,
+          inactiveTrackColor: Colors.white24,
+          onChanged: (val) {
+            setState(() => _tremStationEnabled = val);
+            _saveTremStationEnabled(val);
+            QuakeMapView.tremStationEnabledNotifier.value = val;
+          },
+        ),
       ),
     );
   }
@@ -1204,6 +1806,29 @@ class _SettingsPageState extends State<SettingsPage> {
           _saveWeatherLocalLevel(val);
           context.read<QuakeProvider>().setWeatherLocalAdminLevel(val);
         },
+      ),
+    );
+  }
+
+  Widget _buildWeatherMarqueeEnabledSwitch() {
+    return _buildSettingRow(
+      title: '显示天气预警字幕',
+      subtitle: '在地图顶部显示天气预警跑马灯；默认关闭',
+      leading: Icons.subtitles_outlined,
+      control: Align(
+        alignment: Alignment.centerRight,
+        child: Switch(
+          value: _weatherMarqueeEnabled,
+          activeThumbColor: _accentColor,
+          activeTrackColor: _accentColor.withValues(alpha: 0.38),
+          inactiveThumbColor: Colors.white70,
+          inactiveTrackColor: Colors.white24,
+          onChanged: (val) {
+            setState(() => _weatherMarqueeEnabled = val);
+            _saveWeatherMarqueeEnabled(val);
+            UiRuntimeFlags.weatherMarqueeEnabledNotifier.value = val;
+          },
+        ),
       ),
     );
   }
@@ -1270,29 +1895,6 @@ class _SettingsPageState extends State<SettingsPage> {
             setState(() => _showEpicenter = val);
             _saveShowEpicenter(val);
             context.read<MapStateProvider>().setShowEstimatedEpicenter(val);
-          },
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStaleInfoEventSwitch() {
-    return _buildSettingRow(
-      title: '显示旧事件更新报',
-      subtitle: '开启后，已过期的信息事件更新报仍会显示卡片（默认关闭）',
-      leading: Icons.history_outlined,
-      control: Align(
-        alignment: Alignment.centerRight,
-        child: Switch(
-          value: _showStaleInfoEvent,
-          activeThumbColor: _accentColor,
-          activeTrackColor: _accentColor.withValues(alpha: 0.38),
-          inactiveThumbColor: Colors.white70,
-          inactiveTrackColor: Colors.white24,
-          onChanged: (val) {
-            setState(() => _showStaleInfoEvent = val);
-            _saveShowStaleInfoEvent(val);
-            context.read<QuakeProvider>().setShowStaleInfoEvent(val);
           },
         ),
       ),
@@ -1960,6 +2562,47 @@ class _SelectOption<T> {
   final String label;
 
   const _SelectOption(this.value, this.label);
+}
+
+enum _SettingsCategory { data, map, alert, voice, filter, advanced }
+
+class _SettingsCategoryInfo {
+  final _SettingsCategory category;
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Color accent;
+  final List<String> keywords;
+
+  const _SettingsCategoryInfo({
+    required this.category,
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.accent,
+    required this.keywords,
+  });
+}
+
+class _EmptySettingsSearch extends StatelessWidget {
+  const _EmptySettingsSearch();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.search_off_outlined, color: Colors.white38, size: 34),
+          SizedBox(height: 10),
+          Text(
+            '没有匹配的设置',
+            style: TextStyle(color: Colors.white60, fontSize: 13),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _SettingsDivider extends StatelessWidget {

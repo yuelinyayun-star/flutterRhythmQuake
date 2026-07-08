@@ -102,6 +102,9 @@ abstract class BaseSourceService {
   ///
   /// 当数据源连接状态发生变化时触发。
   /// 由 [SourceManager] 设置，用于更新全局状态。
+  /// Whether this source should be connected by [SourceManager.startAll].
+  bool get autoStart => true;
+
   Function(SourceStatus status)? onStatusChanged;
 
   /// 建立数据源连接

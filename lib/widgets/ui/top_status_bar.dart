@@ -9,18 +9,20 @@ import '../../services/sources/mock_input_service.dart';
 import '../../services/sources/nied_monitor.dart';
 import '../../services/sources/nied_yahoo_service.dart';
 import '../../core/nied_replay_logger.dart';
+import '../map/quake_map_view.dart';
+import 'ui_scale.dart';
 
 /// 顶部状态栏组件
-/// 
+///
 /// 该组件负责显示应用顶部的状态信息栏。
 /// 包含位置信息、时间显示和模拟注入功能入口。
-/// 
+///
 /// 主要功能：
 /// - 显示当前终端位置坐标
 /// - 显示实时时间(支持NTP同步)
 /// - 提供模拟预警注入入口(调试功能)
 /// - 毛玻璃背景效果
-/// 
+///
 /// 时间同步说明：
 /// - NTP: 使用网络时间协议同步，精度高
 /// - LOC: 使用本地时间，可能有偏差
@@ -35,126 +37,195 @@ class _TopStatusBarState extends State<TopStatusBar> {
   /// 定时器
   /// 每秒更新时间显示
   late Timer _timer;
-  
+
   /// 当前显示时间
-  late DateTime _currentTime;
+  late final ValueNotifier<DateTime> _currentTime;
 
   @override
   void initState() {
     super.initState();
-    _currentTime = NtpService().now;
+    _currentTime = ValueNotifier<DateTime>(NtpService().now);
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      setState(() {
-        _currentTime = NtpService().now;
-      });
+      _currentTime.value = NtpService().now;
     });
   }
 
   @override
   void dispose() {
     _timer.cancel();
+    _currentTime.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
-        child: Container(
-          height: 50,
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-          decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.3),
-            border: Border(
-              bottom: BorderSide(
-                color: Colors.white.withOpacity(0.05),
-                width: 0.5,
+    final scale = UiScale.topChrome(context);
+    double s(double value) => value * scale;
+
+    return RepaintBoundary(
+      child: ClipRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
+          child: Container(
+            height: s(50),
+            padding: EdgeInsets.symmetric(horizontal: s(24)),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.3),
+              border: Border(
+                bottom: BorderSide(
+                  color: Colors.white.withValues(alpha: 0.05),
+                  width: s(0.5),
+                ),
               ),
             ),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  const Icon(Icons.location_on, color: Colors.blueAccent, size: 16),
-                  const SizedBox(width: 10),
-                  Text(
-                    LocationService().currentPosition != null
-                        ? "终端位置: ${LocationService().currentPosition!.latitude.toStringAsFixed(2)}, ${LocationService().currentPosition!.longitude.toStringAsFixed(2)}"
-                        : "正在获取位置...",
-                    style: TextStyle(fontFamily: 'JetBrainsMono',
-                      color: Colors.white60, 
-                      fontSize: 12, 
-                      letterSpacing: 0.5,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.location_on,
+                      color: Colors.blueAccent,
+                      size: s(16),
                     ),
-                  ),
-                ],
-              ),
+                    SizedBox(width: s(10)),
+                    ValueListenableBuilder(
+                      valueListenable: LocationService().statusListenable,
+                      builder: (context, status, _) {
+                        return ValueListenableBuilder(
+                          valueListenable: LocationService().positionListenable,
+                          builder: (context, position, _) {
+                            return Text(
+                              _locationText(status, position),
+                              style: TextStyle(
+                                fontFamily: 'JetBrainsMono',
+                                color: Colors.white60,
+                                fontSize: s(12),
+                                letterSpacing: 0,
+                              ),
+                            );
+                          },
+                        );
+                      },
+                    ),
+                  ],
+                ),
 
-              const Spacer(),
+                const Spacer(),
 
-              Row(
-                children: [
-                  IconButton(
-                    tooltip: '模拟注入',
-                    onPressed: _openMockDialog,
-                    icon: const Icon(
-                      Icons.science_outlined,
-                      color: Colors.lightBlueAccent,
-                      size: 18,
-                    ),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                  ),
-                  const SizedBox(width: 8),
-                  const Icon(Icons.access_time, color: Colors.blueAccent, size: 16),
-                  const SizedBox(width: 10),
-                  Text(
-                    DateFormat('yyyy-MM-dd HH:mm:ss').format(_currentTime),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 1.0,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: (NtpService().isSynced ? Colors.green : Colors.orange).withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(
-                        color: (NtpService().isSynced ? Colors.green : Colors.orange).withOpacity(0.3),
-                        width: 0.5,
+                Row(
+                  children: [
+                    IconButton(
+                      tooltip: '模拟注入',
+                      onPressed: _openMockDialog,
+                      icon: Icon(
+                        Icons.science_outlined,
+                        color: Colors.lightBlueAccent,
+                        size: s(18),
+                      ),
+                      padding: EdgeInsets.zero,
+                      constraints: BoxConstraints(
+                        minWidth: s(28),
+                        minHeight: s(28),
                       ),
                     ),
-                    child: Text(
-                      NtpService().isSynced ? "NTP" : "LOC",
-                      style: TextStyle(
-                        color: NtpService().isSynced ? Colors.green : Colors.orange,
-                        fontSize: 9,
-                        fontWeight: FontWeight.bold,
-                      ),
+                    SizedBox(width: s(8)),
+                    Icon(
+                      Icons.access_time,
+                      color: Colors.blueAccent,
+                      size: s(16),
                     ),
-                  ),
-                ],
-              ),
-            ],
+                    SizedBox(width: s(10)),
+                    ValueListenableBuilder<DateTime>(
+                      valueListenable: _currentTime,
+                      builder: (context, time, _) {
+                        final syncState = NtpService().syncState;
+                        final syncColor = _syncColor(syncState);
+                        return Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              DateFormat('yyyy-MM-dd HH:mm:ss').format(time),
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: s(15),
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: 0,
+                              ),
+                            ),
+                            SizedBox(width: s(6)),
+                            Container(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: s(6),
+                                vertical: s(2),
+                              ),
+                              decoration: BoxDecoration(
+                                color: syncColor.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(s(4)),
+                                border: Border.all(
+                                  color: syncColor.withValues(alpha: 0.3),
+                                  width: s(0.5),
+                                ),
+                              ),
+                              child: Text(
+                                _syncLabel(syncState),
+                                style: TextStyle(
+                                  color: syncColor,
+                                  fontSize: s(9),
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
+  String _locationText(LocationServiceStatus status, dynamic position) {
+    if (status == LocationServiceStatus.available && position != null) {
+      return "终端位置: ${position.latitude.toStringAsFixed(2)}, ${position.longitude.toStringAsFixed(2)}";
+    }
+    return switch (status) {
+      LocationServiceStatus.locating => "正在获取位置...",
+      LocationServiceStatus.serviceDisabled => "定位服务未开启",
+      LocationServiceStatus.permissionDenied => "定位权限未授予",
+      LocationServiceStatus.failed => "定位获取失败",
+      LocationServiceStatus.idle || LocationServiceStatus.available => "未设置位置",
+    };
+  }
+
+  Color _syncColor(NtpSyncState state) {
+    return switch (state) {
+      NtpSyncState.synced => Colors.green,
+      NtpSyncState.stale => Colors.amber,
+      NtpSyncState.local => Colors.orange,
+    };
+  }
+
+  String _syncLabel(NtpSyncState state) {
+    return switch (state) {
+      NtpSyncState.synced => "NTP",
+      NtpSyncState.stale => "OLD",
+      NtpSyncState.local => "LOC",
+    };
+  }
+
   /// 打开模拟注入对话框
-  /// 
+  ///
   /// 用于调试和测试，可以手动注入预警消息
   Future<void> _openMockDialog() async {
     final controller = TextEditingController();
     final zipController = TextEditingController();
+    final niedGifController = TextEditingController();
     await showDialog<void>(
       context: context,
       builder: (ctx) {
@@ -178,13 +249,18 @@ class _TopStatusBarState extends State<TopStatusBar> {
                   minLines: 6,
                   style: TextStyle(fontFamily: 'JetBrainsMono', fontSize: 12),
                   decoration: InputDecoration(
-                    hintText: '例如: const msg = {...}; 或 [{"type":"jma_eew",...}]',
-                    hintStyle: TextStyle(color: Colors.white.withOpacity(0.35)),
+                    hintText:
+                        '例如: const msg = {...}; 或 [{"type":"jma_eew",...}]',
+                    hintStyle: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.35),
+                    ),
                     filled: true,
                     fillColor: const Color(0xFF0E0E0E),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(color: Colors.white.withOpacity(0.2)),
+                      borderSide: BorderSide(
+                        color: Colors.white.withValues(alpha: 0.2),
+                      ),
                     ),
                   ),
                 ),
@@ -198,15 +274,52 @@ class _TopStatusBarState extends State<TopStatusBar> {
                 const SizedBox(height: 8),
                 TextField(
                   controller: zipController,
-                  style: const TextStyle(fontSize: 12, color: Colors.lightBlueAccent),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Colors.lightBlueAccent,
+                  ),
                   decoration: InputDecoration(
                     hintText: r'D:\Downloads\20260601055432_ascii.zip',
-                    hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+                    hintStyle: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.3),
+                    ),
                     filled: true,
                     fillColor: const Color(0xFF0E0E0E),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(color: Colors.lightBlueAccent.withOpacity(0.3)),
+                      borderSide: BorderSide(
+                        color: Colors.lightBlueAccent.withValues(alpha: 0.3),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Divider(color: Colors.white12),
+                const SizedBox(height: 8),
+                const Text(
+                  'NIED GIF 文件/目录路径（直接按 GIF 注入）：',
+                  style: TextStyle(color: Colors.lightBlueAccent, fontSize: 12),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: niedGifController,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Colors.lightBlueAccent,
+                  ),
+                  decoration: InputDecoration(
+                    hintText:
+                        r'D:\captures\20260630_iwate 或 D:\captures\20260630112425.jma_s.gif',
+                    hintStyle: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.3),
+                    ),
+                    filled: true,
+                    fillColor: const Color(0xFF0E0E0E),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(
+                        color: Colors.lightBlueAccent.withValues(alpha: 0.3),
+                      ),
                     ),
                   ),
                 ),
@@ -225,10 +338,30 @@ class _TopStatusBarState extends State<TopStatusBar> {
               onPressed: () {
                 final path = zipController.text.trim();
                 if (path.isNotEmpty) {
-                  _submitKnetZip(path);
+                  final ok = _submitKnetZip(path);
+                  if (ok) Navigator.of(ctx).pop();
                 }
               },
-              child: const Text('注入K-NET', style: TextStyle(color: Colors.lightBlueAccent)),
+              child: const Text(
+                '注入K-NET',
+                style: TextStyle(color: Colors.lightBlueAccent),
+              ),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.lightBlueAccent.withValues(alpha: 0.15),
+              ),
+              onPressed: () {
+                final path = niedGifController.text.trim();
+                if (path.isNotEmpty) {
+                  Navigator.of(ctx).pop();
+                  unawaited(_submitNiedGifPath(path));
+                }
+              },
+              child: const Text(
+                '注入NIED GIF',
+                style: TextStyle(color: Colors.lightBlueAccent),
+              ),
             ),
             ElevatedButton(
               onPressed: () {
@@ -243,9 +376,12 @@ class _TopStatusBarState extends State<TopStatusBar> {
         );
       },
     );
+    controller.dispose();
+    zipController.dispose();
+    niedGifController.dispose();
   }
 
-  void _submitKnetZip(String path) {
+  bool _submitKnetZip(String path) {
     try {
       // 1. 停止 3 个 NIED 实时路径 + 开启 Logger
       NiedMonitorService().stop();
@@ -258,7 +394,7 @@ class _TopStatusBarState extends State<TopStatusBar> {
       final mockService = SourceManager().getSource<MockInputService>();
       if (mockService == null) {
         _toast('模拟注入源未初始化');
-        return;
+        return false;
       }
       final count = mockService.injectFromKnetZip(path);
 
@@ -271,13 +407,36 @@ class _TopStatusBarState extends State<TopStatusBar> {
       });
 
       _toast('K-NET注入成功：$count 站 → 日志已保存');
+      return true;
     } catch (e) {
       _toast('K-NET注入失败：$e');
+      return false;
+    }
+  }
+
+  Future<bool> _submitNiedGifPath(String path) async {
+    try {
+      QuakeMapView.niedSourceNotifier.value = 'lmoni';
+      NiedMonitorService().stop();
+      NiedYahooService().stop();
+      _toast('已停止 NIED 实时源，开始注入 GIF');
+
+      final mockService = SourceManager().getSource<MockInputService>();
+      if (mockService == null) {
+        _toast('模拟注入源未初始化');
+        return false;
+      }
+      final count = await mockService.injectFromNiedGifPath(path);
+      _toast('NIED GIF注入成功：$count 秒');
+      return true;
+    } catch (e) {
+      _toast('NIED GIF注入失败：$e');
+      return false;
     }
   }
 
   /// 提交模拟数据
-  /// 
+  ///
   /// 将用户输入的模拟数据注入到预警系统
   /// [raw] 原始报文数据
   void _submitMockPayload(String raw) {
@@ -295,7 +454,7 @@ class _TopStatusBarState extends State<TopStatusBar> {
   }
 
   /// 显示提示消息
-  /// 
+  ///
   /// [message] 要显示的消息内容
   void _toast(String message) {
     if (!mounted) return;

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'package:archive/archive_io.dart';
 import 'package:flutter/foundation.dart';
+import 'package:image/image.dart' as image_lib;
 import 'package:latlong2/latlong.dart';
 import 'base_source.dart';
 import '../../models/quake_message.dart';
@@ -12,26 +13,29 @@ import '../../services/quake_event_adapter.dart';
 import '../../models/unified_quake_data.dart';
 import 'nied_monitor.dart';
 import '../../models/nied_calibration.dart';
+import '../../core/source_estimation/kotoho7_js_receiver_bridge.dart';
 import 'shake_detection_service.dart';
 import 'jp_shindo_scale.dart';
 import 'lmoni_image_service.dart';
 
 /// 模拟输入服务
-/// 
+///
 /// 该类提供手动注入地震数据的功能。
 /// 用于测试和调试，支持多种数据格式的解析。
-/// 
+///
 /// 主要功能：
 /// - 解析JSON/JS格式的地震数据
 /// - 支持Wolfx、P2P、FAN等多种数据格式
 /// - 自动识别数据格式类型
 /// - 提取嵌套的JSON数据块
-/// 
+///
 /// 支持的数据格式：
 /// - Wolfx格式: JMA/CENC/CWA等预警格式
 /// - P2P格式: P2PQuake地震信息格式
 /// - FAN格式: FanStudio聚合数据格式
 class MockInputService extends BaseSourceService {
+  bool _niedGifInjectionRunning = false;
+
   @override
   String get name => 'Mock';
 
@@ -46,12 +50,12 @@ class MockInputService extends BaseSourceService {
   }
 
   /// 从原始字符串注入地震数据
-  /// 
+  ///
   /// 支持多种输入格式：
   /// - 纯JSON字符串
   /// - JavaScript对象字面量
   /// - Markdown代码块包裹的JSON
-  /// 
+  ///
   /// [raw] 原始输入字符串
   /// 返回成功解析的地震事件数量
   int injectFromJs(String raw) {
@@ -72,7 +76,10 @@ class MockInputService extends BaseSourceService {
     if (decoded is List) {
       for (final item in decoded) {
         if (item is Map<String, dynamic>) {
-          if (_tryInjectTsunami(item)) { count++; continue; }
+          if (_tryInjectTsunami(item)) {
+            count++;
+            continue;
+          }
           final q = _parseAny(item);
           if (q != null) {
             emit(q);
@@ -82,8 +89,9 @@ class MockInputService extends BaseSourceService {
         }
       }
     } else if (decoded is Map<String, dynamic>) {
-      if (_tryInjectTsunami(decoded)) { count = 1; }
-      else {
+      if (_tryInjectTsunami(decoded)) {
+        count = 1;
+      } else {
         final q = _parseAny(decoded);
         if (q != null) {
           emit(q);
@@ -107,7 +115,7 @@ class MockInputService extends BaseSourceService {
         return;
       }
       final origin = _getOrigin(q.source);
-      
+
       final result = QuakeEventAdapter.convert(adapterSource, json, origin);
       if (result != null) {
         if (result.magnitude < 0 && q.magnitude > 0) {
@@ -137,16 +145,22 @@ class MockInputService extends BaseSourceService {
             rawEvent: result.rawEvent,
             arrivedAt: result.arrivedAt,
           );
-          debugPrint('_emitUnified: fixed from QuakeMessage mag=${q.magnitude}, depth=${q.depth}, lat=${q.latitude}, lng=${q.longitude}');
+          debugPrint(
+            '_emitUnified: fixed from QuakeMessage mag=${q.magnitude}, depth=${q.depth}, lat=${q.latitude}, lng=${q.longitude}',
+          );
           emitUnified(fixed);
         } else {
-          debugPrint('_emitUnified: OK eventId=${result.eventId}, isEew=${result.isEew}, mag=${result.magnitude}');
+          debugPrint(
+            '_emitUnified: OK eventId=${result.eventId}, isEew=${result.isEew}, mag=${result.magnitude}',
+          );
           emitUnified(result);
         }
       } else {
         final fallback = _buildUnifiedFromQuakeMessage(q);
         if (fallback != null) {
-          debugPrint('_emitUnified: fallback from QuakeMessage mag=${q.magnitude}');
+          debugPrint(
+            '_emitUnified: fallback from QuakeMessage mag=${q.magnitude}',
+          );
           emitUnified(fallback);
         } else {
           debugPrint('_emitUnified: adapter returned null, fallback also null');
@@ -164,7 +178,7 @@ class MockInputService extends BaseSourceService {
     final timeZone = _getTimeZone(q.source);
     final className = _setClassNameFromQuakeMessage(q);
     final adapterSource = _quakeSourceToAdapterSource(q.source);
-    
+
     return UnifiedQuakeData(
       source: adapterSource ?? q.source.name,
       origin: _getOrigin(q.source),
@@ -248,11 +262,19 @@ class MockInputService extends BaseSourceService {
     if (q.isCanceled) return 'dark-gray';
     if (q.jmaShindo != null) {
       final map = {
-        '0': 'gray', '1': 'blue', '2': 'green', '3': 'yellow', '4': 'orange',
-        '5-': 'dark-orange', '5弱': 'dark-orange',
-        '5+': 'red', '5強': 'red',
-        '6-': 'dark-red', '6弱': 'dark-red',
-        '6+': 'purple', '6強': 'purple',
+        '0': 'gray',
+        '1': 'blue',
+        '2': 'green',
+        '3': 'yellow',
+        '4': 'orange',
+        '5-': 'dark-orange',
+        '5弱': 'dark-orange',
+        '5+': 'red',
+        '5強': 'red',
+        '6-': 'dark-red',
+        '6弱': 'dark-red',
+        '6+': 'purple',
+        '6強': 'purple',
         '7': 'purple',
       };
       return map[q.jmaShindo] ?? 'gray';
@@ -274,47 +296,78 @@ class MockInputService extends BaseSourceService {
 
   String? _quakeSourceToAdapterSource(QuakeSourceType source) {
     switch (source) {
-      case QuakeSourceType.wolfx: return 'jmaEew';
-      case QuakeSourceType.jma_fan: return 'jmaEew';
-      case QuakeSourceType.cwa_eew: return 'cwaEew';
-      case QuakeSourceType.cwa: return 'cwaEqlist';
-      case QuakeSourceType.cea: return 'ceaEew';
-      case QuakeSourceType.cea_pr: return 'ceaEew';
-      case QuakeSourceType.sc_eew: return 'scEew';
-      case QuakeSourceType.fj_eew: return 'fjEew';
-      case QuakeSourceType.cq_eew: return 'cqEew';
-      case QuakeSourceType.kma_eew_fan: return 'kmaEew';
-      case QuakeSourceType.kma_eq: return 'kmaEqlist';
-      case QuakeSourceType.p2p: return 'jmaEqlist';
-      case QuakeSourceType.cenc: return 'cencEqlist';
-      case QuakeSourceType.usgs: return 'usgsEqlist';
-      case QuakeSourceType.fssn: return 'fssnEqlist';
-      case QuakeSourceType.fssnCmt: return 'fssnCmt';
-      case QuakeSourceType.hko: return 'hko';
-      case QuakeSourceType.emsc: return 'emsc';
-      case QuakeSourceType.bcsf: return 'bcsf';
-      case QuakeSourceType.gfz: return 'gfz';
-      case QuakeSourceType.usp: return 'usp';
-      case QuakeSourceType.sa: return 'sa';
-      case QuakeSourceType.ningxia: return 'ningxia';
-      case QuakeSourceType.guangxi: return 'guangxi';
-      case QuakeSourceType.shanxi: return 'shanxi';
-      case QuakeSourceType.beijing: return 'beijing';
-      case QuakeSourceType.yunnan: return 'yunnan';
-      default: return null;
+      case QuakeSourceType.wolfx:
+        return 'jmaEew';
+      case QuakeSourceType.jma_fan:
+        return 'jmaEew';
+      case QuakeSourceType.cwa_eew:
+        return 'cwaEew';
+      case QuakeSourceType.cwa:
+        return 'cwaEqlist';
+      case QuakeSourceType.cea:
+        return 'ceaEew';
+      case QuakeSourceType.cea_pr:
+        return 'ceaEew';
+      case QuakeSourceType.sc_eew:
+        return 'scEew';
+      case QuakeSourceType.fj_eew:
+        return 'fjEew';
+      case QuakeSourceType.cq_eew:
+        return 'cqEew';
+      case QuakeSourceType.kma_eew_fan:
+        return 'kmaEew';
+      case QuakeSourceType.kma_eq:
+        return 'kmaEqlist';
+      case QuakeSourceType.p2p:
+        return 'jmaEqlist';
+      case QuakeSourceType.cenc:
+        return 'cencEqlist';
+      case QuakeSourceType.usgs:
+        return 'usgsEqlist';
+      case QuakeSourceType.fssn:
+        return 'fssnEqlist';
+      case QuakeSourceType.fssnCmt:
+        return 'fssnCmt';
+      case QuakeSourceType.hko:
+        return 'hko';
+      case QuakeSourceType.emsc:
+        return 'emsc';
+      case QuakeSourceType.bcsf:
+        return 'bcsf';
+      case QuakeSourceType.gfz:
+        return 'gfz';
+      case QuakeSourceType.usp:
+        return 'usp';
+      case QuakeSourceType.sa:
+        return 'sa';
+      case QuakeSourceType.ningxia:
+        return 'ningxia';
+      case QuakeSourceType.guangxi:
+        return 'guangxi';
+      case QuakeSourceType.shanxi:
+        return 'shanxi';
+      case QuakeSourceType.beijing:
+        return 'beijing';
+      case QuakeSourceType.yunnan:
+        return 'yunnan';
+      default:
+        return null;
     }
   }
 
   int _getOrigin(QuakeSourceType source) {
     switch (source) {
-      case QuakeSourceType.wolfx: return 0;
-      case QuakeSourceType.p2p: return 2;
-      default: return 1;
+      case QuakeSourceType.wolfx:
+        return 0;
+      case QuakeSourceType.p2p:
+        return 2;
+      default:
+        return 1;
     }
   }
 
   /// 尝试解析任意格式的地震数据
-  /// 
+  ///
   /// 自动识别数据格式并调用对应的解析器
   /// 尝试注入海啸数据 (code 552)
   /// 返回 true 表示已处理
@@ -324,7 +377,9 @@ class MockInputService extends BaseSourceService {
     try {
       final tsunami = TsunamiMessage.parseJmaTsunami(json);
       emitTsunami(tsunami);
-      debugPrint('Inject tsunami: ${tsunami.title} (${tsunami.areas.length} areas)');
+      debugPrint(
+        'Inject tsunami: ${tsunami.title} (${tsunami.areas.length} areas)',
+      );
       return true;
     } catch (e) {
       debugPrint('Inject tsunami failed: $e');
@@ -365,11 +420,13 @@ class MockInputService extends BaseSourceService {
       final guessed = Map<String, dynamic>.from(json);
       guessed.putIfAbsent('type', () {
         if (guessed.containsKey('Serial') ||
-            guessed.containsKey('AnnouncedTime'))
+            guessed.containsKey('AnnouncedTime')) {
           return 'jma_eew';
+        }
         if (guessed.containsKey('MaxIntensity') &&
-            guessed.containsKey('HypoCenter'))
+            guessed.containsKey('HypoCenter')) {
           return 'cenc_eew';
+        }
         return 'cenc_eew';
       });
       return _parseWolfx(guessed);
@@ -395,7 +452,7 @@ class MockInputService extends BaseSourceService {
   }
 
   /// 解析Wolfx格式的地震数据
-  /// 
+  ///
   /// Wolfx格式支持多种预警类型：
   /// - jma_eew: 日本气象厅预警
   /// - cenc_eew: 中国地震台网中心预警
@@ -464,13 +521,14 @@ class MockInputService extends BaseSourceService {
   }
 
   /// 解析P2PQuake格式的地震数据
-  /// 
+  ///
   /// P2PQuake格式包含issue和earthquake两个主要字段
   QuakeMessage? _parseP2P(Map<String, dynamic> json) {
     final issue = json['issue'];
     final eq = json['earthquake'];
-    if (issue is! Map<String, dynamic> || eq is! Map<String, dynamic>)
+    if (issue is! Map<String, dynamic> || eq is! Map<String, dynamic>) {
       return null;
+    }
 
     final hypo = eq['hypocenter'];
     final location =
@@ -505,7 +563,7 @@ class MockInputService extends BaseSourceService {
   }
 
   /// 解析FanStudio格式的地震数据
-  /// 
+  ///
   /// FAN格式是FanStudio聚合平台的数据格式
   QuakeMessage _parseFan(Map<String, dynamic> json) {
     final source = _resolveFanSource(json);
@@ -539,7 +597,7 @@ class MockInputService extends BaseSourceService {
   }
 
   /// 解析FAN数据源类型
-  /// 
+  ///
   /// 根据数据特征判断具体的数据源
   QuakeSourceType _resolveFanSource(Map<String, dynamic> json) {
     final sourceHint = json['source']?.toString();
@@ -564,8 +622,9 @@ class MockInputService extends BaseSourceService {
       }
     }
 
-    if (json.containsKey('final') || json.containsKey('cancel'))
+    if (json.containsKey('final') || json.containsKey('cancel')) {
       return QuakeSourceType.jma_fan;
+    }
     if (json.containsKey('affectedAreas')) return QuakeSourceType.kma_eew_fan;
     if (json.containsKey('province')) return QuakeSourceType.cea_pr;
     if (json.containsKey('epiIntensity')) return QuakeSourceType.cea;
@@ -573,7 +632,7 @@ class MockInputService extends BaseSourceService {
   }
 
   /// 从原始字符串中提取JSON数据块
-  /// 
+  ///
   /// 支持多种格式：
   /// - 纯JSON对象/数组
   /// - Markdown代码块包裹的JSON
@@ -644,7 +703,7 @@ class MockInputService extends BaseSourceService {
   }
 
   /// 尝试将JavaScript对象字面量转换为JSON
-  /// 
+  ///
   /// 处理JS特有的语法：
   /// - 无引号的属性名
   /// - 单引号字符串
@@ -684,7 +743,7 @@ class MockInputService extends BaseSourceService {
   }
 
   /// 解析坐标值
-  /// 
+  ///
   /// 支持数字和带方向前缀的格式 (如 "N35.5", "S35.5")
   double _parseCoord(dynamic value) {
     if (value == null) return 0.0;
@@ -699,7 +758,7 @@ class MockInputService extends BaseSourceService {
   }
 
   /// 解析深度值
-  /// 
+  ///
   /// 支持带"km"后缀的格式
   double _parseDepth(dynamic value) {
     if (value == null) return 0.0;
@@ -707,7 +766,7 @@ class MockInputService extends BaseSourceService {
   }
 
   /// 解析P2P最大烈度
-  /// 
+  ///
   /// P2P使用10倍烈度值存储
   int? _parseP2PMaxIntensity(dynamic maxScale) {
     final n = _toInt(maxScale);
@@ -727,10 +786,10 @@ class MockInputService extends BaseSourceService {
       '${prefix}_${DateTime.now().millisecondsSinceEpoch}';
 
   /// 从 K-NET ASCII zip 文件注入测站数据
-  /// 
+  ///
   /// 解析 zip 中的 .NS/.EW/.UD 文件，提取各站 PGA，
   /// 转换为 scratch level，灌入 ShakeDetectionService。
-  /// 
+  ///
   /// [zipPath] K-NET ASCII zip 文件路径
   /// 返回注入的测站数量
   int injectFromKnetZip(String zipPath) {
@@ -822,7 +881,8 @@ class MockInputService extends BaseSourceService {
       ns.calibrationFactor =
           NiedCalibration.factors[ks.code] ?? NiedCalibration.defaultFactor;
       ns.thresholdCode =
-          NiedCalibration.thresholdCodes[ks.code] ?? NiedCalibration.defaultThresholdCode;
+          NiedCalibration.thresholdCodes[ks.code] ??
+          NiedCalibration.defaultThresholdCode;
       niedStations.add(ns);
       avgLat += ks.lat;
       avgLng += ks.lng;
@@ -856,8 +916,160 @@ class MockInputService extends BaseSourceService {
     return niedStations.length;
   }
 
-  double _log10(double x) =>
-      x <= 0 ? 0 : (math.log(x) / 2.302585092994046);
+  /// 直接从 NIED GIF 文件或目录注入。
+  ///
+  /// 目录输入会优先选择 `*.jma_s.gif`，避免把井下/物理量图层当成实时震度图。
+  /// 每张 GIF 对应一个秒级时刻，直接进入 `LmoniImageService.processPixels()`，后续测站更新、检测、
+  /// 震源推算都走应用现有实时链路。
+  Future<int> injectFromNiedGifPath(String path) async {
+    if (_niedGifInjectionRunning) {
+      throw StateError('NIED GIF 注入正在进行中');
+    }
+    final target = FileSystemEntity.typeSync(path);
+    if (target == FileSystemEntityType.notFound) {
+      throw FormatException('路径不存在: $path');
+    }
+
+    final files = target == FileSystemEntityType.directory
+        ? _niedGifFilesInDirectory(Directory(path))
+        : [File(path)];
+    if (files.isEmpty) {
+      throw FormatException('未找到可注入的 NIED GIF: $path');
+    }
+
+    _niedGifInjectionRunning = true;
+    final imageService = LmoniImageService()..start();
+    var injected = 0;
+    DateTime? fallbackTime;
+    DateTime? firstDataTime;
+    final playbackClock = Stopwatch()..start();
+    try {
+      for (final file in files) {
+        final dataTime =
+            _niedGifTimestampFromName(file) ??
+            (fallbackTime = (fallbackTime ?? DateTime.now()).add(
+              const Duration(seconds: 1),
+            ));
+        firstDataTime ??= dataTime;
+        final targetElapsed = dataTime.difference(firstDataTime);
+        if (targetElapsed > Duration.zero) {
+          final remaining = targetElapsed - playbackClock.elapsed;
+          if (remaining > Duration.zero) {
+            await Future<void>.delayed(remaining);
+          }
+        }
+
+        final bytes = await file.readAsBytes();
+        final decoded = image_lib.decodeImage(bytes);
+        if (decoded == null) continue;
+        if (decoded.width != 352 || decoded.height != 400) {
+          debugPrint(
+            '[NIED GIF Inject] skip ${file.path}: '
+            'unexpected size ${decoded.width}x${decoded.height}',
+          );
+          continue;
+        }
+        final packedRgb = _packedRgbFromImage(decoded);
+        imageService.processPixels(
+          packedRgb,
+          surfaceGifBytes: Uint8List.fromList(bytes),
+          dataTime: dataTime,
+          receivedAt: DateTime.now(),
+        );
+        await _waitForNiedSourceBridgePlaybackBackpressure();
+        injected++;
+      }
+    } finally {
+      _niedGifInjectionRunning = false;
+    }
+    debugPrint('[NIED GIF Inject] Injected $injected GIF seconds from $path');
+    return injected;
+  }
+
+  Future<void> _waitForNiedSourceBridgePlaybackBackpressure() async {
+    // StreamController.add() delivers the map listener on a later microtask.
+    // Yield once so the NIED source-estimation driver can enqueue the JS frame
+    // before we inspect bridge pressure.
+    await Future<void>.delayed(Duration.zero);
+    const maxWait = Duration(milliseconds: 1200);
+    final stopwatch = Stopwatch()..start();
+    var lastLogged = '';
+    while (stopwatch.elapsed < maxWait) {
+      final status = Kotoho7JsReceiverBridge.queueStatus();
+      if (!status.hasWork) return;
+      final signature =
+          '${status.pendingFrameCount}/${status.inFlightSessionCount}';
+      if (kDebugMode && signature != lastLogged) {
+        lastLogged = signature;
+        debugPrint(
+          '[NIED GIF Inject] wait JS bridge '
+          'pending=${status.pendingFrameCount} '
+          'inFlight=${status.inFlightSessionCount}',
+        );
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+    }
+  }
+
+  List<File> _niedGifFilesInDirectory(Directory directory) {
+    if (!directory.existsSync()) return const [];
+    final allGifFiles = directory
+        .listSync()
+        .whereType<File>()
+        .where((file) => file.path.toLowerCase().endsWith('.gif'))
+        .toList(growable: false);
+    final surfaceGifFiles = allGifFiles
+        .where((file) => file.path.toLowerCase().endsWith('.jma_s.gif'))
+        .toList(growable: false);
+    final selected = surfaceGifFiles.isNotEmpty ? surfaceGifFiles : allGifFiles;
+    return selected.toList(growable: false)..sort(_compareNiedGifFiles);
+  }
+
+  int _compareNiedGifFiles(File left, File right) {
+    final leftTime = _niedGifTimestampFromName(left);
+    final rightTime = _niedGifTimestampFromName(right);
+    if (leftTime != null && rightTime != null) {
+      final timeCompare = leftTime.compareTo(rightTime);
+      if (timeCompare != 0) return timeCompare;
+    } else if (leftTime != null) {
+      return -1;
+    } else if (rightTime != null) {
+      return 1;
+    }
+    return left.path.compareTo(right.path);
+  }
+
+  DateTime? _niedGifTimestampFromName(File file) {
+    final name = file.uri.pathSegments.isEmpty
+        ? file.path
+        : file.uri.pathSegments.last;
+    final match = RegExp(r'(20\d{12})').firstMatch(name);
+    if (match == null) return null;
+    final stamp = match.group(1)!;
+    return DateTime(
+      int.parse(stamp.substring(0, 4)),
+      int.parse(stamp.substring(4, 6)),
+      int.parse(stamp.substring(6, 8)),
+      int.parse(stamp.substring(8, 10)),
+      int.parse(stamp.substring(10, 12)),
+      int.parse(stamp.substring(12, 14)),
+    );
+  }
+
+  List<int> _packedRgbFromImage(image_lib.Image image) {
+    final pixels = List<int>.filled(image.width * image.height, 0);
+    var index = 0;
+    for (var y = 0; y < image.height; y++) {
+      for (var x = 0; x < image.width; x++) {
+        final pixel = image.getPixel(x, y);
+        pixels[index++] =
+            (pixel.r.toInt() << 16) | (pixel.g.toInt() << 8) | pixel.b.toInt();
+      }
+    }
+    return pixels;
+  }
+
+  double _log10(double x) => x <= 0 ? 0 : (math.log(x) / 2.302585092994046);
 
   String _guessPref(double lat, double lng) {
     const prefs = [

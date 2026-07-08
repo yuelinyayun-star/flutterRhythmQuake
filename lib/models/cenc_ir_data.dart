@@ -16,6 +16,8 @@
 /// - contour_geojson: 等震线 GeoJSON 数据
 /// - instrument_intensity_json: 测站烈度 JSON 数组
 
+library;
+
 import 'dart:convert';
 
 /// CENC 烈度速报数据
@@ -108,7 +110,9 @@ class CencIrData {
     if (json['instrument_intensity_json'] is List) {
       for (final item in json['instrument_intensity_json']) {
         if (item is Map) {
-          instruments.add(InstrumentIntensity.fromJson(Map<String, dynamic>.from(item)));
+          instruments.add(
+            InstrumentIntensity.fromJson(Map<String, dynamic>.from(item)),
+          );
         }
       }
     } else if (json['instrument_intensity_json'] is String) {
@@ -117,7 +121,9 @@ class CencIrData {
         if (decoded is List) {
           for (final item in decoded) {
             if (item is Map) {
-              instruments.add(InstrumentIntensity.fromJson(Map<String, dynamic>.from(item)));
+              instruments.add(
+                InstrumentIntensity.fromJson(Map<String, dynamic>.from(item)),
+              );
             }
           }
         }
@@ -138,8 +144,12 @@ class CencIrData {
 
     return CencIrData(
       uniEventId: json['uniEventId']?.toString() ?? '',
-      oriTime: DateTime.tryParse(json['oriTime']?.toString() ?? '') ?? DateTime.now(),
-      gmtCreate: DateTime.tryParse(json['gmtCreate']?.toString() ?? '') ?? DateTime.now(),
+      oriTime:
+          DateTime.tryParse(json['oriTime']?.toString() ?? '') ??
+          DateTime.now(),
+      gmtCreate:
+          DateTime.tryParse(json['gmtCreate']?.toString() ?? '') ??
+          DateTime.now(),
       locName: json['locName']?.toString() ?? '',
       epiLon: double.tryParse(json['epiLon']?.toString() ?? '') ?? 0.0,
       epiLat: double.tryParse(json['epiLat']?.toString() ?? '') ?? 0.0,
@@ -205,30 +215,43 @@ class InstrumentIntensity {
   /// - 解析后的 InstrumentIntensity 实例
   factory InstrumentIntensity.fromJson(Map<String, dynamic> json) {
     return InstrumentIntensity(
-      stationName: json['stationName']?.toString()
-          ?? json['name']?.toString()
-          ?? json['stName']?.toString()
-          ?? json['stID']?.toString()
-          ?? '',
-      longitude: double.tryParse(json['longitude']?.toString()
-          ?? json['lon']?.toString()
-          ?? json['stlo']?.toString()
-          ?? '') ?? 0.0,
-      latitude: double.tryParse(json['latitude']?.toString()
-          ?? json['lat']?.toString()
-          ?? json['stla']?.toString()
-          ?? '') ?? 0.0,
-      intensity: double.tryParse(json['intensity']?.toString()
-          ?? json['int']?.toString()
-          ?? json['estimateInt']?.toString()
-          ?? json['INT']?.toString()
-          ?? '') ?? 0.0,
-      pga: double.tryParse(json['pga']?.toString()
-          ?? json['PGA']?.toString()
-          ?? ''),
-      pgv: double.tryParse(json['pgv']?.toString()
-          ?? json['PGV']?.toString()
-          ?? ''),
+      stationName:
+          json['stationName']?.toString() ??
+          json['name']?.toString() ??
+          json['stName']?.toString() ??
+          json['stID']?.toString() ??
+          '',
+      longitude:
+          double.tryParse(
+            json['longitude']?.toString() ??
+                json['lon']?.toString() ??
+                json['stlo']?.toString() ??
+                '',
+          ) ??
+          0.0,
+      latitude:
+          double.tryParse(
+            json['latitude']?.toString() ??
+                json['lat']?.toString() ??
+                json['stla']?.toString() ??
+                '',
+          ) ??
+          0.0,
+      intensity:
+          double.tryParse(
+            json['INT']?.toString() ??
+                json['intensity']?.toString() ??
+                json['int']?.toString() ??
+                json['estimateInt']?.toString() ??
+                '',
+          ) ??
+          0.0,
+      pga: double.tryParse(
+        json['pga']?.toString() ?? json['PGA']?.toString() ?? '',
+      ),
+      pgv: double.tryParse(
+        json['pgv']?.toString() ?? json['PGV']?.toString() ?? '',
+      ),
     );
   }
 }

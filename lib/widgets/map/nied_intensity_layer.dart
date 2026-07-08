@@ -5,6 +5,7 @@ import 'package:latlong2/latlong.dart';
 import '../../services/sources/jp_shindo_scale.dart';
 import '../../services/sources/nied_monitor.dart';
 import '../../services/sources/shake_detection_service.dart';
+import 'station_dot_painter_layer.dart';
 
 class NiedIntensityLayer extends StatefulWidget {
   final List<NiedStation>? stations;
@@ -94,43 +95,34 @@ class _NiedIntensityLayerState extends State<NiedIntensityLayer> {
       callback(_gridCells.values.map((c) => c.center).toList(growable: false));
     }
 
-    final dotMarkers = <Marker>[];
+    final dots = <StationDot>[];
     final iconMarkers = <Marker>[];
 
-    final sorted = List<NiedStation>.from(data)
-      ..sort((a, b) => a.level.compareTo(b.level));
-
-    for (final station in sorted) {
+    for (final station in data) {
       final level = station.level;
 
       if (level < 0) {
-        dotMarkers.add(
-          Marker(
-            width: dotSize,
-            height: dotSize,
-            point: station.coordinate,
-            child: _SoftStationDot(
-              color: _idleColor,
-              fillOpacity: dotOpacity * 0.12,
-              borderOpacity: dotOpacity * 0.32,
-              borderWidth: dotBorderWidth,
-            ),
+        dots.add(
+          StationDot(
+            coordinate: station.coordinate,
+            color: _idleColor,
+            radius: dotSize / 2,
+            fillOpacity: dotOpacity * 0.12,
+            borderOpacity: dotOpacity * 0.32,
+            borderWidth: dotBorderWidth,
           ),
         );
       } else if (level <= 5 || zoom < 4) {
         final dotColor =
             _niedDotColors[level.clamp(0, _niedDotColors.length - 1)];
-        dotMarkers.add(
-          Marker(
-            width: dotSize,
-            height: dotSize,
-            point: station.coordinate,
-            child: _SoftStationDot(
-              color: dotColor,
-              fillOpacity: dotOpacity * 0.22,
-              borderOpacity: dotOpacity * 0.68,
-              borderWidth: dotBorderWidth,
-            ),
+        dots.add(
+          StationDot(
+            coordinate: station.coordinate,
+            color: dotColor,
+            radius: dotSize / 2,
+            fillOpacity: dotOpacity * 0.22,
+            borderOpacity: dotOpacity * 0.68,
+            borderWidth: dotBorderWidth,
           ),
         );
       } else {
@@ -154,7 +146,8 @@ class _NiedIntensityLayerState extends State<NiedIntensityLayer> {
       children: [
         if (_gridCells.isNotEmpty && !widget.hideGrid)
           PolygonLayer(polygons: _buildGridPolygons()),
-        MarkerLayer(markers: [...dotMarkers, ...iconMarkers]),
+        StationDotPainterLayer(dots: dots),
+        if (iconMarkers.isNotEmpty) MarkerLayer(markers: iconMarkers),
       ],
     );
   }
@@ -217,34 +210,6 @@ class _NiedIntensityLayerState extends State<NiedIntensityLayer> {
   }
 }
 
-class _SoftStationDot extends StatelessWidget {
-  final Color color;
-  final double fillOpacity;
-  final double borderOpacity;
-  final double borderWidth;
-
-  const _SoftStationDot({
-    required this.color,
-    required this.fillOpacity,
-    required this.borderOpacity,
-    required this.borderWidth,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: fillOpacity.clamp(0.0, 1.0)),
-        shape: BoxShape.circle,
-        border: Border.all(
-          color: color.withValues(alpha: borderOpacity.clamp(0.0, 1.0)),
-          width: borderWidth,
-        ),
-      ),
-    );
-  }
-}
-
 class _IntensityMarker extends StatelessWidget {
   final Color color;
   final String label;
@@ -268,21 +233,6 @@ class _IntensityMarker extends StatelessWidget {
           color: isHigh ? Colors.white : Colors.white.withValues(alpha: 0.5),
           width: isHigh ? 2.0 : 1.0,
         ),
-        boxShadow: isHigh
-            ? [
-                BoxShadow(
-                  color: color.withValues(alpha: 0.6),
-                  blurRadius: 10,
-                  spreadRadius: 2,
-                ),
-              ]
-            : [
-                BoxShadow(
-                  color: color.withValues(alpha: 0.3),
-                  blurRadius: 3,
-                  spreadRadius: 1,
-                ),
-              ],
       ),
       child: Center(
         child: Text(

@@ -1,89 +1,119 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 
-import '../../core/intensity_calculator.dart';
 import '../../services/sources/fdsn_station_service.dart';
+import 'station_dot_painter_layer.dart';
 
 class FdsnStationLayer extends StatelessWidget {
   final List<FdsnStation> stations;
 
   const FdsnStationLayer({super.key, required this.stations});
 
+  static const int _maxVisibleDots = 1200;
+
   @override
   Widget build(BuildContext context) {
-    if (stations.isEmpty) return const SizedBox.shrink();
+    final camera = MapCamera.of(context);
+    final visibleStations = _visibleActiveStations(camera);
+    final dots = [
+      for (final station in visibleStations)
+        StationDot(
+          coordinate: station.coordinate,
+          color: _colorForStation(station),
+          radius: _radiusForZoom(camera.zoom),
+          fillOpacity: 0.48,
+          borderOpacity: 0.56,
+          borderWidth: 0.8,
+        ),
+    ];
+    if (dots.isEmpty) return const SizedBox.shrink();
+    return StationDotPainterLayer(dots: dots);
+  }
 
-    const size = 6.0;
-    const opacity = 0.46;
-    const borderOpacity = 0.72;
+  List<FdsnStation> _visibleActiveStations(MapCamera camera) {
+    final visible = camera.pixelBounds.inflate(36);
+    final selected = <FdsnStation>[];
 
-    return MarkerLayer(
-      markers: [
-        for (final station in stations)
-          Marker(
-            width: size,
-            height: size,
-            point: station.coordinate,
-            child: _FdsnDot(
-              color: _colorForStation(station),
-              opacity: opacity,
-              borderOpacity: borderOpacity,
-            ),
-          ),
-      ],
-    );
+    for (final station in stations) {
+      if (!station.hasActiveMotionMeasurement) continue;
+      final projected = camera.projectAtZoom(station.coordinate);
+      if (!_isVisible(projected, visible, camera.getWorldWidthAtZoom())) {
+        continue;
+      }
+      selected.add(station);
+    }
+
+    if (selected.length <= _maxVisibleDots) return selected;
+
+    selected.sort((a, b) => _motionRank(b).compareTo(_motionRank(a)));
+    return selected.take(_maxVisibleDots).toList(growable: false);
+  }
+
+  double _motionRank(FdsnStation station) {
+    final intensity = station.intensity;
+    if (intensity != null) return intensity * 1000;
+    final pga = station.pga ?? 0;
+    final pgv = station.pgv ?? 0;
+    return pga * 10 + pgv * 100;
+  }
+
+  double _radiusForZoom(double zoom) {
+    if (zoom < 4.5) return 3.2;
+    if (zoom < 6.0) return 4.0;
+    return 5.0;
+  }
+
+  bool _isVisible(Offset projected, Rect visible, double worldWidth) {
+    if (visible.contains(projected)) return true;
+    if (worldWidth == 0) return false;
+
+    for (
+      double shift = -worldWidth;
+      shift >= -worldWidth * 2;
+      shift -= worldWidth
+    ) {
+      if (visible.contains(Offset(projected.dx + shift, projected.dy))) {
+        return true;
+      }
+    }
+    for (
+      double shift = worldWidth;
+      shift <= worldWidth * 2;
+      shift += worldWidth
+    ) {
+      if (visible.contains(Offset(projected.dx + shift, projected.dy))) {
+        return true;
+      }
+    }
+    return false;
   }
 
   Color _colorForStation(FdsnStation station) {
-    final intensity = station.intensity;
-    if (intensity != null && station.isMotionActive) {
-      return Color(IntensityCalculator.getJmaShindoColor(intensity));
+    final mmi = station.intensity;
+    if (mmi != null) {
+      if (mmi >= 10.0) return const Color(0xFFC800A0);
+      if (mmi >= 9.0) return const Color(0xFFC80000);
+      if (mmi >= 8.0) return const Color(0xFFFF0000);
+      if (mmi >= 7.0) return const Color(0xFFFF9600);
+      if (mmi >= 6.0) return const Color(0xFFFFD200);
+      if (mmi >= 5.0) return const Color(0xFFFFFF00);
+      if (mmi >= 4.0) return const Color(0xFFB9F26C);
+      if (mmi >= 3.0) return const Color(0xFF7BE1F1);
+      if (mmi >= 2.0) return const Color(0xFFACD8E9);
+      return const Color(0xFFE8F6FF);
     }
-    if (station.isMotionActive) {
-      return const Color(0xFF00E5FF);
+    if (_hasElevatedMotion(station)) {
+      return const Color(0xFF00E676);
     }
 
-    switch (_stationLevel(station)) {
-      case 3:
-        return const Color(0xFFFFD166);
-      case 2:
-        return const Color(0xFF5DADE2);
-      default:
-        return const Color(0xFF58D68D);
-    }
+    return const Color(0xFF2F80ED);
   }
 
-  int _stationLevel(FdsnStation station) {
-    const globalNetworks = {'IU', 'II', 'IC', 'GE'};
-    const nationalNetworks = {'CU', 'US', 'AK', 'CI', 'NC', 'NN', 'PN', 'PB'};
-    if (globalNetworks.contains(station.network)) return 3;
-    if (nationalNetworks.contains(station.network)) return 2;
-    return 1;
-  }
-}
-
-class _FdsnDot extends StatelessWidget {
-  final Color color;
-  final double opacity;
-  final double borderOpacity;
-
-  const _FdsnDot({
-    required this.color,
-    required this.opacity,
-    required this.borderOpacity,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: color.withValues(alpha: opacity),
-        border: Border.all(
-          color: color.withValues(alpha: borderOpacity),
-          width: 0.6,
-        ),
-      ),
-    );
+  bool _hasElevatedMotion(FdsnStation station) {
+    final pga = station.pga;
+    if (pga != null && pga >= 0.8) return true;
+    final pgv = station.pgv;
+    if (pgv != null && pgv >= 0.08) return true;
+    return false;
   }
 }

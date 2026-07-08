@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "caseId": "20260622_tomakomai_south_offshore_m35_hinet",
+  "caseType": "event",
+  "captureDirectory": "tmp/captures/tomakomai_south_offshore_m35_20260622_193747_multilayer",
+  "timeZone": "Asia/Tokyo",
+  "gifNamePattern": "{stamp}.{layer}.gif",
+  "startTimeJst": "2026-06-22T20:37:17",
+  "endTimeJst": "2026-06-22T20:39:47",
+  "sensitivity": 2,
+  "truth": {
+    "originTimeJst": "2026-06-22T20:37:47",
+    "latitude": 42.063,
+    "longitude": 141.347,
+    "depthKm": 100.0,
+    "magnitude": 3.5,
+    "source": "user_provided_hinet_hypocenter"
+  },
+  "eventLabels": {
+    "catalogEvent": true,
+    "catalogTruthVerified": false,
+    "observableEvent": true,
+    "detectableEvent": true,
+    "includeInDetectionMetrics": false
+  },
+  "classification": {
+    "region": "Tomakomai south offshore",
+    "captureSource": "User-provided Hi-net hypocenter, 2026-06-22 19:37:47 UTC+8",
+    "truthQuality": "hinet_user_provided_preliminary",
+    "notes": "Hi-net preliminary label: Tomakomai south offshore, 42.063N 141.347E, M3.5, depth 100.0 km, origin 2026-06-22 19:37:47 UTC+8. Keep outside frozen split metrics until event-level split assignment and final-catalog linking are reviewed."
+  },
+  "splitStatus": "validation_reference"
+}

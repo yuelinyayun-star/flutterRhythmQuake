@@ -21,6 +21,16 @@ void CreateAndAttachConsole() {
   }
 }
 
+void EnableProcessEfficiencyMode() {
+  PROCESS_POWER_THROTTLING_STATE power_throttling = {};
+  power_throttling.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+  power_throttling.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+  power_throttling.StateMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+
+  ::SetProcessInformation(::GetCurrentProcess(), ProcessPowerThrottling,
+                          &power_throttling, sizeof(power_throttling));
+}
+
 std::vector<std::string> GetCommandLineArguments() {
   // Convert the UTF-16 command line arguments to UTF-8 for the Engine to use.
   int argc;

@@ -3,49 +3,85 @@ import 'dart:ui';
 import 'package:provider/provider.dart';
 import '../../providers/quake_provider.dart';
 import '../../models/source_status.dart';
+import '../../services/sources/fdsn_motion_service.dart';
+import '../../services/sources/global_quake_service.dart';
+import '../ui/ui_scale.dart';
 
 class SourceDashboard extends StatelessWidget {
   const SourceDashboard({super.key});
 
-  static const double _refWidth = 1280.0;
-
-  double _scale(BuildContext c) {
-    final w = MediaQuery.of(c).size.width;
-    return (w / _refWidth).clamp(0.7, 1.0);
-  }
+  double _scale(BuildContext c) => UiScale.compact(c);
 
   double _s(double v, BuildContext c) => v * _scale(c);
 
   @override
   Widget build(BuildContext context) {
     return Positioned(
-      top: 50 + _s(12 + 140, context),
-      right: 20,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(_s(6, context)),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-          child: Container(
-            padding: EdgeInsets.symmetric(
-              horizontal: _s(8, context),
-              vertical: _s(5, context),
-            ),
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.4),
-              borderRadius: BorderRadius.circular(_s(6, context)),
-              border: Border.all(color: Colors.white10, width: _s(0.8, context)),
-            ),
-            child: Consumer<QuakeProvider>(
-              builder: (context, provider, child) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: provider.sourceStatuses.entries
-                      .where((e) => e.key != 'CENC' && e.key != 'S-net')
+      top: UiScale.topBarHeight(context) + _s(12 + 140, context),
+      right: _s(20, context),
+      child: RepaintBoundary(
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(_s(6, context)),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            child: Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: _s(8, context),
+                vertical: _s(5, context),
+              ),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.4),
+                borderRadius: BorderRadius.circular(_s(6, context)),
+                border: Border.all(
+                  color: Colors.white10,
+                  width: _s(0.8, context),
+                ),
+              ),
+              child: Selector<QuakeProvider, int>(
+                selector: (context, provider) => Object.hashAll(
+                  provider.sourceStatuses.entries.map(
+                    (entry) => Object.hash(entry.key, entry.value),
+                  ),
+                ),
+                builder: (context, _, child) {
+                  final provider = context.read<QuakeProvider>();
+                  final globalQuakeEnabled = GlobalQuakeService().isEnabled;
+                  final rows = provider.sourceStatuses.entries
+                      .where(
+                        (e) =>
+                            e.key != 'CENC' &&
+                            e.key != 'S-net' &&
+                            (e.key != 'GlobalQuake' || globalQuakeEnabled),
+                      )
                       .map((entry) {
-                    return _buildStatusRow(context, entry.key, entry.value);
-                  }).toList(),
-                );
-              },
+                        return _buildStatusRow(context, entry.key, entry.value);
+                      })
+                      .toList();
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ...rows,
+                      ValueListenableBuilder<int>(
+                        valueListenable:
+                            FdsnMotionService().linkedStationCountNotifier,
+                        builder: (context, count, child) {
+                          return ValueListenableBuilder<int>(
+                            valueListenable:
+                                FdsnMotionService().targetStationLimitNotifier,
+                            builder: (context, limit, child) {
+                              return _buildStationCountRow(
+                                context,
+                                count,
+                                limit,
+                              );
+                            },
+                          );
+                        },
+                      ),
+                    ],
+                  );
+                },
+              ),
             ),
           ),
         ),
@@ -53,7 +89,11 @@ class SourceDashboard extends StatelessWidget {
     );
   }
 
-  Widget _buildStatusRow(BuildContext context, String name, SourceStatus status) {
+  Widget _buildStatusRow(
+    BuildContext context,
+    String name,
+    SourceStatus status,
+  ) {
     return Padding(
       padding: EdgeInsets.symmetric(vertical: _s(2, context)),
       child: Row(
@@ -63,7 +103,8 @@ class SourceDashboard extends StatelessWidget {
           SizedBox(width: _s(6, context)),
           Text(
             name,
-            style: TextStyle(fontFamily: 'JetBrainsMono',
+            style: TextStyle(
+              fontFamily: 'JetBrainsMono',
               color: Colors.white70,
               fontSize: _s(10, context),
               fontWeight: FontWeight.w500,
@@ -73,8 +114,43 @@ class SourceDashboard extends StatelessWidget {
           Text(
             _getStatusText(status),
             style: TextStyle(
-              color: _getStatusColor(status).withOpacity(0.8),
+              color: _getStatusColor(status).withValues(alpha: 0.8),
               fontSize: _s(8, context),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStationCountRow(BuildContext context, int count, int limit) {
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: _s(2, context)),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.hub_outlined,
+            size: _s(8, context),
+            color: const Color(0xFF00E5FF).withValues(alpha: 0.85),
+          ),
+          SizedBox(width: _s(6, context)),
+          Text(
+            'FDSN',
+            style: TextStyle(
+              fontFamily: 'JetBrainsMono',
+              color: Colors.white70,
+              fontSize: _s(10, context),
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          SizedBox(width: _s(4, context)),
+          Text(
+            '$count/$limit',
+            style: TextStyle(
+              color: const Color(0xFF00E5FF).withValues(alpha: 0.85),
+              fontSize: _s(8, context),
+              fontWeight: FontWeight.w600,
             ),
           ),
         ],
@@ -84,98 +160,69 @@ class SourceDashboard extends StatelessWidget {
 
   String _getStatusText(SourceStatus status) {
     switch (status) {
-      case SourceStatus.connected: return "ONLINE";
-      case SourceStatus.connecting: return "CONNECTING";
-      case SourceStatus.disconnected: return "OFFLINE";
-      case SourceStatus.error: return "ERROR";
-      case SourceStatus.synchronizing: return "SYNCING";
+      case SourceStatus.connected:
+        return "ONLINE";
+      case SourceStatus.connecting:
+        return "CONNECTING";
+      case SourceStatus.disconnected:
+        return "OFFLINE";
+      case SourceStatus.error:
+        return "ERROR";
+      case SourceStatus.synchronizing:
+        return "SYNCING";
     }
   }
 
   Color _getStatusColor(SourceStatus status) {
     switch (status) {
-      case SourceStatus.connected: return const Color(0xFF00FF00);
-      case SourceStatus.connecting: return const Color(0xFFFFD700);
-      case SourceStatus.error: return const Color(0xFFFF4500);
-      case SourceStatus.disconnected: return Colors.grey;
-      case SourceStatus.synchronizing: return Colors.blueAccent;
+      case SourceStatus.connected:
+        return const Color(0xFF00FF00);
+      case SourceStatus.connecting:
+        return const Color(0xFFFFD700);
+      case SourceStatus.error:
+        return const Color(0xFFFF4500);
+      case SourceStatus.disconnected:
+        return Colors.grey;
+      case SourceStatus.synchronizing:
+        return Colors.blueAccent;
     }
   }
 }
 
-class _StatusDot extends StatefulWidget {
+class _StatusDot extends StatelessWidget {
   final BuildContext context;
   final SourceStatus status;
   const _StatusDot({required this.context, required this.status});
 
-  @override
-  State<_StatusDot> createState() => _StatusDotState();
-}
-
-class _StatusDotState extends State<_StatusDot> with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-
-  static const double _refWidth = 1280.0;
-
-  double _scale() {
-    final w = MediaQuery.of(widget.context).size.width;
-    return (w / _refWidth).clamp(0.7, 1.0);
-  }
+  double _scale() => UiScale.compact(context);
 
   double _s(double v) => v * _scale();
 
   @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1000),
-    )..repeat(reverse: true);
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    Color color = _getStatusColor(widget.status);
+    return _buildDot(color: _getStatusColor(status));
+  }
 
-    bool shouldAnimate = widget.status == SourceStatus.connecting || 
-                        widget.status == SourceStatus.error ||
-                        widget.status == SourceStatus.synchronizing;
-
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, child) {
-        return Container(
-          width: _s(6),
-          height: _s(6),
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: color.withOpacity(shouldAnimate ? _controller.value : 1.0),
-            boxShadow: [
-              BoxShadow(
-                color: color.withOpacity(0.5),
-                blurRadius: shouldAnimate ? _s(3) * _controller.value : _s(1.5),
-                spreadRadius: _s(0.5),
-              ),
-            ],
-          ),
-        );
-      },
+  Widget _buildDot({required Color color}) {
+    return Container(
+      width: _s(6),
+      height: _s(6),
+      decoration: BoxDecoration(shape: BoxShape.circle, color: color),
     );
   }
 
   Color _getStatusColor(SourceStatus status) {
     switch (status) {
-      case SourceStatus.connected: return const Color(0xFF00FF00);
-      case SourceStatus.connecting: return const Color(0xFFFFD700);
-      case SourceStatus.error: return const Color(0xFFFF4500);
-      case SourceStatus.disconnected: return Colors.grey;
-      case SourceStatus.synchronizing: return Colors.blueAccent;
+      case SourceStatus.connected:
+        return const Color(0xFF00FF00);
+      case SourceStatus.connecting:
+        return const Color(0xFFFFD700);
+      case SourceStatus.error:
+        return const Color(0xFFFF4500);
+      case SourceStatus.disconnected:
+        return Colors.grey;
+      case SourceStatus.synchronizing:
+        return Colors.blueAccent;
     }
   }
 }

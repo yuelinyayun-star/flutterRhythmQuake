@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
+import '../../core/source_estimation/kotoho7_js_receiver_bridge.dart';
 import '../../models/nied_station_db.dart';
 import '../../services/ntp_service.dart';
 import 'jp_shindo_scale.dart';
@@ -18,6 +19,8 @@ class NiedYahooService {
       'https://weather-kyoshin.east.edge.storage-yahoo.jp/SiteList/sitelist.json';
   static const String _realtimeDataBaseUrl =
       'https://weather-kyoshin.east.edge.storage-yahoo.jp/RealTimeData';
+  static const int _defaultRealtimeDelayMs = 1200;
+  static const int _maxRealtimeDelayMs = 3000;
 
   final _stationController = StreamController<List<NiedStation>?>.broadcast();
   final _statusController = StreamController<bool>.broadcast();
@@ -30,8 +33,15 @@ class NiedYahooService {
   List<NiedStation>? _stations;
   String? _siteConfigId;
   bool _isRunning = false;
+  bool _isTicking = false;
+  bool _stationListReloading = false;
   Timer? _timer;
   String? _lastFetchedTime;
+  DateTime? _lastFrameTime;
+  DateTime? _lastReplayTickAt;
+  DateTime? _lastStationListReloadAt;
+  DateTime? _lastDelayDecayAt;
+  int _realtimeDelayMs = _defaultRealtimeDelayMs;
   NiedReplayConfig _replayConfig = const NiedReplayConfig.disabled();
   DateTime? _replayCursorJst;
   int _tickCount = 0;
@@ -46,13 +56,22 @@ class NiedYahooService {
     _successCount = 0;
     _errorCount = 0;
     _configMismatchCount = 0;
+    _lastFrameTime = null;
+    _lastDelayDecayAt = null;
+    _realtimeDelayMs = _defaultRealtimeDelayMs;
     _fetchStationList();
     _timer = Timer.periodic(const Duration(milliseconds: 500), (_) => _tick());
   }
 
   void stop() {
     _timer?.cancel();
+    _timer = null;
     _isRunning = false;
+    _isTicking = false;
+    _stationListReloading = false;
+    _lastFrameTime = null;
+    _lastDelayDecayAt = null;
+    _realtimeDelayMs = _defaultRealtimeDelayMs;
     onStatusChanged?.call(false);
   }
 
@@ -66,9 +85,18 @@ class NiedYahooService {
     _replayConfig = config;
     _replayCursorJst = config.enabled ? config.startJst : null;
     _lastFetchedTime = null;
+    _lastFrameTime = null;
+    _lastReplayTickAt = null;
+    _lastDelayDecayAt = null;
+    if (!config.enabled) {
+      _realtimeDelayMs = _defaultRealtimeDelayMs;
+    }
   }
 
-  Future<void> _fetchStationList() async {
+  Future<void> _fetchStationList({
+    bool forceRebuild = false,
+    bool publish = true,
+  }) async {
     try {
       final url =
           '$_stationListUrl?time=${DateTime.now().millisecondsSinceEpoch}';
@@ -77,12 +105,18 @@ class NiedYahooService {
           .timeout(const Duration(seconds: 10));
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
-        _siteConfigId = data['siteConfigId'] as String?;
+        final siteConfigId = data['siteConfigId'] as String?;
         final items = data['items'] as List<dynamic>?;
-        if (items != null && _stations == null) {
+        if (items != null && (forceRebuild || _stations == null)) {
+          _siteConfigId = siteConfigId;
           _buildStations(items);
+          if (publish && _stations != null) {
+            _stationController.add(List.unmodifiable(_stations!));
+          }
         } else if (items == null) {
           debugPrint('$_tag: ⚠ 测站列表 items 为 null');
+        } else {
+          _siteConfigId = siteConfigId;
         }
       } else {
         debugPrint('$_tag: ⚠ 测站列表获取失败 HTTP ${response.statusCode}');
@@ -152,109 +186,181 @@ class NiedYahooService {
     _stations = list;
   }
 
-  Future<void> _tick() async {
-    if (_stations == null || _stations!.isEmpty) return;
+  Future<void> _reloadStationListAfterConfigMismatch({
+    required String? expected,
+    required String? actual,
+  }) async {
+    if (_stationListReloading) return;
+    final now = DateTime.now();
+    final lastReloadAt = _lastStationListReloadAt;
+    if (lastReloadAt != null &&
+        now.difference(lastReloadAt) < const Duration(seconds: 5)) {
+      return;
+    }
 
-    if (_replayConfig.enabled && _replayConfig.startJst != null) {
-      _tickCount++;
-      final replayTime = _replayCursorJst ?? _replayConfig.startJst!;
-      _replayCursorJst = replayTime.add(
-        Duration(seconds: _replayConfig.stepSeconds.clamp(1, 60)),
+    _stationListReloading = true;
+    _lastStationListReloadAt = now;
+    try {
+      debugPrint(
+        '$_tag: siteConfigId changed, reloading station list '
+        '(expected=$expected, actual=$actual)',
       );
-      final timeKey = _formatJst(replayTime);
+      for (final station in _stations ?? const <NiedStation>[]) {
+        station.terminate();
+      }
+      _stations = null;
+      _siteConfigId = null;
+      _lastFrameTime = null;
+      _lastFetchedTime = null;
+      _lastDelayDecayAt = null;
+      _realtimeDelayMs = _defaultRealtimeDelayMs;
+      _stationController.add(const <NiedStation>[]);
+      await _fetchStationList(forceRebuild: true);
+      if (_stations != null && _stations!.isNotEmpty) {
+        _configMismatchCount = 0;
+      }
+    } finally {
+      _stationListReloading = false;
+    }
+  }
+
+  Future<void> _tick() async {
+    if (_isTicking || _stations == null || _stations!.isEmpty) return;
+    _isTicking = true;
+    try {
+      if (_replayConfig.enabled && _replayConfig.startJst != null) {
+        final now = DateTime.now();
+        final lastReplayTickAt = _lastReplayTickAt;
+        if (lastReplayTickAt != null &&
+            now.difference(lastReplayTickAt) < const Duration(seconds: 1)) {
+          return;
+        }
+        _lastReplayTickAt = now;
+        _tickCount++;
+        final replayTime = _replayCursorJst ?? _replayConfig.startJst!;
+        _replayCursorJst = replayTime.add(
+          Duration(seconds: _replayConfig.stepSeconds.clamp(1, 60)),
+        );
+        final timeKey = _formatJst(replayTime);
+        if (timeKey == _lastFetchedTime) {
+          return;
+        }
+        _lastFetchedTime = timeKey;
+        await _fetchReplayRealtimeData(timeKey);
+        return;
+      }
+
+      _tickCount++;
+      _decayRealtimeDelayIfNeeded();
+      final jstNow = NtpService().now
+          .toUtc()
+          .add(const Duration(hours: 9))
+          .subtract(Duration(milliseconds: _realtimeDelayMs));
+      final ymd =
+          '${jstNow.year}${jstNow.month.toString().padLeft(2, '0')}${jstNow.day.toString().padLeft(2, '0')}';
+      final hms =
+          '${jstNow.hour.toString().padLeft(2, '0')}${jstNow.minute.toString().padLeft(2, '0')}${jstNow.second.toString().padLeft(2, '0')}';
+      final timeKey = '$ymd$hms';
+
       if (timeKey == _lastFetchedTime) {
         return;
       }
-      _lastFetchedTime = timeKey;
-      await _fetchReplayRealtimeData(timeKey);
-      return;
-    }
 
-    _tickCount++;
-    final jstNow = NtpService().now
-        .toUtc()
-        .add(const Duration(hours: 9))
-        .subtract(const Duration(seconds: 2));
-    final ymd =
-        '${jstNow.year}${jstNow.month.toString().padLeft(2, '0')}${jstNow.day.toString().padLeft(2, '0')}';
-    final hms =
-        '${jstNow.hour.toString().padLeft(2, '0')}${jstNow.minute.toString().padLeft(2, '0')}${jstNow.second.toString().padLeft(2, '0')}';
-    final timeKey = '$ymd$hms';
+      final url = '$_realtimeDataBaseUrl/$ymd/$timeKey.json';
 
-    if (timeKey == _lastFetchedTime) {
-      return;
-    }
-    _lastFetchedTime = timeKey;
+      try {
+        final response = await http
+            .get(Uri.parse(url))
+            .timeout(const Duration(seconds: 5));
 
-    final url = '$_realtimeDataBaseUrl/$ymd/$timeKey.json';
+        if (response.statusCode != 200) {
+          _errorCount++;
+          _increaseRealtimeDelay();
+          if (_tickCount % 20 == 0) {
+            debugPrint(
+              '$_tag: HTTP ${response.statusCode} '
+              '(tick=$_tickCount, 成功=$_successCount, 错误=$_errorCount, '
+              'delay=${_realtimeDelayMs}ms)',
+            );
+          }
+          return;
+        }
 
-    try {
-      final response = await http
-          .get(Uri.parse(url))
-          .timeout(const Duration(seconds: 5));
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final rtData = data['realTimeData'] as Map<String, dynamic>?;
+        if (rtData == null) {
+          debugPrint('$_tag: ⚠ realTimeData 为 null');
+          return;
+        }
 
-      if (response.statusCode != 200) {
+        final configId = rtData['siteConfigId'] as String?;
+        if (configId != _siteConfigId) {
+          _configMismatchCount++;
+          if (_configMismatchCount <= 3) {
+            debugPrint(
+              '$_tag: ⚠ siteConfigId 不匹配: 期望=$_siteConfigId, 实际=$configId',
+            );
+          }
+          await _reloadStationListAfterConfigMismatch(
+            expected: _siteConfigId,
+            actual: configId,
+          );
+          return;
+        }
+
+        final intensityStr = rtData['intensity'] as String?;
+        if (intensityStr == null) {
+          debugPrint('$_tag: ⚠ intensity 字符串为 null');
+          return;
+        }
+        if (intensityStr.length != _stations!.length) {
+          debugPrint(
+            '$_tag: ⚠ intensity 长度不一致: '
+            'stations=${_stations!.length}, intensity=${intensityStr.length}',
+          );
+          return;
+        }
+
+        final dataTime = rtData['dataTime'] as String?;
+        final stamp =
+            _parseYahooDataTime(dataTime) ??
+            _parseTimeKey(timeKey) ??
+            DateTime.now();
+        if (!_shouldProcessFrame(stamp)) {
+          return;
+        }
+        _applyFrameGap(stamp);
+        _lastFetchedTime = timeKey;
+        _successCount++;
+        for (int i = 0; i < _stations!.length && i < intensityStr.length; i++) {
+          final charCode = intensityStr.codeUnitAt(i);
+          final detectLevel = charCode - 100;
+          final level = JpShindoScale.levelFromKanameishiLevel(detectLevel);
+          final station = _stations![i];
+          station.update(level, newDetectLevel: detectLevel);
+          station
+            ..lastUpdate = stamp
+            ..lastDataTime = stamp
+            ..lastReceivedAt = DateTime.now();
+        }
+
+        _logZeroOrAboveStations(dataTime ?? timeKey);
+
+        _stationController.add(List.unmodifiable(_stations!));
+        _statusController.add(true);
+        onStatusChanged?.call(true);
+      } catch (e) {
         _errorCount++;
-        if (_tickCount % 20 == 0) {
+        if (_errorCount <= 5 || _errorCount % 20 == 0) {
           debugPrint(
-            '$_tag: HTTP ${response.statusCode} (tick=$_tickCount, 成功=$_successCount, 错误=$_errorCount)',
+            '$_tag: ✖ tick 异常: $e (tick=$_tickCount, 错误=$_errorCount)',
           );
         }
-        return;
+      } finally {
+        _isTicking = false;
       }
-
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
-      final rtData = data['realTimeData'] as Map<String, dynamic>?;
-      if (rtData == null) {
-        debugPrint('$_tag: ⚠ realTimeData 为 null');
-        return;
-      }
-
-      final configId = rtData['siteConfigId'] as String?;
-      if (configId != _siteConfigId) {
-        _configMismatchCount++;
-        if (_configMismatchCount <= 3) {
-          debugPrint(
-            '$_tag: ⚠ siteConfigId 不匹配: 期望=$_siteConfigId, 实际=$configId',
-          );
-        }
-        return;
-      }
-
-      final intensityStr = rtData['intensity'] as String?;
-      if (intensityStr == null) {
-        debugPrint('$_tag: ⚠ intensity 字符串为 null');
-        return;
-      }
-
-      final dataTime = rtData['dataTime'] as String?;
-      final stamp =
-          _parseYahooDataTime(dataTime) ??
-          _parseTimeKey(timeKey) ??
-          DateTime.now();
-      _successCount++;
-      for (int i = 0; i < _stations!.length && i < intensityStr.length; i++) {
-        final charCode = intensityStr.codeUnitAt(i);
-        final detectLevel = charCode - 100;
-        final level = JpShindoScale.levelFromKanameishiLevel(detectLevel);
-        final station = _stations![i];
-        station.update(level, newDetectLevel: detectLevel);
-        station
-          ..lastUpdate = stamp
-          ..lastDataTime = stamp
-          ..lastReceivedAt = DateTime.now();
-      }
-
-      _logZeroOrAboveStations(dataTime ?? timeKey);
-
-      _stationController.add(List.unmodifiable(_stations!));
-      _statusController.add(true);
-      onStatusChanged?.call(true);
-    } catch (e) {
-      _errorCount++;
-      if (_errorCount <= 5 || _errorCount % 20 == 0) {
-        debugPrint('$_tag: ✖ tick 异常: $e (tick=$_tickCount, 错误=$_errorCount)');
-      }
+    } finally {
+      _isTicking = false;
     }
   }
 
@@ -293,12 +399,23 @@ class NiedYahooService {
         debugPrint('$_tag: Replay intensity is null for $timeKey');
         return;
       }
+      if (intensityStr.length != _stations!.length) {
+        debugPrint(
+          '$_tag: Replay intensity length mismatch: '
+          'stations=${_stations!.length}, intensity=${intensityStr.length}',
+        );
+        return;
+      }
 
-      _successCount++;
       final stamp =
           _parseYahooDataTime(rtData['dataTime'] as String?) ??
           _parseTimeKey(timeKey) ??
           DateTime.now();
+      if (!_shouldProcessFrame(stamp)) {
+        return;
+      }
+      _applyFrameGap(stamp);
+      _successCount++;
       for (int i = 0; i < _stations!.length && i < intensityStr.length; i++) {
         final detectLevel = intensityStr.codeUnitAt(i) - 100;
         final level = JpShindoScale.levelFromKanameishiLevel(detectLevel);
@@ -314,10 +431,122 @@ class NiedYahooService {
       _stationController.add(List.unmodifiable(_stations!));
       _statusController.add(true);
       onStatusChanged?.call(true);
+      await _waitForReplaySourceBridgeBackpressure();
     } catch (e) {
       _errorCount++;
       debugPrint('$_tag: Replay error: $e');
     }
+  }
+
+  Future<void> _waitForReplaySourceBridgeBackpressure() async {
+    await Future<void>.delayed(Duration.zero);
+    const maxWait = Duration(milliseconds: 1200);
+    final stopwatch = Stopwatch()..start();
+    var lastLogged = '';
+    while (stopwatch.elapsed < maxWait) {
+      final status = Kotoho7JsReceiverBridge.queueStatus();
+      if (!status.hasWork) return;
+      final signature =
+          '${status.pendingFrameCount}/${status.inFlightSessionCount}';
+      if (kDebugMode && signature != lastLogged) {
+        lastLogged = signature;
+        debugPrint(
+          '$_tag: Replay wait JS bridge '
+          'pending=${status.pendingFrameCount} '
+          'inFlight=${status.inFlightSessionCount}',
+        );
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+    }
+  }
+
+  bool _shouldProcessFrame(DateTime stamp) {
+    final previous = _lastFrameTime;
+    if (previous == null) return true;
+    return stamp.isAfter(previous);
+  }
+
+  void _applyFrameGap(DateTime stamp) {
+    final stations = _stations;
+    if (stations == null || stations.isEmpty) {
+      _lastFrameTime = stamp;
+      return;
+    }
+
+    final previous = _lastFrameTime;
+    if (previous == null) {
+      _lastFrameTime = stamp;
+      return;
+    }
+
+    final diffMs = stamp.difference(previous).inMilliseconds;
+    if (diffMs <= 0) return;
+
+    _lastFrameTime = stamp;
+    if (diffMs <= 1000) return;
+
+    var missingFrames = (diffMs / 1000).round() - 1;
+    if (missingFrames <= 0) return;
+    if (missingFrames > NiedStation.maxExpireSeconds) {
+      missingFrames = NiedStation.maxExpireSeconds;
+    }
+
+    final noData = List<int>.filled(missingFrames, -1);
+    final stale = diffMs > 10000;
+    for (final station in stations) {
+      station.recentLevel.insertAll(0, noData);
+      if (station.recentLevel.length > NiedStation.maxExpireSeconds) {
+        station.recentLevel = station.recentLevel.sublist(
+          0,
+          NiedStation.maxExpireSeconds,
+        );
+      }
+      station.recentDetectLevel.insertAll(0, noData);
+      if (station.recentDetectLevel.length > NiedStation.maxExpireSeconds) {
+        station.recentDetectLevel = station.recentDetectLevel.sublist(
+          0,
+          NiedStation.maxExpireSeconds,
+        );
+      }
+
+      if (station.expireSeconds > station.defaultExpireSeconds) {
+        final nextExpire = station.expireSeconds - missingFrames;
+        station.expireSeconds = nextExpire < station.defaultExpireSeconds
+            ? station.defaultExpireSeconds
+            : nextExpire;
+      }
+
+      if (stale) {
+        station.isActive = false;
+      }
+    }
+  }
+
+  void _increaseRealtimeDelay() {
+    if (_replayConfig.enabled) return;
+    if (_realtimeDelayMs <= _maxRealtimeDelayMs - 100) {
+      _realtimeDelayMs += 100;
+    }
+  }
+
+  void _decayRealtimeDelayIfNeeded() {
+    if (_replayConfig.enabled) return;
+    final now = DateTime.now();
+    final lastDecay = _lastDelayDecayAt;
+    if (lastDecay != null &&
+        now.difference(lastDecay) < const Duration(seconds: 10)) {
+      return;
+    }
+    _lastDelayDecayAt = now;
+    if (_realtimeDelayMs <= _defaultRealtimeDelayMs) {
+      _realtimeDelayMs = _defaultRealtimeDelayMs;
+      return;
+    }
+    final step = _realtimeDelayMs <= (_maxRealtimeDelayMs * 2 ~/ 3) ? 20 : 100;
+    _realtimeDelayMs = (_realtimeDelayMs - step).clamp(
+      _defaultRealtimeDelayMs,
+      _maxRealtimeDelayMs,
+    );
   }
 
   String _formatJst(DateTime jstTime) {
