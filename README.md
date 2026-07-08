@@ -1,6 +1,6 @@
 # flutterrhythmquake
 
-A new Flutter project.
+这里目前还在施工>ᴗoಣ，后继在完善代码后会更新文档等资料。
 
 ## Getting Started
 
