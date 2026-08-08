@@ -43,6 +43,7 @@ migrate_working_dir/
 /temp_*/
 /tmp_*
 /build_output.txt
+/nuget.exe
 
 # Local research inputs and generated diagnostics
 /.workbuddy/

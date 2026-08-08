@@ -1,5 +1,7 @@
 # Flutter RhythmQuake 项目结构文档
 
+> 状态：历史结构文档。本文保留用于追溯早期模块划分，当前目录和数据流请以 [README.md](README.md)、[文档索引](docs/README.md) 与 [架构总览](docs/ARCHITECTURE.md) 为准。
+
 ## 项目概述
 
 Flutter RhythmQuake 是一个跨平台地震预警应用，支持实时接收和显示来自多个地震监测机构的数据，包括中国地震台网中心(CENC)、日本气象厅(JMA)、韩国气象厅(KMA)等。

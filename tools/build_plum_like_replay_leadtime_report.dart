@@ -953,8 +953,8 @@ class _PlumPredictionScratch {
 double? _stationShindo(NiedStation station) {
   final shindo = station.gifObservation?.shindo;
   if (shindo != null && shindo.isFinite) return shindo;
-  if (station.detectLevel >= 0) {
-    return JpShindoScale.rawShindoFromKanameishiLevel(station.detectLevel);
+  if (station.kaLevel >= 0) {
+    return JpShindoScale.rawShindoFromKanameishiLevel(station.kaLevel);
   }
   return null;
 }
