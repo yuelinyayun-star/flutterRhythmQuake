@@ -231,6 +231,17 @@ class VolcanoEventData {
     return kindName.trim();
   }
 
+  /// Short summary for the compact unified card. The full forecast window is
+  /// still available in [displayDetail] and the volcano sidebar.
+  String get compactDisplayDetail {
+    final ashfall = displayAshfallWindow();
+    if (ashfall == null) return displayDetail;
+    final label = ashfall.label.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final items = _formatAshfallItems(ashfall);
+    if (items.isEmpty) return label.isEmpty ? kindName.trim() : label;
+    return label.isEmpty ? items : '$label：$items';
+  }
+
   VolcanoEventData copyWith({List<VolcanoAshfallWindow>? ashfallWindows}) {
     return VolcanoEventData(
       updates: updates,
@@ -310,7 +321,17 @@ class VolcanoEventData {
 
   String _formatAshfallSummary(VolcanoAshfallWindow window) {
     final time = _formatWindowTime(window);
-    final items = window.items
+    final items = _formatAshfallItems(window);
+    final prefix = [
+      window.label.trim(),
+      time,
+    ].where((part) => part.isNotEmpty).join(' ');
+    if (items.isEmpty) return prefix.isEmpty ? kindName.trim() : prefix;
+    return prefix.isEmpty ? items : '$prefix：$items';
+  }
+
+  String _formatAshfallItems(VolcanoAshfallWindow window) {
+    return window.items
         .where((item) => item.phenomenon.trim().isNotEmpty)
         .take(2)
         .map((item) {
@@ -325,12 +346,6 @@ class VolcanoEventData {
           return '${item.phenomenon.trim()}$areaText$direction$distance';
         })
         .join('；');
-    final prefix = [
-      window.label.trim(),
-      time,
-    ].where((part) => part.isNotEmpty).join(' ');
-    if (items.isEmpty) return prefix.isEmpty ? kindName.trim() : prefix;
-    return prefix.isEmpty ? items : '$prefix：$items';
   }
 
   String _formatWindowTime(VolcanoAshfallWindow window) {

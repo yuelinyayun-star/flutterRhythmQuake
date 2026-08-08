@@ -28,6 +28,7 @@ class UnifiedEventPresentation {
     required this.title,
     required this.primaryText,
     required this.secondaryText,
+    required this.compactSecondaryText,
     required this.timeText,
     required this.intensityLabel,
     required this.intensityValue,
@@ -37,6 +38,7 @@ class UnifiedEventPresentation {
   final String title;
   final String primaryText;
   final String secondaryText;
+  final String compactSecondaryText;
   final String timeText;
   final String intensityLabel;
   final String intensityValue;
@@ -53,6 +55,7 @@ class UnifiedEventPresentation {
         title: title,
         primaryText: volcano.displayLocation,
         secondaryText: volcano.displayDetail,
+        compactSecondaryText: volcano.compactDisplayDetail,
         timeText: eventTime != null
             ? eventTime.toLocal().toString().substring(5, 19)
             : '--:--:--',
@@ -94,6 +97,7 @@ class UnifiedEventPresentation {
       title: title,
       primaryText: primaryText,
       secondaryText: secondaryText,
+      compactSecondaryText: secondaryText,
       timeText: timeText,
       intensityLabel: event.useShindo ? '震度' : '烈度',
       intensityValue: intensityValue,

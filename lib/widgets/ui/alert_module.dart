@@ -1008,10 +1008,18 @@ class _AlertModuleState extends State<AlertModule> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            Icons.local_fire_department,
-            size: _s(34, context),
-            color: color,
+          SizedBox(
+            width: _s(42, context),
+            height: _s(42, context),
+            child: Transform.scale(
+              scale: 2,
+              child: Image.asset(
+                'assets/images/volcano/vol.png',
+                key: const ValueKey('volcano_badge_icon'),
+                fit: BoxFit.contain,
+                filterQuality: FilterQuality.high,
+              ),
+            ),
           ),
           Text(
             '火山',
@@ -1172,7 +1180,7 @@ class _AlertModuleState extends State<AlertModule> {
         ),
         SizedBox(height: _s(3, context)),
         Text(
-          presentation.secondaryText,
+          presentation.compactSecondaryText,
           style: TextStyle(
             color: Colors.white70,
             fontSize: _s(12, context),
@@ -1183,14 +1191,18 @@ class _AlertModuleState extends State<AlertModule> {
         ),
         SizedBox(height: _s(3, context)),
         Text(
-          presentation.timeText,
+          event.isVolcanoEvent && presentation.apiTypeLabel.isNotEmpty
+              ? '${presentation.timeText}  ${presentation.apiTypeLabel}'
+              : presentation.timeText,
           style: TextStyle(
             color: Colors.white54,
             fontSize: _s(11, context),
             fontWeight: FontWeight.w600,
           ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
-        if (presentation.apiTypeLabel.isNotEmpty) ...[
+        if (!event.isVolcanoEvent && presentation.apiTypeLabel.isNotEmpty) ...[
           SizedBox(height: _s(2, context)),
           Text(
             presentation.apiTypeLabel,
