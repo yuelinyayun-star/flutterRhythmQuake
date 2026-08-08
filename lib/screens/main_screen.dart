@@ -2,13 +2,16 @@ import 'package:flutter/material.dart';
 import 'dart:ui';
 import 'dart:async';
 import 'dart:math' as math;
-import 'package:flutter/foundation.dart' show compute;
+import 'package:flutter/foundation.dart' show compute, visibleForTesting;
 import 'package:provider/provider.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../providers/map_state_provider.dart';
 import '../providers/quake_provider.dart';
+import '../providers/notification_settings_provider.dart';
+import '../services/notification_service.dart';
 import '../widgets/map/quake_map_view.dart';
+import '../widgets/ui/in_app_notification_overlay.dart';
 import '../widgets/map/source_dashboard.dart';
 import '../widgets/ui/alert_module.dart';
 import '../widgets/ui/eqlist_panel.dart';
@@ -17,6 +20,8 @@ import '../widgets/ui/top_status_bar.dart';
 import '../widgets/ui/weather_marquee.dart';
 import '../widgets/ui/settings_page.dart';
 import '../widgets/ui/station_dashboard.dart';
+import '../widgets/ui/cmt_sidebar_panel.dart';
+import '../widgets/ui/volcano_sidebar_panel.dart';
 import '../widgets/ui/ui_runtime_flags.dart';
 import '../widgets/ui/ui_scale.dart';
 import '../widgets/ui/app_page_background.dart';
@@ -24,7 +29,12 @@ import '../core/source_estimation/source_estimation_models.dart';
 import '../core/source_estimation/station_event_tracker.dart';
 import '../services/sources/shake_detection_service.dart';
 import '../services/sources/global_quake_service.dart';
+import '../services/sources/cma_local_weather_service.dart';
+import '../services/location_service.dart';
+import '../widgets/map/ka_shindo_marker_style.dart';
 import '../models/tsunami_message.dart';
+import '../models/quake_message.dart';
+import '../models/unified_quake_data.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -35,37 +45,53 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   late final MapController _mapController;
+  NotificationService? _notificationService;
 
   StationSummaryData _stationData = StationSummaryData();
   final ValueNotifier<StationSummaryData> _stationDataNotifier =
       ValueNotifier<StationSummaryData>(StationSummaryData());
+  final CmaLocalWeatherService _cmaWeatherService = CmaLocalWeatherService();
+  CmaLocalWeatherState _cmaWeatherState = const CmaLocalWeatherState();
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
-  bool _showInfoDrawer = false;
+  bool _showInfoDrawer = true;
+  bool _cmaWeatherLayoutEnabled = false;
+  bool _sideInfoSettingLoaded = false;
   bool _phoneActionsExpanded = false;
   bool _sideInfoAutoShowBeta = true;
-  bool _infoOpenedByAuto = false;
-  Timer? _infoAutoHideTimer;
   String? _lastAutoTriggerSignature;
   String _lastNiedInfoSignature = '-';
   String _lastSnetInfoSignature = '-';
   String _lastJmaTsunamiInfoSignature = '-';
   String _lastNmefcTsunamiInfoSignature = '-';
+  String _lastCmtInfoSignature = '-';
+  String _lastVolcanoInfoSignature = '-';
   String? _pendingInfoPageKey;
   int _infoPageIndex = 0;
   Timer? _infoPageCarousel;
   List<String> _lastInfoPageKeys = const [];
   String _lastInfoPageKeysSignature = '';
+  int _niedDetectPageIndex = 0;
+  int _niedDetectPageCount = 0;
+  String _niedDetectPageSignature = '';
+  Timer? _niedDetectPageCarousel;
   String _lastStationDataUiSignature = '';
 
   static const double _refWidth = 1700.0;
   static const double _stationPanelVisualHeight = 104.0;
   static const double _infoPanelHeight = 186.0;
   static const double _stationPanelWidth = 234.0;
+  static const double _rightActionButtonSize = 52.0;
+  static const double _rightActionButtonGap = 12.0;
+  static const double _rightActionButtonBottom = 30.0;
+  static const double _rightInfoPanelButtonGap = 10.0;
+  static const int _rightActionButtonCount = 4;
   static const String _sideInfoAutoShowBetaKey = 'side_info_auto_show_beta';
   static const String _infoPageNied = 'nied';
   static const String _infoPageSnet = 'snet';
   static const String _infoPageJmaTsunami = 'jmaTsunami';
   static const String _infoPageNmefcTsunami = 'nmefcTsunami';
+  static const String _infoPageCmt = 'cmt';
+  static const String _infoPageVolcano = 'volcano';
 
   double _scale(BuildContext c) {
     return UiScale.factor(c, refWidth: _refWidth, min: 0.55);
@@ -87,6 +113,16 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     return UiScale.topBarHeight(context) + _sideS(12 + 140, context);
   }
 
+  double _rightInfoPanelBottom(BuildContext context) {
+    final buttonStackHeight =
+        _rightActionButtonSize * _rightActionButtonCount +
+        _rightActionButtonGap * (_rightActionButtonCount - 1);
+    return _s(
+      _rightActionButtonBottom + buttonStackHeight + _rightInfoPanelButtonGap,
+      context,
+    );
+  }
+
   bool _hasFormalNiedDetect(StationSummaryData data) {
     final detect = data.niedDetect;
     if (detect == null) return false;
@@ -99,6 +135,8 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   bool _hasAutoInfoContent(StationSummaryData data, QuakeProvider provider) {
     return _hasFormalNiedDetect(data) ||
         data.snetTopStations.isNotEmpty ||
+        _activeCmtMapEvent(provider) != null ||
+        _activeVolcanoEvent(provider) != null ||
         (provider.jmaTsunami?.isActive == true) ||
         (provider.jmaTsunami?.areas.isNotEmpty ?? false) ||
         (provider.nmefcTsunami?.isActive == true);
@@ -112,11 +150,28 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     UiRuntimeFlags.sideInfoAutoShowBetaNotifier.addListener(
       _onSideInfoAutoShowSettingChanged,
     );
+    _cmaWeatherService.stateNotifier.addListener(_onCmaWeatherStateChanged);
+    LocationService().positionListenable.addListener(
+      _onLocalWeatherPositionChanged,
+    );
     // 延迟关联控制器，确保 Provider 已准备好
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<MapStateProvider>().setController(_mapController, this);
       AppPageBackground.cachedBytes();
+      _notificationService ??= NotificationService(
+        context.read<QuakeProvider>(),
+        context.read<NotificationSettingsProvider>(),
+      );
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final enabled = !UiScale.isPhone(context);
+    if (_cmaWeatherLayoutEnabled == enabled) return;
+    _cmaWeatherLayoutEnabled = enabled;
+    _syncCmaWeatherActivity();
   }
 
   @override
@@ -124,9 +179,15 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     UiRuntimeFlags.sideInfoAutoShowBetaNotifier.removeListener(
       _onSideInfoAutoShowSettingChanged,
     );
-    _infoAutoHideTimer?.cancel();
+    LocationService().positionListenable.removeListener(
+      _onLocalWeatherPositionChanged,
+    );
+    _cmaWeatherService.stateNotifier.removeListener(_onCmaWeatherStateChanged);
+    _cmaWeatherService.dispose();
     _infoPageCarousel?.cancel();
+    _niedDetectPageCarousel?.cancel();
     _stationDataNotifier.dispose();
+    _notificationService?.dispose();
     super.dispose();
   }
 
@@ -178,8 +239,8 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
           // 2. 顶部状态栏
           const Positioned(top: 0, left: 0, right: 0, child: TopStatusBar()),
 
-          // 3. 右侧数据源状态面板
-          if (!isPhone && !_showInfoDrawer) const SourceDashboard(),
+          // 3. 数据源状态面板
+          if (!isPhone) const SourceDashboard(),
 
           // Station summary panel
           ValueListenableBuilder<StationSummaryData>(
@@ -192,6 +253,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
             Positioned(
               top: _rightInfoPanelTop(context),
               right: _sideS(20, context),
+              bottom: _rightInfoPanelBottom(context),
               child: AnimatedSlide(
                 duration: const Duration(milliseconds: 320),
                 curve: Curves.easeOutCubic,
@@ -259,18 +321,21 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                 ),
                 SizedBox(height: _s(12, context)),
                 Selector<QuakeProvider, bool>(
-                  selector: (context, provider) => provider.cencIrData != null,
-                  builder: (context, hasData, _) {
+                  selector: (context, provider) =>
+                      provider.isManualCencIrActive,
+                  builder: (context, isManualActive, _) {
                     return _buildCircularButton(
                       context: context,
-                      icon: hasData ? Icons.waves : Icons.waves_outlined,
-                      tooltip: hasData ? '关闭 CENC 烈度速报' : 'CENC 烈度速报',
-                      color: hasData
+                      icon: isManualActive ? Icons.waves : Icons.waves_outlined,
+                      tooltip: isManualActive
+                          ? '关闭手动 CENC 烈度速报'
+                          : '手动查看 CENC 烈度速报',
+                      color: isManualActive
                           ? const Color(0xFF2ECC71)
                           : Colors.blueAccent,
                       onPressed: () {
                         final provider = context.read<QuakeProvider>();
-                        if (hasData) {
+                        if (isManualActive) {
                           provider.clearCencIrData();
                         } else {
                           _showCencIrSheet(context);
@@ -292,13 +357,16 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                   icon: Icons.my_location,
                   tooltip: '回到中心',
                   onPressed: () {
-                    context.read<MapStateProvider>().recenterToDefaultView();
+                    context.read<MapStateProvider>().moveToSystemDefaultView();
                   },
                 ),
               ],
             ),
           ),
           if (isPhone) ..._buildPhoneOverlays(context),
+
+          // 应用内轻通知覆盖层
+          const InAppNotificationOverlay(),
         ],
       ),
     );
@@ -362,7 +430,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                           onPressed: () {
                             context
                                 .read<MapStateProvider>()
-                                .recenterToDefaultView();
+                                .moveToSystemDefaultView();
                           },
                         ),
                         SizedBox(height: s(8)),
@@ -376,20 +444,22 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                         SizedBox(height: s(8)),
                         Selector<QuakeProvider, bool>(
                           selector: (context, provider) =>
-                              provider.cencIrData != null,
-                          builder: (context, hasData, _) {
+                              provider.isManualCencIrActive,
+                          builder: (context, isManualActive, _) {
                             return _buildPhoneActionButton(
                               context,
-                              icon: hasData
+                              icon: isManualActive
                                   ? Icons.waves
                                   : Icons.waves_outlined,
-                              tooltip: hasData ? '关闭 CENC 烈度速报' : 'CENC 烈度速报',
-                              color: hasData
+                              tooltip: isManualActive
+                                  ? '关闭手动 CENC 烈度速报'
+                                  : '手动查看 CENC 烈度速报',
+                              color: isManualActive
                                   ? const Color(0xFF2ECC71)
                                   : Colors.blueAccent,
                               onPressed: () {
                                 final provider = context.read<QuakeProvider>();
-                                if (hasData) {
+                                if (isManualActive) {
                                   provider.clearCencIrData();
                                 } else {
                                   _showCencIrSheet(context);
@@ -666,6 +736,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       builder: (context, mapState, provider, _) {
         final detect = _stationData.niedDetect;
         final hasNied = _hasFormalNiedDetect(_stationData);
+        if (!hasNied) _stopNiedDetectPagination();
         final hasSnet = _stationData.snetTopStations.isNotEmpty;
         final jmaTsunami = provider.jmaTsunami;
         final hasJmaTsunami =
@@ -673,11 +744,35 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
             (jmaTsunami.isActive || jmaTsunami.areas.isNotEmpty);
         final nmefc = provider.nmefcTsunami;
         final hasNmefc = nmefc != null && nmefc.isActive;
+        final cmt = _activeCmtMapEvent(provider);
+        final volcano = _activeVolcanoEvent(provider);
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) _handleAutoInfoPopup(_stationData, provider);
         });
 
         final mainPages = <_InfoDrawerPage>[];
+        if (cmt != null) {
+          mainPages.add(
+            _InfoDrawerPage(
+              key: _infoPageCmt,
+              child: CmtSidebarPanel(
+                event: cmt,
+                scale: (value) => _s(value, context),
+              ),
+            ),
+          );
+        }
+        if (volcano != null) {
+          mainPages.add(
+            _InfoDrawerPage(
+              key: _infoPageVolcano,
+              child: VolcanoSidebarPanel(
+                event: volcano,
+                scale: (value) => _s(value, context),
+              ),
+            ),
+          );
+        }
         if (hasNied) {
           mainPages.add(
             _InfoDrawerPage(
@@ -717,18 +812,6 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
           _infoPageIndex = 0;
         }
 
-        if (!showCarousel) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted || !_infoOpenedByAuto || !_showInfoDrawer) return;
-            _infoAutoHideTimer?.cancel();
-            setState(() {
-              _showInfoDrawer = false;
-              _infoOpenedByAuto = false;
-            });
-          });
-          return const SizedBox.shrink();
-        }
-
         return RepaintBoundary(
           child: ClipRRect(
             borderRadius: BorderRadius.circular(_s(10, context)),
@@ -746,47 +829,55 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                   _s(10, context),
                 ),
                 decoration: BoxDecoration(
-                  color: const Color(0xC21A2435),
+                  color: Colors.black.withValues(alpha: 0.45),
                   borderRadius: BorderRadius.circular(_s(10, context)),
                   border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.2),
-                    width: _s(0.7, context),
+                    color: Colors.white12,
+                    width: _s(0.5, context),
                   ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.28),
-                      blurRadius: _s(14, context),
-                      offset: Offset(0, _s(5, context)),
-                    ),
-                  ],
                 ),
                 child: Column(
-                  mainAxisSize: MainAxisSize.min,
+                  mainAxisSize: MainAxisSize.max,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 380),
-                      switchInCurve: Curves.easeOutCubic,
-                      switchOutCurve: Curves.easeInCubic,
-                      transitionBuilder: (child, animation) {
-                        final slide = Tween<Offset>(
-                          begin: const Offset(0.08, 0),
-                          end: Offset.zero,
-                        ).animate(animation);
-                        return FadeTransition(
-                          opacity: animation,
-                          child: SlideTransition(position: slide, child: child),
-                        );
-                      },
-                      child: showCarousel
-                          ? KeyedSubtree(
-                              key: ValueKey(mainPages[_infoPageIndex].key),
-                              child: _buildInfoSurface(
-                                context,
-                                mainPages[_infoPageIndex].child,
-                              ),
-                            )
-                          : const SizedBox.shrink(),
+                    Expanded(
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 380),
+                        switchInCurve: Curves.easeOutCubic,
+                        switchOutCurve: Curves.easeInCubic,
+                        layoutBuilder: (currentChild, previousChildren) {
+                          return Stack(
+                            fit: StackFit.expand,
+                            children: [...previousChildren, ?currentChild],
+                          );
+                        },
+                        transitionBuilder: (child, animation) {
+                          final slide = Tween<Offset>(
+                            begin: const Offset(0.08, 0),
+                            end: Offset.zero,
+                          ).animate(animation);
+                          return FadeTransition(
+                            opacity: animation,
+                            child: SlideTransition(
+                              position: slide,
+                              child: child,
+                            ),
+                          );
+                        },
+                        child: SizedBox.expand(
+                          key: ValueKey(
+                            showCarousel
+                                ? mainPages[_infoPageIndex].key
+                                : 'weatherPlaceholder',
+                          ),
+                          child: _buildInfoSurface(
+                            context,
+                            showCarousel
+                                ? mainPages[_infoPageIndex].child
+                                : _buildWeatherPlaceholder(context),
+                          ),
+                        ),
+                      ),
                     ),
                     SizedBox(height: _s(8, context)),
                     Container(
@@ -809,17 +900,11 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
 
   Widget _buildInfoSurface(BuildContext context, Widget child) {
     return Container(
+      width: double.infinity,
+      height: double.infinity,
       padding: EdgeInsets.symmetric(
         horizontal: _s(8, context),
         vertical: _s(7, context),
-      ),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(_s(8, context)),
-        border: Border.all(
-          color: Colors.white.withValues(alpha: 0.12),
-          width: _s(0.6, context),
-        ),
       ),
       child: child,
     );
@@ -1038,14 +1123,6 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         _s(8, context),
         _s(6, context),
       ),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.04),
-        borderRadius: BorderRadius.circular(_s(8, context)),
-        border: Border.all(
-          color: Colors.white.withValues(alpha: 0.1),
-          width: _s(0.6, context),
-        ),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -1077,6 +1154,229 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         ],
       ),
     );
+  }
+
+  Widget _buildWeatherPlaceholder(BuildContext context) {
+    final observation = _cmaWeatherState.observation;
+    if (observation == null) {
+      final message = switch (_cmaWeatherState.status) {
+        CmaLocalWeatherStatus.noLocation => '等待定位信息',
+        CmaLocalWeatherStatus.resolvingStation => '正在查找附近气象站...',
+        CmaLocalWeatherStatus.loading => '正在获取气象实况...',
+        CmaLocalWeatherStatus.failed => '气象实况暂不可用',
+        CmaLocalWeatherStatus.idle || CmaLocalWeatherStatus.ready => '等待气象实况',
+      };
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '气象实况',
+            style: TextStyle(
+              color: Colors.white70,
+              fontSize: _s(12, context),
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          SizedBox(height: _s(4, context)),
+          Text(
+            message,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.55),
+              fontSize: _s(10.5, context),
+              fontWeight: FontWeight.w600,
+              height: 1.2,
+            ),
+          ),
+        ],
+      );
+    }
+
+    final stationText = _cmaWeatherStationText(observation);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          '站点：$stationText（${observation.station.id}）',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.96),
+            fontSize: _s(10.8, context),
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        SizedBox(height: _s(3, context)),
+        Text(
+          '实况：',
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.9),
+            fontSize: _s(10.5, context),
+            fontWeight: FontWeight.w700,
+            height: 1.18,
+          ),
+        ),
+        if (_cmaHasNumber(observation.temperature))
+          _buildCmaWeatherRow(
+            context,
+            '瞬时温度',
+            _cmaWeatherTimedNumber(
+              observation.temperature,
+              '℃',
+              observation.observedAt,
+            ),
+          ),
+        if (_cmaHasNumber(observation.pressure))
+          _buildCmaWeatherRow(
+            context,
+            '地面气压',
+            _cmaWeatherTimedNumber(
+              observation.pressure,
+              'hPa',
+              observation.observedAt,
+            ),
+          ),
+        if (_cmaHasNumber(observation.humidity))
+          _buildCmaWeatherRow(
+            context,
+            '相对湿度',
+            _cmaWeatherTimedNumber(
+              observation.humidity,
+              '%',
+              observation.observedAt,
+              digits: 0,
+            ),
+          ),
+        if (_cmaHasWindDirection(observation))
+          _buildCmaWeatherRow(
+            context,
+            '2分钟平均风向',
+            _cmaTimedText(
+              _cmaWindDirectionText(observation),
+              observation.observedAt,
+            ),
+          ),
+        if (_cmaHasNumber(observation.windSpeed))
+          _buildCmaWeatherRow(
+            context,
+            '2分钟平均风速',
+            _cmaWeatherTimedNumber(
+              observation.windSpeed,
+              'm/s',
+              observation.observedAt,
+            ),
+          ),
+        if (_cmaHasNumber(observation.precipitation))
+          _buildCmaWeatherRow(
+            context,
+            '1小时降水',
+            _cmaWeatherTimedNumber(
+              observation.precipitation,
+              'mm',
+              observation.observedAt,
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildCmaWeatherRow(
+    BuildContext context,
+    String label,
+    String value, {
+    bool muted = false,
+  }) {
+    return Padding(
+      padding: EdgeInsets.only(top: _s(1.5, context)),
+      child: Text(
+        '$label：$value',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: muted
+              ? Colors.white.withValues(alpha: 0.55)
+              : Colors.white.withValues(alpha: 0.86),
+          fontSize: _s(10.3, context),
+          fontWeight: FontWeight.w600,
+          height: 1.18,
+        ),
+      ),
+    );
+  }
+
+  String _cmaWeatherStationText(CmaLocalWeatherObservation observation) {
+    final parts = observation.locationPath
+        .split(RegExp(r'[,，]'))
+        .map((part) => part.trim())
+        .where((part) => part.isNotEmpty && part != '中国')
+        .toList(growable: false);
+    return parts.isEmpty ? observation.station.name : parts.join();
+  }
+
+  bool _cmaHasNumber(double? value) => value != null && value.isFinite;
+
+  bool _cmaHasWindDirection(CmaLocalWeatherObservation observation) {
+    return observation.windDirection.trim().isNotEmpty ||
+        _cmaHasNumber(observation.windDirectionDegree);
+  }
+
+  String _cmaWeatherNumber(double? value, String unit, {int digits = 1}) {
+    if (value == null || !value.isFinite) return '--';
+    return '${value.toStringAsFixed(digits)} $unit';
+  }
+
+  String _cmaWeatherTimedNumber(
+    double? value,
+    String unit,
+    DateTime? time, {
+    int digits = 1,
+  }) {
+    if (value == null || !value.isFinite) return '--';
+    return _cmaTimedText(_cmaWeatherNumber(value, unit, digits: digits), time);
+  }
+
+  String _cmaTimedText(String value, DateTime? time) {
+    if (value == '--' || time == null) return value;
+    return '$value（${_cmaWeatherTime(time)}）';
+  }
+
+  String _cmaWindDirectionText(CmaLocalWeatherObservation observation) {
+    final direction = observation.windDirection.replaceFirst(RegExp(r'风$'), '');
+    final label = direction.isEmpty ? '--' : direction;
+    final abbreviation = _cmaWindDirectionAbbreviation(direction);
+    if (abbreviation != null) return '$label($abbreviation)';
+    final degree = observation.windDirectionDegree;
+    if (degree == null || !degree.isFinite) return label;
+    return '$label(${_cmaWindAbbreviationFromDegree(degree)})';
+  }
+
+  String? _cmaWindDirectionAbbreviation(String direction) {
+    return const {
+      '北': 'N',
+      '东北': 'NE',
+      '东': 'E',
+      '东南': 'SE',
+      '南': 'S',
+      '西南': 'SW',
+      '西': 'W',
+      '西北': 'NW',
+    }[direction];
+  }
+
+  String _cmaWindAbbreviationFromDegree(double degree) {
+    const labels = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+    final normalized = ((degree % 360) + 360) % 360;
+    return labels[((normalized + 22.5) ~/ 45) % labels.length];
+  }
+
+  String _cmaWeatherTime(DateTime? time) {
+    if (time == null) return '--';
+    final month = time.month.toString().padLeft(2, '0');
+    final day = time.day.toString().padLeft(2, '0');
+    final hour = time.hour.toString().padLeft(2, '0');
+    final minute = time.minute.toString().padLeft(2, '0');
+    return '$month/$day $hour:$minute';
   }
 
   String _snetWindowText() {
@@ -1122,7 +1422,6 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       });
     }
 
-    final rows = <Widget>[];
     const colorStrong = Color(0xFFE74C3C);
     const colorDetected = Color(0xFFE67E22);
     final titleStyle = TextStyle(
@@ -1134,54 +1433,217 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       fontSize: _s(11, context),
       height: 1.35,
     );
-
-    if (strong.isNotEmpty) {
-      final prefs = groupByPref(strong);
-      rows.add(
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Center(
-              child: Text(
-                '強い揺れを検出',
-                style: titleStyle.copyWith(color: colorStrong),
-              ),
-            ),
-            SizedBox(height: _s(2, context)),
-            Text(prefs.values.join('  '), style: textStyle),
-          ],
+    final sections = <_DetectSectionData>[
+      if (strong.isNotEmpty)
+        _DetectSectionData(
+          title: '強い揺れを検出',
+          color: colorStrong,
+          labels: groupByPref(strong).values.toList(growable: false),
         ),
-      );
-    }
-    if (detected.isNotEmpty) {
-      final prefs = groupByPref(detected);
-      rows.add(
-        Padding(
-          padding: EdgeInsets.only(top: strong.isNotEmpty ? _s(6, context) : 0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Center(
-                child: Text(
-                  '揺れを検出',
-                  style: titleStyle.copyWith(color: colorDetected),
+      if (detected.isNotEmpty)
+        _DetectSectionData(
+          title: '揺れを検出',
+          color: colorDetected,
+          labels: groupByPref(detected).values.toList(growable: false),
+        ),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final availableWidth = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : _s(180, context);
+        final availableHeight = constraints.maxHeight.isFinite
+            ? constraints.maxHeight
+            : _s(120, context);
+        final pages = _paginateDetectSections(
+          context: context,
+          sections: sections,
+          maxWidth: availableWidth,
+          maxHeight: availableHeight,
+          titleStyle: titleStyle,
+          textStyle: textStyle,
+        );
+        final signature = [
+          for (final section in sections)
+            '${section.title}:${section.labels.join(',')}',
+          availableWidth.round(),
+          availableHeight.round(),
+          pages.length,
+        ].join('|');
+        _syncNiedDetectPagination(signature, pages.length);
+
+        if (pages.isEmpty) return const SizedBox.expand();
+        final pageIndex = _niedDetectPageIndex.clamp(0, pages.length - 1);
+        final page = pages[pageIndex];
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            Align(
+              alignment: Alignment.topLeft,
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: _s(2, context)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (var i = 0; i < page.sections.length; i++) ...[
+                      if (i > 0) SizedBox(height: _s(6, context)),
+                      Center(
+                        child: Text(
+                          page.sections[i].title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: titleStyle.copyWith(
+                            color: page.sections[i].color,
+                          ),
+                        ),
+                      ),
+                      SizedBox(height: _s(2, context)),
+                      for (final line in page.sections[i].lines)
+                        Text(
+                          line,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: textStyle,
+                        ),
+                    ],
+                  ],
                 ),
               ),
-              SizedBox(height: _s(2, context)),
-              Text(prefs.values.join('  '), style: textStyle),
-            ],
-          ),
-        ),
-      );
-    }
-    return Padding(
-      padding: EdgeInsets.symmetric(vertical: _s(2, context)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: rows,
-      ),
+            ),
+            if (pages.length > 1)
+              Positioned(
+                right: 0,
+                bottom: 0,
+                child: Text(
+                  '${pageIndex + 1}/${pages.length}',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.5),
+                    fontSize: _s(9, context),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
     );
+  }
+
+  List<_DetectPageData> _paginateDetectSections({
+    required BuildContext context,
+    required List<_DetectSectionData> sections,
+    required double maxWidth,
+    required double maxHeight,
+    required TextStyle titleStyle,
+    required TextStyle textStyle,
+  }) {
+    if (sections.isEmpty || maxWidth <= 0 || maxHeight <= 0) return const [];
+
+    final textScaler = MediaQuery.textScalerOf(context);
+    double measuredHeight(String text, TextStyle style) {
+      final painter = TextPainter(
+        text: TextSpan(text: text, style: style),
+        textDirection: TextDirection.ltr,
+        textScaler: textScaler,
+        maxLines: 1,
+      )..layout(maxWidth: maxWidth);
+      return painter.height;
+    }
+
+    final titleHeight = measuredHeight('強い揺れを検出', titleStyle);
+    final lineHeight = measuredHeight('東京都(4)', textStyle);
+    final titleGap = _s(2, context);
+    final sectionGap = _s(6, context);
+    final pageIndicatorReserve = _s(13, context);
+    final verticalPadding = _s(4, context);
+    final pageHeight = math.max(
+      titleHeight + titleGap + lineHeight,
+      maxHeight - pageIndicatorReserve - verticalPadding,
+    );
+
+    final pages = <_DetectPageData>[];
+    var currentSections = <_DetectPageSectionData>[];
+    var remainingHeight = pageHeight;
+
+    void commitPage() {
+      if (currentSections.isEmpty) return;
+      pages.add(_DetectPageData(sections: currentSections));
+      currentSections = <_DetectPageSectionData>[];
+      remainingHeight = pageHeight;
+    }
+
+    for (final section in sections) {
+      final lines = _wrapDetectLabels(
+        context: context,
+        labels: section.labels,
+        maxWidth: maxWidth,
+        style: textStyle,
+      );
+      var lineIndex = 0;
+      while (lineIndex < lines.length) {
+        final leadingGap = currentSections.isEmpty ? 0.0 : sectionGap;
+        final headerHeight = leadingGap + titleHeight + titleGap;
+        if (currentSections.isNotEmpty &&
+            remainingHeight < headerHeight + lineHeight) {
+          commitPage();
+          continue;
+        }
+
+        final lineCapacity = math.max(
+          1,
+          ((remainingHeight - headerHeight) / lineHeight).floor(),
+        );
+        final end = math.min(lines.length, lineIndex + lineCapacity);
+        final pageLines = lines.sublist(lineIndex, end);
+        currentSections.add(
+          _DetectPageSectionData(
+            title: section.title,
+            color: section.color,
+            lines: pageLines,
+          ),
+        );
+        remainingHeight -= headerHeight + pageLines.length * lineHeight;
+        lineIndex = end;
+        if (lineIndex < lines.length) commitPage();
+      }
+    }
+    commitPage();
+    return pages;
+  }
+
+  List<String> _wrapDetectLabels({
+    required BuildContext context,
+    required List<String> labels,
+    required double maxWidth,
+    required TextStyle style,
+  }) {
+    if (labels.isEmpty) return const [];
+    final textScaler = MediaQuery.textScalerOf(context);
+    bool fits(String text) {
+      final painter = TextPainter(
+        text: TextSpan(text: text, style: style),
+        textDirection: TextDirection.ltr,
+        textScaler: textScaler,
+        maxLines: 1,
+      )..layout(maxWidth: maxWidth);
+      return !painter.didExceedMaxLines && painter.width <= maxWidth;
+    }
+
+    final lines = <String>[];
+    var current = '';
+    for (final label in labels) {
+      final candidate = current.isEmpty ? label : '$current  $label';
+      if (current.isNotEmpty && !fits(candidate)) {
+        lines.add(current);
+        current = label;
+      } else {
+        current = candidate;
+      }
+    }
+    if (current.isNotEmpty) lines.add(current);
+    return lines;
   }
 
   List<NiedDetectVisualArea> _visualAreasFromDetectedStations(
@@ -1207,7 +1669,12 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     final prefs = await SharedPreferences.getInstance();
     final enabled = prefs.getBool(_sideInfoAutoShowBetaKey) ?? true;
     if (!mounted) return;
-    setState(() => _sideInfoAutoShowBeta = enabled);
+    setState(() {
+      _sideInfoSettingLoaded = true;
+      _sideInfoAutoShowBeta = enabled;
+      _showInfoDrawer = enabled;
+    });
+    _syncCmaWeatherActivity();
     UiRuntimeFlags.sideInfoAutoShowBetaNotifier.value = enabled;
   }
 
@@ -1215,14 +1682,43 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     if (!mounted) return;
     final enabled = UiRuntimeFlags.sideInfoAutoShowBetaNotifier.value;
     if (_sideInfoAutoShowBeta == enabled) return;
-    setState(() => _sideInfoAutoShowBeta = enabled);
-    if (!enabled && _infoOpenedByAuto) {
-      _infoAutoHideTimer?.cancel();
-      setState(() {
-        _showInfoDrawer = false;
-        _infoOpenedByAuto = false;
-      });
+    setState(() {
+      _sideInfoAutoShowBeta = enabled;
+      _showInfoDrawer = enabled;
+    });
+    _syncCmaWeatherActivity();
+  }
+
+  void _onCmaWeatherStateChanged() {
+    if (!mounted) return;
+    setState(() {
+      _cmaWeatherState = _cmaWeatherService.stateNotifier.value;
+    });
+  }
+
+  void _onLocalWeatherPositionChanged() {
+    if (!_cmaWeatherLayoutEnabled || !_showInfoDrawer) return;
+    final position = LocationService().currentPosition;
+    if (position == null) {
+      _cmaWeatherService.clearLocation();
+      return;
     }
+    unawaited(
+      _cmaWeatherService.startForLocation(
+        position.latitude,
+        position.longitude,
+      ),
+    );
+  }
+
+  void _syncCmaWeatherActivity() {
+    if (!_sideInfoSettingLoaded ||
+        !_cmaWeatherLayoutEnabled ||
+        !_showInfoDrawer) {
+      _cmaWeatherService.pause();
+      return;
+    }
+    _onLocalWeatherPositionChanged();
   }
 
   void _onStationDataChanged(StationSummaryData data) {
@@ -1237,21 +1733,28 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     }
     final provider = context.read<QuakeProvider>();
     _handleAutoInfoPopup(data, provider);
-    _checkNiedAutoHide(data, provider);
   }
 
   String _stationDataUiSignature(StationSummaryData data) {
     final seis = data.seisJsStation;
+    final seisMax = data.seisJsMaxStation;
     final nied = data.niedMaxStation;
     final trea = data.treaMaxStation;
     final kma = data.kmaMaxStation;
+    final pAlert = data.pAlertMaxStation;
+    final snetMax = data.snetTopStations.isEmpty
+        ? -1
+        : data.snetTopStations.first.jmaIndex;
     return [
       seis?.shindo ?? -1,
       seis?.maxIntensity.toStringAsFixed(2) ?? '-',
       seis?.pga.toStringAsFixed(1) ?? '-',
+      seisMax?.intensity.toStringAsFixed(2) ?? '-',
       nied?.level ?? -1,
       trea?.currentIntensity.toStringAsFixed(1) ?? '-',
       kma?.intensity ?? -3,
+      snetMax,
+      pAlert?.shindoClass ?? -1,
       _niedDetectUiSignature(data.niedDetect),
       _snetUiSignature(data),
       data.lpgmMaxSva?.toStringAsFixed(3) ?? '-',
@@ -1302,18 +1805,73 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
   }
 
-  void _checkNiedAutoHide(StationSummaryData data, QuakeProvider provider) {
-    if (!_infoOpenedByAuto) return;
-    if (_hasActiveTsunami(provider) || data.snetTopStations.isNotEmpty) {
-      _infoAutoHideTimer?.cancel();
-      return;
+  QuakeMessage? _activeCmtMapEvent(QuakeProvider provider) {
+    final unified = provider.unifiedEvents;
+    final mapEvents = provider.unifiedMapEvents;
+    if (unified.isEmpty || unified.length != mapEvents.length) return null;
+
+    final currentIndex = provider.currentUnifiedIndex;
+    if (currentIndex >= 0 &&
+        currentIndex < unified.length &&
+        _isCmtSource(mapEvents[currentIndex].source)) {
+      return mapEvents[currentIndex];
     }
-    final isDetecting = _hasFormalNiedDetect(data);
-    if (isDetecting) {
-      _infoAutoHideTimer?.cancel();
-    } else if (_infoAutoHideTimer == null || !_infoAutoHideTimer!.isActive) {
-      _scheduleAutoInfoHide();
+
+    var selectedIndex = -1;
+    DateTime? latestArrival;
+    for (var index = 0; index < unified.length; index++) {
+      if (!_isCmtSource(mapEvents[index].source)) continue;
+      final arrivedAt = unified[index].arrivedAt ?? unified[index].originTime;
+      if (selectedIndex < 0 ||
+          (arrivedAt != null &&
+              (latestArrival == null || arrivedAt.isAfter(latestArrival)))) {
+        selectedIndex = index;
+        latestArrival = arrivedAt;
+      }
     }
+    return selectedIndex < 0 ? null : mapEvents[selectedIndex];
+  }
+
+  bool _isCmtSource(QuakeSourceType source) {
+    return source == QuakeSourceType.fssnCmt ||
+        source == QuakeSourceType.cencCmt ||
+        source == QuakeSourceType.usgsCmt ||
+        source == QuakeSourceType.jmaCmt ||
+        source == QuakeSourceType.fnetCmt ||
+        source == QuakeSourceType.hinetAquaCmt;
+  }
+
+  String _cmtInfoSignature(QuakeMessage? event) {
+    if (event == null) return '-';
+    final metadata = event.cmtMetadata;
+    return [
+      event.source.name,
+      event.eventId,
+      event.nodalPlane1,
+      event.nodalPlane2,
+      event.centroidDepth,
+      event.momentTensor?.toMap(),
+      metadata?.toMap(),
+    ].join('|');
+  }
+
+  UnifiedQuakeData? _activeVolcanoEvent(QuakeProvider provider) {
+    return selectVolcanoSidebarEvent(
+      provider.unifiedEvents,
+      provider.currentUnifiedIndex,
+    );
+  }
+
+  String _volcanoInfoSignature(UnifiedQuakeData? event) {
+    final volcano = event?.volcanoEvent;
+    if (event == null || volcano == null) return '-';
+    return [
+      event.eventId,
+      volcano.kindCode,
+      volcano.updates,
+      volcano.infoTypeName,
+      event.reportTime,
+    ].join('|');
   }
 
   void _syncInfoCarouselPages(List<_InfoDrawerPage> pages) {
@@ -1361,6 +1919,45 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     }
   }
 
+  void _syncNiedDetectPagination(String signature, int pageCount) {
+    if (!_showInfoDrawer) {
+      _stopNiedDetectPagination();
+      return;
+    }
+    if (_niedDetectPageSignature == signature &&
+        _niedDetectPageCount == pageCount) {
+      return;
+    }
+
+    _niedDetectPageCarousel?.cancel();
+    _niedDetectPageCarousel = null;
+    _niedDetectPageSignature = signature;
+    _niedDetectPageCount = pageCount;
+    _niedDetectPageIndex = 0;
+    if (pageCount <= 1) return;
+
+    _niedDetectPageCarousel = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (!mounted || !_showInfoDrawer || _niedDetectPageCount <= 1) return;
+      final currentInfoKey =
+          _infoPageIndex >= 0 && _infoPageIndex < _lastInfoPageKeys.length
+          ? _lastInfoPageKeys[_infoPageIndex]
+          : null;
+      if (currentInfoKey != _infoPageNied) return;
+      setState(() {
+        _niedDetectPageIndex =
+            (_niedDetectPageIndex + 1) % _niedDetectPageCount;
+      });
+    });
+  }
+
+  void _stopNiedDetectPagination() {
+    _niedDetectPageCarousel?.cancel();
+    _niedDetectPageCarousel = null;
+    _niedDetectPageSignature = '';
+    _niedDetectPageCount = 0;
+    _niedDetectPageIndex = 0;
+  }
+
   void _handleAutoInfoPopup(StationSummaryData data, QuakeProvider provider) {
     if (!_sideInfoAutoShowBeta) return;
 
@@ -1372,7 +1969,12 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         jmaTsunami != null &&
         (jmaTsunami.isActive || jmaTsunami.areas.isNotEmpty);
     final nmefcTsunamiTriggered = nmefcTsunami?.isActive == true;
-    final tsunamiHold = _hasActiveTsunami(provider);
+    final cmt = _activeCmtMapEvent(provider);
+    final cmtSignature = _cmtInfoSignature(cmt);
+    final cmtTriggered = cmt != null;
+    final volcano = _activeVolcanoEvent(provider);
+    final volcanoSignature = _volcanoInfoSignature(volcano);
+    final volcanoTriggered = volcano != null;
     final shouldShow = _hasAutoInfoContent(data, provider);
 
     if (!shouldShow) {
@@ -1381,11 +1983,9 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       _lastSnetInfoSignature = '-';
       _lastJmaTsunamiInfoSignature = '-';
       _lastNmefcTsunamiInfoSignature = '-';
+      _lastCmtInfoSignature = '-';
+      _lastVolcanoInfoSignature = '-';
       _pendingInfoPageKey = null;
-      if (_infoOpenedByAuto &&
-          (_infoAutoHideTimer == null || !_infoAutoHideTimer!.isActive)) {
-        _scheduleAutoInfoHide();
-      }
       return;
     }
 
@@ -1408,17 +2008,8 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         ? '${nmefcTsunami!.id}|${nmefcTsunami.status}|${nmefcTsunami.areas.length}'
         : '-';
     final signature =
-        '$niedSignature|$snetSignature|$jmaTsunamiSignature|$nmefcTsunamiSignature';
+        '$niedSignature|$snetSignature|$jmaTsunamiSignature|$nmefcTsunamiSignature|$cmtSignature|$volcanoSignature';
     if (signature == _lastAutoTriggerSignature) {
-      if (!_showInfoDrawer) {
-        setState(() {
-          _showInfoDrawer = true;
-          _infoOpenedByAuto = true;
-          if (detectTriggered) {
-            _pendingInfoPageKey = _infoPageNied;
-          }
-        });
-      }
       return;
     }
     _lastAutoTriggerSignature = signature;
@@ -1438,48 +2029,24 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         nmefcTsunamiSignature != _lastNmefcTsunamiInfoSignature) {
       focusPageKey = _infoPageNmefcTsunami;
     }
+    if (cmtTriggered && cmtSignature != _lastCmtInfoSignature) {
+      focusPageKey = _infoPageCmt;
+    }
+    if (volcanoTriggered && volcanoSignature != _lastVolcanoInfoSignature) {
+      focusPageKey = _infoPageVolcano;
+    }
     _lastNiedInfoSignature = niedSignature;
     _lastSnetInfoSignature = snetSignature;
     _lastJmaTsunamiInfoSignature = jmaTsunamiSignature;
     _lastNmefcTsunamiInfoSignature = nmefcTsunamiSignature;
+    _lastCmtInfoSignature = cmtSignature;
+    _lastVolcanoInfoSignature = volcanoSignature;
 
-    setState(() {
-      _showInfoDrawer = true;
-      _infoOpenedByAuto = true;
-      if (focusPageKey != null) {
-        _pendingInfoPageKey = focusPageKey;
-      }
-    });
-    if (tsunamiHold) {
-      _infoAutoHideTimer?.cancel();
-      return;
-    }
-    if (detectTriggered) {
-      final stage = data.niedDetect?.stage ?? '';
-      if (stage == 'strong' || stage == 'detected') {
-        _infoAutoHideTimer?.cancel();
-      } else {
-        _scheduleAutoInfoHide();
-      }
-    } else {
-      _scheduleAutoInfoHide();
-    }
-  }
-
-  bool _hasActiveTsunami(QuakeProvider provider) {
-    return provider.jmaTsunami?.isActive == true ||
-        provider.nmefcTsunami?.isActive == true;
-  }
-
-  void _scheduleAutoInfoHide() {
-    _infoAutoHideTimer?.cancel();
-    _infoAutoHideTimer = Timer(const Duration(seconds: 8), () {
-      if (!mounted || !_infoOpenedByAuto) return;
+    if (focusPageKey != null && _pendingInfoPageKey != focusPageKey) {
       setState(() {
-        _showInfoDrawer = false;
-        _infoOpenedByAuto = false;
+        _pendingInfoPageKey = focusPageKey;
       });
-    });
+    }
   }
 
   void _showCencIrSheet(BuildContext context) {
@@ -1513,7 +2080,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                   ),
                   SizedBox(height: s(4)),
                   Text(
-                    '可从 FAN 数据源获取最近的烈度速报',
+                    '可从 FAN / NowQuake 获取最近的烈度速报',
                     style: TextStyle(color: Colors.white30, fontSize: s(12)),
                   ),
                 ],
@@ -1576,10 +2143,12 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                       '';
                   final mag = item['magnitude']?.toString() ?? '';
                   final id = item['id']?.toString() ?? '';
+                  final manualData = provider.manualCencIrData;
                   final isActive =
-                      provider.cencIrData != null &&
-                      provider.cencIrData!.uniEventId ==
-                          item['uniEventId']?.toString();
+                      manualData != null &&
+                      (manualData.reportId == id ||
+                          manualData.uniEventId ==
+                              item['uniEventId']?.toString());
 
                   return ListTile(
                     dense: true,
@@ -1676,7 +2245,10 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                     ),
                     onTap: () {
                       Navigator.pop(sheetContext);
-                      provider.requestCencIrDetail(id);
+                      provider.requestCencIrDetail(
+                        id,
+                        source: item['_source']?.toString(),
+                      );
                     },
                   );
                 },
@@ -1696,8 +2268,40 @@ class _InfoDrawerPage {
   const _InfoDrawerPage({required this.key, required this.child});
 }
 
+class _DetectSectionData {
+  const _DetectSectionData({
+    required this.title,
+    required this.color,
+    required this.labels,
+  });
+
+  final String title;
+  final Color color;
+  final List<String> labels;
+}
+
+class _DetectPageSectionData {
+  const _DetectPageSectionData({
+    required this.title,
+    required this.color,
+    required this.lines,
+  });
+
+  final String title;
+  final Color color;
+  final List<String> lines;
+}
+
+class _DetectPageData {
+  const _DetectPageData({required this.sections});
+
+  final List<_DetectPageSectionData> sections;
+}
+
 class _NiedHypCurveOverlay extends StatefulWidget {
-  const _NiedHypCurveOverlay();
+  const _NiedHypCurveOverlay({super.key, this.prepareInBackground = true});
+
+  final bool prepareInBackground;
 
   @override
   State<_NiedHypCurveOverlay> createState() => _NiedHypCurveOverlayState();
@@ -1707,69 +2311,148 @@ class _NiedHypCurveOverlayState extends State<_NiedHypCurveOverlay> {
   List<_NiedHypCurvePanelData> _panels = const [];
   String _signature = '';
   int _requestSerial = 0;
+  bool _isActive = true;
 
   @override
   void initState() {
     super.initState();
     StationEventTracker.instance.currentNiedEvent.addListener(_scheduleUpdate);
+    UiRuntimeFlags.niedHypCurvePanelVisibleNotifier.addListener(
+      _onVisibilityChanged,
+    );
+    _scheduleUpdate();
+  }
+
+  @override
+  void deactivate() {
+    _isActive = false;
+    _requestSerial++;
+    super.deactivate();
+  }
+
+  @override
+  void activate() {
+    super.activate();
+    _isActive = true;
+    _signature = '';
     _scheduleUpdate();
   }
 
   @override
   void dispose() {
+    _isActive = false;
+    _requestSerial++;
     StationEventTracker.instance.currentNiedEvent.removeListener(
       _scheduleUpdate,
+    );
+    UiRuntimeFlags.niedHypCurvePanelVisibleNotifier.removeListener(
+      _onVisibilityChanged,
     );
     super.dispose();
   }
 
+  void _onVisibilityChanged() {
+    if (!mounted || !_isActive) return;
+    _requestSerial++;
+    if (UiRuntimeFlags.niedHypCurvePanelVisibleNotifier.value) {
+      _signature = '';
+      setState(() {});
+      _scheduleUpdate();
+      return;
+    }
+    setState(() {});
+  }
+
   void _scheduleUpdate() {
-    final estimate =
-        StationEventTracker.instance.currentNiedEvent.value?.estimate;
+    if (!mounted ||
+        !_isActive ||
+        !UiRuntimeFlags.niedHypCurvePanelVisibleNotifier.value) {
+      return;
+    }
+    final event = StationEventTracker.instance.currentNiedEvent.value;
+    final estimate = event?.estimate;
     final rawPanels = estimate?.diagnostics['travel_time_curve_panels'];
-    final signature = _curveSignature(estimate);
+    final signature = _curveSignature(event);
     if (signature == _signature) return;
     _signature = signature;
     final serial = ++_requestSerial;
     if (rawPanels is! Iterable || signature.isEmpty) {
-      if (_panels.isNotEmpty && mounted) {
+      if (_panels.isNotEmpty && mounted && _isActive) {
         setState(() => _panels = const []);
       }
       return;
     }
+    final rawPayload = rawPanels.cast<Object?>().toList(growable: false);
+    if (!widget.prepareInBackground) {
+      final payload = _prepareNiedHypCurvePayload(rawPayload);
+      if (!mounted || !_isActive || serial != _requestSerial) return;
+      setState(() {
+        _panels = _NiedHypCurvePanelData.fromPrepared(payload);
+      });
+      return;
+    }
     compute<List<Object?>, List<Map<String, Object?>>>(
       _prepareNiedHypCurvePayload,
-      rawPanels.cast<Object?>().toList(growable: false),
+      rawPayload,
     ).then((payload) {
-      if (!mounted || serial != _requestSerial) return;
+      if (!mounted || !_isActive || serial != _requestSerial) return;
       setState(() {
         _panels = _NiedHypCurvePanelData.fromPrepared(payload);
       });
     });
   }
 
-  static String _curveSignature(SourceEstimate? estimate) {
+  static String _curveSignature(SeismicActiveEvent? event) {
+    final estimate = event?.estimate;
     if (estimate == null) return '';
-    final d = estimate.diagnostics;
-    return [
+    final rawPanels = estimate.diagnostics['travel_time_curve_panels'];
+    if (rawPanels is! Iterable) return '';
+    Map<Object?, Object?>? selectedPanel;
+    for (final rawPanel in rawPanels) {
+      if (rawPanel is Map && rawPanel['selected'] == true) {
+        selectedPanel = rawPanel;
+        break;
+      }
+    }
+    selectedPanel ??= rawPanels.whereType<Map>().firstOrNull;
+    final samples = selectedPanel?['samples'];
+    final sampleCount = samples is Iterable ? samples.length : 0;
+    return <Object?>[
+      event!.eventId,
       estimate.method,
-      estimate.latitude.toStringAsFixed(3),
-      estimate.longitude.toStringAsFixed(3),
-      estimate.depthKm?.toStringAsFixed(1) ?? '-',
-      d['score'],
-      d['effective_station_count'],
-      d['worker_candidate_held_by_score_gate'],
+      estimate.diagnostics['travel_time_curve_revision'],
+      estimate.latitude,
+      estimate.longitude,
+      estimate.depthKm,
+      estimate.originTime?.microsecondsSinceEpoch,
+      selectedPanel?['latitude'],
+      selectedPanel?['longitude'],
+      selectedPanel?['depth_km'],
+      selectedPanel?['origin_time'],
+      selectedPanel?['error_level'],
+      sampleCount,
+      identityHashCode(rawPanels),
     ].join('|');
   }
 
   @override
   Widget build(BuildContext context) {
+    if (!UiRuntimeFlags.niedHypCurvePanelVisibleNotifier.value ||
+        _panels.isEmpty) {
+      return const SizedBox.shrink();
+    }
     final scale = UiScale.compact(context);
     final isPhone = UiScale.isPhone(context);
-    final width = isPhone
-        ? math.min(360.0, MediaQuery.sizeOf(context).width - 24)
-        : 560.0 * scale.clamp(0.75, 1.0);
-    final height = isPhone ? 176.0 : 268.0 * scale.clamp(0.78, 1.0);
+    final viewport = MediaQuery.sizeOf(context);
+    final maxSide = math.max(
+      1.0,
+      math.min(
+        viewport.width - 24.0,
+        viewport.height - (isPhone ? 112.0 : 48.0),
+      ),
+    );
+    final preferredSide = isPhone ? 240.0 : 300.0 * scale.clamp(0.85, 1.0);
+    final side = math.min(preferredSide, maxSide);
     final right = isPhone ? 12.0 : 92.0 * scale.clamp(0.75, 1.0);
     final bottom = isPhone ? 96.0 : 24.0;
 
@@ -1777,18 +2460,23 @@ class _NiedHypCurveOverlayState extends State<_NiedHypCurveOverlay> {
       right: right,
       bottom: bottom,
       child: IgnorePointer(
-        child: _panels.isEmpty
-            ? const SizedBox.shrink()
-            : RepaintBoundary(
-                child: CustomPaint(
-                  size: Size(width, height),
-                  painter: _NiedHypCurvePainter(panels: _panels),
-                ),
-              ),
+        child: RepaintBoundary(
+          child: CustomPaint(
+            key: const ValueKey('nied-hyp-curve-canvas'),
+            size: Size.square(side),
+            painter: _NiedHypCurvePainter(panels: _panels),
+          ),
+        ),
       ),
     );
   }
 }
+
+@visibleForTesting
+Widget buildNiedHypCurveOverlayForTesting({
+  Key? key,
+  bool prepareInBackground = false,
+}) => _NiedHypCurveOverlay(key: key, prepareInBackground: prepareInBackground);
 
 List<Map<String, Object?>> _prepareNiedHypCurvePayload(
   List<Object?> rawPanels,
@@ -1804,21 +2492,33 @@ List<Map<String, Object?>> _prepareNiedHypCurvePayload(
         final distance = _niedCurveDiagDouble(item['distance_km']);
         final observed = _niedCurveDiagDouble(item['observed_s']);
         final predicted = _niedCurveDiagDouble(item['predicted_s']);
-        if (distance == null || observed == null || predicted == null) {
+        final residual = _niedCurveDiagDouble(item['residual_s']);
+        if (distance == null ||
+            observed == null ||
+            predicted == null ||
+            residual == null) {
           continue;
         }
         samples.add({
+          'code': item['code']?.toString() ?? '',
           'distance_km': distance,
+          'epicentral_distance_km':
+              _niedCurveDiagDouble(item['epicentral_distance_km']) ?? distance,
+          'hypocentral_distance_km': _niedCurveDiagDouble(
+            item['hypocentral_distance_km'],
+          ),
           'observed_s': observed,
           'predicted_s': predicted,
+          'residual_s': residual,
           'weight': _niedCurveDiagDouble(item['weight']) ?? 0.0,
           'level': _niedCurveDiagInt(item['level']),
+          'wave': item['wave']?.toString() == 'S' ? 'S' : 'P',
         });
       }
     }
 
     final curve = <Map<String, Object?>>[];
-    final rawCurve = raw['curve'];
+    final rawCurve = raw['p_curve'] ?? raw['curve'];
     if (rawCurve is Iterable) {
       for (final item in rawCurve) {
         if (item is! Map) continue;
@@ -1829,12 +2529,37 @@ List<Map<String, Object?>> _prepareNiedHypCurvePayload(
       }
     }
 
+    final sCurve = <Map<String, Object?>>[];
+    final rawSCurve = raw['s_curve'];
+    if (rawSCurve is Iterable) {
+      for (final item in rawSCurve) {
+        if (item is! Map) continue;
+        final distance = _niedCurveDiagDouble(item['distance_km']);
+        final arrival = _niedCurveDiagDouble(item['arrival_s']);
+        if (distance == null || arrival == null) continue;
+        sCurve.add({'distance_km': distance, 'arrival_s': arrival});
+      }
+    }
+
     if (samples.isEmpty || curve.length < 2) continue;
     final latitude = _niedCurveDiagDouble(raw['latitude']);
     final longitude = _niedCurveDiagDouble(raw['longitude']);
     final depthKm = _niedCurveDiagDouble(raw['depth_km']);
     final score = _niedCurveDiagDouble(raw['score']);
     final rmse = _niedCurveDiagDouble(raw['rmse']);
+    final errorLevel = _niedCurveDiagDouble(raw['error_level']);
+    final activeTimingRmse = _niedCurveDiagDouble(raw['active_timing_rmse']);
+    final inactivePenalty = _niedCurveDiagDouble(raw['inactive_penalty']);
+    final weightSum = _niedCurveDiagDouble(raw['weight_sum']);
+    final stationScale = _niedCurveDiagDouble(raw['station_scale']);
+    final waveCountPenaltyMultiplier = _niedCurveDiagDouble(
+      raw['wave_count_penalty_multiplier'],
+    );
+    final pWaveCount = _niedCurveDiagInt(raw['p_wave_count']);
+    final sWaveCount = _niedCurveDiagInt(raw['s_wave_count']);
+    final effectiveStationCount = _niedCurveDiagInt(
+      raw['effective_station_count'],
+    );
     final observedMinS = _niedCurveDiagDouble(raw['observed_min_s']);
     final observedMaxS = _niedCurveDiagDouble(raw['observed_max_s']);
     final distanceMaxKm = _niedCurveDiagDouble(raw['distance_max_km']);
@@ -1843,6 +2568,15 @@ List<Map<String, Object?>> _prepareNiedHypCurvePayload(
         depthKm == null ||
         score == null ||
         rmse == null ||
+        errorLevel == null ||
+        activeTimingRmse == null ||
+        inactivePenalty == null ||
+        weightSum == null ||
+        stationScale == null ||
+        waveCountPenaltyMultiplier == null ||
+        pWaveCount == null ||
+        sWaveCount == null ||
+        effectiveStationCount == null ||
         observedMinS == null ||
         observedMaxS == null ||
         distanceMaxKm == null) {
@@ -1855,16 +2589,28 @@ List<Map<String, Object?>> _prepareNiedHypCurvePayload(
       'latitude': latitude,
       'longitude': longitude,
       'depth_km': depthKm,
+      'origin_time': raw['origin_time']?.toString(),
+      'time_reference': raw['time_reference']?.toString(),
+      'time_reference_model': raw['time_reference_model']?.toString(),
+      'distance_axis_model': raw['distance_axis_model']?.toString(),
+      'travel_time_model': raw['travel_time_model']?.toString(),
       'score': score,
       'rmse': rmse,
+      'error_level': errorLevel,
+      'active_timing_rmse': activeTimingRmse,
+      'inactive_penalty': inactivePenalty,
+      'weight_sum': weightSum,
+      'station_scale': stationScale,
+      'wave_count_penalty_multiplier': waveCountPenaltyMultiplier,
+      'p_wave_count': pWaveCount,
+      's_wave_count': sWaveCount,
+      'effective_station_count': effectiveStationCount,
       'observed_min_s': observedMinS,
       'observed_max_s': observedMaxS,
       'distance_max_km': distanceMaxKm,
-      'weighted_sample_count': samples
-          .where((sample) => (_niedCurveDiagDouble(sample['weight']) ?? 0) > 0)
-          .length,
       'samples': _niedCurveDisplaySamplesPayload(samples),
       'curve': curve,
+      's_curve': sCurve,
     });
   }
 
@@ -1897,11 +2643,9 @@ List<Map<String, Object?>> _niedCurveDisplaySamplesPayload(
 ) {
   final weighted = samples
       .where((sample) => (_niedCurveDiagDouble(sample['weight']) ?? 0) > 0)
-      .take(48)
       .toList(growable: false);
   final background = samples
       .where((sample) => (_niedCurveDiagDouble(sample['weight']) ?? 0) <= 0)
-      .take(math.max(0, 56 - weighted.length))
       .toList(growable: false);
   return [...weighted, ...background];
 }
@@ -1913,14 +2657,25 @@ class _NiedHypCurvePanelData {
     required this.latitude,
     required this.longitude,
     required this.depthKm,
+    required this.originTime,
+    required this.timeReference,
     required this.score,
     required this.rmse,
+    required this.errorLevel,
+    required this.activeTimingRmse,
+    required this.inactivePenalty,
+    required this.weightSum,
+    required this.stationScale,
+    required this.waveCountPenaltyMultiplier,
+    required this.pWaveCount,
+    required this.sWaveCount,
     required this.observedMinSeconds,
     required this.observedMaxSeconds,
     required this.distanceMaxKm,
     required this.weightedSampleCount,
     required this.samples,
     required this.curve,
+    required this.sCurve,
   });
 
   final String label;
@@ -1928,14 +2683,25 @@ class _NiedHypCurvePanelData {
   final double latitude;
   final double longitude;
   final double depthKm;
+  final DateTime? originTime;
+  final DateTime? timeReference;
   final double score;
   final double rmse;
+  final double errorLevel;
+  final double activeTimingRmse;
+  final double inactivePenalty;
+  final double weightSum;
+  final double stationScale;
+  final double waveCountPenaltyMultiplier;
+  final int pWaveCount;
+  final int sWaveCount;
   final double observedMinSeconds;
   final double observedMaxSeconds;
   final double distanceMaxKm;
   final int weightedSampleCount;
   final List<_NiedHypCurveSample> samples;
   final List<_NiedHypCurvePoint> curve;
+  final List<_NiedHypCurvePoint> sCurve;
 
   static List<_NiedHypCurvePanelData> fromPrepared(
     List<Map<String, Object?>> rawPanels,
@@ -1950,16 +2716,23 @@ class _NiedHypCurvePanelData {
           final distance = _diagDouble(item['distance_km']);
           final observed = _diagDouble(item['observed_s']);
           final predicted = _diagDouble(item['predicted_s']);
-          if (distance == null || observed == null || predicted == null) {
+          final residual = _diagDouble(item['residual_s']);
+          if (distance == null ||
+              observed == null ||
+              predicted == null ||
+              residual == null) {
             continue;
           }
           samples.add(
             _NiedHypCurveSample(
+              code: item['code']?.toString() ?? '',
               distanceKm: distance,
               observedSeconds: observed,
               predictedSeconds: predicted,
+              residualSeconds: residual,
               weight: _diagDouble(item['weight']) ?? 0.0,
               level: _diagInt(item['level']),
+              wave: item['wave']?.toString() == 'S' ? 'S' : 'P',
             ),
           );
         }
@@ -1975,21 +2748,52 @@ class _NiedHypCurvePanelData {
           curve.add(_NiedHypCurvePoint(distanceKm: distance, seconds: arrival));
         }
       }
+      final sCurve = <_NiedHypCurvePoint>[];
+      final rawSCurve = raw['s_curve'];
+      if (rawSCurve is Iterable) {
+        for (final item in rawSCurve) {
+          if (item is! Map) continue;
+          final distance = _diagDouble(item['distance_km']);
+          final arrival = _diagDouble(item['arrival_s']);
+          if (distance == null || arrival == null) continue;
+          sCurve.add(
+            _NiedHypCurvePoint(distanceKm: distance, seconds: arrival),
+          );
+        }
+      }
       if (samples.isEmpty || curve.length < 2) continue;
       final latitude = _diagDouble(raw['latitude']);
       final longitude = _diagDouble(raw['longitude']);
       final depthKm = _diagDouble(raw['depth_km']);
       final score = _diagDouble(raw['score']);
       final rmse = _diagDouble(raw['rmse']);
+      final errorLevel = _diagDouble(raw['error_level']);
+      final activeTimingRmse = _diagDouble(raw['active_timing_rmse']);
+      final inactivePenalty = _diagDouble(raw['inactive_penalty']);
+      final weightSum = _diagDouble(raw['weight_sum']);
+      final stationScale = _diagDouble(raw['station_scale']);
+      final waveCountPenaltyMultiplier = _diagDouble(
+        raw['wave_count_penalty_multiplier'],
+      );
+      final pWaveCount = _diagInt(raw['p_wave_count']);
+      final sWaveCount = _diagInt(raw['s_wave_count']);
       final observedMinS = _diagDouble(raw['observed_min_s']);
       final observedMaxS = _diagDouble(raw['observed_max_s']);
       final distanceMaxKm = _diagDouble(raw['distance_max_km']);
-      final weightedSampleCount = _diagInt(raw['weighted_sample_count']);
+      final weightedSampleCount = _diagInt(raw['effective_station_count']);
       if (latitude == null ||
           longitude == null ||
           depthKm == null ||
           score == null ||
           rmse == null ||
+          errorLevel == null ||
+          activeTimingRmse == null ||
+          inactivePenalty == null ||
+          weightSum == null ||
+          stationScale == null ||
+          waveCountPenaltyMultiplier == null ||
+          pWaveCount == null ||
+          sWaveCount == null ||
           observedMinS == null ||
           observedMaxS == null ||
           distanceMaxKm == null ||
@@ -2003,14 +2807,27 @@ class _NiedHypCurvePanelData {
           latitude: latitude,
           longitude: longitude,
           depthKm: depthKm,
+          originTime: DateTime.tryParse(raw['origin_time']?.toString() ?? ''),
+          timeReference: DateTime.tryParse(
+            raw['time_reference']?.toString() ?? '',
+          ),
           score: score,
           rmse: rmse,
+          errorLevel: errorLevel,
+          activeTimingRmse: activeTimingRmse,
+          inactivePenalty: inactivePenalty,
+          weightSum: weightSum,
+          stationScale: stationScale,
+          waveCountPenaltyMultiplier: waveCountPenaltyMultiplier,
+          pWaveCount: pWaveCount,
+          sWaveCount: sWaveCount,
           observedMinSeconds: observedMinS,
           observedMaxSeconds: observedMaxS,
           distanceMaxKm: distanceMaxKm,
           weightedSampleCount: weightedSampleCount,
           samples: samples,
           curve: curve,
+          sCurve: sCurve,
         ),
       );
     }
@@ -2033,18 +2850,24 @@ class _NiedHypCurvePanelData {
 
 class _NiedHypCurveSample {
   const _NiedHypCurveSample({
+    required this.code,
     required this.distanceKm,
     required this.observedSeconds,
     required this.predictedSeconds,
+    required this.residualSeconds,
     required this.weight,
     required this.level,
+    required this.wave,
   });
 
+  final String code;
   final double distanceKm;
   final double observedSeconds;
   final double predictedSeconds;
+  final double residualSeconds;
   final double weight;
   final int? level;
+  final String wave;
 }
 
 class _NiedHypCurvePoint {
@@ -2052,6 +2875,21 @@ class _NiedHypCurvePoint {
 
   final double distanceKm;
   final double seconds;
+}
+
+({double minX, double maxX, double minY, double maxY})
+niedHypCurveDisplayExtent({
+  required double distanceMaxKm,
+  required double observedMinSeconds,
+  required double observedMaxSeconds,
+}) {
+  final maxX = distanceMaxKm.isFinite && distanceMaxKm > 0
+      ? distanceMaxKm
+      : 1.0;
+  final minY = observedMinSeconds.isFinite ? observedMinSeconds : 0.0;
+  final rawMaxY = observedMaxSeconds.isFinite ? observedMaxSeconds : minY;
+  final maxY = rawMaxY > minY ? rawMaxY : minY + 1.0;
+  return (minX: 0.0, maxX: maxX, minY: minY, maxY: maxY);
 }
 
 class _NiedHypCurvePainter extends CustomPainter {
@@ -2063,6 +2901,15 @@ class _NiedHypCurvePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final bg = Paint()..color = const Color(0xEAF8F8F8);
     canvas.drawRect(Offset.zero & size, bg);
+    if (panels.length == 1) {
+      _drawPanel(
+        canvas,
+        Rect.fromLTWH(10, 12, size.width - 20, size.height - 24),
+        panels.first,
+        large: true,
+      );
+      return;
+    }
     final mainW = size.width * 0.42;
     final gap = 10.0;
     final mainRect = Rect.fromLTWH(10, 12, mainW - 16, size.height - 24);
@@ -2091,6 +2938,7 @@ class _NiedHypCurvePainter extends CustomPainter {
     _NiedHypCurvePanelData panel, {
     required bool large,
   }) {
+    final compactSquare = large && rect.width < 400;
     final border = Paint()
       ..color = panel.selected
           ? const Color(0xFF5B3BE8)
@@ -2107,7 +2955,7 @@ class _NiedHypCurvePainter extends CustomPainter {
 
     final plot = Rect.fromLTRB(
       rect.left + (large ? 38 : 26),
-      rect.top + (large ? 42 : 30),
+      rect.top + (large ? (compactSquare ? 86 : 72) : 34),
       rect.right - 10,
       rect.bottom - (large ? 24 : 16),
     );
@@ -2128,33 +2976,29 @@ class _NiedHypCurvePainter extends CustomPainter {
       grid,
     );
 
-    final line = Path();
-    for (var i = 0; i < panel.curve.length; i++) {
-      final p = _toPlot(
-        plot,
-        ext,
-        panel.curve[i].distanceKm,
-        panel.curve[i].seconds,
-        clamp: false,
-      );
-      if (i == 0) {
-        line.moveTo(p.dx, p.dy);
-      } else {
-        line.lineTo(p.dx, p.dy);
-      }
-    }
     canvas.save();
     canvas.clipRect(plot);
-    canvas.drawPath(
-      line,
-      Paint()
-        ..color = panel.selected
-            ? const Color(0xFF5B3BE8)
-            : const Color(0xFF00B7C8)
-        ..strokeWidth = large ? 4.0 : 3.0
-        ..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.round,
+    _drawTravelTimeCurve(
+      canvas,
+      plot,
+      ext,
+      panel.curve,
+      color: panel.selected ? const Color(0xFF2457D6) : const Color(0xFF00A5B8),
+      strokeWidth: large ? 3.2 : 2.4,
     );
+    if (panel.samples.any((sample) => sample.wave == 'S')) {
+      _drawTravelTimeCurve(
+        canvas,
+        plot,
+        ext,
+        panel.sCurve,
+        color: panel.selected
+            ? const Color(0xFFD93636)
+            : const Color(0xFFD96B36),
+        strokeWidth: large ? 3.2 : 2.4,
+      );
+    }
+    _drawStationResiduals(canvas, plot, ext, panel.samples, large: large);
     canvas.restore();
 
     for (final sample in panel.samples) {
@@ -2166,19 +3010,15 @@ class _NiedHypCurvePainter extends CustomPainter {
       );
       final activeWeight = sample.weight > 0;
       final radius = activeWeight ? (large ? 4.0 : 3.0) : (large ? 2.5 : 2.0);
-      canvas.drawCircle(
-        point.translate(1.2, 1.2),
-        radius,
-        Paint()
-          ..color = Colors.black.withValues(alpha: activeWeight ? 0.18 : 0.06),
-      );
-      canvas.drawCircle(
+      _drawSampleMarker(
+        canvas,
         point,
-        radius,
-        Paint()
-          ..color = _sampleColor(
-            sample.level,
-          ).withValues(alpha: activeWeight ? 0.88 : 0.22),
+        radius: radius,
+        color: _sampleColor(
+          sample.level,
+        ).withValues(alpha: activeWeight ? 0.88 : 0.22),
+        shadowColor: Colors.black.withValues(alpha: activeWeight ? 0.18 : 0.06),
+        sWave: sample.wave == 'S',
       );
       if (activeWeight && large && sample.weight >= 1.0) {
         canvas.drawCircle(
@@ -2194,57 +3034,256 @@ class _NiedHypCurvePainter extends CustomPainter {
 
     _drawText(
       canvas,
-      large ? '误差 ${panel.score.toStringAsFixed(3)}' : panel.label,
+      large
+          ? compactSquare
+                ? '当前震源 ${panel.latitude.toStringAsFixed(3)}, ${panel.longitude.toStringAsFixed(3)}'
+                : '当前震源 ${panel.latitude.toStringAsFixed(3)}, ${panel.longitude.toStringAsFixed(3)}  深${panel.depthKm.toStringAsFixed(0)}km'
+          : '${panel.label} ${panel.score.toStringAsFixed(2)}',
       Offset(rect.left + 8, rect.top + 6),
       color: panel.selected ? const Color(0xFFD92323) : Colors.black87,
-      size: large ? 17 : 12,
+      size: large ? (compactSquare ? 12.5 : 17) : 12,
       weight: FontWeight.w800,
+      maxWidth: rect.width - 16,
     );
     _drawText(
       canvas,
-      'rmse ${panel.rmse.toStringAsFixed(2)}  W${panel.weightedSampleCount}/${panel.samples.length}  ${panel.latitude.toStringAsFixed(2)}, ${panel.longitude.toStringAsFixed(2)}  深${panel.depthKm.toStringAsFixed(0)}km',
+      large
+          ? compactSquare
+                ? '深${panel.depthKm.toStringAsFixed(0)}km  误差 ${panel.errorLevel.toStringAsFixed(2)}  点RMSE ${panel.activeTimingRmse.toStringAsFixed(2)}s'
+                : '发生 ${_formatOriginTime(panel.originTime)}  搜索分值 ${panel.score.toStringAsFixed(3)}'
+          : '点RMSE ${panel.activeTimingRmse.toStringAsFixed(2)}s',
       Offset(rect.left + 8, rect.top + (large ? 28 : 18)),
       color: Colors.black87,
-      size: large ? 10 : 8,
+      size: large ? (compactSquare ? 9 : 10) : 8,
       weight: FontWeight.w600,
+      maxWidth: rect.width - 16,
     );
     if (large) {
       _drawText(
         canvas,
-        '距离(km)',
-        Offset(plot.right - 48, plot.bottom + 5),
-        color: Colors.black54,
-        size: 10,
+        compactSquare
+            ? '发生 ${_formatOriginTime(panel.originTime)}  t0 ${_formatOriginTime(panel.timeReference)}'
+            : '误差水平 ${panel.errorLevel.toStringAsFixed(2)}  点RMSE ${panel.activeTimingRmse.toStringAsFixed(2)}s  含未着RMSE ${panel.rmse.toStringAsFixed(2)}s',
+        Offset(rect.left + 8, rect.top + 42),
+        color: Colors.black87,
+        size: compactSquare ? 8.5 : 9,
         weight: FontWeight.w600,
+        maxWidth: rect.width - 16,
       );
       _drawText(
         canvas,
-        '时刻(s)',
-        Offset(plot.left - 2, rect.top + 22),
-        color: Colors.black54,
-        size: 10,
+        compactSquare
+            ? '分值${panel.score.toStringAsFixed(3)}  总RMSE${panel.rmse.toStringAsFixed(2)}s  未着${panel.inactivePenalty.toStringAsFixed(0)}  使用${panel.weightedSampleCount}站'
+            : '未着 ${panel.inactivePenalty.toStringAsFixed(2)}  使用 ${panel.weightedSampleCount}站',
+        Offset(rect.left + 8, rect.top + 56),
+        color: Colors.black87,
+        size: compactSquare ? 7.5 : 9,
         weight: FontWeight.w600,
+        maxWidth: rect.width - 16,
       );
+      if (compactSquare) {
+        _drawText(
+          canvas,
+          'P${panel.pWaveCount} S${panel.sWaveCount}  S系数${panel.waveCountPenaltyMultiplier.toStringAsFixed(2)}  权重${panel.weightSum.toStringAsFixed(1)}  尺度${panel.stationScale.toStringAsFixed(1)}',
+          Offset(rect.left + 8, rect.top + 70),
+          color: Colors.black87,
+          size: 7.5,
+          weight: FontWeight.w600,
+          maxWidth: rect.width - 16,
+        );
+      }
     }
+    _drawAxisValue(
+      canvas,
+      _axisValue(ext.minX),
+      Offset(plot.left, plot.bottom + 2),
+      align: TextAlign.left,
+      large: large,
+    );
+    _drawAxisValue(
+      canvas,
+      '${_axisValue(ext.maxX)}km',
+      Offset(plot.right, plot.bottom + 2),
+      align: TextAlign.right,
+      large: large,
+    );
+    _drawAxisValue(
+      canvas,
+      '${_axisValue(ext.minY)}s',
+      Offset(plot.left - 3, plot.bottom - (large ? 10 : 8)),
+      align: TextAlign.right,
+      large: large,
+    );
+    _drawAxisValue(
+      canvas,
+      '${_axisValue(ext.maxY)}s',
+      Offset(plot.left - 3, plot.top - 1),
+      align: TextAlign.right,
+      large: large,
+    );
+  }
+
+  String _formatOriginTime(DateTime? value) {
+    if (value == null) return '--:--:--.---';
+    String two(int number) => number.toString().padLeft(2, '0');
+    final millis = value.millisecond.toString().padLeft(3, '0');
+    return '${two(value.hour)}:${two(value.minute)}:${two(value.second)}.$millis';
+  }
+
+  void _drawStationResiduals(
+    Canvas canvas,
+    Rect plot,
+    ({double minX, double maxX, double minY, double maxY}) ext,
+    List<_NiedHypCurveSample> samples, {
+    required bool large,
+  }) {
+    final paint = Paint()
+      ..color = const Color(0xFF333333).withValues(alpha: 0.42)
+      ..strokeWidth = large ? 1.25 : 0.9
+      ..strokeCap = StrokeCap.round;
+    final predictedPaint = Paint()
+      ..color = const Color(0xFF333333).withValues(alpha: 0.55)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = large ? 0.9 : 0.7;
+    for (final sample in samples) {
+      if (sample.weight <= 0) continue;
+      final residualAlpha = (0.28 + sample.residualSeconds.abs() / 6.0).clamp(
+        0.28,
+        0.72,
+      );
+      paint.color = const Color(0xFF333333).withValues(alpha: residualAlpha);
+      final observed = _toPlot(
+        plot,
+        ext,
+        sample.distanceKm,
+        sample.observedSeconds,
+        clamp: false,
+      );
+      final predicted = _toPlot(
+        plot,
+        ext,
+        sample.distanceKm,
+        sample.predictedSeconds,
+        clamp: false,
+      );
+      canvas.drawLine(predicted, observed, paint);
+      canvas.drawCircle(predicted, large ? 1.7 : 1.2, predictedPaint);
+    }
+  }
+
+  void _drawSampleMarker(
+    Canvas canvas,
+    Offset point, {
+    required double radius,
+    required Color color,
+    required Color shadowColor,
+    required bool sWave,
+  }) {
+    if (!sWave) {
+      canvas.drawCircle(
+        point.translate(1.2, 1.2),
+        radius,
+        Paint()..color = shadowColor,
+      );
+      canvas.drawCircle(point, radius, Paint()..color = color);
+      return;
+    }
+    Path diamond(Offset center) => Path()
+      ..moveTo(center.dx, center.dy - radius - 1)
+      ..lineTo(center.dx + radius + 1, center.dy)
+      ..lineTo(center.dx, center.dy + radius + 1)
+      ..lineTo(center.dx - radius - 1, center.dy)
+      ..close();
+
+    canvas.drawPath(
+      diamond(point.translate(1.2, 1.2)),
+      Paint()..color = shadowColor,
+    );
+    canvas.drawPath(diamond(point), Paint()..color = color);
+    canvas.drawPath(
+      diamond(point),
+      Paint()
+        ..color = const Color(0xFFD93636)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2,
+    );
+  }
+
+  void _drawTravelTimeCurve(
+    Canvas canvas,
+    Rect plot,
+    ({double minX, double maxX, double minY, double maxY}) ext,
+    List<_NiedHypCurvePoint> curve, {
+    required Color color,
+    required double strokeWidth,
+  }) {
+    if (curve.length < 2) return;
+    final path = Path();
+    for (var i = 0; i < curve.length; i++) {
+      final point = _toPlot(
+        plot,
+        ext,
+        curve[i].distanceKm,
+        curve[i].seconds,
+        clamp: false,
+      );
+      if (i == 0) {
+        path.moveTo(point.dx, point.dy);
+      } else {
+        path.lineTo(point.dx, point.dy);
+      }
+    }
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = color
+        ..strokeWidth = strokeWidth
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round,
+    );
   }
 
   ({double minX, double maxX, double minY, double maxY}) _extent(
     _NiedHypCurvePanelData panel,
   ) {
-    var maxX = math.max(1.0, panel.distanceMaxKm);
-    var minY = panel.observedMinSeconds;
-    var maxY = panel.observedMaxSeconds;
-    for (final sample in panel.samples) {
-      maxX = math.max(maxX, sample.distanceKm);
-      minY = math.min(minY, sample.observedSeconds);
-      maxY = math.max(maxY, sample.observedSeconds);
+    return niedHypCurveDisplayExtent(
+      distanceMaxKm: panel.distanceMaxKm,
+      observedMinSeconds: panel.observedMinSeconds,
+      observedMaxSeconds: panel.observedMaxSeconds,
+    );
+  }
+
+  String _axisValue(double value) {
+    if ((value - value.roundToDouble()).abs() < 1e-6) {
+      return value.round().toString();
     }
-    if (!minY.isFinite || !maxY.isFinite || (maxY - minY).abs() < 1e-6) {
-      minY = -1;
-      maxY = 1;
-    }
-    final padY = math.max(0.8, (maxY - minY) * 0.12);
-    return (minX: 0, maxX: maxX * 1.04, minY: minY - padY, maxY: maxY + padY);
+    return value.toStringAsFixed(value.abs() >= 100 ? 1 : 2);
+  }
+
+  void _drawAxisValue(
+    Canvas canvas,
+    String text,
+    Offset anchor, {
+    required TextAlign align,
+    required bool large,
+  }) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+          color: Colors.black54,
+          fontSize: large ? 8 : 6.5,
+          fontWeight: FontWeight.w600,
+          fontFamily: 'JetBrainsMono',
+          letterSpacing: 0,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      textAlign: align,
+      maxLines: 1,
+    )..layout();
+    final dx = align == TextAlign.right ? anchor.dx - painter.width : anchor.dx;
+    painter.paint(canvas, Offset(dx, anchor.dy));
   }
 
   Offset _toPlot(
@@ -2264,12 +3303,7 @@ class _NiedHypCurvePainter extends CustomPainter {
   }
 
   Color _sampleColor(int? level) {
-    final v = level ?? -1;
-    if (v >= 22) return const Color(0xFFE53935);
-    if (v >= 16) return const Color(0xFFFF8F24);
-    if (v >= 10) return const Color(0xFFF4D83A);
-    if (v >= 6) return const Color(0xFF62F148);
-    return const Color(0xFF111111);
+    return KaShindoMarkerStyle.colorForLevel(level ?? -1);
   }
 
   void _drawText(
@@ -2279,6 +3313,7 @@ class _NiedHypCurvePainter extends CustomPainter {
     required Color color,
     required double size,
     required FontWeight weight,
+    double maxWidth = 360,
   }) {
     final painter = TextPainter(
       text: TextSpan(
@@ -2293,8 +3328,8 @@ class _NiedHypCurvePainter extends CustomPainter {
       ),
       textDirection: TextDirection.ltr,
       maxLines: 1,
-      ellipsis: '',
-    )..layout(maxWidth: 360);
+      ellipsis: '...',
+    )..layout(maxWidth: maxWidth);
     painter.paint(canvas, offset);
   }
 

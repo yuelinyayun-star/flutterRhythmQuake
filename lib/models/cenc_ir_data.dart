@@ -20,10 +20,17 @@ library;
 
 import 'dart:convert';
 
+enum CencIrDataSource { fan, nowQuake }
+
 /// CENC 烈度速报数据
 ///
 /// 包含一次地震事件的完整烈度速报信息。
 class CencIrData {
+  final CencIrDataSource source;
+
+  /// 数据源中的烈度速报编号。
+  final String reportId;
+
   /// 统一事件标识
   ///
   /// CENC 分配的唯一事件 ID，用于跨系统关联。
@@ -78,6 +85,8 @@ class CencIrData {
 
   /// 构造函数
   CencIrData({
+    this.source = CencIrDataSource.fan,
+    this.reportId = '',
     required this.uniEventId,
     required this.oriTime,
     required this.gmtCreate,
@@ -143,6 +152,8 @@ class CencIrData {
     }
 
     return CencIrData(
+      source: CencIrDataSource.fan,
+      reportId: json['id']?.toString() ?? '',
       uniEventId: json['uniEventId']?.toString() ?? '',
       oriTime:
           DateTime.tryParse(json['oriTime']?.toString() ?? '') ??
@@ -159,6 +170,53 @@ class CencIrData {
       contourGeojson: contour,
       instrumentIntensities: instruments,
     );
+  }
+
+  factory CencIrData.fromNowQuakeJson(Map<String, dynamic> json) {
+    final stations = <InstrumentIntensity>[];
+    final rawStations = json['stations'];
+    if (rawStations is List) {
+      for (final item in rawStations) {
+        if (item is Map) {
+          stations.add(
+            InstrumentIntensity.fromJson(Map<String, dynamic>.from(item)),
+          );
+        }
+      }
+    }
+
+    final eventId = json['eq_id']?.toString() ?? '';
+    return CencIrData(
+      source: CencIrDataSource.nowQuake,
+      reportId: eventId,
+      uniEventId: eventId,
+      oriTime: _parseUtc8Time(json['happen_time']),
+      gmtCreate: _parseUtc8Time(json['update_time']),
+      locName: json['hypocenter']?.toString() ?? '',
+      epiLon: _doubleValue(json['longitude']),
+      epiLat: _doubleValue(json['latitude']),
+      focDepth: _doubleValue(json['depth']),
+      subjectCodes: 'base-info,intensity-report,seismicity',
+      intensityInfoText: json['info']?.toString() ?? '',
+      instrumentIntensities: stations,
+    );
+  }
+
+  static DateTime _parseUtc8Time(dynamic raw) {
+    final value = raw?.toString().trim() ?? '';
+    if (value.isEmpty) {
+      return DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+    }
+    final normalized = value.replaceFirst(' ', 'T');
+    return DateTime.tryParse('$normalized+08:00') ??
+        DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+  }
+
+  static double _doubleValue(dynamic raw) {
+    if (raw is num) {
+      return raw.toDouble();
+    }
+    return double.tryParse(raw?.toString() ?? '') ?? 0;
   }
 }
 

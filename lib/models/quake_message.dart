@@ -1,3 +1,6 @@
+import 'cmt_moment_tensor.dart';
+import 'cmt_solution_metadata.dart';
+
 /// 地震消息数据模型
 ///
 /// 本模块定义了地震消息的数据结构和数据源类型枚举。
@@ -145,6 +148,27 @@ enum QuakeSourceType {
   /// 云南地震局
   yunnan,
 
+  /// BMKG - 印度尼西亚气象气候与地球物理局
+  bmkg,
+
+  /// GeoNet - 新西兰地震信息
+  geonet,
+
+  /// TMD - 泰国气象局
+  tmd,
+
+  /// INGV - 意大利国家地球物理与火山学研究所
+  ingv,
+
+  /// NRCan - 加拿大自然资源部
+  nrcan,
+
+  /// MMD - 马来西亚气象局
+  mmd,
+
+  /// PHIVOLCS - 菲律宾火山与地震研究所
+  phivolcs,
+
   /// CENC 烈度速报
   ///
   /// 中国地震台网中心发布的仪器烈度速报数据。
@@ -156,6 +180,33 @@ enum QuakeSourceType {
   /// FSSN 地震学部反演的矩心矩张量解(Centroid Moment Tensor)。
   /// 包含断层面参数(nodalPlane)和矩张量分量，用于绘制震源球。
   fssnCmt,
+
+  /// CENC-CMT - 中国地震台网中心震源机制解
+  ///
+  /// CENC 反演的矩心矩张量解，来源于 data.earthquake.cn 大震震源机制 CMT 产品。
+  /// 包含断层面参数(nodalPlane)与矩心深度(centroidDepth)，用于绘制震源球。
+  cencCmt,
+
+  /// USGS-CMT - 美国地质调查局震源机制解
+  ///
+  /// USGS 反演的矩心矩张量解，来源于 FDSN API 的 moment-tensor 产品。
+  /// 包含断层面参数(nodalPlane)与矩心深度(centroidDepth)，用于绘制震源球。
+  usgsCmt,
+
+  /// JMA CMT 解（精査後）。
+  /// 気象庁の CMT 解，翌日以后发布，仅人工复核。
+  /// 包含断层面参数(nodalPlane)，列表页无矩心深度。
+  jmaCmt,
+
+  /// F-net CMT 解（震源机制解）。
+  /// 防災科学技術研究所 F-net，震后约10分钟自动发布，工作日人工复核。
+  /// 列表页含矩心深度和Mw，不含断层面参数。
+  fnetCmt,
+
+  /// Hi-net AQUA CMT 解（震源机制解）。
+  /// 防災科学技術研究所 Hi-net AQUA 系统，震后约100-600秒自动发布。
+  /// 目录页包含完整 CMT 参数（断层面参数、矩心深度、Mw）。
+  hinetAquaCmt,
 }
 
 /// QuakeSourceType 扩展方法
@@ -222,10 +273,34 @@ extension QuakeSourceTypeExtension on QuakeSourceType {
         return '北京地震局';
       case QuakeSourceType.yunnan:
         return '云南地震局';
+      case QuakeSourceType.bmkg:
+        return '印度尼西亚气象气候与地球物理局';
+      case QuakeSourceType.geonet:
+        return '新西兰 GeoNet';
+      case QuakeSourceType.tmd:
+        return '泰国气象局';
+      case QuakeSourceType.ingv:
+        return '意大利国家地球物理与火山学研究所';
+      case QuakeSourceType.nrcan:
+        return '加拿大自然资源部';
+      case QuakeSourceType.mmd:
+        return '马来西亚气象局';
+      case QuakeSourceType.phivolcs:
+        return '菲律宾火山与地震研究所';
       case QuakeSourceType.cencIr:
         return '中国地震台网烈度速报';
       case QuakeSourceType.fssnCmt:
         return 'FSSN 震源机制解';
+      case QuakeSourceType.cencCmt:
+        return 'CENC 震源机制解';
+      case QuakeSourceType.usgsCmt:
+        return 'USGS 震源机制解';
+      case QuakeSourceType.jmaCmt:
+        return 'JMA 震源机制解';
+      case QuakeSourceType.fnetCmt:
+        return 'F-net 震源机制解';
+      case QuakeSourceType.hinetAquaCmt:
+        return 'Hi-net AQUA 震源机制解';
     }
   }
 
@@ -289,10 +364,34 @@ extension QuakeSourceTypeExtension on QuakeSourceType {
         return '北京地震局 地震情报';
       case QuakeSourceType.yunnan:
         return '云南地震局 地震情报';
+      case QuakeSourceType.bmkg:
+        return '印度尼西亚气象气候与地球物理局 地震情报';
+      case QuakeSourceType.geonet:
+        return '新西兰 GeoNet 地震情报';
+      case QuakeSourceType.tmd:
+        return '泰国气象局 地震情报';
+      case QuakeSourceType.ingv:
+        return '意大利国家地球物理与火山学研究所 地震情报';
+      case QuakeSourceType.nrcan:
+        return '加拿大自然资源部 地震情报';
+      case QuakeSourceType.mmd:
+        return '马来西亚气象局 地震情报';
+      case QuakeSourceType.phivolcs:
+        return '菲律宾火山与地震研究所 地震情报';
       case QuakeSourceType.cencIr:
         return '中国地震台网烈度速报';
       case QuakeSourceType.fssnCmt:
         return 'FSSN 震源机制解';
+      case QuakeSourceType.cencCmt:
+        return 'CENC 震源机制解';
+      case QuakeSourceType.usgsCmt:
+        return 'USGS 震源机制解';
+      case QuakeSourceType.jmaCmt:
+        return 'JMA 震源机制解';
+      case QuakeSourceType.fnetCmt:
+        return 'F-net 震源机制解';
+      case QuakeSourceType.hinetAquaCmt:
+        return 'Hi-net AQUA 震源机制解';
     }
   }
 }
@@ -459,6 +558,18 @@ class QuakeMessage {
   /// FSSN-CMT 震源机制解，格式如 "340/86/122"。
   final String? nodalPlane2;
 
+  /// 矩心深度（km）
+  ///
+  /// CMT 反演产出的矩心深度，与 [depth]（震源深度，速报值）区分。
+  /// UI 显示用 [depth]，beachball 下方标注用此字段。
+  final double? centroidDepth;
+
+  /// Optional CMT tensor in North-East-Down coordinates for the focal sphere.
+  final CmtMomentTensor? momentTensor;
+
+  /// Optional raw CMT solution metadata. It is retained for source fidelity only.
+  final CmtSolutionMetadata? cmtMetadata;
+
   // ═══════════════════════════════════════════════════════════════════════════
   // EEW 特有字段
   // ═══════════════════════════════════════════════════════════════════════════
@@ -520,6 +631,9 @@ class QuakeMessage {
     this.province,
     this.nodalPlane1,
     this.nodalPlane2,
+    this.centroidDepth,
+    this.momentTensor,
+    this.cmtMetadata,
     this.isWarn = false,
     this.isFinal = false,
     this.isCanceled = false,
@@ -554,6 +668,9 @@ class QuakeMessage {
     String? province,
     String? nodalPlane1,
     String? nodalPlane2,
+    double? centroidDepth,
+    CmtMomentTensor? momentTensor,
+    CmtSolutionMetadata? cmtMetadata,
     bool? isWarn,
     bool? isFinal,
     bool? isCanceled,
@@ -584,6 +701,9 @@ class QuakeMessage {
       province: province ?? this.province,
       nodalPlane1: nodalPlane1 ?? this.nodalPlane1,
       nodalPlane2: nodalPlane2 ?? this.nodalPlane2,
+      centroidDepth: centroidDepth ?? this.centroidDepth,
+      momentTensor: momentTensor ?? this.momentTensor,
+      cmtMetadata: cmtMetadata ?? this.cmtMetadata,
       isWarn: isWarn ?? this.isWarn,
       isFinal: isFinal ?? this.isFinal,
       isCanceled: isCanceled ?? this.isCanceled,
@@ -623,6 +743,9 @@ class QuakeMessage {
       'province': province,
       'nodalPlane1': nodalPlane1,
       'nodalPlane2': nodalPlane2,
+      'centroidDepth': centroidDepth,
+      'momentTensor': momentTensor?.toMap(),
+      'cmtMetadata': cmtMetadata?.toMap(),
       'isWarn': isWarn ? 1 : 0,
       'isFinal': isFinal ? 1 : 0,
       'isCanceled': isCanceled ? 1 : 0,
@@ -670,6 +793,13 @@ class QuakeMessage {
       province: map['province'],
       nodalPlane1: map['nodalPlane1'],
       nodalPlane2: map['nodalPlane2'],
+      centroidDepth: map['centroidDepth'],
+      momentTensor: map['momentTensor'] is Map
+          ? CmtMomentTensor.fromNedMap(map['momentTensor'] as Map)
+          : null,
+      cmtMetadata: map['cmtMetadata'] is Map
+          ? CmtSolutionMetadata.fromMap(map['cmtMetadata'] as Map)
+          : null,
       isWarn: map['isWarn'] == 1,
       isFinal: map['isFinal'] == 1,
       isCanceled: map['isCanceled'] == 1,

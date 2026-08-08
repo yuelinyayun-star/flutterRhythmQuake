@@ -74,9 +74,9 @@ class TtsService {
   AudioPlayer? _windowsTtsPlayer;
   List<TtsVoiceOption> _voices = const [TtsVoiceOption.systemDefault];
 
-  bool enabled = true;
-  bool eventEnabled = true;
-  bool countdownEnabled = true;
+  bool enabled = false;
+  bool eventEnabled = false;
+  bool countdownEnabled = false;
   bool updateEnabled = false;
   String voiceId = '';
   double speechRate = 0.58;
@@ -93,9 +93,9 @@ class TtsService {
     _initialized = true;
 
     final prefs = await SharedPreferences.getInstance();
-    enabled = prefs.getBool(enabledKey) ?? true;
-    eventEnabled = prefs.getBool(eventEnabledKey) ?? true;
-    countdownEnabled = prefs.getBool(countdownEnabledKey) ?? true;
+    enabled = prefs.getBool(enabledKey) ?? false;
+    eventEnabled = prefs.getBool(eventEnabledKey) ?? false;
+    countdownEnabled = prefs.getBool(countdownEnabledKey) ?? false;
     updateEnabled = prefs.getBool(updateEnabledKey) ?? false;
     voiceId = prefs.getString(voiceIdKey) ?? '';
     speechRate = prefs.getDouble(speechRateKey) ?? 0.58;

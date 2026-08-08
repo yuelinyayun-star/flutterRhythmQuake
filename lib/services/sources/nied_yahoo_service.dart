@@ -21,21 +21,27 @@ class NiedYahooService {
       'https://weather-kyoshin.east.edge.storage-yahoo.jp/RealTimeData';
   static const int _defaultRealtimeDelayMs = 1200;
   static const int _maxRealtimeDelayMs = 3000;
+  static const Map<String, String> _noCacheHeaders = <String, String>{
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache',
+  };
 
   final _stationController = StreamController<List<NiedStation>?>.broadcast();
   final _statusController = StreamController<bool>.broadcast();
 
   Stream<List<NiedStation>?> get stationStream => _stationController.stream;
   Stream<bool> get statusStream => _statusController.stream;
+  final ValueNotifier<DateTime?> dataFrameTime = ValueNotifier(null);
 
   void Function(bool connected)? onStatusChanged;
 
   List<NiedStation>? _stations;
   String? _siteConfigId;
   bool _isRunning = false;
-  bool _isTicking = false;
   bool _stationListReloading = false;
   Timer? _timer;
+  int _runGeneration = 0;
+  int? _tickingGeneration;
   String? _lastFetchedTime;
   DateTime? _lastFrameTime;
   DateTime? _lastReplayTickAt;
@@ -57,19 +63,28 @@ class NiedYahooService {
     _errorCount = 0;
     _configMismatchCount = 0;
     _lastFrameTime = null;
+    dataFrameTime.value = null;
     _lastDelayDecayAt = null;
     _realtimeDelayMs = _defaultRealtimeDelayMs;
-    _fetchStationList();
-    _timer = Timer.periodic(const Duration(milliseconds: 500), (_) => _tick());
+    _runGeneration++;
+    final generation = _runGeneration;
+    unawaited(_fetchStationList(generation: generation));
+    _timer = Timer.periodic(
+      const Duration(milliseconds: 500),
+      (_) => unawaited(_tick()),
+    );
+    unawaited(_tick());
   }
 
   void stop() {
+    _isRunning = false;
+    _runGeneration++;
     _timer?.cancel();
     _timer = null;
-    _isRunning = false;
-    _isTicking = false;
+    _tickingGeneration = null;
     _stationListReloading = false;
     _lastFrameTime = null;
+    dataFrameTime.value = null;
     _lastDelayDecayAt = null;
     _realtimeDelayMs = _defaultRealtimeDelayMs;
     onStatusChanged?.call(false);
@@ -77,6 +92,7 @@ class NiedYahooService {
 
   void dispose() {
     stop();
+    dataFrameTime.value = null;
     _stationController.close();
     _statusController.close();
   }
@@ -86,23 +102,27 @@ class NiedYahooService {
     _replayCursorJst = config.enabled ? config.startJst : null;
     _lastFetchedTime = null;
     _lastFrameTime = null;
+    dataFrameTime.value = null;
     _lastReplayTickAt = null;
     _lastDelayDecayAt = null;
     if (!config.enabled) {
       _realtimeDelayMs = _defaultRealtimeDelayMs;
     }
+    _restartRunningRequests();
   }
 
   Future<void> _fetchStationList({
     bool forceRebuild = false,
     bool publish = true,
+    required int generation,
   }) async {
     try {
       final url =
           '$_stationListUrl?time=${DateTime.now().millisecondsSinceEpoch}';
       final response = await http
-          .get(Uri.parse(url))
+          .get(Uri.parse(url), headers: _noCacheHeaders)
           .timeout(const Duration(seconds: 10));
+      if (!_isCurrentRun(generation)) return;
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         final siteConfigId = data['siteConfigId'] as String?;
@@ -113,6 +133,7 @@ class NiedYahooService {
           if (publish && _stations != null) {
             _stationController.add(List.unmodifiable(_stations!));
           }
+          unawaited(_tick());
         } else if (items == null) {
           debugPrint('$_tag: ⚠ 测站列表 items 为 null');
         } else {
@@ -122,6 +143,7 @@ class NiedYahooService {
         debugPrint('$_tag: ⚠ 测站列表获取失败 HTTP ${response.statusCode}');
       }
     } catch (e) {
+      if (!_isCurrentRun(generation)) return;
       debugPrint('$_tag: ✖ 测站列表获取异常: $e');
     }
   }
@@ -162,7 +184,7 @@ class NiedYahooService {
             ),
             network: (s['network'] as String?) ?? 'K-NET',
             prefecture: (s['pref'] as String?) ?? '',
-            expireSeconds: 30,
+            expireSeconds: NiedStation.kaExpireSeconds,
           ),
         );
       } else {
@@ -177,7 +199,7 @@ class NiedYahooService {
             ),
             network: 'K-NET',
             prefecture: '',
-            expireSeconds: 30,
+            expireSeconds: NiedStation.kaExpireSeconds,
           ),
         );
       }
@@ -189,7 +211,9 @@ class NiedYahooService {
   Future<void> _reloadStationListAfterConfigMismatch({
     required String? expected,
     required String? actual,
+    required int generation,
   }) async {
+    if (!_isCurrentRun(generation)) return;
     if (_stationListReloading) return;
     final now = DateTime.now();
     final lastReloadAt = _lastStationListReloadAt;
@@ -212,21 +236,27 @@ class NiedYahooService {
       _siteConfigId = null;
       _lastFrameTime = null;
       _lastFetchedTime = null;
+      dataFrameTime.value = null;
       _lastDelayDecayAt = null;
       _realtimeDelayMs = _defaultRealtimeDelayMs;
       _stationController.add(const <NiedStation>[]);
-      await _fetchStationList(forceRebuild: true);
+      await _fetchStationList(forceRebuild: true, generation: generation);
+      if (!_isCurrentRun(generation)) return;
       if (_stations != null && _stations!.isNotEmpty) {
         _configMismatchCount = 0;
       }
     } finally {
-      _stationListReloading = false;
+      if (_isCurrentRun(generation)) {
+        _stationListReloading = false;
+      }
     }
   }
 
   Future<void> _tick() async {
-    if (_isTicking || _stations == null || _stations!.isEmpty) return;
-    _isTicking = true;
+    if (!_isRunning || _stations == null || _stations!.isEmpty) return;
+    final generation = _runGeneration;
+    if (_tickingGeneration == generation) return;
+    _tickingGeneration = generation;
     try {
       if (_replayConfig.enabled && _replayConfig.startJst != null) {
         final now = DateTime.now();
@@ -246,7 +276,7 @@ class NiedYahooService {
           return;
         }
         _lastFetchedTime = timeKey;
-        await _fetchReplayRealtimeData(timeKey);
+        await _fetchReplayRealtimeData(timeKey, generation: generation);
         return;
       }
 
@@ -270,8 +300,9 @@ class NiedYahooService {
 
       try {
         final response = await http
-            .get(Uri.parse(url))
+            .get(Uri.parse(url), headers: _noCacheHeaders)
             .timeout(const Duration(seconds: 5));
+        if (!_isCurrentRun(generation)) return;
 
         if (response.statusCode != 200) {
           _errorCount++;
@@ -304,6 +335,7 @@ class NiedYahooService {
           await _reloadStationListAfterConfigMismatch(
             expected: _siteConfigId,
             actual: configId,
+            generation: generation,
           );
           return;
         }
@@ -331,17 +363,17 @@ class NiedYahooService {
         }
         _applyFrameGap(stamp);
         _lastFetchedTime = timeKey;
+        dataFrameTime.value = stamp;
         _successCount++;
         for (int i = 0; i < _stations!.length && i < intensityStr.length; i++) {
           final charCode = intensityStr.codeUnitAt(i);
           final detectLevel = charCode - 100;
-          final level = JpShindoScale.levelFromKanameishiLevel(detectLevel);
           final station = _stations![i];
-          station.update(level, newDetectLevel: detectLevel);
           station
             ..lastUpdate = stamp
             ..lastDataTime = stamp
             ..lastReceivedAt = DateTime.now();
+          station.update(detectLevel);
         }
 
         _logZeroOrAboveStations(dataTime ?? timeKey);
@@ -350,28 +382,33 @@ class NiedYahooService {
         _statusController.add(true);
         onStatusChanged?.call(true);
       } catch (e) {
+        if (!_isCurrentRun(generation)) return;
         _errorCount++;
         if (_errorCount <= 5 || _errorCount % 20 == 0) {
           debugPrint(
             '$_tag: ✖ tick 异常: $e (tick=$_tickCount, 错误=$_errorCount)',
           );
         }
-      } finally {
-        _isTicking = false;
       }
     } finally {
-      _isTicking = false;
+      if (_tickingGeneration == generation) {
+        _tickingGeneration = null;
+      }
     }
   }
 
-  Future<void> _fetchReplayRealtimeData(String timeKey) async {
+  Future<void> _fetchReplayRealtimeData(
+    String timeKey, {
+    required int generation,
+  }) async {
     final ymd = timeKey.substring(0, 8);
     final url = '$_realtimeDataBaseUrl/$ymd/$timeKey.json';
 
     try {
       final response = await http
-          .get(Uri.parse(url))
+          .get(Uri.parse(url), headers: _noCacheHeaders)
           .timeout(const Duration(seconds: 5));
+      if (!_isCurrentRun(generation)) return;
 
       if (response.statusCode != 200) {
         _errorCount++;
@@ -415,16 +452,16 @@ class NiedYahooService {
         return;
       }
       _applyFrameGap(stamp);
+      dataFrameTime.value = stamp;
       _successCount++;
       for (int i = 0; i < _stations!.length && i < intensityStr.length; i++) {
         final detectLevel = intensityStr.codeUnitAt(i) - 100;
-        final level = JpShindoScale.levelFromKanameishiLevel(detectLevel);
         final station = _stations![i];
-        station.update(level, newDetectLevel: detectLevel);
         station
           ..lastUpdate = stamp
           ..lastDataTime = stamp
           ..lastReceivedAt = DateTime.now();
+        station.update(detectLevel);
       }
 
       _logZeroOrAboveStations(timeKey);
@@ -433,6 +470,7 @@ class NiedYahooService {
       onStatusChanged?.call(true);
       await _waitForReplaySourceBridgeBackpressure();
     } catch (e) {
+      if (!_isCurrentRun(generation)) return;
       _errorCount++;
       debugPrint('$_tag: Replay error: $e');
     }
@@ -461,10 +499,19 @@ class NiedYahooService {
   }
 
   bool _shouldProcessFrame(DateTime stamp) {
-    final previous = _lastFrameTime;
-    if (previous == null) return true;
-    return stamp.isAfter(previous);
+    return _isNewerFrame(stamp, _lastFrameTime);
   }
+
+  static bool _isNewerFrame(DateTime stamp, DateTime? previous) =>
+      previous == null || stamp.isAfter(previous);
+
+  @visibleForTesting
+  static bool isNewerFrameForTest(DateTime stamp, DateTime? previous) =>
+      _isNewerFrame(stamp, previous);
+
+  @visibleForTesting
+  static Map<String, String> get realtimeRequestHeadersForTest =>
+      _noCacheHeaders;
 
   void _applyFrameGap(DateTime stamp) {
     final stations = _stations;
@@ -501,21 +548,6 @@ class NiedYahooService {
           NiedStation.maxExpireSeconds,
         );
       }
-      station.recentDetectLevel.insertAll(0, noData);
-      if (station.recentDetectLevel.length > NiedStation.maxExpireSeconds) {
-        station.recentDetectLevel = station.recentDetectLevel.sublist(
-          0,
-          NiedStation.maxExpireSeconds,
-        );
-      }
-
-      if (station.expireSeconds > station.defaultExpireSeconds) {
-        final nextExpire = station.expireSeconds - missingFrames;
-        station.expireSeconds = nextExpire < station.defaultExpireSeconds
-            ? station.defaultExpireSeconds
-            : nextExpire;
-      }
-
       if (stale) {
         station.isActive = false;
       }
@@ -549,6 +581,16 @@ class NiedYahooService {
     );
   }
 
+  bool _isCurrentRun(int generation) =>
+      _isRunning && _runGeneration == generation;
+
+  void _restartRunningRequests() {
+    if (!_isRunning) return;
+    _runGeneration++;
+    _tickingGeneration = null;
+    unawaited(_tick());
+  }
+
   String _formatJst(DateTime jstTime) {
     final ymd =
         '${jstTime.year}${jstTime.month.toString().padLeft(2, '0')}${jstTime.day.toString().padLeft(2, '0')}';
@@ -558,23 +600,17 @@ class NiedYahooService {
   }
 
   void _logZeroOrAboveStations(String dataTime) {
+    if (!kDebugMode) return;
     final stations = _stations;
     if (stations == null) return;
 
-    final detected =
-        stations
-            .where(
-              (s) =>
-                  s.level >= 0 &&
-                  JpShindoScale.rawShindoFromLevel(s.level) >= 0,
-            )
-            .toList()
-          ..sort((a, b) => b.level.compareTo(a.level));
+    final detected = stations.where((s) => s.level >= 7).toList()
+      ..sort((a, b) => b.level.compareTo(a.level));
     if (detected.isEmpty) return;
 
     final list = detected
         .map((s) {
-          final rawShindo = JpShindoScale.rawShindoFromLevel(s.level);
+          final rawShindo = JpShindoScale.rawShindoFromKanameishiLevel(s.level);
           final name = s.name.isNotEmpty ? s.name : s.code;
           return '${s.code}/$name:${rawShindo.toStringAsFixed(2)}';
         })
@@ -585,7 +621,7 @@ class NiedYahooService {
   }
 
   static double levelToShindo(int lvl) {
-    return JpShindoScale.displayShindoFromLevel(lvl);
+    return JpShindoScale.rawShindoFromKanameishiLevel(lvl);
   }
 
   DateTime? _parseYahooDataTime(String? value) {

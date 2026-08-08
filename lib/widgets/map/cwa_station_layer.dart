@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../../services/sources/cwa_station_service.dart';
+import 'ka_shindo_marker_style.dart';
 import 'station_dot_painter_layer.dart';
 
 class CwaStationLayer extends StatefulWidget {
   final List<CwaStation>? stations;
   final bool hideGrid;
   final bool blinkOn;
+  final bool displayShindo0;
   final void Function(List<LatLng> centers)? onGridCellsChanged;
 
   const CwaStationLayer({
@@ -15,6 +17,7 @@ class CwaStationLayer extends StatefulWidget {
     this.stations,
     this.hideGrid = false,
     this.blinkOn = true,
+    this.displayShindo0 = false,
     this.onGridCellsChanged,
   });
 
@@ -26,34 +29,6 @@ class _CwaStationLayerState extends State<CwaStationLayer> {
   bool _hadAlertStations = false;
   List<double> _gridDecimal = const [0.0, 0.0];
   final Map<String, _CwaGridCell> _heldGridCells = {};
-
-  static const List<Color> _cwaColors = [
-    Color(0xFF0005D0),
-    Color(0xFF004BF8),
-    Color(0xFF009EF8),
-    Color(0xFF79E5FD),
-    Color(0xFF49E9AD),
-    Color(0xFF44FA34),
-    Color(0xFFBEFF0C),
-    Color(0xFFFFF000),
-    Color(0xFFFF9300),
-    Color(0xFFFC5235),
-    Color(0xFFB720E9),
-  ];
-
-  static const List<String> _cwaLabels = [
-    '0',
-    '0',
-    '0',
-    '0',
-    '1',
-    '2',
-    '3',
-    '4',
-    '5弱',
-    '5強',
-    '7',
-  ];
 
   static const Color _idleColor = Color(0x804466AA);
 
@@ -73,7 +48,7 @@ class _CwaStationLayerState extends State<CwaStationLayer> {
     if (camera != null) zoom = camera.zoom;
 
     final overview = _overviewFactor(zoom);
-    final idleDotSize = (1.0 + overview * 4.0).clamp(1.0, 5.0);
+    final idleDotSize = (0.9 + (zoom - 3) * 0.95).clamp(0.9, 7.5);
     final idleBorderWidth = (0.35 + overview * 0.55).clamp(0.35, 0.9);
 
     final alertStations = data.where((s) => s.hasAlert).toList();
@@ -91,19 +66,36 @@ class _CwaStationLayerState extends State<CwaStationLayer> {
 
     for (var station in data) {
       final intensity = station.currentIntensity;
-      final active = station.work && intensity >= 0;
+      final level = CwaStationService.gridLevelFromInstShindo(intensity);
+      final showMarker = KaShindoMarkerStyle.shouldShowMarker(
+        level: level,
+        zoom: zoom,
+        displayShindo0: widget.displayShindo0,
+      );
 
-      if (active) {
+      if (showMarker) {
         iconMarkers.add(
           Marker(
-            width: _getSize(intensity),
-            height: _getSize(intensity),
+            width: _getSize(level),
+            height: _getSize(level),
             point: station.coordinate,
             child: _CwaIntensityMarker(
-              color: _getColor(intensity),
-              label: _getLabel(intensity),
-              intensity: intensity,
+              color: KaShindoMarkerStyle.colorForLevel(level),
+              label: KaShindoMarkerStyle.labelForLevel(level),
+              level: level,
             ),
+          ),
+        );
+      } else if (level >= 0) {
+        final dotColor = KaShindoMarkerStyle.colorForLevel(level);
+        dots.add(
+          StationDot(
+            coordinate: station.coordinate,
+            color: dotColor,
+            radius: idleDotSize / 2,
+            fillOpacity: 0.14 + overview * 0.22,
+            borderOpacity: 0.45 + overview * 0.45,
+            borderWidth: idleBorderWidth,
           ),
         );
       } else {
@@ -223,17 +215,7 @@ class _CwaStationLayerState extends State<CwaStationLayer> {
     return (fraction * 10).roundToDouble() / 10;
   }
 
-  Color _getColor(double intensity) {
-    final idx = (intensity.round() + 3).clamp(0, _cwaColors.length - 1);
-    return _cwaColors[idx];
-  }
-
-  String _getLabel(double intensity) {
-    final idx = (intensity.round() + 3).clamp(0, _cwaLabels.length - 1);
-    return _cwaLabels[idx];
-  }
-
-  double _getSize(double intensity) {
+  double _getSize(int level) {
     return 14.0;
   }
 
@@ -245,17 +227,17 @@ class _CwaStationLayerState extends State<CwaStationLayer> {
 class _CwaIntensityMarker extends StatelessWidget {
   final Color color;
   final String label;
-  final double intensity;
+  final int level;
 
   const _CwaIntensityMarker({
     required this.color,
     required this.label,
-    required this.intensity,
+    required this.level,
   });
 
   @override
   Widget build(BuildContext context) {
-    final isHigh = intensity >= 5;
+    final isHigh = level >= 17;
 
     return Container(
       decoration: BoxDecoration(
@@ -270,8 +252,8 @@ class _CwaIntensityMarker extends StatelessWidget {
         child: Text(
           label,
           style: TextStyle(
-            color: intensity >= 4 ? Colors.black : Colors.white,
-            fontSize: intensity >= 5 ? 8 : 7,
+            color: KaShindoMarkerStyle.foregroundForLevel(level),
+            fontSize: level >= 16 ? 8 : 7,
             fontWeight: FontWeight.bold,
             height: 1.0,
           ),

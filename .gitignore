@@ -44,6 +44,19 @@ migrate_working_dir/
 /tmp_*
 /build_output.txt
 
+# Local research inputs and generated diagnostics
+/.workbuddy/
+/artifacts/
+/references/
+/eq_report*.json
+/trem_report.json
+
+# Local server packaging artifacts
+/server/*.zip
+/server/**/*.zip
+/server/**/.venv/
+/server/**/__pycache__/
+
 # Symbolication related
 app.*.symbols
 

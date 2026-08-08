@@ -111,7 +111,9 @@ class FdsnStationService {
   List<FdsnStation> get stations => _stations;
 
   bool _running = false;
-  bool _isLoading = false;
+  int _runGeneration = 0;
+  int? _loadingGeneration;
+  http.Client? _client;
   Timer? _refreshTimer;
 
   void Function(bool connected)? onStatusChanged;
@@ -121,17 +123,27 @@ class FdsnStationService {
   }) async {
     if (_running) return;
     _running = true;
-    await refresh();
-    _refreshTimer = Timer.periodic(refreshInterval, (_) => refresh());
+    final generation = ++_runGeneration;
+    _client = http.Client();
+    await _refresh(generation);
+    if (!_isCurrentRun(generation)) return;
+    _refreshTimer = Timer.periodic(
+      refreshInterval,
+      (_) => unawaited(refresh()),
+    );
   }
 
-  Future<void> refresh() async {
-    if (_isLoading) return;
-    _isLoading = true;
+  Future<void> refresh() => _refresh(_runGeneration);
+
+  Future<void> _refresh(int generation) async {
+    final client = _client;
+    if (!_isCurrentRun(generation) || client == null) return;
+    if (_loadingGeneration == generation) return;
+    _loadingGeneration = generation;
     onStatusChanged?.call(false);
     try {
       final uri = _buildUri();
-      final response = await http
+      final response = await client
           .get(
             uri,
             headers: const {
@@ -140,6 +152,7 @@ class FdsnStationService {
             },
           )
           .timeout(const Duration(seconds: 20));
+      if (!_isCurrentRun(generation) || !identical(client, _client)) return;
 
       if (response.statusCode != 200) {
         throw Exception('HTTP ${response.statusCode}');
@@ -150,19 +163,29 @@ class FdsnStationService {
       onStatusChanged?.call(true);
       debugPrint('FDSN ${endpoint.name}: ${_stations.length} stations loaded');
     } catch (e) {
+      if (!_isCurrentRun(generation) || !identical(client, _client)) return;
       debugPrint('FDSN ${endpoint.name}: station load failed: $e');
       onStatusChanged?.call(false);
     } finally {
-      _isLoading = false;
+      if (_loadingGeneration == generation) {
+        _loadingGeneration = null;
+      }
     }
   }
 
   void stop() {
     _running = false;
+    _runGeneration++;
     _refreshTimer?.cancel();
     _refreshTimer = null;
+    _loadingGeneration = null;
+    _client?.close();
+    _client = null;
     onStatusChanged?.call(false);
   }
+
+  bool _isCurrentRun(int generation) =>
+      _running && _runGeneration == generation;
 
   void dispose() {
     stop();

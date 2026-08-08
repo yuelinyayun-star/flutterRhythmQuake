@@ -34,8 +34,7 @@ void main() {
       expireSeconds: 10,
     );
     station
-      ..level = level
-      ..detectLevel = detectLevel
+      ..level = detectLevel
       ..continuousShindo = shindo
       ..updateGifObservation(
         NiedGifObservation(layer: NiedGifLayer.realtimeShindo, shindo: shindo),
@@ -43,11 +42,14 @@ void main() {
       ..activity = activity
       ..ascend = ascend
       ..isActive = isActive
+      ..triggerStamp = isActive
+          ? DateTime(2026, 6, 10, 12, 0, 0).millisecondsSinceEpoch
+          : 0
       ..lastUpdate = DateTime(2026, 6, 10, 12, 0, 0);
     return station;
   }
 
-  test('creates active NIED event and computes baseline estimate', () {
+  test('creates active NIED event without bypassing KA worker input', () {
     final stations = [
       buildStation(code: 'AAA001', lat: 35.0, lng: 140.0, shindo: 0.3),
       buildStation(code: 'AAA002', lat: 35.2, lng: 140.2, shindo: 0.5),
@@ -73,7 +75,7 @@ void main() {
       event.records.first.provenance[StationValueType.jmaShindo]?.layerId,
       'jma',
     );
-    expect(event.estimate, isNotNull);
+    expect(event.estimate, isNull);
   });
 
   test('uses detection event id for source-estimation event id', () {
@@ -116,7 +118,7 @@ void main() {
     expect(record.provenance[StationValueType.pga]?.layerId, 'acmap');
   });
 
-  test('uses detectLevel midpoint when gif observation is absent', () {
+  test('uses KA level midpoint when gif observation is absent', () {
     final station =
         NiedStation(
             id: 1,
@@ -127,8 +129,7 @@ void main() {
             prefecture: 'Test',
             expireSeconds: 10,
           )
-          ..level = 12
-          ..detectLevel = 11
+          ..level = 11
           ..activity = 6
           ..ascend = 2
           ..isActive = true
@@ -144,6 +145,8 @@ void main() {
     final event = tracker.currentNiedEvent.value;
     expect(event, isNotNull);
     expect(event!.records.single.lastValue, closeTo(2.25, 1e-9));
+    expect(event.records.single.lastRawLevel, 11);
+    expect(event.records.single.lastDetectLevel, 11);
     expect(event.estimate, isNull);
   });
 
@@ -165,7 +168,6 @@ void main() {
             ..isActive = false
             ..activity = 0
             ..ascend = 0
-            ..detectLevel = -1
             ..level = -1
             ..lastUpdate = DateTime(2026, 6, 10, 12, 0, 5);
           return station;

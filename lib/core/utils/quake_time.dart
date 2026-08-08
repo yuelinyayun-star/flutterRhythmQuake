@@ -3,38 +3,38 @@ import '../../models/unified_quake_data.dart';
 import '../../services/ntp_service.dart';
 
 /// 地震时间处理工具类
-/// 
+///
 /// 该类提供地震事件时间相关的处理功能。
 /// 主要处理不同数据源的时间偏移和显示问题。
-/// 
+///
 /// 主要功能：
 /// - 判断数据源是否为日本数据源
 /// - 获取目标时区偏移
 /// - 标准化发震时刻
 /// - 格式化显示时间
-/// 
+///
 /// 时区说明：
 /// - UTC+8: 中国标准时间 (北京时间)
 /// - UTC+9: 日本标准时间 (东京时间)
 class QuakeTime {
   /// UTC+8 时区偏移 (中国标准时间)
   static const Duration _utc8 = Duration(hours: 8);
-  
+
   /// UTC+9 时区偏移 (日本标准时间)
   static const Duration _utc9 = Duration(hours: 9);
 
   /// 判断数据源是否为日本数据源
-  /// 
+  ///
   /// 日本数据源包括:
   /// - wolfx: Wolfx JMA数据
   /// - nied: NIED强震数据
   /// - p2p: P2PQuake数据
   /// - jma_fan: FanStudio JMA数据
-  /// 
+  ///
   /// 韩国数据源也使用UTC+9时区:
   /// - kma_eq: 韩国气象厅地震信息
   /// - kma_eew_fan: 韩国气象厅地震预警
-  /// 
+  ///
   /// [source] 数据源类型
   /// 返回是否为日本/韩国数据源（UTC+9时区）
   static bool isJapanSource(QuakeSourceType source) {
@@ -43,6 +43,9 @@ class QuakeTime {
       case QuakeSourceType.nied:
       case QuakeSourceType.p2p:
       case QuakeSourceType.jma_fan:
+      case QuakeSourceType.jmaCmt:
+      case QuakeSourceType.fnetCmt:
+      case QuakeSourceType.hinetAquaCmt:
       case QuakeSourceType.kma_eq:
       case QuakeSourceType.kma_eew_fan:
         return true;
@@ -52,11 +55,11 @@ class QuakeTime {
   }
 
   /// 获取目标时区偏移
-  /// 
+  ///
   /// 根据数据源返回对应的时区偏移。
   /// - 日本数据源: UTC+9
   /// - 其他数据源: UTC+8
-  /// 
+  ///
   /// [event] 地震事件
   /// 返回时区偏移
   static Duration targetOffset(QuakeMessage event) {
@@ -64,9 +67,9 @@ class QuakeTime {
   }
 
   /// 获取时区标签
-  /// 
+  ///
   /// 用于在UI上显示时区信息。
-  /// 
+  ///
   /// [event] 地震事件
   /// 返回时区标签字符串 (如 "UTC+8", "UTC+9")
   static String zoneLabel(QuakeMessage event) {
@@ -74,16 +77,16 @@ class QuakeTime {
   }
 
   /// 标准化发震时刻
-  /// 
+  ///
   /// 将原始数据中的发震时刻转换为标准化的本地时间。
-  /// 
+  ///
   /// 处理逻辑:
   /// 1. 原始数据中的时间被视为数据源本地时间
   /// 2. 将其转换为UTC时间
   /// 3. 再转换为系统本地时间
-  /// 
+  ///
   /// 这样可以正确处理不同时区的地震数据。
-  /// 
+  ///
   /// [event] 地震事件
   /// 返回标准化后的本地发震时刻
   static DateTime normalizedOriginLocal(QuakeMessage event) {
@@ -134,12 +137,33 @@ class QuakeTime {
 
   /// 计算统一事件从指定时间起已过去的秒数
   /// 参照 kanameishi 的 calcPassedTime(reportTime, timeZone) 逻辑
-  static int calcPassedSecondsFromDateTime(DateTime refTime, Duration tzOffset) {
+  static int calcPassedSecondsFromDateTime(
+    DateTime refTime,
+    Duration tzOffset,
+  ) {
     return _calcPassedSecondsFromDateTime(refTime, tzOffset);
   }
 
+  /// Current-card lifetime reference for a non-EEW unified event.
+  ///
+  /// WHEWS EMSC can publish a recent directory revision for an earthquake that
+  /// occurred much earlier. Its updateTime remains useful for ordering
+  /// revisions, but must not revive that old earthquake in the current UI or
+  /// background notifications. Other sources retain the existing report-time
+  /// display-window behavior.
+  static DateTime? informationDisplayReference(UnifiedQuakeData event) {
+    final isWhewsEmsc =
+        event.apiTypeLabel == 'WHEWS' &&
+        (event.source == 'emsc' || event.source == 'emscEqlist');
+    if (isWhewsEmsc && event.originTime != null) return event.originTime;
+    return event.reportTime ?? event.originTime;
+  }
+
   /// 内部：从 DateTime 计算已过去秒数
-  static int _calcPassedSecondsFromDateTime(DateTime refTime, Duration tzOffset) {
+  static int _calcPassedSecondsFromDateTime(
+    DateTime refTime,
+    Duration tzOffset,
+  ) {
     // 将 DateTime 视为数据源本地时间，转为 UTC
     final utcInstant = DateTime.utc(
       refTime.year,

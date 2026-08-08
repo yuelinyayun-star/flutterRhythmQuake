@@ -79,13 +79,14 @@ class _ComplianceMapViewState extends State<ComplianceMapView>
 
   @override
   Widget build(BuildContext context) {
+    final mapState = context.watch<MapStateProvider>();
     return FlutterMap(
       mapController: _mapController,
-      options: const MapOptions(
-        initialCenter: MapStateProvider.defaultCenter,
-        initialZoom: MapStateProvider.defaultZoom,
+      options: MapOptions(
+        initialCenter: mapState.defaultCenter,
+        initialZoom: mapState.defaultZoom,
       ),
-      children: [],
+      children: const [],
     );
   }
 }

@@ -2909,8 +2909,8 @@ bool _isConfirmedDetectionState(EventDetectionState state) {
 int _maxStationDetectLevel(List<NiedStation> stations) {
   var maxLevel = -1;
   for (final station in stations) {
-    if (station.detectLevel > maxLevel) {
-      maxLevel = station.detectLevel;
+    if (station.level > maxLevel) {
+      maxLevel = station.level;
     }
   }
   return maxLevel;
@@ -2957,8 +2957,8 @@ List<SeismicStationSample> _samplesFromNiedStations(
           observedPga: station.gifObservation?.pga,
           observedPgv: station.gifObservation?.pgv,
           observedPgd: station.gifObservation?.pgd,
-          rawLevel: station.level >= 0 ? station.level : null,
-          detectLevel: station.detectLevel >= 0 ? station.detectLevel : null,
+          rawLevel: station.kaLevel >= 0 ? station.kaLevel : null,
+          detectLevel: station.kaLevel >= 0 ? station.kaLevel : null,
           activity: trigger?.activity ?? 0,
           ascend: trigger?.ascend ?? 0,
           isTriggered:
@@ -3069,7 +3069,7 @@ SourceEstimationMethodFrame _runScratchFrame(
           confidence: scratch.confidence,
           method: SourceEstimationBenchmarkRunner.scratchMethod,
           supportingStationCount: stations
-              .where((station) => station.isActive && station.level >= 0)
+              .where((station) => station.isActive && station.kaLevel >= 0)
               .length,
         );
   return _methodFrame(

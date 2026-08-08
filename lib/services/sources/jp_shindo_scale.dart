@@ -43,27 +43,19 @@ class JpShindoScale {
     return -1;
   }
 
-  static int levelFromKanameishiLevel(int level) {
-    if (level < 0) return -1;
-    if (level == 0) return 0;
-    if (level >= 20) return scratchValues.length - 1;
-    return levelFromShindo((level + 0.5 - 7) / 2);
-  }
-
   static int kanameishiLevelFromShindo(double shindo) {
+    // KA getLevelFromInstShindo parity:
+    // -1: < -3.0, 0: exactly -3.0, 1: (-3.0, -2.5),
+    // 2..19: [(level - 7) / 2, (level - 6) / 2), 20: >= 6.5.
     if (shindo.isNaN || shindo < -3.0) return -1;
     if (shindo == -3.0) return 0;
     if (shindo >= 6.5) return 20;
     return (shindo * 2 + 7).floor();
   }
 
-  static int kanameishiLevelFromDisplayLevel(int level) {
-    if (level < 0) return -1;
-    return kanameishiLevelFromShindo(rawShindoFromLevel(level));
-  }
-
   static double rawShindoFromKanameishiLevel(int level) {
     if (level < 0) return -3.0;
+    if (level == 0) return -3.0;
     if (level >= 20) return 6.5;
     return (level + 0.5 - 7) / 2;
   }

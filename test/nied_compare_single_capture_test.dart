@@ -46,7 +46,7 @@ double _maxStationShindo(List<NiedStation> stations) {
   var max = -3.0;
   for (final s in stations) {
     if (s.level < 0) continue;
-    final shindo = JpShindoScale.rawShindoFromLevel(s.level);
+    final shindo = JpShindoScale.rawShindoFromKanameishiLevel(s.level);
     if (shindo > max) max = shindo;
   }
   return max;
@@ -56,10 +56,10 @@ List<String> _topStationSummaries(List<NiedStation> stations) {
   final active = stations.where((s) => s.level >= 0).toList()
     ..sort((a, b) => b.level.compareTo(a.level));
   return active.take(8).map((s) {
-    final display = JpShindoScale.rawShindoFromLevel(
+    final display = JpShindoScale.rawShindoFromKanameishiLevel(
       s.level,
     ).toStringAsFixed(2);
-    return '${s.code}:disp=$display det21=${s.detectLevel}';
+    return '${s.code}:shindo=$display level=${s.level}';
   }).toList();
 }
 
@@ -93,9 +93,6 @@ Future<_CompareResult> _runGif(Directory dir, DateTime jst) async {
   final stamp = '20260614165604';
   final surface = await decodeNiedGifFile(
     File('${dir.path}\\$stamp.lmoni.jma_s.gif'),
-  );
-  final borehole = await decodeNiedGifFile(
-    File('${dir.path}\\$stamp.lmoni.jma_b.gif'),
   );
   expect(surface, isNotNull);
   service.processPixels(
@@ -170,6 +167,15 @@ void main() {
       print('=== NIED compare @ JST 2026-06-14 16:56:04 ===');
       print(jsonEncode(gif.toJson()));
       print(jsonEncode(yahoo.toJson()));
+
+      expect(gif.maxStationShindo, 0.25);
+      expect(yahoo.maxStationShindo, 0.25);
+      expect(gif.topStations.take(3), [
+        'AIC005:shindo=0.25 level=7',
+        'CHB006:shindo=0.25 level=7',
+        'FKS006:shindo=0.25 level=7',
+      ]);
+      expect(yahoo.topStations.take(3), gif.topStations.take(3));
     },
     timeout: const Timeout(Duration(minutes: 5)),
   );

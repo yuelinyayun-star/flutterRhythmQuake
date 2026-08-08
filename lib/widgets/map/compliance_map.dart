@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:provider/provider.dart';
 import '../../core/utils/geo_loader.dart';
 import '../../providers/map_state_provider.dart';
 import 'map_sources.dart';
@@ -15,10 +16,11 @@ class ComplianceMapView extends StatelessWidget {
     return FutureBuilder<List<List<LatLng>>>(
       future: GeoLoader.loadChinaBoundary(),
       builder: (context, snapshot) {
+        final mapState = context.watch<MapStateProvider>();
         return FlutterMap(
-          options: const MapOptions(
-            initialCenter: MapStateProvider.defaultCenter,
-            initialZoom: MapStateProvider.defaultZoom,
+          options: MapOptions(
+            initialCenter: mapState.defaultCenter,
+            initialZoom: mapState.defaultZoom,
           ),
           children: [
             // 1. 底图层 (天地图矢量)

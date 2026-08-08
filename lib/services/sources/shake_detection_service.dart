@@ -8,6 +8,7 @@ import '../../core/event_detection/legacy_shake_event_detector_adapter.dart';
 import '../../../core/nied_replay_logger.dart';
 import 'jp_shindo_scale.dart';
 import 'nied_background_worker.dart';
+import 'nied_detection_rules.dart';
 import 'nied_monitor.dart';
 
 enum ShakeDetectStage { idle, weak, detected, strong }
@@ -90,19 +91,9 @@ class ShakeDetectionService {
     maxShindo: -1,
   );
 
-  static const int nearbyLength = 6;
+  static const int nearbyLength = niedNearbyStationLimit;
   static const double _denseNearbyKm = 30.0;
   static const double _sparseFallbackNearbyKm = 40.0;
-  static const List<double> _activityThresholds = [
-    double.infinity,
-    9,
-    12,
-    14,
-    15,
-    16,
-    16,
-  ];
-
   List<NiedStation>? _stations;
   List<List<int>> _adjStationIds = [];
   List<List<double>> _distMatrix = [];
@@ -270,12 +261,11 @@ class ShakeDetectionService {
       station.detectReason = '';
       station.ascend = 0;
       station.activity = 0;
+      station.abnormalUpdateCount = null;
       station.recentLevel.clear();
-      station.recentDetectLevel.clear();
       station.expireSeconds = station.defaultExpireSeconds;
       if (clearValues) {
         station.level = -1;
-        station.detectLevel = -1;
       }
     }
   }
@@ -324,6 +314,30 @@ class ShakeDetectionService {
 
     final activeStations = <int>{};
     final checkedStations = <int>{};
+    final stationPairAbnormalCache = <String, bool>{};
+
+    bool hasAbnormalStationPair(List<int> stationIds) {
+      for (var i = 0; i < stationIds.length - 1; i++) {
+        for (var j = i + 1; j < stationIds.length; j++) {
+          final firstId = stationIds[i];
+          final secondId = stationIds[j];
+          final lowId = math.min(firstId, secondId);
+          final highId = math.max(firstId, secondId);
+          final key = '$lowId-$highId';
+          final isAbnormal = stationPairAbnormalCache.putIfAbsent(
+            key,
+            () => isNiedAbnormalStationPair(
+              firstTriggerStamp: stations[firstId].triggerStamp,
+              secondTriggerStamp: stations[secondId].triggerStamp,
+              distanceKm: _distMatrix[firstId][secondId],
+            ),
+          );
+          if (isAbnormal) return true;
+        }
+      }
+      return false;
+    }
+
     for (final index in dedupedPossibleStations) {
       final station = stations[index];
       if (checkedStations.contains(index)) {
@@ -338,7 +352,7 @@ class ShakeDetectionService {
       final nearbyStationIds = _dedupeStationIds(
         _adjStationIds[index]
             .where((id) => id >= 0 && id < stations.length)
-            .where((id) => stations[id].detectLevel > -1)
+            .where((id) => stations[id].kaLevel > -1)
             .toList(growable: false),
         stations,
       );
@@ -357,30 +371,20 @@ class ShakeDetectionService {
           possibleNearbyStationIds.length - weakRiseCount / 2.0;
 
       final nearbyCount = nearbyStationIds.length.clamp(0, nearbyLength);
-      final numThres = switch (_sensitivity) {
-        1 => 3.0,
-        2 => nearbyCount <= 2 ? (nearbyCount + 1) / 2.0 : nearbyCount / 2.0,
-        3 => nearbyCount / 2.0,
-        _ => double.infinity,
-      };
-      final baseActivityThres = _activityThresholds[nearbyCount];
-      final activityThres = switch (_sensitivity) {
-        1 => baseActivityThres + 2,
-        2 => baseActivityThres,
-        3 => baseActivityThres - 2,
-        _ => double.infinity,
-      };
+      final numThres = niedStationCountThreshold(_sensitivity, nearbyCount);
+      var activityThres = niedActivityThreshold(_sensitivity, nearbyCount);
 
       if (nearbyActiveNum >= numThres) {
+        final abnormalCandidates = nearbyStationIds
+            .where((id) => !stations[id].isActive && stations[id].ascend > 2)
+            .toList(growable: false);
+        if (hasAbnormalStationPair(abnormalCandidates)) {
+          activityThres *= 2;
+        }
         final numActivity = nearbyActiveNum * (nearbyActiveNum + 1) / 2.0;
         var nearbyActivity = numActivity;
-        for (var i = 0; i < nearbyStationIds.length; i++) {
-          final nearbyId = nearbyStationIds[i];
-          final nearbyStation = stations[nearbyId];
-          final distance = _distMatrix[index][nearbyId];
-          nearbyActivity += i >= 3 && distance > 15
-              ? nearbyStation.activity / 2.0
-              : nearbyStation.activity;
+        for (final nearbyId in nearbyStationIds) {
+          nearbyActivity += stations[nearbyId].activity;
         }
         if (nearbyActivity >= activityThres) {
           _chainActivate(index, activeStations, checkedStations);
@@ -391,17 +395,17 @@ class ShakeDetectionService {
     if (!hadActiveGrid && activeStations.isNotEmpty) {
       final strongest = activeStations
           .map((id) => stations[id])
-          .reduce((a, b) => a.detectLevel >= b.detectLevel ? a : b);
+          .reduce((a, b) => a.kaLevel >= b.kaLevel ? a : b);
       _gridDecimal = [
-        _gridDecimalPart(strongest.coordinate.latitude),
-        _gridDecimalPart(strongest.coordinate.longitude),
+        niedDetectionGridDecimalPart(strongest.coordinate.latitude),
+        niedDetectionGridDecimalPart(strongest.coordinate.longitude),
       ];
     }
 
     for (final index in activeStations) {
       final station = stations[index];
-      final jmaShindo = station.detectLevel >= 0
-          ? JpShindoScale.jmaNumberFromKanameishiLevel(station.detectLevel)
+      final jmaShindo = station.kaLevel >= 0
+          ? JpShindoScale.jmaNumberFromKanameishiLevel(station.kaLevel)
           : -1;
       station.detectState = jmaShindo >= 4
           ? 6
@@ -457,11 +461,12 @@ class ShakeDetectionService {
             stations: [
               for (final station in currentStations)
                 NiedDetectionInput(
-                  detectLevel: station.detectLevel,
+                  kaLevel: station.kaLevel,
                   activity: station.activity,
                   ascend: station.ascend,
                   isActive: station.isActive,
                   continuousShindo: station.continuousShindo,
+                  triggerStamp: station.triggerStamp,
                 ),
             ],
             sensitivity: _sensitivity,
@@ -480,17 +485,15 @@ class ShakeDetectionService {
               strongestIndex < currentStations.length) {
             final strongest = currentStations[strongestIndex];
             _gridDecimal = [
-              _gridDecimalPart(strongest.coordinate.latitude),
-              _gridDecimalPart(strongest.coordinate.longitude),
+              niedDetectionGridDecimalPart(strongest.coordinate.latitude),
+              niedDetectionGridDecimalPart(strongest.coordinate.longitude),
             ];
           }
           for (final index in result.activeIndices) {
             if (index < 0 || index >= currentStations.length) continue;
             final station = currentStations[index];
-            final jmaShindo = station.detectLevel >= 0
-                ? JpShindoScale.jmaNumberFromKanameishiLevel(
-                    station.detectLevel,
-                  )
+            final jmaShindo = station.kaLevel >= 0
+                ? JpShindoScale.jmaNumberFromKanameishiLevel(station.kaLevel)
                 : -1;
             station.detectState = jmaShindo >= 4
                 ? 6
@@ -555,12 +558,9 @@ class ShakeDetectionService {
       }
 
       _adjStationIds[i] = distances.map((d) => d.id).toList(growable: false);
-      if (distances.isNotEmpty) {
-        final maxDist = distances.last.distance;
-        final expire = math.max((maxDist / 3.5).round(), 5);
-        stations[i].defaultExpireSeconds = expire;
-        stations[i].expireSeconds = expire;
-      }
+      stations[i]
+        ..defaultExpireSeconds = NiedStation.kaExpireSeconds
+        ..expireSeconds = NiedStation.kaExpireSeconds;
     }
   }
 
@@ -605,13 +605,25 @@ class ShakeDetectionService {
       // kanameishi-dev builds grids from every active station and then maps the
       // resulting max level to JMA shindo, so level<=7 must remain as a real
       // "震度0" detect grid instead of being dropped here.
-      if (station.detectLevel < 0) continue;
-      final lat = _roundCoord(station.coordinate.latitude, _gridDecimal[0]);
-      final lng = _roundCoord(station.coordinate.longitude, _gridDecimal[1]);
+      if (station.kaLevel < 0) continue;
+      final lat = niedDetectionGridAxisCenter(
+        niedDetectionGridAxisIndex(
+          station.coordinate.latitude,
+          _gridDecimal[0],
+        ),
+        _gridDecimal[0],
+      );
+      final lng = niedDetectionGridAxisCenter(
+        niedDetectionGridAxisIndex(
+          station.coordinate.longitude,
+          _gridDecimal[1],
+        ),
+        _gridDecimal[1],
+      );
       final key = '$lat,$lng';
       final existing = next[key];
-      final level = existing == null || station.detectLevel > existing.level
-          ? station.detectLevel
+      final level = existing == null || station.kaLevel > existing.level
+          ? station.kaLevel
           : existing.level;
       next[key] = NiedDetectionGridCell(
         center: LatLng(lat, lng),
@@ -640,11 +652,11 @@ class ShakeDetectionService {
     final entries = <DetectedStationEntry>[];
 
     for (final station in activeStations) {
-      if (station.detectLevel > maxDetectLevel) {
-        maxDetectLevel = station.detectLevel;
+      if (station.kaLevel > maxDetectLevel) {
+        maxDetectLevel = station.kaLevel;
       }
-      final jmaShindo = station.detectLevel >= 0
-          ? JpShindoScale.jmaNumberFromKanameishiLevel(station.detectLevel)
+      final jmaShindo = station.kaLevel >= 0
+          ? JpShindoScale.jmaNumberFromKanameishiLevel(station.kaLevel)
           : -1;
       if (jmaShindo >= 4) strong++;
       if (jmaShindo >= 1 && jmaShindo <= 3) {
@@ -790,10 +802,6 @@ class ShakeDetectionService {
     });
   }
 
-  double _roundCoord(double val, double decimal) {
-    return (val - decimal).roundToDouble() + decimal;
-  }
-
   List<int> _dedupeStationIds(
     List<int> stationIds,
     List<NiedStation> stations,
@@ -842,8 +850,8 @@ class ShakeDetectionService {
     int cmp(double a, double b) => a.compareTo(b);
 
     final detectCmp = cmp(
-      candidate.detectLevel.toDouble(),
-      current.detectLevel.toDouble(),
+      candidate.kaLevel.toDouble(),
+      current.kaLevel.toDouble(),
     );
     if (detectCmp != 0) return detectCmp > 0 ? candidateId : currentId;
 
@@ -860,11 +868,6 @@ class ShakeDetectionService {
     if (shindoCmp != 0) return shindoCmp > 0 ? candidateId : currentId;
 
     return candidate.id < current.id ? candidateId : currentId;
-  }
-
-  static double _gridDecimalPart(double val) {
-    final fraction = (val + 180) % 1;
-    return (fraction * 10).roundToDouble() / 10;
   }
 
   double _haversine(LatLng a, LatLng b) {

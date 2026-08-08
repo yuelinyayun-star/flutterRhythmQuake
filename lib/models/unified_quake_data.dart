@@ -10,6 +10,9 @@
 /// 3. 颜色由 `className` 字符串统一控制，UI + 地图使用同一色彩体系
 
 import 'quake_message.dart';
+import 'cmt_moment_tensor.dart';
+import 'cmt_solution_metadata.dart';
+import 'volcano_event_data.dart';
 
 class UnifiedQuakeData {
   final String source;
@@ -38,6 +41,17 @@ class UnifiedQuakeData {
   final String apiTypeLabel;
   final String? nodalPlane1;
   final String? nodalPlane2;
+
+  /// 矩心深度（km），CMT 反演产出。
+  /// 与 [depth]（震源深度，速报值）区分；UI 显示用 [depth]，beachball 下方标注用此字段。
+  final double? centroidDepth;
+
+  /// Optional CMT tensor in North-East-Down coordinates for the focal sphere.
+  final CmtMomentTensor? momentTensor;
+
+  /// Optional raw CMT solution metadata, not used for event parameters or drawing.
+  final CmtSolutionMetadata? cmtMetadata;
+  final VolcanoEventData? volcanoEvent;
   final QuakeMessage? rawEvent;
   final DateTime? arrivedAt;
 
@@ -68,6 +82,10 @@ class UnifiedQuakeData {
     this.apiTypeLabel = '',
     this.nodalPlane1,
     this.nodalPlane2,
+    this.centroidDepth,
+    this.momentTensor,
+    this.cmtMetadata,
+    this.volcanoEvent,
     this.rawEvent,
     this.arrivedAt,
   });
@@ -92,6 +110,7 @@ class UnifiedQuakeData {
       className == 'red' || className == 'dark-red' || className == 'purple';
   bool get isOrange => className == 'orange' || className == 'dark-orange';
   bool get isDarkGray => className == 'dark-gray';
+  bool get isVolcanoEvent => volcanoEvent != null;
 
   UnifiedQuakeData copyWith({
     String? source,
@@ -120,6 +139,10 @@ class UnifiedQuakeData {
     String? apiTypeLabel,
     String? nodalPlane1,
     String? nodalPlane2,
+    double? centroidDepth,
+    CmtMomentTensor? momentTensor,
+    CmtSolutionMetadata? cmtMetadata,
+    VolcanoEventData? volcanoEvent,
     QuakeMessage? rawEvent,
     DateTime? arrivedAt,
   }) {
@@ -150,6 +173,10 @@ class UnifiedQuakeData {
       apiTypeLabel: apiTypeLabel ?? this.apiTypeLabel,
       nodalPlane1: nodalPlane1 ?? this.nodalPlane1,
       nodalPlane2: nodalPlane2 ?? this.nodalPlane2,
+      centroidDepth: centroidDepth ?? this.centroidDepth,
+      momentTensor: momentTensor ?? this.momentTensor,
+      cmtMetadata: cmtMetadata ?? this.cmtMetadata,
+      volcanoEvent: volcanoEvent ?? this.volcanoEvent,
       rawEvent: rawEvent ?? this.rawEvent,
       arrivedAt: arrivedAt ?? this.arrivedAt,
     );

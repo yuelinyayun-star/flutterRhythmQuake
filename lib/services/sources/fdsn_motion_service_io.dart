@@ -164,8 +164,10 @@ class FdsnMotionService {
   final ValueNotifier<int> targetStationLimitNotifier = ValueNotifier<int>(
     defaultStationLimit,
   );
+  final ValueNotifier<DateTime?> dataTimeNotifier = ValueNotifier(null);
 
   final List<_SeedLinkConnection> _connections = [];
+  final Set<Socket> _discoverySockets = {};
   bool _running = false;
   int _currentStationLimit = defaultStationLimit;
   Set<String> _currentEnabledSources = const {'EarthScope', 'GEOFON'};
@@ -211,7 +213,11 @@ class FdsnMotionService {
     Set<String> enabledSources,
     int generation,
   ) async {
-    final streams = await _streamsForLimit(stationLimit, enabledSources);
+    final streams = await _streamsForLimit(
+      stationLimit,
+      enabledSources,
+      generation,
+    );
     if (!_running ||
         _currentStationLimit != stationLimit ||
         !setEquals(_currentEnabledSources, enabledSources) ||
@@ -230,7 +236,7 @@ class FdsnMotionService {
         host: first.host,
         port: first.port,
         streams: entry.value,
-        onSample: _controller.add,
+        onSample: _emitSample,
         onStatusChanged: _emitStatus,
       );
       _connections.add(connection);
@@ -245,13 +251,25 @@ class FdsnMotionService {
       connection.stop();
     }
     _connections.clear();
+    for (final socket in _discoverySockets.toList(growable: false)) {
+      socket.destroy();
+    }
+    _discoverySockets.clear();
     _setLinkedStationCount(0);
+    dataTimeNotifier.value = null;
     onStatusChanged?.call(false);
+  }
+
+  void _emitSample(FdsnMotionSample sample) {
+    if (!_running) return;
+    dataTimeNotifier.value = sample.timestamp;
+    _controller.add(sample);
   }
 
   Future<List<FdsnSeedLinkStream>> _streamsForLimit(
     int stationLimit,
     Set<String> enabledSources,
+    int generation,
   ) async {
     final defaultForSources = defaultStreams
         .where((stream) => enabledSources.contains(stream.source))
@@ -263,6 +281,7 @@ class FdsnMotionService {
     final discovered = await _discoverSeedLinkStreams(
       stationLimit,
       enabledSources,
+      generation,
     );
     if (discovered.isEmpty) return defaultForSources;
     return discovered.take(stationLimit).toList(growable: false);
@@ -271,12 +290,14 @@ class FdsnMotionService {
   Future<List<FdsnSeedLinkStream>> _discoverSeedLinkStreams(
     int stationLimit,
     Set<String> enabledSources,
+    int generation,
   ) async {
     final lists = await Future.wait(
       _seedLinkSources
           .where((source) => enabledSources.contains(source.source))
-          .map((source) => _loadSeedLinkStreams(source)),
+          .map((source) => _loadSeedLinkStreams(source, generation)),
     );
+    if (!_isCurrentRun(generation)) return const [];
     final seen = <String>{};
     final merged = <FdsnSeedLinkStream>[];
 
@@ -316,6 +337,7 @@ class FdsnMotionService {
 
   Future<List<FdsnSeedLinkStream>> _loadSeedLinkStreams(
     _SeedLinkSource source,
+    int generation,
   ) async {
     Socket? socket;
     Timer? timeoutTimer;
@@ -332,9 +354,18 @@ class FdsnMotionService {
         source.port,
         timeout: const Duration(seconds: 12),
       );
+      if (!_isCurrentRun(generation)) {
+        socket.destroy();
+        return const [];
+      }
+      _discoverySockets.add(socket);
       timeoutTimer = Timer(const Duration(seconds: 10), complete);
       socket.listen(
         (chunk) {
+          if (!_isCurrentRun(generation)) {
+            complete();
+            return;
+          }
           bytes.addAll(chunk);
           if (bytes.length >= 10 * 1024 * 1024 ||
               _containsAscii(bytes, '</seedlink>')) {
@@ -348,10 +379,13 @@ class FdsnMotionService {
       socket.add(ascii.encode('INFO STREAMS\r'));
       await done.future;
     } catch (e) {
-      debugPrint('SeedLink ${source.host}:${source.port} INFO failed: $e');
+      if (_isCurrentRun(generation)) {
+        debugPrint('SeedLink ${source.host}:${source.port} INFO failed: $e');
+      }
       return const [];
     } finally {
       timeoutTimer?.cancel();
+      if (socket != null) _discoverySockets.remove(socket);
       socket?.destroy();
     }
 
@@ -360,6 +394,9 @@ class FdsnMotionService {
     debugPrint('SeedLink ${source.source}: ${streams.length} stations found');
     return streams;
   }
+
+  bool _isCurrentRun(int generation) =>
+      _running && _connectionGeneration == generation;
 
   bool _containsAscii(List<int> bytes, String needle) {
     final pattern = ascii.encode(needle.toLowerCase());
@@ -473,6 +510,11 @@ class FdsnMotionService {
   }
 
   void _emitStatus() {
+    if (!_running) {
+      _setLinkedStationCount(0);
+      onStatusChanged?.call(false);
+      return;
+    }
     final linkedStations = <String>{};
     for (final connection in _connections) {
       if (connection.isConnected) {
@@ -492,6 +534,7 @@ class FdsnMotionService {
     disconnect();
     linkedStationCountNotifier.dispose();
     targetStationLimitNotifier.dispose();
+    dataTimeNotifier.dispose();
     _controller.close();
   }
 }
@@ -551,7 +594,9 @@ class _SeedLinkConnection {
 
   Socket? _socket;
   Timer? _reconnectTimer;
+  http.Client? _httpClient;
   bool _running = false;
+  int _runGeneration = 0;
   bool _connected = false;
   int _activePacketJobs = 0;
   final List<int> _buffer = [];
@@ -572,41 +617,58 @@ class _SeedLinkConnection {
   void start() {
     if (_running) return;
     _running = true;
-    _connect();
+    final generation = ++_runGeneration;
+    _httpClient = http.Client();
+    _connect(generation);
   }
 
   void stop() {
     _running = false;
+    _runGeneration++;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     _socket?.destroy();
     _socket = null;
+    _httpClient?.close();
+    _httpClient = null;
+    _responseCache.clear();
+    _buffer.clear();
     _setConnected(false);
   }
 
-  Future<void> _connect() async {
-    if (!_running || _socket != null) return;
+  Future<void> _connect(int generation) async {
+    if (!_isCurrentRun(generation) || _socket != null) return;
     try {
       final socket = await Socket.connect(
         host,
         port,
         timeout: const Duration(seconds: 12),
       );
+      if (!_isCurrentRun(generation)) {
+        socket.destroy();
+        return;
+      }
       _socket = socket;
       _setConnected(true);
       _sendSelections(socket);
       socket.listen(
-        _handleBytes,
-        onDone: _handleClosed,
+        (bytes) {
+          if (_isCurrentRun(generation) && identical(_socket, socket)) {
+            _handleBytes(bytes, generation);
+          }
+        },
+        onDone: () => _handleClosed(socket, generation),
         onError: (error) {
           debugPrint('SeedLink $host:$port error: $error');
-          _handleClosed();
+          _handleClosed(socket, generation);
         },
         cancelOnError: true,
       );
     } catch (e) {
-      debugPrint('SeedLink $host:$port connect failed: $e');
-      _handleClosed();
+      if (_isCurrentRun(generation)) {
+        debugPrint('SeedLink $host:$port connect failed: $e');
+      }
+      _scheduleReconnect(generation);
     }
   }
 
@@ -622,7 +684,8 @@ class _SeedLinkConnection {
     socket.add(ascii.encode('$line\r'));
   }
 
-  void _handleBytes(Uint8List bytes) {
+  void _handleBytes(Uint8List bytes, int generation) {
+    if (!_isCurrentRun(generation)) return;
     _buffer.addAll(bytes);
 
     while (true) {
@@ -640,15 +703,16 @@ class _SeedLinkConnection {
 
       final packet = Uint8List.fromList(_buffer.sublist(0, _packetSize));
       _buffer.removeRange(0, _packetSize);
-      _schedulePacket(packet);
+      _schedulePacket(packet, generation);
     }
   }
 
-  void _schedulePacket(Uint8List packet) {
+  void _schedulePacket(Uint8List packet, int generation) {
+    if (!_isCurrentRun(generation)) return;
     if (_activePacketJobs >= 200) return;
     _activePacketJobs++;
     unawaited(
-      _handlePacket(packet).whenComplete(() {
+      _handlePacket(packet, generation).whenComplete(() {
         _activePacketJobs--;
       }),
     );
@@ -671,7 +735,8 @@ class _SeedLinkConnection {
     return -1;
   }
 
-  Future<void> _handlePacket(Uint8List packet) async {
+  Future<void> _handlePacket(Uint8List packet, int generation) async {
+    if (!_isCurrentRun(generation)) return;
     final record = packet.sublist(8);
     final miniSeed = _MiniSeedRecord.tryParse(record);
     if (miniSeed == null || miniSeed.samples.isEmpty) return;
@@ -685,6 +750,7 @@ class _SeedLinkConnection {
       }
     }
     if (source.isEmpty) return;
+    if (!_isCurrentRun(generation)) return;
 
     onSample(
       FdsnMotionSample(
@@ -697,8 +763,8 @@ class _SeedLinkConnection {
       ),
     );
 
-    final response = await _responseFor(source, miniSeed);
-    if (response == null) return;
+    final response = await _responseFor(source, miniSeed, generation);
+    if (response == null || !_isCurrentRun(generation)) return;
 
     final metrics = _calculateMotionMetrics(miniSeed, response);
     if (!metrics.hasMeasurement) return;
@@ -721,50 +787,71 @@ class _SeedLinkConnection {
   Future<_ChannelResponse?> _responseFor(
     String source,
     _MiniSeedRecord record,
+    int generation,
   ) {
+    if (!_isCurrentRun(generation)) return Future.value(null);
     final key =
         '$source:${record.network}.${record.station}.${record.location}.${record.channel}';
-    return _responseCache.putIfAbsent(key, () => _loadResponse(source, record));
+    return _responseCache.putIfAbsent(
+      key,
+      () => _loadResponse(source, record, generation),
+    );
   }
 
   Future<_ChannelResponse?> _loadResponse(
     String source,
     _MiniSeedRecord record,
-  ) => _responseLoadLimiter.run(() async {
-    final base = source == 'GEOFON'
-        ? 'https://geofon.gfz-potsdam.de/fdsnws/station/1/query'
-        : 'https://service.earthscope.org/fdsnws/station/1/query';
-    final query = <String, String>{
-      'network': record.network,
-      'station': record.station,
-      'channel': record.channel,
-      'level': 'response',
-      'format': 'xml',
-      'nodata': '204',
-    };
-    if (record.location.isNotEmpty) {
-      query['location'] = record.location;
+    int generation,
+  ) {
+    final client = _httpClient;
+    if (!_isCurrentRun(generation) || client == null) {
+      return Future.value(null);
     }
+    return _responseLoadLimiter.run(() async {
+      if (!_isCurrentRun(generation) || !identical(_httpClient, client)) {
+        return null;
+      }
+      final base = source == 'GEOFON'
+          ? 'https://geofon.gfz-potsdam.de/fdsnws/station/1/query'
+          : 'https://service.earthscope.org/fdsnws/station/1/query';
+      final query = <String, String>{
+        'network': record.network,
+        'station': record.station,
+        'channel': record.channel,
+        'level': 'response',
+        'format': 'xml',
+        'nodata': '204',
+      };
+      if (record.location.isNotEmpty) {
+        query['location'] = record.location;
+      }
 
-    try {
-      final response = await http
-          .get(
-            Uri.parse(base).replace(queryParameters: query),
-            headers: const {
-              'Accept': 'application/xml,text/xml,*/*',
-              'User-Agent': 'FlutterRhythmQuake/1.0',
-            },
-          )
-          .timeout(const Duration(seconds: 12));
-      if (response.statusCode != 200) return null;
-      return _parseResponseXml(response.body);
-    } catch (e) {
-      debugPrint(
-        'FDSN response load failed ${record.network}.${record.station}.${record.channel}: $e',
-      );
-      return null;
-    }
-  });
+      try {
+        final response = await client
+            .get(
+              Uri.parse(base).replace(queryParameters: query),
+              headers: const {
+                'Accept': 'application/xml,text/xml,*/*',
+                'User-Agent': 'FlutterRhythmQuake/1.0',
+              },
+            )
+            .timeout(const Duration(seconds: 12));
+        if (!_isCurrentRun(generation) || !identical(_httpClient, client)) {
+          return null;
+        }
+        if (response.statusCode != 200) return null;
+        return _parseResponseXml(response.body);
+      } catch (e) {
+        if (!_isCurrentRun(generation) || !identical(_httpClient, client)) {
+          return null;
+        }
+        debugPrint(
+          'FDSN response load failed ${record.network}.${record.station}.${record.channel}: $e',
+        );
+        return null;
+      }
+    });
+  }
 
   _ChannelResponse? _parseResponseXml(String xml) {
     final sensitivityMatch = RegExp(
@@ -883,16 +970,27 @@ class _SeedLinkConnection {
 
   bool _isDisplacementUnit(String unit) => unit == 'M' || unit == 'METER';
 
-  void _handleClosed() {
-    _socket?.destroy();
+  void _handleClosed(Socket socket, int generation) {
+    if (!identical(_socket, socket)) {
+      socket.destroy();
+      return;
+    }
+    socket.destroy();
     _socket = null;
     _setConnected(false);
-    if (!_running || _reconnectTimer != null) return;
+    _scheduleReconnect(generation);
+  }
+
+  void _scheduleReconnect(int generation) {
+    if (!_isCurrentRun(generation) || _reconnectTimer != null) return;
     _reconnectTimer = Timer(const Duration(seconds: 10), () {
       _reconnectTimer = null;
-      _connect();
+      if (_isCurrentRun(generation)) _connect(generation);
     });
   }
+
+  bool _isCurrentRun(int generation) =>
+      _running && _runGeneration == generation;
 
   void _setConnected(bool value) {
     if (_connected == value) return;

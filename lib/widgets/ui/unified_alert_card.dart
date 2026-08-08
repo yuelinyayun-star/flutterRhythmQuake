@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:ui';
 import '../../models/unified_quake_data.dart';
+import 'unified_intensity_format.dart';
 
 class UnifiedAlertCard extends StatelessWidget {
   final UnifiedQuakeData event;
@@ -173,7 +174,7 @@ class UnifiedAlertCard extends StatelessWidget {
     final color = _colorFromClass(event.className);
     final value = double.tryParse(event.maxIntensity);
     final display = value != null
-        ? value.toInt().toString()
+        ? unifiedRomanIntensityLabel(event.maxIntensity)
         : event.maxIntensity;
     final isNumeric = value != null;
     return Container(

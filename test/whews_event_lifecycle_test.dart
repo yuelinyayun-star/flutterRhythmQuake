@@ -1,0 +1,556 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:flutterrhythmquake/models/unified_quake_data.dart';
+import 'package:flutterrhythmquake/models/volcano_event_data.dart';
+import 'package:flutterrhythmquake/providers/quake_provider.dart';
+import 'package:flutterrhythmquake/services/background_event_processor.dart';
+import 'package:flutterrhythmquake/services/quake_event_adapter.dart';
+import 'package:flutterrhythmquake/services/sound_effect_service.dart';
+import 'package:flutterrhythmquake/services/sources/whews_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    SoundEffectService().enabled = false;
+  });
+
+  tearDown(() => SoundEffectService().enabled = true);
+
+  test('expired WHEWS information never enters the current UI', () async {
+    final provider = QuakeProvider();
+    addTearDown(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      provider.dispose();
+    });
+
+    provider.handleUnifiedEventForTest(
+      _whewsInfo(
+        eventId: '20260722-old-emsc',
+        reportTime: _sourceLocalNow(8).subtract(const Duration(days: 15)),
+      ),
+    );
+
+    expect(provider.unifiedEvents, isEmpty);
+    await Future<void>.delayed(Duration.zero);
+  });
+
+  test('background notifications reject the same expired WHEWS event', () {
+    final processor = BackgroundEventProcessor(sourceInfoMagFilters: const {});
+    final result = processor.process(
+      _whewsInfo(
+        eventId: '20260722-old-emsc',
+        reportTime: _sourceLocalNow(8).subtract(const Duration(days: 15)),
+      ),
+    );
+
+    expect(result.type, BackgroundEventResultType.dropped);
+  });
+
+  test('recent EMSC revision cannot revive an old WHEWS earthquake', () async {
+    final provider = QuakeProvider();
+    addTearDown(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      provider.dispose();
+    });
+    final now = _sourceLocalNow(8);
+    final event = QuakeEventAdapter.convertWhews('emsc', {
+      'id': 'old-emsc-with-fresh-revision',
+      'magnitude': 5.1,
+      'placeName': '中国四川',
+      'shockTime': now.subtract(const Duration(hours: 10)).toIso8601String(),
+      'updateTime': now.toIso8601String(),
+      'longitude': 104.2,
+      'latitude': 30.8,
+      'depth': 10,
+    });
+    final processor = BackgroundEventProcessor(sourceInfoMagFilters: const {});
+
+    expect(event, isNotNull);
+    expect(event!.apiTypeLabel, 'WHEWS');
+    provider.handleUnifiedEventForTest(event);
+
+    expect(provider.unifiedEvents, isEmpty);
+    expect(processor.process(event).type, BackgroundEventResultType.dropped);
+    await Future<void>.delayed(Duration.zero);
+  });
+
+  test('old WHEWS JMA cancel report is rejected before UI entry', () async {
+    final provider = QuakeProvider();
+    addTearDown(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      provider.dispose();
+    });
+    final event = QuakeEventAdapter.convertWhews('jma_eew', {
+      'id': 'JMA-CANCEL-OLD',
+      'updates': 5,
+      'shockTime': '2026-07-01 12:00:00',
+      'createTime': '2026-07-01 12:00:10',
+      'magnitude': 5.0,
+      'cancel': true,
+    });
+
+    expect(event, isNotNull);
+    provider.handleUnifiedEventForTest(event!);
+
+    expect(provider.unifiedEvents, isEmpty);
+    await Future<void>.delayed(Duration.zero);
+  });
+
+  test(
+    'fresh WHEWS information still enters UI and background processing',
+    () async {
+      final event = _whewsInfo(
+        eventId: 'fresh-emsc',
+        reportTime: _sourceLocalNow(8),
+      );
+      final provider = QuakeProvider();
+      addTearDown(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        provider.dispose();
+      });
+      final processor = BackgroundEventProcessor(
+        sourceInfoMagFilters: const {},
+      );
+
+      provider.handleUnifiedEventForTest(event);
+
+      expect(provider.unifiedEvents, hasLength(1));
+      expect(processor.process(event).type, BackgroundEventResultType.newEvent);
+      await Future<void>.delayed(Duration.zero);
+    },
+  );
+
+  test(
+    'fresh WHEWS volcano information enters unified UI without quake values',
+    () async {
+      final provider = QuakeProvider();
+      addTearDown(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        provider.dispose();
+      });
+      final event = QuakeEventAdapter.convertWhews('va', {
+        'id': 'VFVO52_20260807120000_506',
+        'kindCode': 'VFVO52',
+        'kindName': '喷发相关火山观测报',
+        'infoTypeName': '發表',
+        'reportTime': _sourceLocalNow(9).toIso8601String(),
+        'targetTime': _sourceLocalNow(
+          9,
+        ).subtract(const Duration(minutes: 1)).toIso8601String(),
+        'volcanoName': '桜島',
+        'volcanoCode': '506',
+        'latitude': 31.5925,
+        'longitude': 130.6567,
+        'craterName': '南岳山頂火口',
+        'headline': '噴火が発生しました。',
+      });
+
+      expect(event, isNotNull);
+      expect(event!.isVolcanoEvent, isTrue);
+      expect(event.magnitude, -1);
+      expect(event.depth, -1);
+
+      provider.handleUnifiedEventForTest(event);
+
+      expect(provider.unifiedEvents, hasLength(1));
+      expect(provider.unifiedEvents.single.isVolcanoEvent, isTrue);
+      expect(provider.unifiedDismissSecondsForTest(event), 900);
+      await Future<void>.delayed(Duration.zero);
+    },
+  );
+
+  test(
+    'same-report WHEWS ashfall enrichment updates UI without repeat effects',
+    () async {
+      final provider = QuakeProvider();
+      addTearDown(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        provider.dispose();
+      });
+      final effects = <UnifiedQuakeData>[];
+      provider.onUnifiedEventNotified = (event, _) => effects.add(event);
+      final reportTime = _sourceLocalNow(9);
+      final first = QuakeEventAdapter.convertWhews('va', {
+        'id': 'VFVO53_20260807120000_506',
+        'updates': 1,
+        'kindCode': 'VFVO53',
+        'kindName': '降灰预报',
+        'infoTypeName': '發表',
+        'reportTime': reportTime.toIso8601String(),
+        'targetTime': reportTime.toIso8601String(),
+        'volcanoName': '桜島',
+        'volcanoCode': '506',
+        'latitude': 31.5925,
+        'longitude': 130.6567,
+      });
+
+      expect(first, isNotNull);
+      final enriched = first!.copyWith(
+        volcanoEvent: first.volcanoEvent!.copyWith(
+          ashfallWindows: [
+            VolcanoAshfallWindow(
+              label: '予報　３時間後',
+              startTime: reportTime,
+              endTime: reportTime.add(const Duration(hours: 3)),
+              items: const [
+                VolcanoAshfallItem(
+                  phenomenon: '降灰',
+                  phenomenonCode: '70',
+                  areaNames: ['鹿児島県屋久島町'],
+                  areaCodes: ['4650500'],
+                  plumeDirection: '西',
+                  distanceKm: 100,
+                  polygons: [
+                    [
+                      VolcanoAshfallCoordinate(
+                        latitude: 30.1,
+                        longitude: 129.2,
+                      ),
+                      VolcanoAshfallCoordinate(
+                        latitude: 30.3,
+                        longitude: 129.4,
+                      ),
+                      VolcanoAshfallCoordinate(
+                        latitude: 30.2,
+                        longitude: 129.6,
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+
+      provider.handleUnifiedEventForTest(first);
+      provider.handleUnifiedEventForTest(enriched);
+
+      expect(provider.unifiedEvents, hasLength(1));
+      expect(
+        provider.unifiedEvents.single.volcanoEvent!.ashfallWindows,
+        hasLength(1),
+      );
+      expect(effects, hasLength(1));
+      await Future<void>.delayed(Duration.zero);
+    },
+  );
+
+  test(
+    'changed WHEWS revision updates once and exact replay is dropped',
+    () async {
+      final provider = QuakeProvider();
+      addTearDown(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        provider.dispose();
+      });
+      final effects = <UnifiedQuakeData>[];
+      provider.onUnifiedEventNotified = (event, _) => effects.add(event);
+      final now = _sourceLocalNow(8);
+      final first = _whewsInfo(eventId: 'whews-update-1', reportTime: now);
+      final update = _whewsInfo(
+        eventId: 'whews-update-1',
+        reportTime: now.add(const Duration(seconds: 2)),
+        magnitude: 4.6,
+      );
+
+      provider.handleUnifiedEventForTest(first);
+      provider.handleUnifiedEventForTest(update);
+      provider.handleUnifiedEventForTest(update);
+
+      expect(provider.unifiedEvents, hasLength(1));
+      expect(provider.unifiedEvents.single.magnitude, 4.6);
+      expect(effects, hasLength(2));
+      await Future<void>.delayed(Duration.zero);
+    },
+  );
+
+  test('dismissed WHEWS event stays closed after a later revision', () async {
+    final provider = QuakeProvider();
+    addTearDown(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      provider.dispose();
+    });
+    final now = _sourceLocalNow(8);
+    final first = _whewsInfo(eventId: 'whews-dismissed-1', reportTime: now);
+    final revision = _whewsInfo(
+      eventId: 'whews-dismissed-1',
+      reportTime: now.add(const Duration(seconds: 3)),
+      magnitude: 4.7,
+    );
+
+    provider.handleUnifiedEventForTest(first);
+    provider.dismissUnifiedEventForTest(first);
+    provider.handleUnifiedEventForTest(revision);
+
+    expect(provider.unifiedEvents, isEmpty);
+    await Future<void>.delayed(Duration.zero);
+  });
+
+  test('a new fingerprint cannot revive an expired WHEWS event', () async {
+    final provider = QuakeProvider();
+    addTearDown(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      provider.dispose();
+    });
+    final expired = _sourceLocalNow(8).subtract(const Duration(hours: 1));
+
+    provider.handleUnifiedEventForTest(
+      _whewsInfo(eventId: 'whews-expired-revision', reportTime: expired),
+    );
+    provider.handleUnifiedEventForTest(
+      _whewsInfo(
+        eventId: 'whews-expired-revision',
+        reportTime: expired.add(const Duration(seconds: 10)),
+        magnitude: 4.6,
+      ),
+    );
+
+    expect(provider.unifiedEvents, isEmpty);
+    await Future<void>.delayed(Duration.zero);
+  });
+
+  test(
+    'foreground and background merge FAN and WHEWS identical bodies',
+    () async {
+      final provider = QuakeProvider();
+      addTearDown(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        provider.dispose();
+      });
+      final effects = <UnifiedQuakeData>[];
+      provider.onUnifiedEventNotified = (event, _) => effects.add(event);
+      final fan = _kmaInfo(origin: 1, apiTypeLabel: 'FAN');
+      final whews = fan.copyWith(
+        origin: WhewsService.adapterOrigin,
+        apiTypeLabel: 'WHEWS',
+      );
+      final processor = BackgroundEventProcessor(
+        sourceInfoMagFilters: const {},
+      );
+
+      provider.handleUnifiedEventForTest(fan);
+      provider.handleUnifiedEventForTest(whews);
+
+      expect(provider.unifiedEvents, hasLength(1));
+      expect(effects, hasLength(1));
+      expect(processor.process(fan).type, BackgroundEventResultType.newEvent);
+      expect(processor.process(whews).type, BackgroundEventResultType.dropped);
+      await Future<void>.delayed(Duration.zero);
+    },
+  );
+
+  test('background accepts one changed WHEWS revision only', () {
+    final processor = BackgroundEventProcessor(sourceInfoMagFilters: const {});
+    final now = _sourceLocalNow(8);
+    final first = _whewsInfo(eventId: 'background-update-1', reportTime: now);
+    final update = _whewsInfo(
+      eventId: 'background-update-1',
+      reportTime: now.add(const Duration(seconds: 2)),
+      magnitude: 4.6,
+    );
+
+    expect(processor.process(first).type, BackgroundEventResultType.newEvent);
+    expect(processor.process(update).type, BackgroundEventResultType.update);
+    expect(processor.process(update).type, BackgroundEventResultType.dropped);
+  });
+
+  test(
+    'same-second WHEWS body correction is accepted without repeat effects',
+    () async {
+      final provider = QuakeProvider();
+      addTearDown(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        provider.dispose();
+      });
+      final effects = <UnifiedQuakeData>[];
+      provider.onUnifiedEventNotified = (event, _) => effects.add(event);
+      final now = _sourceLocalNow(8);
+      final first = _whewsInfo(eventId: 'same-second-1', reportTime: now);
+      final correction = _whewsInfo(
+        eventId: 'same-second-1',
+        reportTime: now,
+        magnitude: 4.6,
+      );
+      final processor = BackgroundEventProcessor(
+        sourceInfoMagFilters: const {},
+      );
+
+      provider.handleUnifiedEventForTest(first);
+      provider.handleUnifiedEventForTest(correction);
+
+      expect(provider.unifiedEvents.single.magnitude, 4.6);
+      expect(effects, hasLength(1));
+      expect(processor.process(first).type, BackgroundEventResultType.newEvent);
+      expect(
+        processor.process(correction).type,
+        BackgroundEventResultType.update,
+      );
+      await Future<void>.delayed(Duration.zero);
+    },
+  );
+
+  test(
+    'out-of-order WHEWS revision cannot overwrite newer information',
+    () async {
+      final provider = QuakeProvider();
+      addTearDown(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        provider.dispose();
+      });
+      final now = _sourceLocalNow(8);
+      final newer = _whewsInfo(
+        eventId: 'out-of-order-1',
+        reportTime: now,
+        magnitude: 4.7,
+      );
+      final older = _whewsInfo(
+        eventId: 'out-of-order-1',
+        reportTime: now.subtract(const Duration(seconds: 2)),
+        magnitude: 4.6,
+      );
+      final processor = BackgroundEventProcessor(
+        sourceInfoMagFilters: const {},
+      );
+
+      provider.handleUnifiedEventForTest(newer);
+      provider.handleUnifiedEventForTest(older);
+
+      expect(provider.unifiedEvents.single.magnitude, 4.7);
+      expect(processor.process(newer).type, BackgroundEventResultType.newEvent);
+      expect(processor.process(older).type, BackgroundEventResultType.dropped);
+      await Future<void>.delayed(Duration.zero);
+    },
+  );
+
+  test('WHEWS CENC content revision inside 30 seconds updates once', () async {
+    final provider = QuakeProvider();
+    addTearDown(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      provider.dispose();
+    });
+    final effects = <UnifiedQuakeData>[];
+    provider.onUnifiedEventNotified = (event, _) => effects.add(event);
+    final now = _sourceLocalNow(8);
+    final first = _whewsCencInfo(
+      reportTime: now,
+      magnitude: 4.5,
+      reviewLabel: '自动测定',
+    );
+    final revision = _whewsCencInfo(
+      reportTime: now.add(const Duration(seconds: 10)),
+      magnitude: 4.6,
+      reviewLabel: '正式测定',
+    );
+    final processor = BackgroundEventProcessor(sourceInfoMagFilters: const {});
+
+    provider.handleUnifiedEventForTest(first);
+    provider.handleUnifiedEventForTest(revision);
+
+    expect(provider.unifiedEvents, hasLength(1));
+    expect(provider.unifiedEvents.single.magnitude, 4.6);
+    expect(provider.unifiedEvents.single.reportNumText, '正式测定');
+    expect(effects, hasLength(2));
+    expect(processor.process(first).type, BackgroundEventResultType.newEvent);
+    expect(processor.process(revision).type, BackgroundEventResultType.update);
+    expect(processor.process(revision).type, BackgroundEventResultType.dropped);
+    await Future<void>.delayed(Duration.zero);
+  });
+}
+
+UnifiedQuakeData _whewsInfo({
+  required String eventId,
+  required DateTime reportTime,
+  double magnitude = 4.5,
+}) {
+  return UnifiedQuakeData(
+    source: 'emsc',
+    origin: WhewsService.adapterOrigin,
+    eventId: eventId,
+    isEew: false,
+    timeZone: 8,
+    titleText: 'EMSC 地震情报',
+    reportNumText: '',
+    useShindo: false,
+    maxIntensity: '-',
+    className: 'green',
+    hypocenter: '所罗门群岛',
+    originTime: reportTime.subtract(const Duration(minutes: 1)),
+    reportTime: reportTime,
+    magnitude: magnitude,
+    depth: 27,
+    depthText: '深度: 27km',
+    lat: -9.0,
+    lng: 159.0,
+    apiTypeLabel: 'WHEWS',
+  );
+}
+
+UnifiedQuakeData _kmaInfo({required int origin, required String apiTypeLabel}) {
+  final now = _sourceLocalNow(8);
+  return UnifiedQuakeData(
+    source: 'kmaEqlist',
+    origin: origin,
+    eventId: 'KMA-CROSS-API-1',
+    isEew: false,
+    timeZone: 8,
+    titleText: '기상청 지진정보',
+    reportNumText: '',
+    useShindo: false,
+    maxIntensity: 'Ⅳ',
+    className: 'blue',
+    hypocenter: '경상북도',
+    originTime: now.subtract(const Duration(minutes: 1)),
+    reportTime: now,
+    magnitude: 4.2,
+    depth: 12,
+    depthText: '深度: 12km',
+    lat: 36.1,
+    lng: 128.2,
+    apiTypeLabel: apiTypeLabel,
+  );
+}
+
+UnifiedQuakeData _whewsCencInfo({
+  required DateTime reportTime,
+  required double magnitude,
+  required String reviewLabel,
+}) {
+  return UnifiedQuakeData(
+    source: 'cencEqlist',
+    origin: WhewsService.adapterOrigin,
+    eventId: 'CENC-WHEWS-REVISION-1',
+    isEew: false,
+    timeZone: 8,
+    titleText: '中国地震台网地震信息',
+    reportNumText: reviewLabel,
+    useShindo: false,
+    maxIntensity: '-',
+    className: 'gray',
+    hypocenter: '四川省',
+    originTime: reportTime.subtract(const Duration(minutes: 1)),
+    reportTime: reportTime,
+    magnitude: magnitude,
+    depth: 10,
+    depthText: '深度: 10km',
+    lat: 30,
+    lng: 100,
+    apiTypeLabel: 'WHEWS',
+  );
+}
+
+DateTime _sourceLocalNow(int timeZone) {
+  final utc = DateTime.now().toUtc();
+  return DateTime.utc(
+    utc.year,
+    utc.month,
+    utc.day,
+    utc.hour,
+    utc.minute,
+    utc.second,
+    utc.millisecond,
+    utc.microsecond,
+  ).add(Duration(hours: timeZone));
+}

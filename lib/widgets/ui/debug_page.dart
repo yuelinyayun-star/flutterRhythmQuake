@@ -24,6 +24,7 @@ import '../../core/nied_replay_logger.dart';
 import '../map/map_config.dart';
 import '../map/quake_map_view.dart';
 import 'app_page_background.dart';
+import 'ui_runtime_flags.dart';
 
 class DebugPage extends StatefulWidget {
   const DebugPage({super.key});
@@ -65,12 +66,7 @@ class _DebugPageState extends State<DebugPage> {
   final TextEditingController _mapboxStyleIdController =
       TextEditingController();
   final TextEditingController _mapboxTokenController = TextEditingController();
-  final TextEditingController _tencentWmtsKeyController =
-      TextEditingController();
-  final TextEditingController _tencentWmtsSecretController =
-      TextEditingController();
   bool _mapboxDebugLoaded = false;
-  bool _tencentWmtsDebugLoaded = false;
   final GlobalQuakeService _globalQuakeService = GlobalQuakeService();
   StreamSubscription<void>? _globalQuakeSub;
   final TextEditingController _globalQuakePrimaryHostController =
@@ -93,7 +89,6 @@ class _DebugPageState extends State<DebugPage> {
     _initNiedDebugState();
     _initGlobalQuakeDebugState();
     _loadMapboxDebugState();
-    _loadTencentWmtsDebugState();
     _loadNiedLegendAssets();
     _loadLegendGeometry();
     _snetUiTimer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -130,8 +125,6 @@ class _DebugPageState extends State<DebugPage> {
     _mapboxUsernameController.dispose();
     _mapboxStyleIdController.dispose();
     _mapboxTokenController.dispose();
-    _tencentWmtsKeyController.dispose();
-    _tencentWmtsSecretController.dispose();
     _snetUiTimer?.cancel();
     NiedReplayLogger.instance.revision.removeListener(_onReplayLoggerChanged);
     QuakeMapView.niedSourceNotifier.removeListener(_onNiedSourceChanged);
@@ -167,8 +160,6 @@ class _DebugPageState extends State<DebugPage> {
                 return ListView(
                   children: [
                     _buildMapboxPanel(mapState),
-                    const SizedBox(height: 10),
-                    _buildTencentWmtsPanel(mapState),
                     const SizedBox(height: 10),
                     _buildLpgmPanel(),
                     const SizedBox(height: 10),
@@ -474,60 +465,6 @@ class _DebugPageState extends State<DebugPage> {
     await _saveMapboxDebugState(mapState);
   }
 
-  Future<void> _loadTencentWmtsDebugState() async {
-    final prefs = await SharedPreferences.getInstance();
-    final apiKey =
-        prefs.getString(MapConfig.tencentWmtsApiKeyKey) ??
-        MapConfig.tencentWmtsApiKey;
-    final secretKey =
-        prefs.getString(MapConfig.tencentWmtsSecretKeyKey) ??
-        MapConfig.tencentWmtsSecretKey;
-    MapConfig.configureTencentWmts(apiKey: apiKey, secretKey: secretKey);
-    if (!mounted) return;
-    setState(() {
-      _tencentWmtsKeyController.text = MapConfig.tencentWmtsApiKey;
-      _tencentWmtsSecretController.text = MapConfig.tencentWmtsSecretKey;
-      _tencentWmtsDebugLoaded = true;
-    });
-  }
-
-  Future<void> _saveTencentWmtsDebugState(MapStateProvider mapState) async {
-    final apiKey = _tencentWmtsKeyController.text.trim();
-    final secretKey = _tencentWmtsSecretController.text.trim();
-    MapConfig.configureTencentWmts(apiKey: apiKey, secretKey: secretKey);
-    debugPrint(
-      '[TencentMap] Debug save: '
-      'apiKey=${apiKey.isEmpty ? "empty" : "set"}, '
-      'sk=${secretKey.isEmpty ? "empty" : "set"}',
-    );
-    final prefs = await SharedPreferences.getInstance();
-    if (MapConfig.tencentWmtsApiKey.isEmpty) {
-      await prefs.remove(MapConfig.tencentWmtsApiKeyKey);
-    } else {
-      await prefs.setString(
-        MapConfig.tencentWmtsApiKeyKey,
-        MapConfig.tencentWmtsApiKey,
-      );
-    }
-    if (MapConfig.tencentWmtsSecretKey.isEmpty) {
-      await prefs.remove(MapConfig.tencentWmtsSecretKeyKey);
-    } else {
-      await prefs.setString(
-        MapConfig.tencentWmtsSecretKeyKey,
-        MapConfig.tencentWmtsSecretKey,
-      );
-    }
-    if (!mounted) return;
-    mapState.refreshTileConfig();
-    setState(() {
-      _tencentWmtsKeyController.text = MapConfig.tencentWmtsApiKey;
-      _tencentWmtsSecretController.text = MapConfig.tencentWmtsSecretKey;
-    });
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Tencent Map config saved')));
-  }
-
   Widget _buildMapboxPanel(MapStateProvider mapState) {
     final active = mapState.tileKey == MapConfig.mapboxEewceDarkKey;
     final configured = MapConfig.hasMapboxAccessToken;
@@ -615,99 +552,6 @@ class _DebugPageState extends State<DebugPage> {
                 ElevatedButton(
                   onPressed: _mapboxDebugLoaded
                       ? () => _saveMapboxDebugState(mapState)
-                      : null,
-                  child: const Text('Save'),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTencentWmtsPanel(MapStateProvider mapState) {
-    final active =
-        mapState.tileKey == MapConfig.tencentJsMapKey ||
-        mapState.tileKey == MapConfig.tencentStaticMapKey ||
-        mapState.tileKey == MapConfig.tencentWmtsKey;
-    final configured = MapConfig.hasTencentWmtsApiKey;
-    final signed = MapConfig.hasTencentWmtsSecretKey;
-    final fallback = active && !configured;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.white12),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    'Tencent Map API',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 14,
-                    ),
-                  ),
-                ),
-                Text(
-                  configured
-                      ? (signed ? 'key set / SK saved' : 'key set')
-                      : 'APIKEY empty',
-                  style: TextStyle(
-                    color: configured ? const Color(0xFF3AFF6F) : Colors.amber,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text(
-              fallback
-                  ? 'Tencent Map is selected, but APIKEY is empty. Current map falls back to Petal Light.'
-                  : 'Uses Tencent JavaScript GL API for the base map. SK is only used by legacy WebService diagnostics.',
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.72),
-                fontSize: 11,
-              ),
-            ),
-            const SizedBox(height: 10),
-            if (!_tencentWmtsDebugLoaded)
-              const LinearProgressIndicator(minHeight: 2)
-            else
-              Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                children: [
-                  _mapboxField(
-                    label: 'APIKEY',
-                    width: 360,
-                    controller: _tencentWmtsKeyController,
-                    obscureText: true,
-                  ),
-                  _mapboxField(
-                    label: 'SK',
-                    width: 300,
-                    controller: _tencentWmtsSecretController,
-                    obscureText: true,
-                  ),
-                ],
-              ),
-            const SizedBox(height: 10),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                ElevatedButton(
-                  onPressed: _tencentWmtsDebugLoaded
-                      ? () => _saveTencentWmtsDebugState(mapState)
                       : null,
                   child: const Text('Save'),
                 ),
@@ -958,6 +802,7 @@ class _DebugPageState extends State<DebugPage> {
     );
   }
 
+
   Widget _buildNiedGifMapCardV2({
     required String title,
     required Uint8List? gifBytes,
@@ -1185,13 +1030,51 @@ class _DebugPageState extends State<DebugPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'NIED Source Estimation',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 14,
-                      ),
+                    Wrap(
+                      alignment: WrapAlignment.spaceBetween,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 12,
+                      runSpacing: 4,
+                      children: [
+                        const Text(
+                          'NIED Source Estimation',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14,
+                          ),
+                        ),
+                        ValueListenableBuilder<bool>(
+                          valueListenable:
+                              UiRuntimeFlags.niedHypCurvePanelVisibleNotifier,
+                          builder: (context, visible, _) {
+                            return Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Text(
+                                  '主界面曲线面板',
+                                  style: TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Switch(
+                                  key: const ValueKey(
+                                    'nied-hyp-curve-panel-toggle',
+                                  ),
+                                  value: visible,
+                                  activeThumbColor: Colors.lightBlueAccent,
+                                  activeTrackColor: Colors.lightBlueAccent
+                                      .withValues(alpha: 0.35),
+                                  onChanged: _setNiedHypCurvePanelVisible,
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 8),
                     ...lines.map(
@@ -1245,6 +1128,17 @@ class _DebugPageState extends State<DebugPage> {
         );
       },
     );
+  }
+
+  void _setNiedHypCurvePanelVisible(bool visible) {
+    UiRuntimeFlags.niedHypCurvePanelVisibleNotifier.value = visible;
+    unawaited(() async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(
+        UiRuntimeFlags.niedHypCurvePanelVisiblePreferenceKey,
+        visible,
+      );
+    }());
   }
 
   Widget _buildEstimateStationChip(SeismicStationEventRecord record) {

@@ -22,6 +22,7 @@ class KmaStation {
   Timer? _activeTimer;
 
   bool get hasAlert => isActive || intensity >= 1;
+  int get heldIntensity => holdLevel < 0 ? -1 : (holdLevel - 2).clamp(0, 11);
 
   KmaStation({
     required this.id,
@@ -33,7 +34,7 @@ class KmaStation {
     activityLevel = intensity + 2;
   }
 
-  void update(int newIntensity) {
+  void update(int newIntensity, {int holdFrames = 1}) {
     intensity = newIntensity;
     final level = newIntensity + 2;
     recentLevel.insert(0, level);
@@ -60,7 +61,7 @@ class KmaStation {
     activityLevel = activityArr.fold(-1, max);
 
     final validPastCount = pastArr.where((l) => l >= 0).length;
-    final pastLevel = validPastCount >= activitySeconds * 3.5
+    final pastLevel = validPastCount >= activitySeconds * 3
         ? pastArr.fold(-1, max)
         : -1;
 
@@ -68,8 +69,11 @@ class KmaStation {
         ? activityArr.where((l) => l > pastLevel).length
         : 0;
 
+    final normalizedHoldFrames = holdFrames.clamp(1, recentSeconds);
     holdLevel = recentLevel.isNotEmpty
-        ? recentLevel.sublist(0, min(recentLevel.length, 4)).fold(-1, max)
+        ? recentLevel
+              .sublist(0, min(recentLevel.length, normalizedHoldFrames))
+              .fold(-1, max)
         : -1;
   }
 
@@ -98,8 +102,9 @@ class KmaMonitorService {
   KmaMonitorService._internal();
 
   static const List<String> _wsUrls = [
-    'wss://ws.fanstudio.tech:443/kma-station',
-    'wss://ws.fanstudio.hk:443/kma-station',
+    'wss://ws.yuelinrhythm.top/kma-station',
+    'wss://ws.fanstudio.tech/kma-station',
+    'wss://ws.fanstudio.hk/kma-station',
   ];
 
   List<KmaStation> _stations = [];
@@ -111,8 +116,10 @@ class KmaMonitorService {
   int _reconnectAttempts = 0;
   int _currentUrlIndex = 0;
   bool _isConnected = false;
+  bool _hasRealtimeData = false;
   DateTime _lastMessageAt = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime? _lastDataTimestamp;
+  final ValueNotifier<DateTime?> dataTimeNotifier = ValueNotifier(null);
   DateTime _lastInvalidMmiLogAt = DateTime.fromMillisecondsSinceEpoch(0);
   int _prevMaxActiveShindo = -1;
   bool get isConnected => _isConnected;
@@ -121,9 +128,14 @@ class KmaMonitorService {
   List<List<double>> _distMatrix = [];
   int _lastStationCount = 0;
   int _sensitivity = 2;
+  int _intensityHoldFrames = 1;
 
   void setSensitivity(int level) {
     _sensitivity = level.clamp(1, 3);
+  }
+
+  void setIntensityHoldFrames(int frames) {
+    _intensityHoldFrames = frames.clamp(1, KmaStation.recentSeconds);
   }
 
   final _stationController = StreamController<List<KmaStation>>.broadcast();
@@ -155,7 +167,6 @@ class KmaMonitorService {
       _currentUrlIndex = urlIndex;
       _lastMessageAt = DateTime.now();
       _reconnectAttempts = 0;
-      onStatusChanged?.call(true);
       debugPrint('KMA: WebSocket已连接 -> ${_wsUrls[urlIndex]}');
 
       _startHeartbeat();
@@ -205,6 +216,8 @@ class KmaMonitorService {
             _channel?.sink.close();
             _channel = null;
             _isConnected = false;
+            _hasRealtimeData = false;
+            dataTimeNotifier.value = null;
             onStatusChanged?.call(false);
             final nextUrlIndex = (urlIndex + 1) % _wsUrls.length;
             _scheduleReconnect(3, nextUrlIndex);
@@ -276,10 +289,15 @@ class KmaMonitorService {
 
     final now = DateTime.now();
     _applyDataGap(timestamp);
+    dataTimeNotifier.value = timestamp;
+    if (!_hasRealtimeData) {
+      _hasRealtimeData = true;
+      onStatusChanged?.call(true);
+    }
 
     for (int i = 0; i < parsed.length; i++) {
       final val = parsed[i];
-      _stations[i].update(val);
+      _stations[i].update(val, holdFrames: _intensityHoldFrames);
       _stations[i].lastUpdate = now;
     }
 
@@ -518,6 +536,8 @@ class KmaMonitorService {
     _channel?.sink.close();
     _channel = null;
     _isConnected = false;
+    _hasRealtimeData = false;
+    dataTimeNotifier.value = null;
     onStatusChanged?.call(false);
     _reconnectAttempts++;
     final nextUrlIndex = (failedUrlIndex + 1) % _wsUrls.length;
@@ -553,6 +573,8 @@ class KmaMonitorService {
     _channel?.sink.close();
     _channel = null;
     _isConnected = false;
+    _hasRealtimeData = false;
+    dataTimeNotifier.value = null;
   }
 
   void dispose() {

@@ -128,7 +128,7 @@ class SeismicSourceTracker {
         activeEvent.eventId != eventId) {
       activeEvent.endedAt ??= observedAt;
       final historyItems = List<SeismicActiveEvent>.from(history(sourceId))
-        ..insert(0, activeEvent);
+        ..insert(0, _archivedEventView(activeEvent));
       if (historyItems.length > 20) {
         historyItems.removeRange(20, historyItems.length);
       }
@@ -285,6 +285,12 @@ class SeismicSourceTracker {
         record.endAt = observedAt;
       }
 
+      _updateEventPhysicalPeaks(
+        record: record,
+        eventStartedAt: activeEvent.startedAt,
+        sample: sample,
+      );
+
       record.qualityFlags.addAll(sample.qualityFlags);
       record.provenance.addAll(sample.provenance);
     }
@@ -320,35 +326,58 @@ class SeismicSourceTracker {
       sensorSelection: const SensorSelection(),
     );
     if (estimator != null && estimator.supports(request)) {
-      final signature = _buildEstimateSignature(request);
+      final SourceEstimatorLifecycleOwner? lifecycleOwner =
+          estimator is SourceEstimatorLifecycleOwner
+          ? estimator as SourceEstimatorLifecycleOwner
+          : null;
+      final baseSignature = _buildEstimateSignature(request);
+      final signature = lifecycleOwner?.requiresEveryFrame == true
+          ? '$baseSignature|estimator_frame_time:'
+                '${observedAt.microsecondsSinceEpoch}'
+          : baseSignature;
       if (_lastEstimateSignatureBySource[sourceId] == signature) {
         activeEvent.estimate = _lastEstimateBySource[sourceId];
       } else {
         final estimate = estimator.estimate(request);
-        if (estimate != null) {
-          final qualityHeldEstimate = _applyEstimateQualityPolicy(
-            sourceId: sourceId,
-            eventId: activeEvent.eventId,
-            candidate: estimate,
-            previous: _lastEstimateBySource[sourceId],
-            metadata: activeEvent.metadata,
-          );
-          final acceptedEstimate = identical(qualityHeldEstimate, estimate)
-              ? _applyStabilityPolicy(
+        final clearPublishedEstimate =
+            lifecycleOwner?.ownsOutputLifecycle == true &&
+            activeEvent.metadata['nied_dart_hyp_clear_published_source'] ==
+                true;
+        if (clearPublishedEstimate) {
+          activeEvent.estimate = null;
+          _lastEstimateBySource.remove(sourceId);
+          _phaseBestFitBySource.remove(sourceId);
+          _candidateRegionBySource.remove(sourceId);
+          _clearCandidateRegionMetadata(activeEvent.metadata);
+          _clearEstimateQualityMetadata(activeEvent.metadata);
+          _clearStabilityMetadata(activeEvent.metadata);
+          _clearStabilityState(sourceId);
+          activeEvent.metadata.remove('estimate_held_due_to_low_support');
+        } else if (estimate != null) {
+          final acceptedEstimate = lifecycleOwner?.ownsOutputLifecycle == true
+              ? estimate
+              : _applyTrackerEstimatePolicies(
                   sourceId: sourceId,
+                  eventId: activeEvent.eventId,
                   observedAt: observedAt,
-                  candidate: qualityHeldEstimate,
+                  candidate: estimate,
                   previous: _lastEstimateBySource[sourceId],
                   metadata: activeEvent.metadata,
-                )
-              : qualityHeldEstimate;
+                );
           activeEvent.estimate = acceptedEstimate;
-          _updateCandidateRegionDiagnostics(
-            sourceId: sourceId,
-            event: activeEvent,
-            observedAt: observedAt,
-            estimate: acceptedEstimate,
-          );
+          if (lifecycleOwner?.ownsOutputLifecycle == true) {
+            _clearCandidateRegionMetadata(activeEvent.metadata);
+            _clearEstimateQualityMetadata(activeEvent.metadata);
+            _clearStabilityMetadata(activeEvent.metadata);
+            _clearStabilityState(sourceId);
+          } else {
+            _updateCandidateRegionDiagnostics(
+              sourceId: sourceId,
+              event: activeEvent,
+              observedAt: observedAt,
+              estimate: acceptedEstimate,
+            );
+          }
           if (identical(acceptedEstimate, estimate)) {
             final revision = activeEvent.metadata['estimate_revision'];
             activeEvent.metadata['estimate_revision'] =
@@ -383,7 +412,7 @@ class SeismicSourceTracker {
     if (!hasSignal) {
       activeEvent.endedAt ??= observedAt;
       final historyItems = List<SeismicActiveEvent>.from(history(sourceId))
-        ..insert(0, activeEvent);
+        ..insert(0, _archivedEventView(activeEvent));
       if (historyItems.length > 20) {
         historyItems.removeRange(20, historyItems.length);
       }
@@ -456,6 +485,32 @@ class SeismicSourceTracker {
     final raw = metadata['source_trigger_member_ids'];
     if (raw is Iterable) return raw.whereType<String>();
     return const <String>[];
+  }
+
+  SourceEstimate _applyTrackerEstimatePolicies({
+    required String sourceId,
+    required String eventId,
+    required DateTime observedAt,
+    required SourceEstimate candidate,
+    required SourceEstimate? previous,
+    required Map<String, Object?> metadata,
+  }) {
+    final qualityHeldEstimate = _applyEstimateQualityPolicy(
+      sourceId: sourceId,
+      eventId: eventId,
+      candidate: candidate,
+      previous: previous,
+      metadata: metadata,
+    );
+    return identical(qualityHeldEstimate, candidate)
+        ? _applyStabilityPolicy(
+            sourceId: sourceId,
+            observedAt: observedAt,
+            candidate: qualityHeldEstimate,
+            previous: previous,
+            metadata: metadata,
+          )
+        : qualityHeldEstimate;
   }
 
   SourceEstimate _applyEstimateQualityPolicy({
@@ -644,6 +699,21 @@ class SeismicSourceTracker {
     );
   }
 
+  SeismicActiveEvent _archivedEventView(SeismicActiveEvent event) {
+    return SeismicActiveEvent(
+      eventId: event.eventId,
+      sourceId: event.sourceId,
+      startedAt: event.startedAt,
+      updatedAt: event.updatedAt,
+      stageName: event.stageName,
+      maxShindo: event.maxShindo,
+      stationRecords: const <String, SeismicStationEventRecord>{},
+      metadata: Map<String, Object?>.unmodifiable(event.metadata),
+      estimate: event.estimate,
+      endedAt: event.endedAt,
+    );
+  }
+
   StationLifecycleState _stationStateFromSample(SeismicStationSample sample) {
     final detectLevel = sample.detectLevel ?? -1;
     if (sample.isTriggered && detectLevel >= 14) {
@@ -688,8 +758,32 @@ class SeismicSourceTracker {
           if (clampedNonChronological)
             'observation_time_clamped_nonchronological',
         }),
+        physicalObservations: Map.unmodifiable(sample.physicalObservations),
       ),
     );
+  }
+
+  void _updateEventPhysicalPeaks({
+    required SeismicStationEventRecord record,
+    required DateTime eventStartedAt,
+    required SeismicStationSample sample,
+  }) {
+    final windowStartAt =
+        record.firstTriggerAt ?? record.firstRiseAt ?? eventStartedAt;
+    record.eventPhysicalPeaks.removeWhere(
+      (_, observation) => observation.dataTime.isBefore(windowStartAt),
+    );
+    for (final observation in sample.physicalObservations.values) {
+      if (!observation.isUsable ||
+          observation.dataTime.isBefore(windowStartAt)) {
+        continue;
+      }
+      if (!_hasIndependentProvenance(sample, observation.quantity)) continue;
+      final previous = record.eventPhysicalPeaks[observation.quantity];
+      if (previous == null || observation.value > previous.value) {
+        record.eventPhysicalPeaks[observation.quantity] = observation;
+      }
+    }
   }
 
   ObservationTimeInterval _latestObservationInterval(

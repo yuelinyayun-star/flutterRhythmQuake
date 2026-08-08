@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../../services/sources/kma_monitor.dart';
+import 'ka_kma_marker_style.dart';
 import 'station_dot_painter_layer.dart';
 
 class KmaIntensityLayer extends StatefulWidget {
   final List<KmaStation>? stations;
   final bool hideGrid;
   final bool blinkOn;
+  final bool displayShindo0;
   final void Function(List<LatLng> centers)? onGridCellsChanged;
 
   const KmaIntensityLayer({
@@ -15,6 +17,7 @@ class KmaIntensityLayer extends StatefulWidget {
     this.stations,
     this.hideGrid = false,
     this.blinkOn = true,
+    this.displayShindo0 = false,
     this.onGridCellsChanged,
   });
 
@@ -26,22 +29,6 @@ class _KmaIntensityLayerState extends State<KmaIntensityLayer> {
   bool _hadActiveStations = false;
   List<double> _gridDecimal = const [0.0, 0.0];
   final Map<String, _KmaGridCell> _heldGridCells = {};
-
-  static const List<Color> _kmaColors = [
-    Color(0xFF0003CF),
-    Color(0xFF004FF4),
-    Color(0xFF05D384),
-    Color(0xFF50FB30),
-    Color(0xFFCCFF09),
-    Color(0xFFFDFC00),
-    Color(0xFFFFCA00),
-    Color(0xFFFF7900),
-    Color(0xFFFF4700),
-    Color(0xFFF91900),
-    Color(0xFFE10000),
-    Color(0xFFAF0000),
-    Color(0xFFAD0000),
-  ];
 
   static const Color _idleColor = Color(0x804466AA);
 
@@ -61,9 +48,8 @@ class _KmaIntensityLayerState extends State<KmaIntensityLayer> {
     if (camera != null) zoom = camera.zoom;
 
     final overview = _overviewFactor(zoom);
-    final idleDotSize = (1.0 + overview * 4.0).clamp(1.0, 5.0);
-    final smallMarkerSize = (4.5 + overview * 9.5).clamp(4.5, 14.0);
-    final smallBorderWidth = (0.35 + overview * 0.65).clamp(0.35, 1.0);
+    final dotSize = KaKmaMarkerStyle.dotSizeForZoom(zoom);
+    final dotBorderWidth = KaKmaMarkerStyle.borderWidthForZoom(zoom);
 
     final activeStations = data.where((s) => s.isActive).toList();
     _syncHeldGridCells(activeStations);
@@ -80,44 +66,47 @@ class _KmaIntensityLayerState extends State<KmaIntensityLayer> {
     final iconMarkers = <Marker>[];
 
     for (var station in data) {
-      final active = station.intensity >= 0;
-      final level = (station.intensity + 2).clamp(0, 12);
-      final showLabel = active && level >= 4;
+      final level = station.holdLevel;
+      final active = level >= 0;
+      final showLabel = KaKmaMarkerStyle.shouldShowMarker(
+        holdLevel: level,
+        zoom: zoom,
+        displayShindo0: widget.displayShindo0,
+      );
 
       if (!active) {
         dots.add(
           StationDot(
             coordinate: station.coordinate,
             color: _idleColor,
-            radius: idleDotSize / 2,
+            radius: dotSize / 2,
             fillOpacity: 0.08 + overview * 0.10,
             borderOpacity: 0.22 + overview * 0.38,
-            borderWidth: smallBorderWidth,
+            borderWidth: dotBorderWidth,
           ),
         );
       } else if (showLabel) {
         iconMarkers.add(
           Marker(
-            width: 22,
-            height: 22,
+            width: KaKmaMarkerStyle.labeledMarkerSize,
+            height: KaKmaMarkerStyle.labeledMarkerSize,
             point: station.coordinate,
             child: _KmaLabeledMarker(
-              color: _kmaColors[level],
+              color: KaKmaMarkerStyle.markerColorForLevel(level),
               level: level,
-              intensity: station.intensity,
             ),
           ),
         );
       } else {
-        final color = _kmaColors[level];
+        final color = KaKmaMarkerStyle.stationColorForLevel(level);
         dots.add(
           StationDot(
             coordinate: station.coordinate,
             color: color,
-            radius: smallMarkerSize / 2,
+            radius: dotSize / 2,
             fillOpacity: 0.14 + overview * 0.22,
             borderOpacity: 0.45 + overview * 0.45,
-            borderWidth: smallBorderWidth,
+            borderWidth: dotBorderWidth,
           ),
         );
       }
@@ -228,24 +217,19 @@ class _KmaIntensityLayerState extends State<KmaIntensityLayer> {
 class _KmaLabeledMarker extends StatelessWidget {
   final Color color;
   final int level;
-  final int intensity;
 
-  const _KmaLabeledMarker({
-    required this.color,
-    required this.level,
-    required this.intensity,
-  });
+  const _KmaLabeledMarker({required this.color, required this.level});
 
   @override
   Widget build(BuildContext context) {
     final isHigh = level >= 7;
-    final displayValue = intensity.toString();
+    final displayValue = KaKmaMarkerStyle.mmiForLevel(level).toString();
 
     return Container(
       decoration: BoxDecoration(
         color: color,
         shape: BoxShape.circle,
-        border: Border.all(color: Colors.white, width: isHigh ? 2.0 : 1.2),
+        border: Border.all(color: Colors.white, width: isHigh ? 2.0 : 1.0),
       ),
       alignment: Alignment.center,
       child: FittedBox(
@@ -253,8 +237,8 @@ class _KmaLabeledMarker extends StatelessWidget {
         child: Text(
           displayValue,
           style: TextStyle(
-            color: level >= 5 ? Colors.black : Colors.white,
-            fontSize: 12,
+            color: KaKmaMarkerStyle.foregroundForLevel(level),
+            fontSize: KaKmaMarkerStyle.labelFontSizeForLevel(level),
             fontWeight: FontWeight.w900,
             height: 1,
           ),

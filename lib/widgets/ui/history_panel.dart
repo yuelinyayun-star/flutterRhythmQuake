@@ -5,6 +5,7 @@ import '../../providers/quake_provider.dart';
 import '../../providers/map_state_provider.dart';
 import '../../models/eew_event_group.dart';
 import '../../models/unified_quake_data.dart';
+import 'unified_intensity_format.dart';
 
 class HistoryPanel extends StatelessWidget {
   const HistoryPanel({super.key});
@@ -282,7 +283,7 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
 
     final value = double.tryParse(event.maxIntensity);
     final display = value != null
-        ? value.toInt().toString()
+        ? unifiedRomanIntensityLabel(event.maxIntensity)
         : event.maxIntensity;
 
     return Container(

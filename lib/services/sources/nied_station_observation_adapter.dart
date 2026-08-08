@@ -26,8 +26,8 @@ class NiedStationObservationAdapter {
       latitude: station.coordinate.latitude,
       longitude: station.coordinate.longitude,
       intensity: station.gifObservation?.shindo,
-      rawLevel: station.level >= 0 ? station.level : null,
-      detectLevel: station.detectLevel >= 0 ? station.detectLevel : null,
+      rawLevel: station.kaLevel >= 0 ? station.kaLevel : null,
+      detectLevel: station.kaLevel >= 0 ? station.kaLevel : null,
       sensorRole: ObservationSensorRole.surface,
       qualityFlags: qualityFlags,
       metadata: {

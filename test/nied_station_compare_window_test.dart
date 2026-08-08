@@ -22,13 +22,15 @@ String _gifLine(DateTime jst, NiedStation? station) {
       '${jst.hour.toString().padLeft(2, '0')}:${jst.minute.toString().padLeft(2, '0')}:${jst.second.toString().padLeft(2, '0')}';
   if (station == null) return '$hhmmss GIF missing';
   final display = station.level >= 0
-      ? JpShindoScale.rawShindoFromLevel(station.level).toStringAsFixed(2)
+      ? JpShindoScale.rawShindoFromKanameishiLevel(
+          station.level,
+        ).toStringAsFixed(2)
       : '--';
   final cont = station.level >= 0
       ? station.continuousShindo.toStringAsFixed(3)
       : '--';
-  return '$hhmmss GIF ${station.code} cont=$cont raw30=${station.level} '
-      'disp=$display det21=${station.detectLevel}';
+  return '$hhmmss GIF ${station.code} cont=$cont level=${station.level} '
+      'shindo=$display';
 }
 
 String _yahooLine(DateTime jst, NiedStation? station) {
@@ -36,13 +38,15 @@ String _yahooLine(DateTime jst, NiedStation? station) {
       '${jst.hour.toString().padLeft(2, '0')}:${jst.minute.toString().padLeft(2, '0')}:${jst.second.toString().padLeft(2, '0')}';
   if (station == null) return '$hhmmss Yahoo missing';
   final display = station.level >= 0
-      ? JpShindoScale.rawShindoFromLevel(station.level).toStringAsFixed(2)
+      ? JpShindoScale.rawShindoFromKanameishiLevel(
+          station.level,
+        ).toStringAsFixed(2)
       : '--';
-  final midpoint = station.detectLevel >= 0
-      ? _kanameishiMidpointShindo(station.detectLevel).toStringAsFixed(2)
+  final midpoint = station.level >= 0
+      ? _kanameishiMidpointShindo(station.level).toStringAsFixed(2)
       : '--';
-  return '$hhmmss Yahoo ${station.code} mid21=$midpoint raw30=${station.level} '
-      'disp=$display det21=${station.detectLevel}';
+  return '$hhmmss Yahoo ${station.code} midpoint=$midpoint '
+      'level=${station.level} shindo=$display';
 }
 
 void main() {

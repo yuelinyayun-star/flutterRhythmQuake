@@ -37,10 +37,14 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'package:web_socket_channel/web_socket_channel.dart';
+import 'dart:math' as math;
+import 'package:flutter/foundation.dart' show ValueNotifier;
 import 'base_source.dart';
+import 'fan_socket_connection.dart';
+import 'fan_socket_factory.dart';
 import '../quake_event_adapter.dart';
 import '../../models/quake_message.dart';
+import '../../models/cmt_moment_tensor.dart';
 import '../../models/source_status.dart';
 import '../../models/cenc_ir_data.dart';
 import '../../models/weather_alarm.dart';
@@ -49,11 +53,54 @@ import '../../utils/fe_regions.dart';
 import '../../core/intensity_calculator.dart';
 import '../../core/utils/quake_time.dart';
 
+enum FanAuthStatus { unauthenticated, authenticating, authenticated, failed }
+
+enum FanConnectionStatus { disconnected, connecting, reconnecting, connected }
+
 /// FAN 服务类
 ///
 /// 继承自 BaseSourceService，实现 FAN API 的具体逻辑。
 /// 负责管理 WebSocket 连接、消息解析和数据分发。
 class FanService extends BaseSourceService {
+  /// FAN Studio 应用标识。应用内置，用户只需要在 Debug 页填写自己的 API Key。
+  static const String builtInAppId = '7c92a197-c814-4d0d-b795-89d4fd3293e7';
+
+  /// FAN Studio API Key 的本地偏好设置键。
+  static const String apiKeyPreferenceKey = 'fan_studio_api_key';
+
+  FanService({String apiKey = ''}) : _apiKey = apiKey.trim();
+
+  String _apiKey;
+
+  final ValueNotifier<FanAuthStatus> authStatusNotifier =
+      ValueNotifier<FanAuthStatus>(FanAuthStatus.unauthenticated);
+
+  final ValueNotifier<FanConnectionStatus> connectionStatusNotifier =
+      ValueNotifier<FanConnectionStatus>(FanConnectionStatus.disconnected);
+
+  bool get hasApiKey => _apiKey.isNotEmpty;
+
+  void _setAuthStatus(FanAuthStatus status) {
+    if (authStatusNotifier.value == status) return;
+    authStatusNotifier.value = status;
+  }
+
+  void _setConnectionStatus(FanConnectionStatus status) {
+    if (connectionStatusNotifier.value == status) return;
+    connectionStatusNotifier.value = status;
+  }
+
+  /// 更新 API Key。已有连接会重连，使认证配置立即生效。
+  void setApiKey(String apiKey) {
+    final next = apiKey.trim();
+    if (next == _apiKey) return;
+    _apiKey = next;
+    if (!hasApiKey) _setAuthStatus(FanAuthStatus.unauthenticated);
+    if (_isRunning && !_isManualClose) {
+      connect();
+    }
+  }
+
   /// 服务名称标识
   @override
   String get name => 'FAN';
@@ -68,6 +115,33 @@ class FanService extends BaseSourceService {
   ///
   /// 当收到 cencirlist_response 时触发，传递原始列表数据。
   void Function(List<Map<String, dynamic>>)? onCencIrListUpdated;
+
+  /// 是否向 FAN 请求 CENC 烈度速报。
+  ///
+  /// NowQuake 可用时关闭；仅在 NowQuake 不可用时作为回退开启。
+  bool _cencIrRequestsEnabled = true;
+
+  void setCencIrRequestsEnabled(bool enabled) {
+    if (_cencIrRequestsEnabled == enabled) return;
+    _cencIrRequestsEnabled = enabled;
+    if (!enabled) {
+      _cencIrDetailRequested = false;
+      return;
+    }
+    requestCencIrList();
+  }
+
+  void requestCencIrList() {
+    if (!_cencIrRequestsEnabled) return;
+    final channel = _channel;
+    final serial = _connectSerial;
+    if (channel == null || !_isActiveConnection(channel, serial)) return;
+    unawaited(
+      channel.send('cencirlist').catchError((Object error) {
+        debugPrint('FAN cencirlist 发送失败: $error');
+      }),
+    );
+  }
 
   /// FSSN 地震列表更新回调
   ///
@@ -89,6 +163,11 @@ class FanService extends BaseSourceService {
   /// 当收到 weatheralarm 数据时触发。
   void Function(WeatherAlarm)? onWeatherAlarm;
 
+  /// 台风实时更新回调。
+  ///
+  /// FAN WS 的 typhoon 包只作为变更通知，详细路径仍走 GET 接口。
+  void Function()? onTyphoonUpdate;
+
   // ═══════════════════════════════════════════════════════════════════════════
   // 服务器配置
   // ═══════════════════════════════════════════════════════════════════════════
@@ -98,8 +177,8 @@ class FanService extends BaseSourceService {
   /// 支持多个中继服务器，按顺序尝试连接。
   /// 当一个服务器连接失败时，自动切换到下一个。
   static const List<String> _wsUrls = [
-    'wss://ws.fanstudio.tech:443/all',
-    'wss://ws.fanstudio.hk:443/all',
+    'wss://ws.fanstudio.tech/all',
+    'wss://ws.fanstudio.hk/all',
   ];
 
   /// 获取可选择的服务器名称列表
@@ -108,11 +187,20 @@ class FanService extends BaseSourceService {
     'ws.fanstudio.hk',
   ];
 
-  /// 设置默认连接的服务器索引（在 connect() 之前调用）
+  /// 设置默认连接的服务器索引。
+  ///
+  /// 启动前调用时只保存默认顺序；运行中切换时立即终止旧链路，
+  /// 取消旧重连任务，并从新的默认服务器重新连接。
   void setDefaultServerIndex(int index) {
-    if (index >= 0 && index < _wsUrls.length) {
-      _currentUrlIndex = index;
-    }
+    if (index < 0 || index >= _wsUrls.length) return;
+
+    final changed = _defaultUrlIndex != index || _currentUrlIndex != 0;
+    _defaultUrlIndex = index;
+    _currentUrlIndex = 0;
+    if (!changed || _isManualClose || !_isRunning) return;
+
+    debugPrint('FAN: 默认服务器已切换，取消旧链路并重新连接: ${serverOptions[index]}');
+    connect();
   }
 
   /// 手动请求 CENC 烈度速报详情
@@ -120,9 +208,16 @@ class FanService extends BaseSourceService {
   /// 发送 [cencirdetail] 请求获取指定事件的完整烈度数据
   /// （包括 instrument_intensity_json 和 contour_geojson）。
   void requestCencIrDetail(String id) {
-    if (_channel == null) return;
+    final channel = _channel;
+    if (channel == null) return;
     _cencIrDetailRequested = true;
-    _channel!.sink.add(jsonEncode({'type': 'cencirdetail', 'id': id}));
+    unawaited(
+      channel.send(jsonEncode({'type': 'cencirdetail', 'id': id})).catchError((
+        Object error,
+      ) {
+        debugPrint('FAN cencirdetail 发送失败: $error');
+      }),
+    );
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -130,7 +225,7 @@ class FanService extends BaseSourceService {
   // ═══════════════════════════════════════════════════════════════════════════
 
   /// WebSocket 通道实例
-  WebSocketChannel? _channel;
+  FanSocketConnection? _channel;
 
   /// 连接初始化是否已完成
   ///
@@ -161,8 +256,52 @@ class FanService extends BaseSourceService {
   /// 当前使用的 URL 索引
   int _currentUrlIndex = 0;
 
+  /// 设置里选择的默认服务器原始索引。
+  int _defaultUrlIndex = 0;
+
+  /// 当前连接尝试序号，用于隔离旧 socket 的异步回调。
+  int _connectSerial = 0;
+
   /// 是否为手动关闭
   bool _isManualClose = false;
+
+  /// 是否处于由 SourceManager 管理的运行状态。
+  /// 连接暂时失败时仍保持 true，便于设置切换时取消旧重连流程。
+  bool _isRunning = false;
+
+  /// WebView2 不可用时，本轮生命周期退回 Dart 原生连接。
+  bool _forceNativeTransport = false;
+
+  /// 每次连接只打印首个 FAN 包类型，避免持续日志占用。
+  bool _hasLoggedFirstPacket = false;
+
+  List<String> get _orderedWsUrls {
+    final urls = List<String>.of(_wsUrls);
+    if (_defaultUrlIndex <= 0 || _defaultUrlIndex >= urls.length) return urls;
+    urls.insert(0, urls.removeAt(_defaultUrlIndex));
+    return urls;
+  }
+
+  bool _isActiveConnection(FanSocketConnection channel, int serial) {
+    return !_isManualClose &&
+        serial == _connectSerial &&
+        identical(_channel, channel);
+  }
+
+  List<String> get _initMessages => [
+    'cwalist',
+    if (_cencIrRequestsEnabled) 'cencirlist',
+    'cenclist',
+    'fssnlist',
+  ];
+
+  List<String> get _autoMessages => [
+    'query',
+    'cwalist',
+    if (_cencIrRequestsEnabled) 'cencirlist',
+    'cenclist',
+    'fssnlist',
+  ];
 
   // ═══════════════════════════════════════════════════════════════════════════
   // 连接管理
@@ -173,13 +312,26 @@ class FanService extends BaseSourceService {
   /// 清理现有连接状态并开始新的连接尝试。
   @override
   void connect() {
+    final isReconnect = _isRunning && !_isManualClose;
     _isManualClose = false;
+    _isRunning = true;
+    _setConnectionStatus(
+      isReconnect
+          ? FanConnectionStatus.reconnecting
+          : FanConnectionStatus.connecting,
+    );
+    // 认证只在 WebSocket 已建立后开始，连接阶段显示连接状态。
+    _setAuthStatus(FanAuthStatus.unauthenticated);
     _reconnectTimer?.cancel();
     _keepaliveTimer?.cancel();
     _connectTimeoutTimer?.cancel();
     _retryInterval = 3;
+    _forceNativeTransport = false;
+    // 主动重连（设置切换、重新启用、更新 Key）必须回到设置选定的默认服务器。
+    // 故障轮换只由 _scheduleReconnect() 推进，不能把备用服务器留成下一次入口。
+    _currentUrlIndex = 0;
     _cleanup();
-    _doConnect(_currentUrlIndex);
+    _doConnect(0, reconnecting: isReconnect);
   }
 
   /// 执行连接
@@ -191,65 +343,105 @@ class FanService extends BaseSourceService {
   ///
   /// 参数：
   /// - [urlIndex]: 要连接的服务器 URL 索引
-  void _doConnect(int urlIndex) {
-    // 所有 URL 都尝试失败，按线性退避调度重连
-    if (urlIndex >= _wsUrls.length) {
-      debugPrint('FAN: 所有地址连接失败，${_retryInterval}秒后重试');
-      onStatusChanged?.call(SourceStatus.error);
-      _scheduleReconnect();
-      return;
-    }
+  void _doConnect(int urlIndex, {bool reconnecting = false}) {
+    final urls = _orderedWsUrls;
+    if (urls.isEmpty) return;
+    urlIndex %= urls.length;
+    _currentUrlIndex = urlIndex;
 
+    _setConnectionStatus(
+      reconnecting
+          ? FanConnectionStatus.reconnecting
+          : FanConnectionStatus.connecting,
+    );
     onStatusChanged?.call(SourceStatus.connecting);
-    final url = _wsUrls[urlIndex];
-    debugPrint('正在建立 FAN 链路: $url (重试间隔: ${_retryInterval}s)');
+    final url = urls[urlIndex];
+    final serial = ++_connectSerial;
+    debugPrint('正在准备 FAN 链路: $url (重试间隔: ${_retryInterval}s)');
+    unawaited(_openConnection(urlIndex, url, serial));
+  }
 
+  Future<void> _openConnection(int urlIndex, String url, int serial) async {
     try {
-      _channel = WebSocketChannel.connect(Uri.parse(url));
+      final channel = await createFanSocket(
+        Uri.parse(url),
+        forceNative: _forceNativeTransport,
+      );
+      if (_isManualClose || serial != _connectSerial) {
+        await channel.close();
+        return;
+      }
+      _channel = channel;
       _lastMessageAt = DateTime.now();
-      bool hasReceivedData = false;
+      var hasConnected = false;
+      debugPrint('正在建立 FAN 链路: $url [${channel.transportName}]');
 
       // 连接超时保护：10 秒后连接仍未完成则关闭
       _connectTimeoutTimer?.cancel();
       _connectTimeoutTimer = Timer(const Duration(seconds: 10), () {
-        debugPrint('FAN: 连接超时(10s)，切换到下一地址');
-        _cleanup();
-        _doConnect(urlIndex + 1);
+        if (!_isActiveConnection(channel, serial) || hasConnected) return;
+        debugPrint('FAN: 连接超时(10s): $url [${channel.transportName}]');
+        _handleFailure();
       });
 
-      _channel!.stream.listen(
+      unawaited(
+        channel.ready
+            .timeout(const Duration(seconds: 10))
+            .then<void>((_) {
+              if (!_isActiveConnection(channel, serial) || hasConnected) {
+                return;
+              }
+              hasConnected = true;
+              _currentUrlIndex = urlIndex;
+              _connectTimeoutTimer?.cancel();
+              _setConnectionStatus(FanConnectionStatus.connected);
+              onStatusChanged?.call(SourceStatus.connected);
+              _onConnected(channel, serial);
+            })
+            .catchError((Object error) {
+              if (!_isActiveConnection(channel, serial) || hasConnected) {
+                return;
+              }
+              debugPrint('FAN: 握手失败: $url [${channel.transportName}] $error');
+              _handleConnectionFailure(channel, error);
+            }),
+      );
+
+      channel.stream.listen(
         (data) {
-          hasReceivedData = true;
+          if (!_isActiveConnection(channel, serial)) return;
           _lastMessageAt = DateTime.now();
-          // 连接恢复正常，重置退避间隔
-          if (_retryInterval > 3) {
-            debugPrint('FAN 链路已恢复正常');
-          }
-          _retryInterval = 3;
-          _currentUrlIndex = urlIndex;
-          _connectTimeoutTimer?.cancel();
-          onStatusChanged?.call(SourceStatus.connected);
-          if (!_connectedInitDone) {
-            _connectedInitDone = true;
-            _onConnected();
+          if (!hasConnected) {
+            hasConnected = true;
+            _currentUrlIndex = urlIndex;
+            _connectTimeoutTimer?.cancel();
+            _setConnectionStatus(FanConnectionStatus.connected);
+            onStatusChanged?.call(SourceStatus.connected);
+            _onConnected(channel, serial);
           }
           _dispatch(data);
         },
         onDone: () {
+          if (!_isActiveConnection(channel, serial)) return;
           _keepaliveTimer?.cancel();
           _connectTimeoutTimer?.cancel();
-          if (!hasReceivedData) {
-            debugPrint('FAN: 无效路径或服务端拒绝连接，服务端已关闭链路 ($url)');
-          } else {
-            _currentUrlIndex = (_currentUrlIndex + 1) % _wsUrls.length;
+          if (!hasConnected) {
+            debugPrint('FAN: 握手前链路关闭: $url [${channel.transportName}]');
+            _handleFailure();
+            return;
           }
           debugPrint('FAN 链路远程关闭');
           _handleFailure();
         },
         onError: (err) {
+          if (!_isActiveConnection(channel, serial)) return;
           _keepaliveTimer?.cancel();
           _connectTimeoutTimer?.cancel();
           debugPrint('FAN 链路传输错误: $err');
+          if (!hasConnected) {
+            _handleConnectionFailure(channel, err);
+            return;
+          }
           _handleFailure();
         },
         cancelOnError: true,
@@ -257,33 +449,81 @@ class FanService extends BaseSourceService {
     } catch (e) {
       debugPrint('FAN 初始握手失败: $e');
       _connectTimeoutTimer?.cancel();
-      _doConnect(urlIndex + 1);
+      _handleFailure();
     }
+  }
+
+  void _handleConnectionFailure(FanSocketConnection channel, Object error) {
+    if (channel.transportName == 'WebView2' &&
+        error is FanBrowserSocketUnavailableException) {
+      debugPrint('FAN: WebView2 不可用，本轮改用 Dart 原生连接: $error');
+      _forceNativeTransport = true;
+      _cleanup();
+      _doConnect(_currentUrlIndex, reconnecting: true);
+      return;
+    }
+    _handleFailure();
   }
 
   /// 连接成功后的初始化
   ///
   /// 立即发送订阅请求并启动保活定时器。
   /// 参考 kanameishi 的 WebSocketObj.onopen 逻辑。
-  void _onConnected() {
-    _channel?.sink.add('query');
-    _channel?.sink.add('cwalist');
-    _channel?.sink.add('cenclist');
-    _channel?.sink.add('cencirlist');
-    _channel?.sink.add('fssnlist');
-
+  void _onConnected(FanSocketConnection channel, int serial) {
+    if (!_isActiveConnection(channel, serial) || _connectedInitDone) return;
+    _connectedInitDone = true;
+    final recovered = _retryInterval > 3;
+    _retryInterval = 3;
+    debugPrint(
+      'FAN 链路已连接: ${_orderedWsUrls[_currentUrlIndex]} '
+      '[${channel.transportName}]',
+    );
+    if (recovered) {
+      debugPrint('FAN 链路已恢复正常');
+    }
+    unawaited(_initializeConnectedChannel(channel, serial));
     _startKeepalive();
+  }
+
+  Future<void> _initializeConnectedChannel(
+    FanSocketConnection channel,
+    int serial,
+  ) async {
+    if (hasApiKey) {
+      _setAuthStatus(FanAuthStatus.authenticating);
+      try {
+        await channel.send(
+          jsonEncode({'type': 'auth', 'appId': builtInAppId, 'key': _apiKey}),
+        );
+        debugPrint('FAN Studio 认证首包已发送');
+      } catch (error) {
+        if (_isActiveConnection(channel, serial)) {
+          _setAuthStatus(FanAuthStatus.failed);
+          debugPrint('FAN Studio 认证首包发送失败: $error');
+          _handleFailure();
+        }
+        return;
+      }
+    } else {
+      _setAuthStatus(FanAuthStatus.unauthenticated);
+      debugPrint('FAN Studio 未配置 API Key，按未认证模式连接');
+    }
+    if (_isActiveConnection(channel, serial)) {
+      await _sendFanMessages(_initMessages, channel, serial);
+    }
   }
 
   /// 启动保活/重订阅定时器
   ///
   /// 服务器每分钟自动推送 heartbeat，客户端可选回复 ping。
-  /// 本定时器作为额外保活：每 30 秒发一次 ping 确保连接活跃。
+  /// 本定时器按 kanameishi 的 WebSocketObj 逻辑，每 10 秒重发自动订阅消息。
   /// 同时定期检查 90 秒无消息则触发重连。
   void _startKeepalive() {
     _keepaliveTimer?.cancel();
-    _keepaliveTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (_channel == null) return;
+    _keepaliveTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      final channel = _channel;
+      final serial = _connectSerial;
+      if (channel == null || !_isActiveConnection(channel, serial)) return;
 
       final idle = DateTime.now().difference(_lastMessageAt).inSeconds;
       if (idle > 90) {
@@ -293,9 +533,28 @@ class FanService extends BaseSourceService {
         return;
       }
 
-      // 每 30 秒发一次 ping 保活
-      _channel?.sink.add('ping');
+      _sendFanMessages(_autoMessages, channel, serial);
     });
+  }
+
+  Future<void> _sendFanMessages(
+    List<String> messages,
+    FanSocketConnection channel,
+    int serial,
+  ) async {
+    for (final message in messages) {
+      if (!_isActiveConnection(channel, serial)) return;
+      if (message == 'cencirlist' && !_cencIrRequestsEnabled) continue;
+      try {
+        await channel.send(message);
+      } catch (_) {
+        if (_isActiveConnection(channel, serial)) _handleFailure();
+        return;
+      }
+      await Future<void>.delayed(
+        Duration(milliseconds: math.min(2000, 10000 ~/ messages.length)),
+      );
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -326,11 +585,22 @@ class FanService extends BaseSourceService {
       if (json is! Map<String, dynamic>) return;
 
       final String type = json['type']?.toString() ?? '';
+      if (!_hasLoggedFirstPacket) {
+        _hasLoggedFirstPacket = true;
+        debugPrint('FAN 首包已接收: type=${type.isEmpty ? 'unknown' : type}');
+      }
 
       // 处理心跳消息
       // 服务端每分钟发送 heartbeat，客户端可选回复 ping 包
       if (type == 'heartbeat') {
-        _channel?.sink.add('ping');
+        final channel = _channel;
+        if (channel != null) {
+          unawaited(
+            channel.send('ping').catchError((Object error) {
+              debugPrint('FAN ping 发送失败: $error');
+            }),
+          );
+        }
         return;
       }
 
@@ -338,13 +608,27 @@ class FanService extends BaseSourceService {
         return;
       }
 
+      if (type == 'auth_success') {
+        _setAuthStatus(FanAuthStatus.authenticated);
+        debugPrint('FAN Studio 认证成功');
+        return;
+      }
+
+      if (type == 'auth_fail' || type == 'auth_error') {
+        _setAuthStatus(FanAuthStatus.failed);
+        debugPrint(
+          'FAN Studio 认证失败: ${json['message'] ?? json['error'] ?? 'unknown'}',
+        );
+        return;
+      }
+
       if (type == 'error') {
         debugPrint('FAN 服务端错误: ${json['message']}');
         final errorMsg = json['message']?.toString() ?? '';
         if (errorMsg.contains('连接数超限')) {
-          _currentUrlIndex = (_currentUrlIndex + 1) % _wsUrls.length;
+          _currentUrlIndex = (_currentUrlIndex + 1) % _orderedWsUrls.length;
           _retryInterval = 3;
-          _cleanup();
+          _handleFailure();
         }
         return;
       }
@@ -360,6 +644,9 @@ class FanService extends BaseSourceService {
               sourceName == 'timestamp')
             continue;
           final value = entry.value;
+          if (_isTyphoonSourceName(sourceName)) {
+            continue;
+          }
           if (value is Map) {
             _parsePayload(
               Map<String, dynamic>.from(value),
@@ -391,6 +678,7 @@ class FanService extends BaseSourceService {
 
       // CENC 烈度速报列表：新事件作为 CENC 信息事件推送
       if (type == 'cencirlist_response') {
+        if (!_cencIrRequestsEnabled) return;
         final items = json['Data'];
         if (items is List) {
           final isEmpty = _seenCencIrIds.isEmpty;
@@ -441,6 +729,10 @@ class FanService extends BaseSourceService {
         debugPrint('FAN update 报文: $rawData');
         final sourceName = json['source']?.toString();
         final data = json['Data'];
+        if (_isTyphoonSourceName(sourceName)) {
+          _handleTyphoonUpdateNotice(data);
+          return;
+        }
         if (data is Map) {
           _parsePayload(
             Map<String, dynamic>.from(data),
@@ -455,6 +747,9 @@ class FanService extends BaseSourceService {
       if (type == 'initial') {
         final sourceName = json['source']?.toString();
         final data = json['Data'];
+        if (_isTyphoonSourceName(sourceName)) {
+          return;
+        }
         if (data is Map && sourceName != null) {
           _parsePayload(
             Map<String, dynamic>.from(data),
@@ -473,6 +768,9 @@ class FanService extends BaseSourceService {
                 k == 'source' ||
                 k == 'md5')
               continue;
+            if (_isTyphoonSourceName(k)) {
+              continue;
+            }
             final v = entry.value;
             if (v is Map) {
               _parsePayload(
@@ -494,6 +792,10 @@ class FanService extends BaseSourceService {
               json.containsKey('id'))) {
         final sourceHint = json['source']?.toString();
         final data = json['Data'];
+        if (_isTyphoonSourceName(sourceHint)) {
+          _handleTyphoonUpdateNotice(data);
+          return;
+        }
         if (data is Map && sourceHint != null) {
           _parsePayload(
             Map<String, dynamic>.from(data),
@@ -617,6 +919,21 @@ class FanService extends BaseSourceService {
     }
   }
 
+  bool _isTyphoonSourceName(String? name) {
+    final normalized = (name ?? '')
+        .trim()
+        .toLowerCase()
+        .replaceAll('_', '-')
+        .replaceAll('/', '-');
+    return normalized == 'typhoon' || normalized == 'we-typhoon';
+  }
+
+  void _handleTyphoonUpdateNotice(dynamic data) {
+    if (data is! Map && data is! List) return;
+    debugPrint('FAN typhoon update received; fetching detailed typhoon data');
+    onTyphoonUpdate?.call();
+  }
+
   /// 解析数据负载
   ///
   /// 从消息中提取地震事件数据并处理。
@@ -662,9 +979,6 @@ class FanService extends BaseSourceService {
     final QuakeSourceType source = _resolveSource(event, sourceHint);
     final result = _parseFanEvent(event, source, isInitialLoad: isInitialLoad);
     if (result != null) {
-      debugPrint(
-        'FAN _parsePayload source=$source eventId=${result.eventId} isInfoEvent=${result.isInfoEvent} isHistory=$isInitialLoad',
-      );
       if (isInitialLoad) {
         // kanameishi: query_response / initial_all 包含当前活跃的 EEW 事件
         // 对 EEW 事件，检查是否仍然活跃（根据 reportTime 和 timeoutSeconds）
@@ -674,14 +988,7 @@ class FanService extends BaseSourceService {
           final int timeoutSec = QuakeTime.eewTimeoutSeconds(result);
           final int elapsedSec = QuakeTime.calcPassedSeconds(result);
           if (elapsedSec < timeoutSec) {
-            debugPrint(
-              'FAN initial EEW still active: ${result.eventId} elapsed=${elapsedSec}s timeout=${timeoutSec}s',
-            );
             emit(result);
-          } else {
-            debugPrint(
-              'FAN initial EEW expired: ${result.eventId} elapsed=${elapsedSec}s timeout=${timeoutSec}s',
-            );
           }
         }
         // 信息事件：历史数据已通过 cenclist_response / cwalist_response 等专门路径入桶
@@ -749,8 +1056,8 @@ class FanService extends BaseSourceService {
   }) {
     try {
       final tsunami = TsunamiMessage.parseNmefcTsunami(json);
-      debugPrint('FAN NMEFC海啸: ${tsunami.title} (${tsunami.areas.length}区域)');
       if (!isInitialLoad) {
+        debugPrint('FAN NMEFC海啸: ${tsunami.title} (${tsunami.areas.length}区域)');
         emitTsunami(tsunami);
       }
     } catch (e) {
@@ -1054,6 +1361,17 @@ class FanService extends BaseSourceService {
       final String? nodalPlane2 = source == QuakeSourceType.fssnCmt
           ? json['nodalPlane2']?.toString()
           : null;
+      final Map<String, dynamic>? momentTensor =
+          source == QuakeSourceType.fssnCmt
+          ? <String, dynamic>{
+              'mnn': json['mnn'],
+              'mee': json['mee'],
+              'mdd': json['mdd'],
+              'mne': json['mne'],
+              'mnd': json['mnd'],
+              'med': json['med'],
+            }
+          : null;
 
       // ─── 震度/烈度（多路径差异） ───
       // JMA 震度可能是数字或字符串 (如 "5弱", "5強")
@@ -1242,11 +1560,6 @@ class FanService extends BaseSourceService {
           shockTimeStr,
         );
         shouldEmitUnified = elapsedSec < timeoutSec;
-        if (!shouldEmitUnified) {
-          debugPrint(
-            'FAN initial EEW expired (unified): source=$source eventId=$eventId elapsed=${elapsedSec}s timeout=${timeoutSec}s',
-          );
-        }
       }
       if (shouldEmitUnified) {
         _emitFanUnified(source, <String, dynamic>{
@@ -1279,6 +1592,9 @@ class FanService extends BaseSourceService {
           'shockTime': json['shockTime']?.toString() ?? '',
           'nodalPlane1': nodalPlane1 ?? '',
           'nodalPlane2': nodalPlane2 ?? '',
+          'centroidDepth': json['centroidDepth'],
+          'momentTensor': momentTensor,
+          'momentTensorConvention': 'ned',
         });
       }
 
@@ -1323,6 +1639,10 @@ class FanService extends BaseSourceService {
         province: province.isNotEmpty ? province : null,
         nodalPlane1: nodalPlane1,
         nodalPlane2: nodalPlane2,
+        centroidDepth: source == QuakeSourceType.fssnCmt
+            ? double.tryParse(json['centroidDepth']?.toString() ?? '')
+            : null,
+        momentTensor: CmtMomentTensor.fromNedMap(momentTensor),
       );
     } catch (e) {
       debugPrint('FAN 事件解析异常: $e');
@@ -1341,8 +1661,13 @@ class FanService extends BaseSourceService {
   /// - 达到上限后切换到下一个 URL
   void _handleFailure() {
     _keepaliveTimer?.cancel();
+    _connectTimeoutTimer?.cancel();
     onStatusChanged?.call(SourceStatus.error);
+    _setConnectionStatus(FanConnectionStatus.reconnecting);
+    // 当前链路已经失效，下一次握手成功后才重新进入认证中。
+    _setAuthStatus(FanAuthStatus.unauthenticated);
     if (!_isManualClose) {
+      _cleanup();
       _scheduleReconnect();
     }
   }
@@ -1356,14 +1681,14 @@ class FanService extends BaseSourceService {
 
     // 重试间隔达到上限时切换到下一个 URL
     if (_retryInterval >= 10) {
-      _currentUrlIndex = (_currentUrlIndex + 1) % _wsUrls.length;
+      _currentUrlIndex = (_currentUrlIndex + 1) % _orderedWsUrls.length;
     }
 
     final delay = _retryInterval;
     debugPrint('FAN: $delay 秒后重连 (urlIndex=$_currentUrlIndex)');
     _reconnectTimer = Timer(Duration(seconds: delay), () {
       _cleanup();
-      _doConnect(_currentUrlIndex);
+      _doConnect(_currentUrlIndex, reconnecting: true);
     });
 
     // 线性递增退避：+1s，上限 10s
@@ -1374,13 +1699,16 @@ class FanService extends BaseSourceService {
   ///
   /// 关闭 WebSocket 连接并释放相关资源。
   void _cleanup() {
+    _connectSerial++;
     _keepaliveTimer?.cancel();
     _connectTimeoutTimer?.cancel();
     _connectedInitDone = false;
+    _hasLoggedFirstPacket = false;
     _seenCencIrIds.clear();
     _cencIrDetailRequested = false;
     try {
-      _channel?.sink.close();
+      final channel = _channel;
+      if (channel != null) unawaited(channel.close());
     } catch (_) {}
     _channel = null;
   }
@@ -1392,11 +1720,21 @@ class FanService extends BaseSourceService {
   @override
   void disconnect() {
     _isManualClose = true;
+    _isRunning = false;
     _reconnectTimer?.cancel();
     _keepaliveTimer?.cancel();
     _connectTimeoutTimer?.cancel();
     _cleanup();
+    _setAuthStatus(FanAuthStatus.unauthenticated);
+    _setConnectionStatus(FanConnectionStatus.disconnected);
     onStatusChanged?.call(SourceStatus.disconnected);
+  }
+
+  @override
+  void dispose() {
+    authStatusNotifier.dispose();
+    connectionStatusNotifier.dispose();
+    super.dispose();
   }
 
   /// 调试打印

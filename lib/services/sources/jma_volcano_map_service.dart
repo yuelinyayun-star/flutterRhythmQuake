@@ -10,7 +10,12 @@ class JmaVolcanoMapService {
   static final JmaVolcanoMapService _instance =
       JmaVolcanoMapService._internal();
   factory JmaVolcanoMapService() => _instance;
-  JmaVolcanoMapService._internal();
+  JmaVolcanoMapService._internal({JsonFetcher? jsonFetcher})
+    : _jsonFetcher = jsonFetcher;
+
+  @visibleForTesting
+  JmaVolcanoMapService.forTesting(JsonFetcher jsonFetcher)
+    : _jsonFetcher = jsonFetcher;
 
   static const String _volcanoListUrl =
       'https://www.jma.go.jp/bosai/volcano/const/volcano_list.json';
@@ -28,8 +33,15 @@ class JmaVolcanoMapService {
   };
 
   Timer? _timer;
+  Timer? _retryTimer;
+  Future<void>? _fetchInFlight;
+  final JsonFetcher? _jsonFetcher;
   final List<JmaVolcanoSite> _sites = [];
   bool _started = false;
+  int _listFetchFailureCount = 0;
+  dynamic _lastWarningRaw;
+  dynamic _lastEruptionRaw;
+  dynamic _lastInfoRaw;
 
   void Function(List<JmaVolcanoSite>)? onSitesUpdated;
 
@@ -38,6 +50,7 @@ class JmaVolcanoMapService {
   void start({Duration interval = const Duration(minutes: 10)}) {
     if (_started) return;
     _started = true;
+    _listFetchFailureCount = 0;
     _timer?.cancel();
     _timer = Timer.periodic(interval, (_) => fetchNow());
     unawaited(fetchNow());
@@ -46,27 +59,65 @@ class JmaVolcanoMapService {
   void stop() {
     _timer?.cancel();
     _timer = null;
+    _retryTimer?.cancel();
+    _retryTimer = null;
     _started = false;
   }
 
   Future<void> fetchNow() async {
+    final inFlight = _fetchInFlight;
+    if (inFlight != null) return inFlight;
+    final request = _fetchNow();
+    _fetchInFlight = request;
+    unawaited(
+      request.then<void>(
+        (_) {
+          if (identical(_fetchInFlight, request)) {
+            _fetchInFlight = null;
+          }
+        },
+        onError: (Object _, StackTrace _) {
+          if (identical(_fetchInFlight, request)) {
+            _fetchInFlight = null;
+          }
+        },
+      ),
+    );
+    return request;
+  }
+
+  Future<void> _fetchNow() async {
+    dynamic listRaw;
     try {
-      final responses = await Future.wait([
-        _getJson(_volcanoListUrl),
-        _getJson(_warningUrl),
-        _getJson(_eruptionUrl),
-        _getJson(_infoUrl),
+      listRaw = await _getJson(_volcanoListUrl);
+    } catch (e) {
+      debugPrint('JMA Volcano map list fetch error: $e');
+      _scheduleListRetry();
+      return;
+    }
+
+    if (listRaw is! List) {
+      debugPrint('JMA Volcano map: volcano_list is not a list');
+      _scheduleListRetry();
+      return;
+    }
+
+    _listFetchFailureCount = 0;
+    _retryTimer?.cancel();
+    _retryTimer = null;
+
+    try {
+      final stateResponses = await Future.wait([
+        _getOptionalJson(_warningUrl, 'warning'),
+        _getOptionalJson(_eruptionUrl, 'eruption'),
+        _getOptionalJson(_infoUrl, 'info'),
       ]);
-
-      final listRaw = responses[0];
-      final warningRaw = responses[1];
-      final eruptionRaw = responses[2];
-      final infoRaw = responses[3];
-
-      if (listRaw is! List) {
-        debugPrint('JMA Volcano map: volcano_list is not a list');
-        return;
-      }
+      final warningRaw = stateResponses[0] ?? _lastWarningRaw;
+      final eruptionRaw = stateResponses[1] ?? _lastEruptionRaw;
+      final infoRaw = stateResponses[2] ?? _lastInfoRaw;
+      if (stateResponses[0] != null) _lastWarningRaw = stateResponses[0];
+      if (stateResponses[1] != null) _lastEruptionRaw = stateResponses[1];
+      if (stateResponses[2] != null) _lastInfoRaw = stateResponses[2];
 
       final warningList = warningRaw is List
           ? warningRaw.whereType<Map>().map(_mapOf).toList()
@@ -152,11 +203,39 @@ class JmaVolcanoMapService {
       onSitesUpdated?.call(List.unmodifiable(_sites));
       debugPrint('JMA Volcano map: ${_sites.length} sites updated');
     } catch (e) {
-      debugPrint('JMA Volcano map fetch error: $e');
+      debugPrint('JMA Volcano map update error: $e');
     }
   }
 
+  Future<dynamic> _getOptionalJson(String url, String name) async {
+    try {
+      return await _getJson(url);
+    } catch (e) {
+      debugPrint('JMA Volcano map $name fetch error: $e');
+      return null;
+    }
+  }
+
+  void _scheduleListRetry() {
+    if (!_started || _retryTimer?.isActive == true) return;
+    _listFetchFailureCount = (_listFetchFailureCount + 1).clamp(1, 5);
+    const retryDelays = <Duration>[
+      Duration(seconds: 5),
+      Duration(seconds: 15),
+      Duration(seconds: 30),
+      Duration(minutes: 1),
+      Duration(minutes: 2),
+    ];
+    final delay = retryDelays[_listFetchFailureCount - 1];
+    _retryTimer = Timer(delay, () {
+      _retryTimer = null;
+      unawaited(fetchNow());
+    });
+  }
+
   Future<dynamic> _getJson(String url) async {
+    final jsonFetcher = _jsonFetcher;
+    if (jsonFetcher != null) return jsonFetcher(url);
     final resp = await http
         .get(Uri.parse(url), headers: _headers)
         .timeout(const Duration(seconds: 20));
@@ -289,6 +368,8 @@ class JmaVolcanoMapService {
     return DateTime.tryParse(text);
   }
 }
+
+typedef JsonFetcher = Future<dynamic> Function(String url);
 
 class _WarningState {
   final String code;

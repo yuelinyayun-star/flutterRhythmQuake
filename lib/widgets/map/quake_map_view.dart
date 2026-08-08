@@ -28,10 +28,12 @@ import 'user_location_layer.dart';
 import 'nied_intensity_layer.dart';
 import 'kma_intensity_layer.dart';
 import 'cwa_station_layer.dart';
+import 'palert_station_layer.dart';
 import 'cenc_ir_layer.dart';
 import 'history_marker_layer.dart';
 import 'snet_layer.dart';
 import 'volcano_layer.dart';
+import 'volcano_ashfall_layer.dart';
 import 'seisjs_layer.dart';
 import 'fdsn_station_layer.dart';
 import 'fssn_cmt_layer.dart';
@@ -40,28 +42,41 @@ import 'station_dot_painter_layer.dart';
 import 'tsunami_layer.dart';
 import 'nmefc_tsunami_layer.dart';
 import 'typhoon_layer.dart';
-import 'tencent_js_map_widget.dart';
+import 'fan_radar_layer.dart';
+import 'fan_satellite_cloud_layer.dart';
+import 'eew_wave_camera_follow_gate.dart';
+import 'finite_camera_constraint.dart';
 import 'allow_any_cert_tile_provider.dart';
 import 'map_config.dart';
 import 'package:provider/provider.dart';
 import '../../providers/quake_provider.dart';
 import '../../providers/map_state_provider.dart';
+import '../../services/background_service.dart';
 import '../../services/sources/lmoni_image_service.dart';
 import '../../services/sources/lpgm_monitor_service.dart';
 import '../../services/sources/nied_monitor.dart';
+import '../../services/sources/nied_background_worker.dart';
 import '../../services/sources/nied_source_estimation_driver.dart';
 import '../../services/sources/nied_yahoo_service.dart';
 import '../../services/sources/jp_shindo_scale.dart';
+import '../../services/sources/shindo_color_util.dart';
 import '../../services/sources/jma_volcano_map_service.dart';
+import '../../services/sources/fan_radar_service.dart';
+import '../../services/sources/fan_satellite_cloud_service.dart';
 import '../../services/sources/shake_detection_service.dart';
 import '../../services/sources/kma_monitor.dart';
 import '../../services/sources/cwa_station_service.dart';
+import '../../services/sources/palert_service.dart';
 import '../../services/sources/seisjs_service.dart';
 import '../../services/sources/fdsn_station_service.dart';
 import '../../services/sources/fdsn_motion_service.dart';
 import '../../services/sources/snet_service.dart';
+import '../../services/sources/whews_service.dart';
+import '../../services/sources/whews_station_service.dart';
+import '../../services/wauth_service.dart';
 import '../../services/location_service.dart';
 import '../../core/calculator.dart';
+import '../../core/source_estimation/jma2001_travel_time_approximation.dart';
 import '../../core/source_estimation/source_estimation_models.dart';
 import '../../core/source_estimation/source_station_phase_classifier.dart';
 import '../../core/source_estimation/station_event_tracker.dart';
@@ -76,6 +91,61 @@ import '../../models/cenc_ir_data.dart';
 import '../../models/typhoon_data.dart';
 import '../../models/tsunami_message.dart';
 import '../ui/station_dashboard.dart';
+
+({double pRadiusKm, double sRadiusKm}) niedWaveRadiiFromEstimate(
+  SourceEstimate estimate, {
+  double? algorithmElapsedSeconds,
+}) {
+  double? value(Object? raw) {
+    if (raw is num) return raw.toDouble();
+    if (raw is String) return double.tryParse(raw);
+    return null;
+  }
+
+  final bestSource = estimate.diagnostics['best_source'];
+  final bestSourceMap = bestSource is Map ? bestSource : null;
+  final frozen = (
+    pRadiusKm:
+        value(estimate.diagnostics['best_source_p_radius_km']) ??
+        value(bestSourceMap?['pRadiusKm']) ??
+        0,
+    sRadiusKm:
+        value(estimate.diagnostics['best_source_s_radius_km']) ??
+        value(bestSourceMap?['sRadiusKm']) ??
+        0,
+  );
+  final depthKm = estimate.depthKm;
+  final radiusCapKm = value(estimate.diagnostics['wave_radius_cap_km']);
+  if (estimate.method != 'nied_dart_hyp_v1' ||
+      algorithmElapsedSeconds == null ||
+      depthKm == null ||
+      radiusCapKm == null) {
+    return frozen;
+  }
+  const hiddenRadius = 999999.0;
+  final elapsedSeconds = math.max(0.0, algorithmElapsedSeconds);
+  if (elapsedSeconds >= 300.0) {
+    return (pRadiusKm: hiddenRadius, sRadiusKm: hiddenRadius);
+  }
+  return (
+    pRadiusKm: math.min(
+      Jma2001TravelTimeApproximation.epicentralRadiusKm(
+        elapsedSeconds: elapsedSeconds,
+        depthKm: depthKm,
+        pWave: true,
+      ),
+      radiusCapKm,
+    ),
+    sRadiusKm: math.min(
+      Jma2001TravelTimeApproximation.epicentralRadiusKm(
+        elapsedSeconds: elapsedSeconds,
+        depthKm: depthKm,
+        pWave: false,
+      ),
+      radiusCapKm,
+    ),
+  );
+}
 
 /// 地震地图视图组件
 ///
@@ -101,8 +171,64 @@ class QuakeMapView extends StatefulWidget {
     FdsnMotionService.defaultStationLimit,
   );
   static const String tremStationEnabledPreferenceKey = 'trem_station_enabled';
+  static const String displayShindo0PreferenceKey = 'station_display_shindo0';
+  static const String kmaIntensityHoldPreferenceKey =
+      'kma_intensity_hold_frames';
   static final ValueNotifier<bool> tremStationEnabledNotifier =
       ValueNotifier<bool>(true);
+  static final ValueNotifier<bool> displayShindo0Notifier = ValueNotifier<bool>(
+    false,
+  );
+  static final ValueNotifier<int> kmaIntensityHoldNotifier = ValueNotifier<int>(
+    1,
+  );
+  static const String fanEnabledPreferenceKey = 'api_source_fan_enabled';
+  static const String wolfxEnabledPreferenceKey = 'api_source_wolfx_enabled';
+  static const String wolfxSeisJsEnabledPreferenceKey =
+      'api_source_wolfx_seisjs_enabled';
+  static const String p2pquakeEnabledPreferenceKey =
+      'api_source_p2pquake_enabled';
+  static const String kmaPewsEnabledPreferenceKey =
+      'api_source_kma_pews_enabled';
+  static const String pAlertEnabledPreferenceKey = 'api_source_palert_enabled';
+  static const String niedMonitorEnabledPreferenceKey =
+      'api_source_nied_monitor_enabled';
+  static const String niedLpgmEnabledPreferenceKey =
+      'api_source_nied_lpgm_enabled';
+  static const String snetEnabledPreferenceKey = 'api_source_snet_enabled';
+  static const String fdsnSeedLinkEnabledPreferenceKey =
+      'api_source_fdsn_seedlink_enabled';
+  static const String whewsNiedEnabledPreferenceKey =
+      WhewsStationService.niedEnabledPreferenceKey;
+  static const String whewsSnetEnabledPreferenceKey =
+      WhewsStationService.snetEnabledPreferenceKey;
+  static const String whewsKmaEnabledPreferenceKey =
+      WhewsStationService.kmaEnabledPreferenceKey;
+  static final ValueNotifier<bool> kmaPewsEnabledNotifier = ValueNotifier<bool>(
+    true,
+  );
+  static final ValueNotifier<bool> pAlertEnabledNotifier = ValueNotifier<bool>(
+    true,
+  );
+  static final ValueNotifier<bool> wolfxSeisJsEnabledNotifier =
+      ValueNotifier<bool>(true);
+  static final ValueNotifier<bool> niedMonitorEnabledNotifier =
+      ValueNotifier<bool>(true);
+  static final ValueNotifier<bool> niedLpgmEnabledNotifier =
+      ValueNotifier<bool>(true);
+  static final ValueNotifier<bool> snetEnabledNotifier = ValueNotifier<bool>(
+    true,
+  );
+  static final ValueNotifier<bool> fdsnSeedLinkEnabledNotifier =
+      ValueNotifier<bool>(false);
+  static final ValueNotifier<bool> whewsNiedEnabledNotifier =
+      ValueNotifier<bool>(false);
+  static final ValueNotifier<bool> whewsSnetEnabledNotifier =
+      ValueNotifier<bool>(false);
+  static final ValueNotifier<bool> whewsKmaEnabledNotifier =
+      ValueNotifier<bool>(false);
+  static final ValueNotifier<String> whewsApiTokenNotifier =
+      ValueNotifier<String>('');
 
   const QuakeMapView({
     super.key,
@@ -118,7 +244,12 @@ class QuakeMapView extends StatefulWidget {
 ///
 /// 绠＄悊鍚勭洃娴嬫湇鍔＄殑鐢熷懡鍛ㄦ湡鍜屾暟鎹闃呫€?
 class _QuakeMapViewState extends State<QuakeMapView> {
-  static const double _splitEewFocusDistanceKm = 2500.0;
+  static const double _splitUnifiedFocusDistanceKm = 2500.0;
+  static const Set<String> _liveWeatherTileKeys = {
+    'cloudLayer',
+    'windLayer',
+    'rainLayer',
+  };
 
   ({String tileKey, String tileUrl}) _baseTileState(MapStateProvider mapState) {
     return (tileKey: mapState.tileKey, tileUrl: mapState.tileUrl);
@@ -159,6 +290,18 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   /// S-net 海底观测服务实例
 
   final SnetService _snetService = SnetService();
+  final WhewsStationService _whewsNiedService = WhewsStationService(
+    kind: WhewsStationKind.nied,
+    apiToken: '',
+  );
+  final WhewsStationService _whewsSnetService = WhewsStationService(
+    kind: WhewsStationKind.snet,
+    apiToken: '',
+  );
+  final WhewsStationService _whewsKmaService = WhewsStationService(
+    kind: WhewsStationKind.kma,
+    apiToken: '',
+  );
   final LpgmMonitorService _lpgmService = LpgmMonitorService();
 
   /// KMA 图层是否可见
@@ -171,7 +314,9 @@ class _QuakeMapViewState extends State<QuakeMapView> {
 
   /// KMA 测站数据订阅
   StreamSubscription? _kmaStationSubscription;
-  StreamSubscription<MapEvent>? _mapEventSubscription;
+  StreamSubscription? _whewsNiedSubscription;
+  StreamSubscription? _whewsSnetSubscription;
+  StreamSubscription? _whewsKmaSubscription;
 
   /// NIED lmoni 测站数据订阅
   StreamSubscription? _lmoniStationSub;
@@ -184,18 +329,36 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   final List<LatLng> _kmaGridCellCenters = []; // kanameishi: KMA 宸茬敾鏍煎瓙涓績鐐?
   /// KMA 测站列表
   List<KmaStation> _kmaStations = [];
+  List<NiedStation> _whewsNiedStations = const [];
+  List<SnetStation> _whewsSnetStations = const [];
+  List<KmaStation> _whewsKmaStations = const [];
 
   /// CWA 测站服务实例
 
   final CwaStationService _cwaService = CwaStationService();
+  final PAlertService _pAlertService = PAlertService();
 
   /// CWA 测站数据订阅
   StreamSubscription? _cwaStationSubscription;
+  StreamSubscription? _pAlertStationSubscription;
 
   /// CWA 测站列表
 
   List<CwaStation> _cwaStations = [];
+  List<PAlertStation> _pAlertStations = [];
+  bool _wolfxSeisJsEnabled = true;
+  bool _kmaPewsEnabled = true;
+  bool _pAlertEnabled = true;
   bool _tremStationEnabled = true;
+  bool _displayShindo0 = false;
+  int _kmaIntensityHoldFrames = 1;
+  bool _niedMonitorEnabled = true;
+  bool _niedLpgmEnabled = true;
+  bool _snetEnabled = true;
+  bool _fdsnSeedLinkEnabled = false;
+  bool _whewsNiedEnabled = false;
+  bool _whewsSnetEnabled = false;
+  bool _whewsKmaEnabled = false;
 
   /// CWA 图层是否可见
 
@@ -229,10 +392,12 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   final ValueNotifier<int> _niedLayerRevision = ValueNotifier<int>(0);
   final ValueNotifier<int> _kmaLayerRevision = ValueNotifier<int>(0);
   final ValueNotifier<int> _cwaLayerRevision = ValueNotifier<int>(0);
+  final ValueNotifier<int> _pAlertLayerRevision = ValueNotifier<int>(0);
   final ValueNotifier<int> _seisJsLayerRevision = ValueNotifier<int>(0);
   final ValueNotifier<int> _snetLayerRevision = ValueNotifier<int>(0);
   final ValueNotifier<int> _earthScopeLayerRevision = ValueNotifier<int>(0);
   final ValueNotifier<int> _geofonLayerRevision = ValueNotifier<int>(0);
+  final ValueNotifier<int> _liveWeatherTileRevision = ValueNotifier<int>(0);
   final ValueNotifier<bool> _blinkNotifier = ValueNotifier<bool>(true);
   Map<String, int> _earthScopeStationIndex = const {};
   Map<String, int> _geofonStationIndex = const {};
@@ -243,6 +408,10 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   final Map<String, DateTime> _lastFdsnUiUpdateAt = {};
   Timer? _fdsnMotionFlushTimer;
   Timer? _fdsnMotionRestartTimer;
+  Timer? _liveWeatherTileRefreshTimer;
+  String _liveWeatherTileOverlaySignature = '';
+  Duration? _liveWeatherTileRefreshInterval;
+  int _liveWeatherTileVersion = DateTime.now().millisecondsSinceEpoch;
 
   /// NIED 图层是否可见
 
@@ -267,6 +436,18 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   LpgmSnapshot? _latestLpgmSnapshot;
   final JmaVolcanoMapService _volcanoMapService = JmaVolcanoMapService();
   List<JmaVolcanoSite> _volcanoSites = [];
+  final FanRadarService _fanRadarService = FanRadarService();
+  StreamSubscription<FanRadarFrame?>? _fanRadarSubscription;
+  FanRadarFrame? _latestFanRadarFrame;
+  final ValueNotifier<int> _fanRadarLayerRevision = ValueNotifier<int>(0);
+  final FanSatelliteCloudService _fanSatelliteCloudService =
+      FanSatelliteCloudService();
+  StreamSubscription<FanSatelliteCloudFrame?>? _fanSatelliteCloudSubscription;
+  FanSatelliteCloudFrame? _latestFanSatelliteCloudFrame;
+  final ValueNotifier<int> _fanSatelliteCloudLayerRevision = ValueNotifier<int>(
+    0,
+  );
+  int _lastTyphoonUpdateRevision = 0;
   ShakeDetectionSnapshot _latestDetectSnapshot = const ShakeDetectionSnapshot(
     stage: ShakeDetectStage.idle,
     weakCount: 0,
@@ -281,6 +462,8 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   String? _niedSourceWaveEventId;
   String _lastNiedSourceEstimateSignature = 'none';
   EventAnimationLease? _niedWaveClockLease;
+  double? _niedWaveElapsedAnchorSeconds;
+  final Stopwatch _niedWaveElapsedClock = Stopwatch();
   final ValueNotifier<int> _waveTick = ValueNotifier<int>(0);
   final SourceStationPhaseClassifier _sourceStationPhaseClassifier =
       const SourceStationPhaseClassifier();
@@ -293,6 +476,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   String _lastNiedLayerSignature = '';
   String _lastKmaLayerSignature = '';
   String _lastCwaLayerSignature = '';
+  String _lastPAlertLayerSignature = '';
   String _lastSeisJsLayerSignature = '';
   String _lastSnetLayerSignature = '';
   String? _lastEventPointFocusSignature;
@@ -303,9 +487,11 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   DateTime? _preferredEventFocusUntil;
   String? _preferredEventFocusSignature;
   Timer? _preferredEventFocusTimer;
+  final EewWaveCameraFollowGate _eewWaveCameraFollowGate =
+      EewWaveCameraFollowGate();
   String _lastEewTakeoverSignature = '';
   String? _preferredStationFocusSource;
-  List<LatLng>? _preferredStationFocusPoints;
+  String? _lastSelectedHistoryCameraKey;
   bool _pendingNiedStationFocus = false;
   bool _pendingKmaStationFocus = false;
   bool _pendingTremStationFocus = false;
@@ -313,12 +499,12 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   MapStateProvider? _mapStateProvider;
   bool _providerCallbacksBound = false;
   bool _mapDataServicesStarted = false;
+  // 初始设为 true，保证第一次 _resumeMapDataServices 会真正启动数据源。
+  // 进入后台时 _pauseMapDataServices 会将其置回 true，回到前台再恢复。
+  bool _backgroundPaused = true;
   bool _initialCameraPolicyApplied = false;
   bool _lastCanAutoFollow = true;
   final AllowAnyCertTileProvider _tileProvider = AllowAnyCertTileProvider();
-  final TencentJsMapController _tencentJsMapController =
-      TencentJsMapController();
-  final Map<String, DateTime> _lastBaseTileErrorLogAt = {};
 
   bool get _showNiedEstimatedEpicenter =>
       _mapStateProvider?.showEstimatedEpicenter ?? false;
@@ -328,35 +514,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
 
   bool get _hasNiedSourceEstimate => _latestNiedSourceEstimate != null;
 
-  void _handleBaseTileError(
-    TileImage tile,
-    Object error,
-    StackTrace? stackTrace,
-    String tileKey,
-  ) {
-    if (tileKey != MapConfig.tencentWmtsKey &&
-        tileKey != MapConfig.tencentStaticMapKey) {
-      return;
-    }
-    final coordinates = tile.coordinates;
-    final logKey = '${coordinates.z}/${coordinates.x}/${coordinates.y}';
-    final now = DateTime.now();
-    final last = _lastBaseTileErrorLogAt[logKey];
-    if (last != null && now.difference(last) < const Duration(seconds: 20)) {
-      return;
-    }
-    _lastBaseTileErrorLogAt[logKey] = now;
-    debugPrint(
-      '[TencentWMTS] tile load failed: '
-      'z=${coordinates.z} x=${coordinates.x} y=${coordinates.y} '
-      'error=$error',
-    );
-    if (stackTrace != null) {
-      final briefStack = stackTrace.toString().split('\n').take(3).join(' | ');
-      debugPrint('[TencentWMTS] tile stack: $briefStack');
-    }
-  }
-
   /// 涓存椂淇℃伅浜嬩欢瀹氫綅璁℃椂鍣?
 
   /// 鍒濆鍖栫姸鎬?  ///
@@ -364,28 +521,64 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   @override
   void initState() {
     super.initState();
-    _mapEventSubscription = widget.mapController.mapEventStream.listen(
-      (event) => _syncTencentJsMapCamera(event.camera),
-    );
     _loadCameraDefaults();
     _volcanoSites = _volcanoMapService.sites;
     _volcanoMapService.onSitesUpdated = (items) {
       if (!mounted) return;
       setState(() => _volcanoSites = items);
     };
+    _latestFanRadarFrame = _fanRadarService.latestFrame;
+    _fanRadarSubscription = _fanRadarService.frameStream.listen((frame) {
+      if (!mounted) return;
+      _latestFanRadarFrame = frame;
+      _notifyLayer(_fanRadarLayerRevision);
+    });
+    _latestFanSatelliteCloudFrame = _fanSatelliteCloudService.latestFrame;
+    _fanSatelliteCloudSubscription = _fanSatelliteCloudService.frameStream
+        .listen((frame) {
+          if (!mounted) return;
+          _latestFanSatelliteCloudFrame = frame;
+          _notifyLayer(_fanSatelliteCloudLayerRevision);
+        });
     QuakeMapView.fdsnStationLimitNotifier.addListener(
       _onFdsnStationLimitChanged,
     );
     QuakeMapView.tremStationEnabledNotifier.addListener(
       _onTremStationEnabledChanged,
     );
+    QuakeMapView.displayShindo0Notifier.addListener(_onDisplayShindo0Changed);
+    QuakeMapView.kmaIntensityHoldNotifier.addListener(
+      _onKmaIntensityHoldChanged,
+    );
+    QuakeMapView.wolfxSeisJsEnabledNotifier.addListener(
+      _onWolfxSeisJsEnabledChanged,
+    );
+    QuakeMapView.kmaPewsEnabledNotifier.addListener(_onKmaPewsEnabledChanged);
+    QuakeMapView.pAlertEnabledNotifier.addListener(_onPAlertEnabledChanged);
+    QuakeMapView.niedMonitorEnabledNotifier.addListener(
+      _onNiedMonitorEnabledChanged,
+    );
+    QuakeMapView.niedLpgmEnabledNotifier.addListener(_onNiedLpgmEnabledChanged);
+    QuakeMapView.snetEnabledNotifier.addListener(_onSnetEnabledChanged);
+    QuakeMapView.fdsnSeedLinkEnabledNotifier.addListener(
+      _onFdsnSeedLinkEnabledChanged,
+    );
+    QuakeMapView.whewsNiedEnabledNotifier.addListener(
+      _onWhewsNiedEnabledChanged,
+    );
+    QuakeMapView.whewsSnetEnabledNotifier.addListener(
+      _onWhewsSnetEnabledChanged,
+    );
+    QuakeMapView.whewsKmaEnabledNotifier.addListener(_onWhewsKmaEnabledChanged);
+    QuakeMapView.whewsApiTokenNotifier.addListener(_onWhewsApiTokenChanged);
+    LocationService().positionListenable.addListener(_onUserLocationChanged);
     _latestNiedSourceEvent =
         StationEventTracker.instance.currentNiedEvent.value;
     StationEventTracker.instance.currentNiedEvent.addListener(
       _onNiedSourceEventChanged,
     );
     _kmaStationSubscription = _kmaService.stationStream.listen((stations) {
-      if (!mounted) return;
+      if (!mounted || _whewsKmaEnabled) return;
       final signature = _kmaLayerSignature(stations);
       if (signature != _lastKmaLayerSignature) {
         _lastKmaLayerSignature = signature;
@@ -401,6 +594,15 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       _syncActivityTimers();
       _emitStationSummary();
     });
+    _whewsNiedSubscription = _whewsNiedService.frameStream.listen(
+      _onWhewsNiedFrame,
+    );
+    _whewsSnetSubscription = _whewsSnetService.frameStream.listen(
+      _onWhewsSnetFrame,
+    );
+    _whewsKmaSubscription = _whewsKmaService.frameStream.listen(
+      _onWhewsKmaFrame,
+    );
     _cwaStationSubscription = _cwaService.stationStream.listen((stations) {
       if (!mounted) return;
       final signature = _cwaLayerSignature(stations);
@@ -418,6 +620,20 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       _syncActivityTimers();
       _emitStationSummary();
     });
+    _pAlertStationSubscription = _pAlertService.stationStream.listen((
+      stations,
+    ) {
+      if (!mounted) return;
+      final signature = _pAlertLayerSignature(stations);
+      if (signature != _lastPAlertLayerSignature) {
+        _lastPAlertLayerSignature = signature;
+        _pAlertStations = stations;
+        _notifyLayer(_pAlertLayerRevision);
+      } else {
+        _pAlertStations = stations;
+      }
+      _emitStationSummary();
+    });
     _seisjsSubscription = _seisjsService.stationStream.listen((stations) {
       if (!mounted) return;
       final signature = _seisJsLayerSignature(stations);
@@ -433,6 +649,9 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _startMapDataServices();
     });
+    if (BackgroundService().isBackgroundHandlingEnabled) {
+      BackgroundService().addStateListener(_onBackgroundStateChanged);
+    }
   }
 
   Future<void> _startMapDataServices() async {
@@ -442,14 +661,114 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     if (!mounted) return;
     _tremStationEnabled =
         prefs.getBool(QuakeMapView.tremStationEnabledPreferenceKey) ?? true;
+    _displayShindo0 =
+        prefs.getBool(QuakeMapView.displayShindo0PreferenceKey) ?? false;
+    _kmaIntensityHoldFrames =
+        prefs.getInt(QuakeMapView.kmaIntensityHoldPreferenceKey) ?? 1;
+    _wolfxSeisJsEnabled =
+        prefs.getBool(QuakeMapView.wolfxSeisJsEnabledPreferenceKey) ?? true;
+    _kmaPewsEnabled =
+        prefs.getBool(QuakeMapView.kmaPewsEnabledPreferenceKey) ?? true;
+    _pAlertEnabled =
+        prefs.getBool(QuakeMapView.pAlertEnabledPreferenceKey) ?? true;
+    _niedMonitorEnabled =
+        prefs.getBool(QuakeMapView.niedMonitorEnabledPreferenceKey) ?? true;
+    _niedLpgmEnabled =
+        prefs.getBool(QuakeMapView.niedLpgmEnabledPreferenceKey) ?? true;
+    _snetEnabled = prefs.getBool(QuakeMapView.snetEnabledPreferenceKey) ?? true;
+    _fdsnSeedLinkEnabled =
+        prefs.getBool(QuakeMapView.fdsnSeedLinkEnabledPreferenceKey) ?? false;
+    final whewsToken = prefs.getString('wauth_api_token') ?? '';
+    final whewsAuthorized =
+        (prefs.getBool(WhewsService.apiAuthorizedPreferenceKey) ?? false) &&
+        (prefs.getString(WAuthService.accessTokenPreferenceKey) ?? '')
+            .trim()
+            .isNotEmpty &&
+        whewsToken.trim().isNotEmpty;
+    _whewsNiedEnabled =
+        whewsAuthorized &&
+        (prefs.getBool(QuakeMapView.whewsNiedEnabledPreferenceKey) ?? false);
+    _whewsSnetEnabled =
+        whewsAuthorized &&
+        (prefs.getBool(QuakeMapView.whewsSnetEnabledPreferenceKey) ?? false);
+    _whewsKmaEnabled =
+        whewsAuthorized &&
+        (prefs.getBool(QuakeMapView.whewsKmaEnabledPreferenceKey) ?? false);
+    _whewsNiedService.setApiToken(whewsToken);
+    _whewsSnetService.setApiToken(whewsToken);
+    _whewsKmaService.setApiToken(whewsToken);
+    QuakeMapView.whewsApiTokenNotifier.value = whewsToken;
     QuakeMapView.tremStationEnabledNotifier.value = _tremStationEnabled;
-    _syncVolcanoMapServiceWithOverlay();
+    QuakeMapView.displayShindo0Notifier.value = _displayShindo0;
+    QuakeMapView.kmaIntensityHoldNotifier.value = _kmaIntensityHoldFrames;
+    _kmaService.setIntensityHoldFrames(_kmaIntensityHoldFrames);
+    QuakeMapView.wolfxSeisJsEnabledNotifier.value = _wolfxSeisJsEnabled;
+    QuakeMapView.kmaPewsEnabledNotifier.value = _kmaPewsEnabled;
+    QuakeMapView.pAlertEnabledNotifier.value = _pAlertEnabled;
+    QuakeMapView.niedMonitorEnabledNotifier.value = _niedMonitorEnabled;
+    QuakeMapView.niedLpgmEnabledNotifier.value = _niedLpgmEnabled;
+    QuakeMapView.snetEnabledNotifier.value = _snetEnabled;
+    QuakeMapView.fdsnSeedLinkEnabledNotifier.value = _fdsnSeedLinkEnabled;
+    QuakeMapView.whewsNiedEnabledNotifier.value = _whewsNiedEnabled;
+    QuakeMapView.whewsSnetEnabledNotifier.value = _whewsSnetEnabled;
+    QuakeMapView.whewsKmaEnabledNotifier.value = _whewsKmaEnabled;
+    _resumeMapDataServices();
     _initNiedFromImage();
-    _initSnet();
-    _initLpgmMonitor();
-    _kmaService.connect();
+  }
+
+  /// 后台状态变化回调
+  void _onBackgroundStateChanged(AppLifecycleStateExt state) {
+    if (!mounted) return;
+    if (state == AppLifecycleStateExt.background) {
+      _pauseMapDataServices();
+    } else {
+      _resumeMapDataServices();
+    }
+  }
+
+  /// 进入后台时暂停地图/测站等高功耗数据源
+  void _pauseMapDataServices() {
+    if (_backgroundPaused) return;
+    _backgroundPaused = true;
+    _kmaService.disconnect();
+    _seisjsService.disconnect();
+    _pAlertService.stop();
+    _lmoniService.stop();
+    _yahooService.stop();
+    NiedMonitorService().stop();
+    NiedBackgroundWorker.instance.stop();
+    _lpgmService.stop();
+    _snetService.stopMonitoring();
+    _cwaService.stop();
+    _fdsnMotionService.disconnect();
+    _volcanoMapService.stop();
+    _fanRadarService.stop();
+    _fanSatelliteCloudService.stop();
+    _whewsNiedService.stop();
+    _whewsSnetService.stop();
+    _whewsKmaService.stop();
+  }
+
+  /// 回到前台时根据当前设置恢复地图/测站数据源
+  void _resumeMapDataServices() {
+    if (!_backgroundPaused) return;
+    _backgroundPaused = false;
+    if (!mounted) return;
+    _syncLiveWeatherTileRefresh();
+    _syncVolcanoMapServiceWithOverlay();
+    _syncFanRadarServiceWithOverlay();
+    _syncFanSatelliteCloudServiceWithOverlay();
+    _syncNiedMonitorService();
+    _syncLpgmMonitorService();
+    _syncSnetService();
+    _syncKmaPewsService();
+    _syncPAlertService();
     _syncTremStationService();
-    _seisjsService.connect();
+    _syncWolfxSeisJsService();
+    _syncFdsnServicesWithOverlay();
+    _syncWhewsNiedService();
+    _syncWhewsSnetService();
+    _syncWhewsKmaService();
   }
 
   void _onTremStationEnabledChanged() {
@@ -458,6 +777,257 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     if (_tremStationEnabled == enabled) return;
     _tremStationEnabled = enabled;
     _syncTremStationService();
+  }
+
+  void _onDisplayShindo0Changed() {
+    if (!mounted) return;
+    final enabled = QuakeMapView.displayShindo0Notifier.value;
+    if (_displayShindo0 == enabled) return;
+    _displayShindo0 = enabled;
+    _notifyLayer(_niedLayerRevision);
+    _notifyLayer(_kmaLayerRevision);
+    _notifyLayer(_cwaLayerRevision);
+    _notifyLayer(_pAlertLayerRevision);
+  }
+
+  void _onKmaIntensityHoldChanged() {
+    final frames = QuakeMapView.kmaIntensityHoldNotifier.value.clamp(1, 60);
+    if (_kmaIntensityHoldFrames == frames) return;
+    _kmaIntensityHoldFrames = frames;
+    _kmaService.setIntensityHoldFrames(frames);
+  }
+
+  void _onWolfxSeisJsEnabledChanged() {
+    if (!mounted) return;
+    final enabled = QuakeMapView.wolfxSeisJsEnabledNotifier.value;
+    if (_wolfxSeisJsEnabled == enabled) return;
+    _wolfxSeisJsEnabled = enabled;
+    _syncWolfxSeisJsService();
+  }
+
+  void _onKmaPewsEnabledChanged() {
+    if (!mounted) return;
+    final enabled = QuakeMapView.kmaPewsEnabledNotifier.value;
+    if (_kmaPewsEnabled == enabled) return;
+    _kmaPewsEnabled = enabled;
+    _syncKmaPewsService();
+  }
+
+  void _onPAlertEnabledChanged() {
+    if (!mounted) return;
+    final enabled = QuakeMapView.pAlertEnabledNotifier.value;
+    if (_pAlertEnabled == enabled) return;
+    _pAlertEnabled = enabled;
+    _syncPAlertService();
+  }
+
+  void _onNiedMonitorEnabledChanged() {
+    if (!mounted) return;
+    final enabled = QuakeMapView.niedMonitorEnabledNotifier.value;
+    if (_niedMonitorEnabled == enabled) return;
+    _niedMonitorEnabled = enabled;
+    _syncNiedMonitorService();
+  }
+
+  void _onNiedLpgmEnabledChanged() {
+    if (!mounted) return;
+    final enabled = QuakeMapView.niedLpgmEnabledNotifier.value;
+    if (_niedLpgmEnabled == enabled) return;
+    _niedLpgmEnabled = enabled;
+    _syncLpgmMonitorService();
+  }
+
+  void _onSnetEnabledChanged() {
+    if (!mounted) return;
+    final enabled = QuakeMapView.snetEnabledNotifier.value;
+    if (_snetEnabled == enabled) return;
+    _snetEnabled = enabled;
+    _syncSnetService();
+  }
+
+  void _onFdsnSeedLinkEnabledChanged() {
+    if (!mounted) return;
+    final enabled = QuakeMapView.fdsnSeedLinkEnabledNotifier.value;
+    if (_fdsnSeedLinkEnabled == enabled) return;
+    _fdsnSeedLinkEnabled = enabled;
+    _syncFdsnServicesWithOverlay();
+  }
+
+  void _onWhewsNiedEnabledChanged() {
+    if (!mounted) return;
+    _whewsNiedEnabled = QuakeMapView.whewsNiedEnabledNotifier.value;
+    _syncWhewsNiedService();
+  }
+
+  void _onWhewsSnetEnabledChanged() {
+    if (!mounted) return;
+    _whewsSnetEnabled = QuakeMapView.whewsSnetEnabledNotifier.value;
+    _syncWhewsSnetService();
+  }
+
+  void _onWhewsKmaEnabledChanged() {
+    if (!mounted) return;
+    _whewsKmaEnabled = QuakeMapView.whewsKmaEnabledNotifier.value;
+    _syncWhewsKmaService();
+  }
+
+  void _onWhewsApiTokenChanged() {
+    final token = QuakeMapView.whewsApiTokenNotifier.value;
+    _whewsNiedService.setApiToken(token);
+    _whewsSnetService.setApiToken(token);
+    _whewsKmaService.setApiToken(token);
+  }
+
+  void _syncWhewsNiedService() {
+    if (_whewsNiedEnabled) {
+      _syncNiedMonitorService();
+      _whewsNiedService.start();
+      return;
+    }
+    _whewsNiedService.stop();
+    _whewsNiedStations = const [];
+    if (_niedMonitorEnabled) {
+      _niedStations = const [];
+      _syncNiedMonitorService();
+    }
+    _notifyLayer(_niedLayerRevision);
+    _emitStationSummary();
+  }
+
+  void _syncWhewsSnetService() {
+    if (_whewsSnetEnabled) {
+      _syncSnetService();
+      _whewsSnetService.start();
+      return;
+    }
+    _whewsSnetService.stop();
+    _whewsSnetStations = const [];
+    _syncSnetService();
+    _notifyLayer(_snetLayerRevision);
+    _emitStationSummary();
+  }
+
+  void _syncWhewsKmaService() {
+    if (_whewsKmaEnabled) {
+      _syncKmaPewsService();
+      _whewsKmaService.start();
+      return;
+    }
+    _whewsKmaService.stop();
+    _whewsKmaStations = const [];
+    if (_kmaPewsEnabled) _kmaService.connect();
+    _notifyLayer(_kmaLayerRevision);
+    _emitStationSummary();
+  }
+
+  void _syncKmaPewsService() {
+    if (_whewsKmaEnabled) {
+      _kmaService.disconnect();
+      return;
+    }
+    if (_kmaPewsEnabled) {
+      _kmaService.connect();
+      return;
+    }
+    _kmaService.disconnect();
+    _kmaStations = const [];
+    _kmaGridCellCenters.clear();
+    _lastKmaLayerSignature = '';
+    _lastKmaStationFocusSignature = null;
+    _lastKmaStationFocusAt = null;
+    _pendingKmaStationFocus = false;
+    if (_preferredStationFocusSource == 'kma') {
+      _preferredStationFocusSource = null;
+    }
+    _notifyLayer(_kmaLayerRevision);
+    _quakeProvider?.updateSourceStatus('KMA', SourceStatus.disconnected);
+    _emitStationSummary();
+  }
+
+  void _syncWolfxSeisJsService() {
+    if (_wolfxSeisJsEnabled) {
+      _seisjsService.connect();
+      return;
+    }
+    _seisjsService.disconnect();
+    _seisjsStations = const [];
+    _lastSeisJsLayerSignature = '';
+    _notifyLayer(_seisJsLayerRevision);
+    _quakeProvider?.updateSourceStatus('SeisJS', SourceStatus.disconnected);
+    _emitStationSummary();
+  }
+
+  void _syncPAlertService() {
+    if (_pAlertEnabled) {
+      _quakeProvider?.updateSourceStatus('P-Alert', SourceStatus.connecting);
+      _pAlertService.start();
+      return;
+    }
+    _pAlertService.stop();
+    _pAlertStations = const [];
+    _lastPAlertLayerSignature = '';
+    _notifyLayer(_pAlertLayerRevision);
+    _quakeProvider?.updateSourceStatus('P-Alert', SourceStatus.disconnected);
+    _emitStationSummary();
+  }
+
+  void _syncNiedMonitorService() {
+    if (_whewsNiedEnabled) {
+      _lmoniService.stop();
+      _yahooService.stop();
+      NiedMonitorService().stop();
+      return;
+    }
+    if (_niedMonitorEnabled) {
+      if (_useYahooSource) {
+        _yahooService.start();
+      } else {
+        _lmoniService.start();
+        NiedMonitorService().start();
+      }
+      return;
+    }
+    NiedMonitorService().setPhysicalLayersEnabled(false);
+    _lmoniService.stop();
+    _yahooService.stop();
+    NiedMonitorService().stop();
+    _niedStations = const [];
+    _niedGridCellCenters.clear();
+    _lastNiedLayerSignature = '';
+    _resetNiedDetectionState(detachStations: true);
+    NiedBackgroundWorker.instance.stop();
+    _notifyLayer(_niedLayerRevision);
+    _quakeProvider?.updateSourceStatus('NIED', SourceStatus.disconnected);
+    _emitStationSummary();
+  }
+
+  void _syncLpgmMonitorService() {
+    if (_niedLpgmEnabled) {
+      unawaited(_initLpgmMonitor());
+      return;
+    }
+    _lpgmSnapshotSubscription?.cancel();
+    _lpgmSnapshotSubscription = null;
+    _lpgmService.stop();
+    _latestLpgmSnapshot = null;
+    _emitStationSummary();
+  }
+
+  void _syncSnetService() {
+    if (_whewsSnetEnabled) {
+      _snetService.stopMonitoring();
+      return;
+    }
+    if (_snetEnabled) {
+      unawaited(_initSnet());
+      return;
+    }
+    _snetService.stopMonitoring();
+    _snetService.clearStations();
+    _lastSnetLayerSignature = '';
+    _notifyLayer(_snetLayerRevision);
+    _quakeProvider?.updateSourceStatus('S-net', SourceStatus.disconnected);
+    _emitStationSummary();
   }
 
   void _syncTremStationService() {
@@ -472,7 +1042,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       _pendingTremStationFocus = false;
       if (_preferredStationFocusSource == 'trem') {
         _preferredStationFocusSource = null;
-        _preferredStationFocusPoints = null;
       }
       _notifyLayer(_cwaLayerRevision);
       _emitStationSummary();
@@ -542,6 +1111,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _niedDetectEpicenter = null;
     _niedSourceWaveEventId = null;
     _lastNiedSourceEstimateSignature = 'none';
+    _clearNiedWaveElapsedAnchor();
     _lastEpicenterFocus = null;
     _lastEpicenterSourceEventId = null;
     _stopNiedWaveClock();
@@ -553,10 +1123,16 @@ class _QuakeMapViewState extends State<QuakeMapView> {
 
   void _processNiedSourceEstimation(List<NiedStation> stations) {
     if (!_showNiedEstimatedEpicenter) {
+      NiedMonitorService().setPhysicalLayersEnabled(false);
       _clearNiedSourceEstimationState();
       return;
     }
-    _niedSourceEstimationDriver.processStations(stations);
+    final detection = _niedSourceEstimationDriver.processStations(stations);
+    // The realtime shindo frame remains the priority. Physical GIF layers are
+    // fetched only while the detector has an actual candidate or source event.
+    if (!_useYahooSource && _niedMonitorEnabled) {
+      NiedMonitorService().setPhysicalLayersEnabled(detection.hasActiveEvent);
+    }
     _refreshNiedSourceEventFromTracker();
   }
 
@@ -572,6 +1148,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       _niedDetectEpicenter = null;
       _niedSourceWaveEventId = null;
       _lastNiedSourceEstimateSignature = 'none';
+      _clearNiedWaveElapsedAnchor();
       _stopNiedWaveClock();
       return hadEstimateState || previousEstimateSignature != 'none';
     }
@@ -583,6 +1160,9 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     if (firstEstimate) {
       _niedSourceWaveEventId = eventId;
       _startNiedWaveClock();
+    }
+    if (firstEstimate || previousEstimateSignature != estimateSignature) {
+      _anchorNiedWaveElapsed(estimate);
     }
 
     final needsDistanceUpdate =
@@ -642,8 +1222,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
         ..write(station.id)
         ..write(':')
         ..write(station.level)
-        ..write(':')
-        ..write(station.detectLevel)
         ..write(':')
         ..write(station.detectState);
     }
@@ -714,6 +1292,24 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     return buffer.toString();
   }
 
+  String _pAlertLayerSignature(List<PAlertStation> stations) {
+    final buffer = StringBuffer()..write(stations.length);
+    for (final station in stations) {
+      buffer
+        ..write('|')
+        ..write(station.id)
+        ..write(':')
+        ..write(station.gridLevel)
+        ..write(':')
+        ..write(station.pgaGal?.toStringAsFixed(3) ?? '-')
+        ..write(':')
+        ..write(station.pgvCms?.toStringAsFixed(3) ?? '-')
+        ..write(':')
+        ..write(station.dataTime?.millisecondsSinceEpoch ?? 0);
+    }
+    return buffer.toString();
+  }
+
   String _seisJsLayerSignature(List<SeisJsStation> stations) {
     final buffer = StringBuffer()..write(stations.length);
     for (final station in stations) {
@@ -721,7 +1317,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
         ..write('|')
         ..write(station.id)
         ..write(':')
-        ..write(station.shindo);
+        ..write(station.intensity?.toStringAsFixed(3) ?? '-');
     }
     return buffer.toString();
   }
@@ -789,6 +1385,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                   stations: _niedStations,
                   hideGrid: hideGrid,
                   blinkOn: blinkOn,
+                  displayShindo0: _displayShindo0,
                   detectionGridCells: _latestDetectSnapshot.gridCells,
                   onGridCellsChanged: (centers) {
                     _niedGridCellCenters
@@ -827,6 +1424,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                   stations: _kmaStations,
                   hideGrid: hideGrid,
                   blinkOn: blinkOn,
+                  displayShindo0: _displayShindo0,
                   onGridCellsChanged: (centers) {
                     _kmaGridCellCenters
                       ..clear()
@@ -864,6 +1462,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                   stations: _cwaStations,
                   hideGrid: hideGrid,
                   blinkOn: blinkOn,
+                  displayShindo0: _displayShindo0,
                   onGridCellsChanged: (_) {
                     if (_pendingTremStationFocus) {
                       _pendingTremStationFocus = false;
@@ -876,6 +1475,21 @@ class _QuakeMapViewState extends State<QuakeMapView> {
               },
             );
           },
+        );
+      },
+    );
+  }
+
+  Widget _buildPAlertStationLayer() {
+    return ValueListenableBuilder<int>(
+      valueListenable: _pAlertLayerRevision,
+      builder: (context, revision, child) {
+        if (!_pAlertEnabled || _pAlertStations.isEmpty) {
+          return const SizedBox.shrink();
+        }
+        return PAlertStationLayer(
+          stations: _pAlertStations,
+          displayShindo0: _displayShindo0,
         );
       },
     );
@@ -929,6 +1543,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     final layerCount = math.min(unifiedEvents.length, mapEvents.length);
     for (int i = 0; i < layerCount; i++) {
       final u = unifiedEvents[i];
+      if (u.isVolcanoEvent) continue;
       final qm = mapEvents[i];
       final layerKey = _mapLayerKey(qm, u.eventId, i);
 
@@ -1010,7 +1625,10 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       valueListenable: _snetLayerRevision,
       builder: (context, revision, child) {
         if (!_snetVisible) return const SizedBox.shrink();
-        return SnetLayer(stations: _snetService.stations);
+        final stations = _whewsSnetEnabled
+            ? _whewsSnetStations
+            : _snetService.stations;
+        return SnetLayer(stations: stations);
       },
     );
   }
@@ -1105,7 +1723,40 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     if (mounted) _waveTick.value++;
   }
 
+  void _anchorNiedWaveElapsed(SourceEstimate estimate) {
+    final elapsedSeconds = _metadataDouble(
+      estimate.diagnostics['wave_elapsed_s'],
+    );
+    if (elapsedSeconds == null) {
+      _clearNiedWaveElapsedAnchor();
+      return;
+    }
+    _niedWaveElapsedAnchorSeconds = elapsedSeconds;
+    _niedWaveElapsedClock
+      ..reset()
+      ..start();
+  }
+
+  void _clearNiedWaveElapsedAnchor() {
+    _niedWaveElapsedAnchorSeconds = null;
+    _niedWaveElapsedClock
+      ..stop()
+      ..reset();
+  }
+
+  double? get _displayNiedWaveElapsedSeconds {
+    if (QuakeMapView.niedReplayNotifier.value.enabled) return null;
+    final anchor = _niedWaveElapsedAnchorSeconds;
+    if (anchor == null) return null;
+    return anchor + _niedWaveElapsedClock.elapsedMilliseconds / 1000.0;
+  }
+
   void _onQuakeProviderChanged() {
+    final typhoonRevision = _quakeProvider?.typhoonUpdateRevision ?? 0;
+    if (typhoonRevision != _lastTyphoonUpdateRevision) {
+      _lastTyphoonUpdateRevision = typhoonRevision;
+      _refreshFanSatelliteCloudOnTyphoonUpdate();
+    }
     _syncActivityTimers();
   }
 
@@ -1134,12 +1785,18 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     }
     if (!_providerCallbacksBound) {
       _quakeProvider?.addListener(_onQuakeProviderChanged);
+      _lastTyphoonUpdateRevision = _quakeProvider?.typhoonUpdateRevision ?? 0;
       _wireStatusCallbacks();
       _bindAllEventsExpiredCallback();
       _providerCallbacksBound = true;
     }
     _syncActivityTimers();
+    _syncVolcanoMapServiceWithOverlay();
     _syncFdsnServicesWithOverlay();
+    _syncLiveWeatherTileRefresh();
+    _syncTyphoonLayerServiceWithOverlay();
+    _syncFanRadarServiceWithOverlay();
+    _syncFanSatelliteCloudServiceWithOverlay();
   }
 
   void _handleFdsnMotionSample(FdsnMotionSample sample) {
@@ -1253,16 +1910,32 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   void _onMapStateChanged() {
     final mapState = _mapStateProvider;
     final canAutoFollow = mapState?.canAutoFollow ?? false;
+    final selectedHistoryCameraKey = _historyCameraKey(
+      mapState?.selectedHistoryEvent,
+    );
     _syncFdsnServicesWithOverlay();
+    _syncLiveWeatherTileRefresh();
+    _syncTyphoonLayerServiceWithOverlay();
     _syncVolcanoMapServiceWithOverlay();
+    _syncFanRadarServiceWithOverlay();
+    _syncFanSatelliteCloudServiceWithOverlay();
     _syncWaveAutoZoomTimer();
     if (!_showNiedEstimatedEpicenter) {
       _clearNiedSourceDisplayState();
     }
     if (!_lastCanAutoFollow && canAutoFollow) {
-      _queueCameraPolicyRefresh(force: true);
+      _queueCameraPolicyRefresh(force: false);
     }
     _lastCanAutoFollow = canAutoFollow;
+    if (mapState != null &&
+        !mapState.isGestureAutoFollowPaused &&
+        _cameraPolicyForce) {
+      _queueCameraPolicyRefresh(force: true);
+    }
+    if (_lastSelectedHistoryCameraKey != selectedHistoryCameraKey) {
+      _lastSelectedHistoryCameraKey = selectedHistoryCameraKey;
+      _queueCameraPolicyRefresh(force: false);
+    }
     if (!_initialCameraPolicyApplied && mapState?.mapController != null) {
       _initialCameraPolicyApplied = true;
       _queueCameraPolicyRefresh(force: false);
@@ -1271,32 +1944,8 @@ class _QuakeMapViewState extends State<QuakeMapView> {
 
   void _handleMapEvent(MapEvent event) {
     final manual = _isManualCameraEvent(event);
-    _syncTencentJsMapCamera(event.camera);
     if (!manual) return;
-    context.read<MapStateProvider>().pauseAutoZoom();
-  }
-
-  void _syncTencentJsMapCamera(MapCamera camera) {
-    if (_mapStateProvider?.tileKey != MapConfig.tencentJsMapKey ||
-        !MapConfig.hasTencentWmtsApiKey) {
-      return;
-    }
-    _tencentJsMapController.syncCamera(
-      center: camera.center,
-      zoom: camera.zoom,
-    );
-  }
-
-  ({LatLng center, double zoom}) _currentMapCameraState() {
-    try {
-      final camera = widget.mapController.camera;
-      return (center: camera.center, zoom: camera.zoom);
-    } catch (_) {
-      return (
-        center: MapStateProvider.defaultCenter,
-        zoom: MapStateProvider.defaultZoom,
-      );
-    }
+    context.read<MapStateProvider>().pauseAutoZoomForGesture();
   }
 
   bool _isManualCameraEvent(MapEvent event) {
@@ -1325,6 +1974,10 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   }
 
   void _syncFdsnServicesWithOverlay() {
+    if (!_fdsnSeedLinkEnabled) {
+      _stopFdsnServices(clearStations: true);
+      return;
+    }
     final mapState = _mapStateProvider;
     final enabledSources = <String>{
       if (mapState?.isOverlayEnabled('fdsnEarthScope') == true) 'EarthScope',
@@ -1346,6 +1999,137 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     } else {
       _volcanoMapService.stop();
     }
+  }
+
+  List<JmaVolcanoSite> _volcanoSitesForEvents(List<UnifiedQuakeData> events) {
+    final officialByCode = <String, JmaVolcanoSite>{
+      for (final site in _volcanoSites) site.code: site,
+    };
+    final latestByLocation = <String, UnifiedQuakeData>{};
+    for (final event in events) {
+      final volcano = event.volcanoEvent;
+      if (volcano == null) continue;
+      final code = volcano.volcanoCode.trim();
+      final key = code.isEmpty ? 'event:${event.eventId}' : 'code:$code';
+      final existing = latestByLocation[key];
+      final eventTime = event.reportTime ?? event.arrivedAt;
+      final existingTime = existing?.reportTime ?? existing?.arrivedAt;
+      if (existing == null ||
+          (eventTime != null &&
+              (existingTime == null || eventTime.isAfter(existingTime)))) {
+        latestByLocation[key] = event;
+      }
+    }
+
+    final sites = <JmaVolcanoSite>[];
+    for (final event in latestByLocation.values) {
+      final volcano = event.volcanoEvent!;
+      final official = officialByCode[volcano.volcanoCode.trim()];
+      if (official != null) {
+        sites.add(official);
+        continue;
+      }
+      if (!volcano.hasMapLocation) continue;
+      sites.add(
+        JmaVolcanoSite(
+          code: volcano.volcanoCode.trim().isEmpty
+              ? event.eventId
+              : volcano.volcanoCode.trim(),
+          nameJp: volcano.volcanoName,
+          nameEn: '',
+          latitude: volcano.latitude!,
+          longitude: volcano.longitude!,
+          levelOperation: false,
+          alertLevel: 0,
+          hasWarning: false,
+          hasRecentInfo: false,
+          hasRecentEruption: false,
+        ),
+      );
+    }
+    return sites;
+  }
+
+  void _syncTyphoonLayerServiceWithOverlay() {
+    final mapState = _mapStateProvider;
+    if (mapState == null) return;
+    _quakeProvider?.setTyphoonLayerEnabled(
+      mapState.isOverlayEnabled('typhoonLayer'),
+    );
+  }
+
+  void _syncLiveWeatherTileRefresh() {
+    final mapState = _mapStateProvider;
+    final cloud = mapState?.isOverlayEnabled('cloudLayer') == true;
+    final wind = mapState?.isOverlayEnabled('windLayer') == true;
+    final rain = mapState?.isOverlayEnabled('rainLayer') == true;
+    final signature = '$cloud|$wind|$rain';
+    final anyLiveLayer = cloud || wind || rain;
+    if (!anyLiveLayer) {
+      _liveWeatherTileRefreshTimer?.cancel();
+      _liveWeatherTileRefreshTimer = null;
+      _liveWeatherTileOverlaySignature = signature;
+      _liveWeatherTileRefreshInterval = null;
+      return;
+    }
+
+    final interval = (cloud || rain)
+        ? const Duration(minutes: 10)
+        : const Duration(minutes: 30);
+    final signatureChanged = signature != _liveWeatherTileOverlaySignature;
+    final intervalChanged = interval != _liveWeatherTileRefreshInterval;
+    _liveWeatherTileOverlaySignature = signature;
+    _liveWeatherTileRefreshInterval = interval;
+
+    if (signatureChanged) {
+      _refreshLiveWeatherTiles();
+    }
+    if (signatureChanged ||
+        intervalChanged ||
+        _liveWeatherTileRefreshTimer == null) {
+      _liveWeatherTileRefreshTimer?.cancel();
+      _liveWeatherTileRefreshTimer = Timer.periodic(
+        interval,
+        (_) => _refreshLiveWeatherTiles(),
+      );
+    }
+  }
+
+  void _refreshLiveWeatherTiles() {
+    _liveWeatherTileVersion = DateTime.now().millisecondsSinceEpoch;
+    _notifyLayer(_liveWeatherTileRevision);
+  }
+
+  void _syncFanRadarServiceWithOverlay() {
+    final mapState = _mapStateProvider;
+    final shouldRun =
+        mapState != null && mapState.isOverlayEnabled('radarChinaLayer');
+    if (shouldRun) {
+      _fanRadarService.start(interval: const Duration(minutes: 10));
+    } else {
+      _fanRadarService.stop(clear: true);
+    }
+  }
+
+  void _syncFanSatelliteCloudServiceWithOverlay() {
+    final mapState = _mapStateProvider;
+    final shouldRun =
+        mapState != null && mapState.isOverlayEnabled('satelliteCloudLayer');
+    if (shouldRun) {
+      _fanSatelliteCloudService.start(interval: const Duration(minutes: 30));
+    } else {
+      _fanSatelliteCloudService.stop(clear: true);
+    }
+  }
+
+  void _refreshFanSatelliteCloudOnTyphoonUpdate() {
+    final mapState = _mapStateProvider;
+    if (mapState?.isOverlayEnabled('satelliteCloudLayer') != true) return;
+    if (!_fanSatelliteCloudService.isRunning) {
+      _fanSatelliteCloudService.start(interval: const Duration(minutes: 30));
+      return;
+    }
+    unawaited(_fanSatelliteCloudService.fetchNow());
   }
 
   void _startFdsnServices(Set<String> enabledSources) {
@@ -1421,7 +2205,16 @@ class _QuakeMapViewState extends State<QuakeMapView> {
 
   void _restartFdsnMotionService() {
     _fdsnMotionRestartTimer = null;
-    if (!_fdsnServicesActive) return;
+    if (!_fdsnServicesActive || !_fdsnSeedLinkEnabled) return;
+    final enabledSources = <String>{
+      if (_mapStateProvider?.isOverlayEnabled('fdsnEarthScope') == true)
+        'EarthScope',
+      if (_mapStateProvider?.isOverlayEnabled('fdsnGeofon') == true) 'GEOFON',
+    };
+    if (enabledSources.isEmpty) {
+      _stopFdsnServices(clearStations: true);
+      return;
+    }
     _fdsnMotionSubscription?.cancel();
     _fdsnMotionSubscription = null;
     _fdsnMotionFlushTimer?.cancel();
@@ -1430,11 +2223,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _fdsnMotionService.disconnect();
     _fdsnMotionService.connect(
       stationLimit: QuakeMapView.fdsnStationLimitNotifier.value,
-      enabledSources: {
-        if (_mapStateProvider?.isOverlayEnabled('fdsnEarthScope') == true)
-          'EarthScope',
-        if (_mapStateProvider?.isOverlayEnabled('fdsnGeofon') == true) 'GEOFON',
-      },
+      enabledSources: enabledSources,
     );
     _fdsnMotionSubscription = _fdsnMotionService.sampleStream.listen(
       _handleFdsnMotionSample,
@@ -1442,32 +2231,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   }
 
   void _stopFdsnServices({bool clearStations = false}) {
-    if (!_fdsnServicesActive &&
-        _earthScopeStationSubscription == null &&
-        _geofonStationSubscription == null &&
-        _fdsnMotionSubscription == null) {
-      if (clearStations) {
-        _latestFdsnMotionSamples.clear();
-        _latestFdsnMotionReceivedAt.clear();
-        _lastFdsnUiUpdateAt.clear();
-      }
-      if (clearStations &&
-          mounted &&
-          (_earthScopeStations.isNotEmpty || _geofonStations.isNotEmpty)) {
-        if (_earthScopeStations.isNotEmpty) {
-          _earthScopeStations = [];
-          _notifyLayer(_earthScopeLayerRevision);
-        }
-        if (_geofonStations.isNotEmpty) {
-          _geofonStations = [];
-          _notifyLayer(_geofonLayerRevision);
-        }
-        _earthScopeStationIndex = const {};
-        _geofonStationIndex = const {};
-      }
-      return;
-    }
-
     _fdsnServicesActive = false;
     _earthScopeStationSubscription?.cancel();
     _earthScopeStationSubscription = null;
@@ -1565,6 +2328,16 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     }
   }
 
+  void _onUserLocationChanged() {
+    final pos = LocationService().currentPosition;
+    if (pos != null) {
+      _preferredViewCenter = LatLng(pos.latitude, pos.longitude);
+    }
+    if (mounted) {
+      _queueCameraPolicyRefresh(force: true);
+    }
+  }
+
   List<QuakeMessage> _unifiedEewMapEvents(QuakeProvider provider) {
     final unifiedEvents = provider.unifiedEvents;
     final mapEvents = provider.unifiedMapEvents;
@@ -1578,41 +2351,23 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   }
 
   String _mapLayerKey(QuakeMessage event, String? eventId, int index) {
-    final id = eventId == null || eventId.isEmpty ? 'noid' : eventId;
-    final report = event.reportNumber?.toString() ?? 'r0';
-    return '${id}_${event.source.name}_${report}_$index';
-  }
-
-  /// kanameishi: 鏍规嵁浜嬩欢鏉ユ簮鑾峰彇瀵瑰簲鐨勮娴嬬綉缃戞牸鐐?  /// JMA EEW 鈫?NIED 缃戞牸, KMA EEW 鈫?KMA 缃戞牸
-  /// 瑙傛祴缃戞縺娲绘椂鐢ㄧ綉鏍肩偣浠ｆ浛 S 娉㈠～鍏呮墿灞曡鍙?
-  List<LatLng> _cameraGridPoints(List<QuakeMessage> eewEvents) {
-    final points = <LatLng>[];
-    for (final e in eewEvents) {
-      final source = e.source;
-      if (source == QuakeSourceType.jma_fan) {
-        if (_niedGridCellCenters.isNotEmpty) {
-          points.addAll(_niedGridCellCenters);
-        }
-      } else if (source == QuakeSourceType.kma_eew_fan) {
-        if (_kmaGridCellCenters.isNotEmpty) {
-          points.addAll(_kmaGridCellCenters);
-        }
-      }
-    }
-    return points;
+    final id = eventId == null || eventId.isEmpty ? 'noid_$index' : eventId;
+    // 同一事件的连续报必须复用图层 State。报号放进 Key 会让每报都重新
+    // initState，并使区域震度层重复加载边界数据和重算。
+    return '${event.source.name}_$id';
   }
 
   /// 临时显示信息事件位置
   ///
   /// 褰撴湁棰勮鏃舵敹鍒颁俊鎭簨浠讹紝璺宠浆鍒颁俊鎭簨浠朵綅缃?绉掑悗鍥炲埌棰勮浣嶇疆
-  bool _shouldSplitDistantEewFocus(List<QuakeMessage> eewEvents) {
-    if (eewEvents.length < 2) return false;
+  bool _shouldSplitDistantUnifiedFocus(List<QuakeMessage> events) {
+    if (events.length < 2) return false;
     var maxDistanceKm = 0.0;
-    for (var i = 0; i < eewEvents.length; i++) {
-      final a = eewEvents[i];
+    for (var i = 0; i < events.length; i++) {
+      final a = events[i];
       if (a.latitude == 0.0 && a.longitude == 0.0) continue;
-      for (var j = i + 1; j < eewEvents.length; j++) {
-        final b = eewEvents[j];
+      for (var j = i + 1; j < events.length; j++) {
+        final b = events[j];
         if (b.latitude == 0.0 && b.longitude == 0.0) continue;
         final distance = QuakeCalculator.haversineDistance(
           a.latitude,
@@ -1625,7 +2380,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
         }
       }
     }
-    return maxDistanceKm > _splitEewFocusDistanceKm;
+    return maxDistanceKm > _splitUnifiedFocusDistanceKm;
   }
 
   QuakeMessage? _currentEewFocusEvent(
@@ -1645,10 +2400,35 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     return eewEvents[index % eewEvents.length];
   }
 
+  QuakeMessage? _currentInfoFocusEvent(
+    QuakeProvider provider,
+    List<QuakeMessage> infoEvents,
+  ) {
+    if (infoEvents.isEmpty) return null;
+    final index = provider.currentUnifiedIndex;
+    final unifiedEvents = provider.unifiedEvents;
+    final mapEvents = provider.unifiedMapEvents;
+    if (index >= 0 &&
+        index < unifiedEvents.length &&
+        index < mapEvents.length &&
+        !unifiedEvents[index].isEew &&
+        !unifiedEvents[index].isVolcanoEvent) {
+      return mapEvents[index];
+    }
+    return infoEvents[index % infoEvents.length];
+  }
+
   String _cameraEventTag(QuakeMessage event) {
     final id = event.eventId.isEmpty ? 'noid' : event.eventId;
     final report = event.reportNumber?.toString() ?? 'r0';
     return '${event.source.name}:$id:$report';
+  }
+
+  String _eewWaveCameraEventKey(QuakeMessage event) {
+    final eventId = event.eventId.isEmpty
+        ? '${event.latitude.toStringAsFixed(4)},${event.longitude.toStringAsFixed(4)}'
+        : event.eventId;
+    return '${event.source.name}:$eventId';
   }
 
   int _latestUnifiedInfoIndex(List<UnifiedQuakeData> events) {
@@ -1656,7 +2436,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     DateTime? bestTime;
     for (var i = 0; i < events.length; i++) {
       final event = events[i];
-      if (event.isEew) continue;
+      if (event.isEew || event.isVolcanoEvent) continue;
       final time = event.arrivedAt ?? event.reportTime ?? event.originTime;
       if (bestIndex < 0 ||
           (time != null && (bestTime == null || time.isAfter(bestTime)))) {
@@ -1698,7 +2478,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _pendingNiedStationFocus = false;
     if (_preferredStationFocusSource == 'nied') {
       _preferredStationFocusSource = null;
-      _preferredStationFocusPoints = null;
     }
     _latestDetectSnapshot = ShakeDetectionService.idleSnapshot;
     _emitStationSummary();
@@ -1723,7 +2502,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _lastNiedLayerSignature = '';
     if (_preferredStationFocusSource == 'nied') {
       _preferredStationFocusSource = null;
-      _preferredStationFocusPoints = null;
     }
     _clearNiedSourceEstimationState();
     _emitStationSummary();
@@ -1738,7 +2516,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _pendingKmaStationFocus = false;
     if (_preferredStationFocusSource == 'kma') {
       _preferredStationFocusSource = null;
-      _preferredStationFocusPoints = null;
     }
     _onShakeExpired();
   }
@@ -1750,7 +2527,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _pendingTremStationFocus = false;
     if (_preferredStationFocusSource == 'trem') {
       _preferredStationFocusSource = null;
-      _preferredStationFocusPoints = null;
     }
     _onShakeExpired();
   }
@@ -1853,9 +2629,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       }
 
       representative ??= mapEvent;
-      keyParts.add(
-        '${unified.source}:${unified.eventId}:${unified.reportTime?.millisecondsSinceEpoch ?? 0}:${unified.warnArea.hashCode}',
-      );
+      keyParts.add('${unified.source}:${unified.eventId}');
 
       final warnArea = unified.warnArea.trim();
       if (warnArea.isEmpty) continue;
@@ -1918,7 +2692,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
 
     _lastNiedStationFocusSignature = signature;
     _lastNiedStationFocusAt = now;
-    _preferStationFocusSource('nied', force, focusPoints);
+    _preferStationFocusSource('nied', force);
     _queueCameraPolicyRefresh(force: force);
     return true;
   }
@@ -1938,20 +2712,22 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     });
   }
 
-  void _preferStationFocusSource(
-    String source,
-    bool force,
-    List<LatLng> points,
-  ) {
+  void _preferStationFocusSource(String source, bool force) {
     if (!force) return;
     _preferredStationFocusSource = source;
-    _preferredStationFocusPoints = List<LatLng>.unmodifiable(points);
   }
 
   void _applyCameraPolicy({bool force = false}) {
     if (!mounted) return;
     final mapState = _mapStateProvider;
     if (mapState == null) return;
+    if (mapState.isGestureAutoFollowPaused) {
+      _cameraPolicyForce = _cameraPolicyForce || force;
+      return;
+    }
+    if (force && mapState.isHistoryEventSelected) {
+      mapState.clearSelectedHistoryEvent();
+    }
     if (!force && !mapState.canAutoFollow) return;
     if (force && !mapState.canAutoFollow) {
       mapState.resumeAutoZoom();
@@ -1962,6 +2738,24 @@ class _QuakeMapViewState extends State<QuakeMapView> {
 
     final mapEvents = provider.unifiedMapEvents;
     final eewEvents = _unifiedEewMapEvents(provider);
+
+    final eewWaveCameraReleased = _eewWaveCameraFollowGate.syncEvents(
+      eewEvents.map(_eewWaveCameraEventKey),
+      now,
+    );
+
+    final selectedHistory = mapState.selectedHistoryEvent;
+    if (selectedHistory != null &&
+        (selectedHistory.latitude != 0 || selectedHistory.longitude != 0)) {
+      mapState.smartMoveToCenter(
+        LatLng(selectedHistory.latitude, selectedHistory.longitude),
+        zoom: 7.0,
+        sourceTag: 'policy-history-${_cameraEventTag(selectedHistory)}',
+        force: true,
+        minInterval: Duration.zero,
+      );
+      return;
+    }
 
     if (eewEvents.isNotEmpty) {
       if (_preferredEventFocus != null &&
@@ -1983,38 +2777,60 @@ class _QuakeMapViewState extends State<QuakeMapView> {
 
       _clearPreferredEventFocus();
 
-      if (_shouldSplitDistantEewFocus(eewEvents)) {
+      if (eewWaveCameraReleased) {
+        mapState.smartMoveToEvents(
+          eewEvents,
+          padding: 0.0,
+          minZoom: 4.5,
+          maxZoom: 8.0,
+          screenOffset: _eventFocusOffset(),
+          sourceTag: 'policy-unified-eew-epicenters',
+          force: force,
+          minInterval: const Duration(milliseconds: 1500),
+        );
+        return;
+      }
+
+      if (_shouldSplitDistantUnifiedFocus(eewEvents)) {
         final focusEew = _currentEewFocusEvent(provider, eewEvents);
         if (focusEew != null) {
           final focusedEvents = [focusEew];
-          final focusedGridPoints = _cameraGridPoints(focusedEvents);
-          mapState.smartMoveToEvents(
+          final targetZoom = mapState.smartMoveToEvents(
             focusedEvents,
             waveEvents: focusedEvents,
-            gridPoints: focusedGridPoints,
             padding: 0.8,
             minZoom: 4.5,
             maxZoom: 7.0,
             screenOffset: _eventFocusOffset(),
             sourceTag: 'policy-unified-eew-split-${_cameraEventTag(focusEew)}',
             force: force,
-            minInterval: const Duration(milliseconds: 1500),
+            minInterval: const Duration(milliseconds: 900),
+            continuousFollow: true,
+          );
+          _eewWaveCameraFollowGate.noteTargetZoom(
+            targetZoom: targetZoom ?? double.infinity,
+            minimumZoom: 4.5,
+            now: now,
           );
           return;
         }
       }
 
-      final gridPoints = _cameraGridPoints(eewEvents);
-      mapState.smartMoveToEvents(
+      final targetZoom = mapState.smartMoveToEvents(
         eewEvents,
         waveEvents: eewEvents,
-        gridPoints: gridPoints,
         padding: 0.8,
         minZoom: 4.5,
         screenOffset: _eventFocusOffset(),
         sourceTag: 'policy-unified-eew',
         force: force,
-        minInterval: const Duration(milliseconds: 1500),
+        minInterval: const Duration(milliseconds: 900),
+        continuousFollow: true,
+      );
+      _eewWaveCameraFollowGate.noteTargetZoom(
+        targetZoom: targetZoom ?? double.infinity,
+        minimumZoom: 4.5,
+        now: now,
       );
       return;
     }
@@ -2030,6 +2846,23 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     }
 
     if (mapEvents.isNotEmpty) {
+      if (_shouldSplitDistantUnifiedFocus(mapEvents)) {
+        final focusInfo = _currentInfoFocusEvent(provider, mapEvents);
+        if (focusInfo != null) {
+          mapState.smartMoveToEvents(
+            [focusInfo],
+            padding: 1.0,
+            minZoom: 3.0,
+            screenOffset: _eventFocusOffset(),
+            sourceTag:
+                'policy-unified-info-split-${_cameraEventTag(focusInfo)}',
+            force: force,
+            minInterval: const Duration(milliseconds: 1500),
+          );
+          return;
+        }
+      }
+
       mapState.smartMoveToEvents(
         mapEvents,
         padding: 1.0,
@@ -2129,22 +2962,15 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     };
     if (preferred != null && currentPreferredPoints.isEmpty) {
       _preferredStationFocusSource = null;
-      _preferredStationFocusPoints = null;
       preferred = null;
     }
-
-    final preferredPoints =
-        _preferredStationFocusPoints != null &&
-            _preferredStationFocusPoints!.isNotEmpty
-        ? _preferredStationFocusPoints!
-        : currentPreferredPoints;
 
     final stationPoints = <String, List<LatLng>>{
       'nied': _niedFocusPoints(),
       'kma': _kmaFocusPoints(),
       'trem': _tremFocusStations().map((s) => s.coordinate).toList(),
-      if (preferred != null && preferredPoints.isNotEmpty)
-        preferred: preferredPoints,
+      if (preferred != null && currentPreferredPoints.isNotEmpty)
+        preferred: currentPreferredPoints,
     };
     final preferredHasPoints =
         preferred != null && (stationPoints[preferred]?.isNotEmpty ?? false);
@@ -2186,6 +3012,13 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     return 'u[$unified]-n[$niedSig]-k[$kmaSig]-c[$tremSig]-sp[$stationPref]';
   }
 
+  String? _historyCameraKey(QuakeMessage? event) {
+    if (event == null) return null;
+    return '${event.source.name}:${event.eventId}:'
+        '${event.latitude.toStringAsFixed(5)}:'
+        '${event.longitude.toStringAsFixed(5)}';
+  }
+
   // ignore: unused_element
   List<NiedStation> _niedFocusStations() {
     // kanameishi: 鐩存帴鏌ュ凡鐢绘牸瀛? 鏍煎瓙涓績鐐瑰綋浣滆仛鐒︾洰鏍?
@@ -2203,7 +3036,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
             .map((s) {
               final lat = s.coordinate.latitude.floor();
               final lng = s.coordinate.longitude.floor();
-              final jma = JpShindoScale.jmaIndexFromLevel(s.level);
+              final jma = JpShindoScale.jmaIndexFromKanameishiLevel(s.level);
               return '$lat,$lng:$jma';
             })
             .toSet()
@@ -2268,7 +3101,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
 
     _lastKmaStationFocusSignature = signature;
     _lastKmaStationFocusAt = now;
-    _preferStationFocusSource('kma', force, focusPoints);
+    _preferStationFocusSource('kma', force);
     _queueCameraPolicyRefresh(force: force);
     return true;
   }
@@ -2323,11 +3156,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
 
     _lastTremStationFocusSignature = signature;
     _lastTremStationFocusAt = now;
-    _preferStationFocusSource(
-      'trem',
-      force,
-      focusStations.map((s) => s.coordinate).toList(),
-    );
+    _preferStationFocusSource('trem', force);
     _queueCameraPolicyRefresh(force: force);
     return true;
   }
@@ -2443,16 +3272,25 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   }
 
   LatLng _defaultFallbackCenter() {
+    final mapState = _mapStateProvider;
+    if (mapState != null && mapState.preferredViewMode != null) {
+      return mapState.defaultCenter;
+    }
     if (_preferredViewCenter != null) return _preferredViewCenter!;
     final pos = LocationService().currentPosition;
     if (pos != null) {
       return LatLng(pos.latitude, pos.longitude);
     }
-    return MapStateProvider.defaultCenter;
+    return MapStateProvider.fallbackCenter;
   }
 
-  double _defaultFallbackZoom() =>
-      _preferredDefaultZoom ?? MapStateProvider.defaultZoom;
+  double _defaultFallbackZoom() {
+    final mapState = _mapStateProvider;
+    if (mapState != null && mapState.preferredViewMode != null) {
+      return mapState.defaultZoom;
+    }
+    return _preferredDefaultZoom ?? MapStateProvider.fallbackZoom;
+  }
 
   void _onShakeExpired() {
     if (!mounted) return;
@@ -2519,6 +3357,20 @@ class _QuakeMapViewState extends State<QuakeMapView> {
         }
       });
     };
+    _pAlertService.onStatusChanged = (connected) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          provider.updateSourceStatus(
+            'P-Alert',
+            connected
+                ? SourceStatus.connected
+                : (_pAlertEnabled
+                      ? SourceStatus.error
+                      : SourceStatus.disconnected),
+          );
+        }
+      });
+    };
   }
 
   void _emitStationSummary() {
@@ -2531,6 +3383,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
         break;
       }
     }
+    summary.seisJsMaxStation = selectSeisJsCurrentMaxStation(_seisjsStations);
 
     double niedMax = -1;
     for (final s in _niedStations) {
@@ -2549,32 +3402,33 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       }
     }
 
-    int kmaMax = -1;
+    int kmaMaxLevel = -1;
     for (final s in _kmaStations) {
-      if (s.intensity > kmaMax) {
-        kmaMax = s.intensity;
+      if (s.holdLevel > kmaMaxLevel) {
+        kmaMaxLevel = s.holdLevel;
         summary.kmaMaxStation = s;
       }
     }
 
-    final snetCandidates =
-        _snetService.stations.where((s) => s.shindo >= 1.0).toList()
-          ..sort((a, b) => b.shindo.compareTo(a.shindo));
-    if (snetCandidates.isNotEmpty) {
+    var pAlertMax = -1;
+    for (final station in _pAlertStations) {
+      final level = station.gridLevel;
+      if (level > pAlertMax) {
+        pAlertMax = level;
+        summary.pAlertMaxStation = station;
+      }
+    }
+
+    final snetStations = _whewsSnetEnabled
+        ? _whewsSnetStations
+        : _snetService.stations;
+    final snetTopStations = selectSnetSidebarTopStations(snetStations);
+    if (snetTopStations.isNotEmpty) {
       summary.snetWindowEnd = DateTime.now();
       summary.snetWindowStart = summary.snetWindowEnd!.subtract(
         const Duration(minutes: 10),
       );
-      summary.snetTopStations = snetCandidates
-          .take(5)
-          .map(
-            (s) => SnetTopStation(
-              code: s.code,
-              shindo: s.shindo,
-              jmaIndex: JpShindoScale.jmaIndexFromShindo(s.shindo),
-            ),
-          )
-          .toList(growable: false);
+      summary.snetTopStations = snetTopStations;
     } else {
       summary.snetTopStations = const [];
       summary.snetWindowStart = null;
@@ -2622,7 +3476,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
 
     final prefMax = <String, int>{};
     final activeStations = _niedStations
-        .where((s) => s.isActive && s.detectLevel >= 0)
+        .where((s) => s.isActive && s.level >= 0)
         .toList(growable: false);
 
     void updatePref(String pref, int jmaShindo) {
@@ -2711,14 +3565,17 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     final sensitivity = prefs.getInt('shake_sensitivity') ?? 2;
     QuakeMapView.shakeSensitivityNotifier.value = sensitivity;
     _shakeDetection.setSensitivity(sensitivity);
+    _niedSourceEstimationDriver.setSensitivity(sensitivity);
     _kmaService.setSensitivity(sensitivity);
     _hideGridOnEew = prefs.getBool('hide_grid_on_eew') ?? false;
 
-    if (_useYahooSource) {
-      _yahooService.start();
-    } else {
-      _lmoniService.start();
-      NiedMonitorService().start();
+    if (_niedMonitorEnabled) {
+      if (_useYahooSource) {
+        _yahooService.start();
+      } else {
+        _lmoniService.start();
+        NiedMonitorService().start();
+      }
     }
 
     QuakeMapView.niedSourceNotifier.addListener(_onNiedSourceChanged);
@@ -2728,7 +3585,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     );
 
     _lmoniStationSub = _lmoniService.stationStream.listen((stations) {
-      if (!mounted || _useYahooSource) return;
+      if (!mounted || _useYahooSource || _whewsNiedEnabled) return;
       if (stations != null) {
         if (stations.isEmpty) {
           _niedStations = const [];
@@ -2746,7 +3603,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     });
 
     _yahooStationSub = _yahooService.stationStream.listen((stations) {
-      if (!mounted || !_useYahooSource) return;
+      if (!mounted || !_useYahooSource || _whewsNiedEnabled) return;
       if (stations != null) {
         if (stations.isEmpty) {
           _niedStations = const [];
@@ -2819,6 +3676,18 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     if (newSource == _niedSource) return;
 
     _resetNiedDetectionState(detachStations: true);
+    NiedMonitorService().setPhysicalLayersEnabled(false);
+
+    if (!_niedMonitorEnabled) {
+      _lmoniService.stop();
+      NiedMonitorService().stop();
+      _yahooService.stop();
+      _niedSource = newSource;
+      _useYahooSource = useYahoo;
+      _niedStations = [];
+      debugPrint('NIED 数据源切换为: ${_niedSourceLabel(newSource)}');
+      return;
+    }
 
     if (useYahoo) {
       _lmoniService.stop();
@@ -2865,6 +3734,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   void _onShakeSensitivityChanged() {
     final sensitivity = QuakeMapView.shakeSensitivityNotifier.value;
     _shakeDetection.setSensitivity(sensitivity);
+    _niedSourceEstimationDriver.setSensitivity(sensitivity);
     _kmaService.setSensitivity(sensitivity);
   }
 
@@ -2897,6 +3767,74 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   /// 鍒濆鍖?S-net 鏈嶅姟
   ///
   /// 璁剧疆鏁版嵁鏇存柊鍥炶皟骞跺惎鍔ㄥ畾鏈熺洃娴嬨€?
+  void _onWhewsNiedFrame(WhewsStationFrame frame) {
+    if (!mounted || !_whewsNiedEnabled) return;
+    final now = DateTime.now();
+    _whewsNiedStations = List.generate(frame.coordinates.length, (index) {
+      final raw = frame.values[index];
+      final station = NiedStation(
+        id: index,
+        code: 'WHEWS-NIED-${index + 1}',
+        name: 'WHEWS-NIED-${index + 1}',
+        coordinate: frame.coordinates[index],
+        network: 'WHEWS',
+        prefecture: '',
+        expireSeconds: NiedStation.kaExpireSeconds,
+      );
+      if (whewsNiedSnetValueIsValid(raw)) {
+        station.lastDataTime = frame.dataTime;
+        station.lastReceivedAt = now;
+        station.updateFromContinuousShindo(raw);
+      }
+      return station;
+    });
+    _niedStations = _whewsNiedStations;
+    _notifyLayer(_niedLayerRevision);
+    _emitStationSummary();
+  }
+
+  void _onWhewsSnetFrame(WhewsStationFrame frame) {
+    if (!mounted || !_whewsSnetEnabled) return;
+    _whewsSnetStations = List.generate(frame.coordinates.length, (index) {
+      final raw = frame.values[index];
+      final valid = whewsNiedSnetValueIsValid(raw);
+      return SnetStation(
+        code: 'WHEWS-SNET-${index + 1}',
+        name: 'WHEWS-SNET-${index + 1}',
+        coordinate: frame.coordinates[index],
+        depth: 0,
+        network: 'WHEWS',
+        type: 'velocity',
+        shindo: valid ? raw : -3.0,
+        intensity: valid ? raw : null,
+        level: valid ? ShindoColorUtil.shindoToRawLevel(raw) : -1,
+        isActive: valid,
+        lastUpdate: frame.dataTime,
+      );
+    });
+    _notifyLayer(_snetLayerRevision);
+    _emitStationSummary();
+  }
+
+  void _onWhewsKmaFrame(WhewsStationFrame frame) {
+    if (!mounted || !_whewsKmaEnabled) return;
+    _whewsKmaStations = List.generate(frame.coordinates.length, (index) {
+      final station = KmaStation(
+        id: index,
+        coordinate: frame.coordinates[index],
+      );
+      station.update(
+        frame.values[index].round(),
+        holdFrames: _kmaIntensityHoldFrames,
+      );
+      station.lastUpdate = frame.dataTime;
+      return station;
+    });
+    _kmaStations = _whewsKmaStations;
+    _notifyLayer(_kmaLayerRevision);
+    _emitStationSummary();
+  }
+
   Future<void> _initSnet() async {
     _snetService.onDataUpdated = (stations) {
       if (!mounted) return;
@@ -2918,6 +3856,13 @@ class _QuakeMapViewState extends State<QuakeMapView> {
 
   Future<void> _initLpgmMonitor() async {
     await _lpgmService.start(interval: _lpgmPollingInterval);
+    // The service is stopped and restarted across app background transitions,
+    // but its broadcast stream subscription should remain singleton-owned by
+    // this map widget. Reusing the existing subscription prevents duplicate
+    // station-summary emissions after repeated foreground/background cycles.
+    if (!mounted || !_niedLpgmEnabled || _lpgmSnapshotSubscription != null) {
+      return;
+    }
     _lpgmSnapshotSubscription = _lpgmService.snapshotStream.listen((snapshot) {
       _latestLpgmSnapshot = snapshot;
       _emitStationSummary();
@@ -2957,7 +3902,9 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _stopNiedWaveClock();
     _waveTick.dispose();
     _kmaStationSubscription?.cancel();
-    _mapEventSubscription?.cancel();
+    _whewsNiedSubscription?.cancel();
+    _whewsSnetSubscription?.cancel();
+    _whewsKmaSubscription?.cancel();
     _cwaStationSubscription?.cancel();
     _lmoniStationSub?.cancel();
     _yahooStationSub?.cancel();
@@ -2972,11 +3919,47 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     QuakeMapView.tremStationEnabledNotifier.removeListener(
       _onTremStationEnabledChanged,
     );
+    QuakeMapView.displayShindo0Notifier.removeListener(
+      _onDisplayShindo0Changed,
+    );
+    QuakeMapView.kmaIntensityHoldNotifier.removeListener(
+      _onKmaIntensityHoldChanged,
+    );
+    QuakeMapView.wolfxSeisJsEnabledNotifier.removeListener(
+      _onWolfxSeisJsEnabledChanged,
+    );
+    QuakeMapView.kmaPewsEnabledNotifier.removeListener(
+      _onKmaPewsEnabledChanged,
+    );
+    QuakeMapView.pAlertEnabledNotifier.removeListener(_onPAlertEnabledChanged);
+    QuakeMapView.niedMonitorEnabledNotifier.removeListener(
+      _onNiedMonitorEnabledChanged,
+    );
+    QuakeMapView.niedLpgmEnabledNotifier.removeListener(
+      _onNiedLpgmEnabledChanged,
+    );
+    QuakeMapView.snetEnabledNotifier.removeListener(_onSnetEnabledChanged);
+    QuakeMapView.fdsnSeedLinkEnabledNotifier.removeListener(
+      _onFdsnSeedLinkEnabledChanged,
+    );
+    QuakeMapView.whewsNiedEnabledNotifier.removeListener(
+      _onWhewsNiedEnabledChanged,
+    );
+    QuakeMapView.whewsSnetEnabledNotifier.removeListener(
+      _onWhewsSnetEnabledChanged,
+    );
+    QuakeMapView.whewsKmaEnabledNotifier.removeListener(
+      _onWhewsKmaEnabledChanged,
+    );
+    QuakeMapView.whewsApiTokenNotifier.removeListener(_onWhewsApiTokenChanged);
+    LocationService().positionListenable.removeListener(_onUserLocationChanged);
     StationEventTracker.instance.currentNiedEvent.removeListener(
       _onNiedSourceEventChanged,
     );
     _kmaService.disconnect();
     _cwaService.stop();
+    _pAlertStationSubscription?.cancel();
+    _pAlertService.stop();
     _seisjsSubscription?.cancel();
     _lpgmSnapshotSubscription?.cancel();
     _seisjsService.disconnect();
@@ -2984,7 +3967,13 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _mapStateProvider?.removeListener(_onMapStateChanged);
     _preferredEventFocusTimer?.cancel();
     _preferredEventFocusTimer = null;
+    _liveWeatherTileRefreshTimer?.cancel();
+    _liveWeatherTileRefreshTimer = null;
     _stopFdsnServices();
+    _fanRadarSubscription?.cancel();
+    _fanRadarService.stop(clear: false);
+    _fanSatelliteCloudSubscription?.cancel();
+    _fanSatelliteCloudService.stop(clear: false);
     _shakeDetection.reset(
       clearStationState: true,
       clearStationValues: true,
@@ -2995,16 +3984,27 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     NiedMonitorService().stop();
     _yahooService.stop();
     _snetService.dispose();
+    _whewsNiedService.dispose();
+    _whewsSnetService.dispose();
+    _whewsKmaService.dispose();
     _lpgmService.stop();
+    NiedBackgroundWorker.instance.stop();
     _volcanoMapService.onSitesUpdated = null;
     _niedLayerRevision.dispose();
     _kmaLayerRevision.dispose();
     _cwaLayerRevision.dispose();
+    _pAlertLayerRevision.dispose();
     _seisJsLayerRevision.dispose();
     _snetLayerRevision.dispose();
     _earthScopeLayerRevision.dispose();
     _geofonLayerRevision.dispose();
+    _liveWeatherTileRevision.dispose();
+    _fanRadarLayerRevision.dispose();
+    _fanSatelliteCloudLayerRevision.dispose();
     _blinkNotifier.dispose();
+    if (BackgroundService().isBackgroundHandlingEnabled) {
+      BackgroundService().removeStateListener(_onBackgroundStateChanged);
+    }
     super.dispose();
   }
 
@@ -3023,35 +4023,28 @@ class _QuakeMapViewState extends State<QuakeMapView> {
               final mapboxBase =
                   tileState.tileKey == MapConfig.mapboxEewceDarkKey &&
                   MapConfig.hasMapboxAccessToken;
-              final tencentJsBase =
-                  tileState.tileKey == MapConfig.tencentJsMapKey &&
-                  MapConfig.hasTencentWmtsApiKey;
-              final initialTencentCamera = _currentMapCameraState();
               return Stack(
                 fit: StackFit.expand,
                 children: [
-                  if (tencentJsBase)
-                    TencentJsMapWidget(
-                      key: ValueKey(
-                        'tencent-js-${MapConfig.tencentWmtsApiKey}',
-                      ),
-                      controller: _tencentJsMapController,
-                      initialCenter: initialTencentCamera.center,
-                      initialZoom: initialTencentCamera.zoom,
-                    ),
                   ExcludeSemantics(
                     child: FlutterMap(
                       key: ValueKey(tileState.tileKey),
                       mapController: widget.mapController,
                       options: MapOptions(
-                        backgroundColor: tencentJsBase
-                            ? Colors.transparent
-                            : const Color(0xFF152238),
-                        initialCenter: MapStateProvider.defaultCenter,
-                        initialZoom: MapStateProvider.defaultZoom,
+                        backgroundColor: const Color(0xFF152238),
+                        initialCenter: context
+                            .read<MapStateProvider>()
+                            .defaultCenter,
+                        initialZoom: context
+                            .read<MapStateProvider>()
+                            .defaultZoom,
                         initialRotation: 0,
                         maxZoom: 18.0,
                         minZoom: 3.0,
+                        // 某些 Android 设备在快速双指缩放时会产生包含 NaN
+                        // 坐标的瞬时相机更新。约束会在 flutter_map 提交更新前
+                        // 丢弃该帧，保留上一帧有效相机，避免瓦片投影异常。
+                        cameraConstraint: const FiniteCameraConstraint(),
                         interactionOptions: InteractionOptions(
                           flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
                           cursorKeyboardRotationOptions:
@@ -3063,30 +4056,22 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                         onMapEvent: _handleMapEvent,
                       ),
                       children: [
-                        if (!tencentJsBase)
-                          TileLayer(
-                            urlTemplate: tileState.tileUrl,
-                            subdomains: MapConfig.subdomainsByKey(
-                              tileState.tileKey,
-                            ),
-                            userAgentPackageName: 'flutterrhythmquake/1.0',
-                            tileProvider: _tileProvider,
-                            tileDimension: mapboxBase ? 512 : 256,
-                            zoomOffset: mapboxBase ? -1 : 0,
-                            tms: MapConfig.isTmsTileKey(tileState.tileKey),
-                            panBuffer: 2,
-                            keepBuffer: 4,
-                            evictErrorTileStrategy:
-                                EvictErrorTileStrategy.notVisible,
-                            errorTileCallback: (tile, error, stackTrace) =>
-                                _handleBaseTileError(
-                                  tile,
-                                  error,
-                                  stackTrace,
-                                  tileState.tileKey,
-                                ),
-                            tileDisplay: const TileDisplay.instantaneous(),
+                        TileLayer(
+                          urlTemplate: tileState.tileUrl,
+                          subdomains: MapConfig.subdomainsByKey(
+                            tileState.tileKey,
                           ),
+                          userAgentPackageName: 'flutterrhythmquake/1.0',
+                          tileProvider: _tileProvider,
+                          tileDimension: mapboxBase ? 512 : 256,
+                          zoomOffset: mapboxBase ? -1 : 0,
+                          tms: MapConfig.isTmsTileKey(tileState.tileKey),
+                          panBuffer: 2,
+                          keepBuffer: 4,
+                          evictErrorTileStrategy:
+                              EvictErrorTileStrategy.notVisible,
+                          tileDisplay: const TileDisplay.instantaneous(),
+                        ),
                         Selector<
                           MapStateProvider,
                           ({
@@ -3099,8 +4084,45 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                           selector: (context, mapState) =>
                               _weatherOverlayState(mapState),
                           builder: (context, overlays, child) {
-                            return Stack(
-                              children: _buildOptionalOverlayLayers(overlays),
+                            return ValueListenableBuilder<int>(
+                              valueListenable: _liveWeatherTileRevision,
+                              builder: (context, revision, child) {
+                                return Stack(
+                                  children: _buildOptionalOverlayLayers(
+                                    overlays,
+                                  ),
+                                );
+                              },
+                            );
+                          },
+                        ),
+                        Selector<MapStateProvider, bool>(
+                          selector: (context, mapState) =>
+                              mapState.isOverlayEnabled('radarChinaLayer'),
+                          builder: (context, visible, child) {
+                            if (!visible) return const SizedBox.shrink();
+                            return ValueListenableBuilder<int>(
+                              valueListenable: _fanRadarLayerRevision,
+                              builder: (context, revision, child) {
+                                return FanRadarLayer(
+                                  frame: _latestFanRadarFrame,
+                                );
+                              },
+                            );
+                          },
+                        ),
+                        Selector<MapStateProvider, bool>(
+                          selector: (context, mapState) =>
+                              mapState.isOverlayEnabled('satelliteCloudLayer'),
+                          builder: (context, visible, child) {
+                            if (!visible) return const SizedBox.shrink();
+                            return ValueListenableBuilder<int>(
+                              valueListenable: _fanSatelliteCloudLayerRevision,
+                              builder: (context, revision, child) {
+                                return FanSatelliteCloudLayer(
+                                  frame: _latestFanSatelliteCloudFrame,
+                                );
+                              },
                             );
                           },
                         ),
@@ -3113,22 +4135,8 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                               selector: (context, provider) =>
                                   provider.activeTyphoons,
                               builder: (context, typhoons, child) {
-                                if (typhoons.isEmpty) {
-                                  return const SizedBox.shrink();
-                                }
                                 return TyphoonLayer(typhoons: typhoons);
                               },
-                            );
-                          },
-                        ),
-                        Selector<MapStateProvider, bool>(
-                          selector: (context, mapState) =>
-                              mapState.isOverlayEnabled('volcanoLayer'),
-                          builder: (context, visible, child) {
-                            if (!visible) return const SizedBox.shrink();
-                            return VolcanoLayer(
-                              sites: _volcanoSites,
-                              showHoverTargets: false,
                             );
                           },
                         ),
@@ -3136,6 +4144,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                         _buildNiedStationLayer(),
                         _buildKmaStationLayer(),
                         _buildCwaStationLayer(),
+                        _buildPAlertStationLayer(),
                         _buildSeisJsStationLayer(),
                         _buildSnetStationLayer(),
                         _buildFdsnStationLayer(
@@ -3173,6 +4182,9 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                                     _buildSourceCandidateRegionLayer(
                                       sourceEvent,
                                     ),
+                                    _buildNiedHypAlgorithmCandidateLayer(
+                                      sourceEvent,
+                                    ),
                                     if (sourceEvent.estimate != null)
                                       _buildEstimatedEpicenterMarker(
                                         sourceEvent,
@@ -3191,9 +4203,29 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                               mapState.isOverlayEnabled('volcanoLayer'),
                           builder: (context, visible, child) {
                             if (!visible) return const SizedBox.shrink();
-                            return VolcanoLayer(
-                              sites: _volcanoSites,
-                              showMarkers: false,
+                            return Selector<
+                              QuakeProvider,
+                              List<UnifiedQuakeData>
+                            >(
+                              selector: (context, provider) => provider
+                                  .unifiedEvents
+                                  .where((event) => event.isVolcanoEvent)
+                                  .toList(growable: false),
+                              builder: (context, volcanoEvents, child) {
+                                if (volcanoEvents.isEmpty) {
+                                  return VolcanoLayer(sites: _volcanoSites);
+                                }
+                                return Stack(
+                                  children: [
+                                    VolcanoAshfallLayer(events: volcanoEvents),
+                                    VolcanoLayer(
+                                      sites: _volcanoSitesForEvents(
+                                        volcanoEvents,
+                                      ),
+                                    ),
+                                  ],
+                                );
+                              },
                             );
                           },
                         ),
@@ -3217,6 +4249,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
 
                                 if (!hasUnified) {
                                   _lastEventPointFocusSignature = null;
+                                  _lastEewTakeoverSignature = '';
                                   return const SizedBox.shrink();
                                 }
 
@@ -3227,10 +4260,23 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                                     _eewTakeoverSignature(unifiedEvents);
                                 if (eewTakeoverSignature !=
                                     _lastEewTakeoverSignature) {
+                                  final previousEewIds =
+                                      _lastEewTakeoverSignature.isEmpty
+                                      ? const <String>{}
+                                      : _lastEewTakeoverSignature
+                                            .split('|')
+                                            .toSet();
+                                  final hasNewEew = eewTakeoverSignature
+                                      .split('|')
+                                      .where((id) => id.isNotEmpty)
+                                      .any(
+                                        (id) => !previousEewIds.contains(id),
+                                      );
                                   _lastEewTakeoverSignature =
                                       eewTakeoverSignature;
-                                  if (eewTakeoverSignature.isNotEmpty) {
+                                  if (hasNewEew) {
                                     _clearPreferredEventFocus();
+                                    _queueCameraPolicyRefresh(force: true);
                                   }
                                 }
                                 final latestInfoIndex = _latestUnifiedInfoIndex(
@@ -3283,7 +4329,18 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                                   );
                                   for (int i = 0; i < layerCount; i++) {
                                     final u = unifiedEvents[i];
+                                    if (u.isVolcanoEvent) continue;
                                     final qm = mapEvents[i];
+                                    // CMT 事件由 FssnCmtLayer 绘制 beachball，跳过 QuakeWaveLayer
+                                    if (qm.source == QuakeSourceType.fssnCmt ||
+                                        qm.source == QuakeSourceType.cencCmt ||
+                                        qm.source == QuakeSourceType.usgsCmt ||
+                                        qm.source == QuakeSourceType.jmaCmt ||
+                                        qm.source == QuakeSourceType.fnetCmt ||
+                                        qm.source ==
+                                            QuakeSourceType.hinetAquaCmt) {
+                                      continue;
+                                    }
                                     final layerKey = _mapLayerKey(
                                       qm,
                                       u.eventId,
@@ -3320,7 +4377,13 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                             final provider = context.read<QuakeProvider>();
                             final cmts = provider.unifiedMapEvents
                                 .where(
-                                  (e) => e.source == QuakeSourceType.fssnCmt,
+                                  (e) =>
+                                      e.source == QuakeSourceType.fssnCmt ||
+                                      e.source == QuakeSourceType.cencCmt ||
+                                      e.source == QuakeSourceType.usgsCmt ||
+                                      e.source == QuakeSourceType.jmaCmt ||
+                                      e.source == QuakeSourceType.fnetCmt ||
+                                      e.source == QuakeSourceType.hinetAquaCmt,
                                 )
                                 .map(FssnCmtMarker.fromQuakeMessage)
                                 .toList();
@@ -3420,7 +4483,49 @@ class _QuakeMapViewState extends State<QuakeMapView> {
 
   static String _pad2(int n) => n.toString().padLeft(2, '0');
 
-  /// 鎺ㄧ畻闇囦腑鏍囪: P 娉㈠湀(姘磋壊) + S 娉㈠湀(鎸夐渿搴︾潃鑹? + 涓績鐐?  /// 瀵归綈妯℃嫙鍣?sb3: S 娉㈤鑹叉寜 JMA 闇囧害 5 绾э紝鍦嗛殢鍦板浘缂╂斁
+  Widget _buildNiedHypAlgorithmCandidateLayer(SeismicActiveEvent event) {
+    final estimate = event.estimate;
+    if (estimate == null || estimate.method != 'nied_dart_hyp_v1') {
+      return const SizedBox.shrink();
+    }
+
+    final currentLatitude = estimate.latitude;
+    final currentLongitude = estimate.longitude;
+    final currentDepth = estimate.depthKm;
+    final currentErrorLevel = _metadataDouble(
+      estimate.diagnostics['error_level'],
+    );
+    var currentDetail = currentDepth == null
+        ? '--'
+        : '${currentDepth.round()}km';
+    if (currentErrorLevel != null) {
+      currentDetail += ' 误差${currentErrorLevel.toStringAsFixed(2)}';
+    }
+    return RepaintBoundary(
+      child: Semantics(
+        label: '震源算法当前采用震源',
+        child: MarkerLayer(
+          markers: [
+            Marker(
+              width: 220,
+              height: 56,
+              point: LatLng(currentLatitude, currentLongitude),
+              alignment: Alignment.center,
+              child: _NiedHypMapCandidateMarkerVisual(
+                label: '当前',
+                depthText: currentDetail,
+                color: const Color(0xFFFFA000),
+                temporary: false,
+                selected: true,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 推算震中标记：实时 P/S 波圈与中心点。
 
   Widget _buildEstimatedEpicenterMarker(SeismicActiveEvent event) {
     final estimate = event.estimate!;
@@ -3435,29 +4540,12 @@ class _QuakeMapViewState extends State<QuakeMapView> {
           valueListenable: _waveTick,
           builder: (context, tick, child) {
             final circles = <CircleMarker<Object>>[];
-
-            // P/S 娉㈠悓蹇冨渾 (瀵归綈 kanameishi: 浣跨敤 JMA2001/JB 璧版椂琛?
-            // 璧版椂琛ㄦ湭鍔犺浇鏃?fallback 鍒板浐瀹氭尝閫?
-            double pRadiusKm =
-                _metadataDouble(
-                  estimate.diagnostics['best_source_p_radius_km'],
-                ) ??
-                _sourceEstimateDiagnosticDouble(
-                  estimate,
-                  'best_source',
-                  'pRadiusKm',
-                ) ??
-                0;
-            double sRadiusKm =
-                _metadataDouble(
-                  estimate.diagnostics['best_source_s_radius_km'],
-                ) ??
-                _sourceEstimateDiagnosticDouble(
-                  estimate,
-                  'best_source',
-                  'sRadiusKm',
-                ) ??
-                0;
+            final radii = niedWaveRadiiFromEstimate(
+              estimate,
+              algorithmElapsedSeconds: _displayNiedWaveElapsedSeconds,
+            );
+            var pRadiusKm = radii.pRadiusKm;
+            var sRadiusKm = radii.sRadiusKm;
 
             if (pRadiusKm >= 999000) pRadiusKm = 0;
             if (sRadiusKm >= 999000) sRadiusKm = 0;
@@ -3507,6 +4595,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                         sourceError: _metadataDouble(
                           estimate.diagnostics['best_source_error'],
                         ),
+                        visible: estimate.method != 'nied_dart_hyp_v1',
                       ),
                     ),
                   ],
@@ -3665,16 +4754,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     return null;
   }
 
-  static double? _sourceEstimateDiagnosticDouble(
-    SourceEstimate estimate,
-    String mapKey,
-    String valueKey,
-  ) {
-    final map = estimate.diagnostics[mapKey];
-    if (map is! Map) return null;
-    return _metadataDouble(map[valueKey]);
-  }
-
   double _haversine(LatLng a, LatLng b) {
     const r = 6371.0;
     final dLat = (b.latitude - a.latitude) * math.pi / 180;
@@ -3746,7 +4825,8 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       if (!enabled) return;
       layers.add(
         TileLayer(
-          urlTemplate: MapConfig.overlayUrlByKey(key),
+          key: ValueKey(_overlayTileLayerKey(key)),
+          urlTemplate: _overlayTileUrlTemplate(key),
           userAgentPackageName: 'flutterrhythmquake/1.0',
           tileProvider: _tileProvider,
           panBuffer: 1,
@@ -3763,6 +4843,88 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     addOverlay('cnContour', overlays.cnContour);
     return layers;
   }
+
+  String _overlayTileUrlTemplate(String key) {
+    final template = MapConfig.overlayUrlByKey(key);
+    if (!_liveWeatherTileKeys.contains(key)) return template;
+    final separator = template.contains('?') ? '&' : '?';
+    return '$template${separator}rq_live=$_liveWeatherTileVersion';
+  }
+
+  String _overlayTileLayerKey(String key) {
+    if (!_liveWeatherTileKeys.contains(key)) return key;
+    return '$key:$_liveWeatherTileVersion';
+  }
+}
+
+class _NiedHypMapCandidateMarkerVisual extends StatelessWidget {
+  const _NiedHypMapCandidateMarkerVisual({
+    required this.label,
+    required this.depthText,
+    required this.color,
+    required this.temporary,
+    required this.selected,
+  });
+
+  final String label;
+  final String depthText;
+  final Color color;
+  final bool temporary;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final zoom = MapCamera.maybeOf(context)?.zoom ?? 4.0;
+    final diameter = (5.0 + (zoom - 3.0) * 1.2).clamp(6.0, 13.0).toDouble();
+    final cross = Icon(
+      Icons.close,
+      size: selected || temporary ? diameter + 8 : diameter + 5,
+      color: color,
+      shadows: const [
+        Shadow(color: Colors.black, blurRadius: 4),
+        Shadow(color: Colors.black, blurRadius: 2),
+      ],
+    );
+    return IgnorePointer(
+      child: Stack(
+        clipBehavior: Clip.none,
+        alignment: Alignment.center,
+        children: [
+          if (selected || temporary)
+            Container(
+              width: diameter + 13,
+              height: diameter + 13,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: color, width: 1.4),
+              ),
+            ),
+          cross,
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: Text(
+              '$label $depthText',
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.visible,
+              style: TextStyle(
+                color: color,
+                fontSize: 9,
+                fontWeight: FontWeight.w800,
+                height: 1,
+                shadows: const [
+                  Shadow(color: Colors.black, blurRadius: 4),
+                  Shadow(color: Colors.black, blurRadius: 2),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _EstimatedEpicenterMarkerVisual extends StatelessWidget {
@@ -3770,16 +4932,19 @@ class _EstimatedEpicenterMarkerVisual extends StatelessWidget {
   final int maxShindo;
   final double? depthKm;
   final double? sourceError;
+  final bool visible;
 
   const _EstimatedEpicenterMarkerVisual({
     required this.color,
     required this.maxShindo,
     required this.depthKm,
     required this.sourceError,
+    this.visible = true,
   });
 
   @override
   Widget build(BuildContext context) {
+    if (!visible) return const SizedBox.shrink();
     final zoom = MapCamera.maybeOf(context)?.zoom ?? 4.0;
     final dotDiameter = (1.8 + (zoom - 3) * 1.35).clamp(3.0, 10.0).toDouble();
     const markerWidth = 156.0;

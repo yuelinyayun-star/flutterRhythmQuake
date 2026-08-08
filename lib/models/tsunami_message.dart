@@ -318,6 +318,72 @@ class TsunamiMessage {
     );
   }
 
+  static TsunamiMessage parseWhewsJmaTsunami(Map<String, dynamic> json) {
+    final id = json['id']?.toString().trim() ?? '';
+    final reportTime = json['createTime']?.toString().trim() ?? '';
+    final headline = json['headline']?.toString().trim() ?? '';
+    final cancelled = json['cancel'] == true;
+
+    if (cancelled) {
+      return TsunamiMessage(
+        source: TsunamiSource.jma,
+        id: id,
+        timeZone: 9,
+        reportTime: reportTime,
+        title: '津波警報・注意報解除',
+        titleText: headline.isNotEmpty ? headline : '津波警報・注意報は解除されました',
+        grade: TsunamiGrade.none,
+        className: 'gray',
+      );
+    }
+
+    final areas = <TsunamiAreaInfo>[];
+    var topGrade = TsunamiGrade.none;
+    final areasRaw = json['areas'];
+    if (areasRaw is List) {
+      for (final rawArea in areasRaw) {
+        if (rawArea is! Map) continue;
+        final area = Map<String, dynamic>.from(rawArea);
+        final kind = area['kind']?.toString().trim() ?? '';
+        final grade = _parseWhewsJmaGrade(kind);
+        final rawHeight = area['maxHeight']?.toString().trim() ?? '';
+        final heightDescription =
+            area['maxHeightDesc']?.toString().trim() ?? '';
+        areas.add(
+          TsunamiAreaInfo(
+            name: area['name']?.toString().trim() ?? '',
+            grade: grade,
+            height: _parseDouble(rawHeight),
+            description: heightDescription.isNotEmpty
+                ? heightDescription
+                : rawHeight.isNotEmpty
+                ? rawHeight
+                : null,
+            arrivalTime: area['arrivalTime']?.toString().trim(),
+            condition: area['condition']?.toString().trim(),
+          ),
+        );
+        if (grade.index > topGrade.index) {
+          topGrade = grade;
+        }
+      }
+    }
+
+    final rawTitle = json['title']?.toString().trim() ?? '';
+    final fallbackText = _whewsJmaStatusText(topGrade);
+    return TsunamiMessage(
+      source: TsunamiSource.jma,
+      id: id,
+      timeZone: 9,
+      reportTime: reportTime,
+      title: rawTitle.isNotEmpty ? rawTitle : fallbackText,
+      titleText: headline.isNotEmpty ? headline : fallbackText,
+      grade: topGrade,
+      areas: areas,
+      className: _whewsJmaClassName(topGrade),
+    );
+  }
+
   static TsunamiMessage parseNmefcTsunami(Map<String, dynamic> json) {
     final timeInfo = json['timeInfo'] as Map<String, dynamic>?;
     final warningInfo = json['warningInfo'] as Map<String, dynamic>?;
@@ -451,6 +517,45 @@ class TsunamiMessage {
     final text = value.toString().trim();
     if (text.isEmpty) return null;
     return double.tryParse(text);
+  }
+
+  static TsunamiGrade _parseWhewsJmaGrade(String kind) {
+    if (kind.contains('大津波警報')) {
+      return TsunamiGrade.majorWarning;
+    }
+    if (kind.contains('津波警報')) {
+      return TsunamiGrade.warning;
+    }
+    if (kind.contains('津波注意報')) {
+      return TsunamiGrade.watch;
+    }
+    return TsunamiGrade.none;
+  }
+
+  static String _whewsJmaStatusText(TsunamiGrade grade) {
+    switch (grade) {
+      case TsunamiGrade.majorWarning:
+        return '大津波警報発表中';
+      case TsunamiGrade.warning:
+        return '津波警報発表中';
+      case TsunamiGrade.watch:
+        return '津波注意報発表中';
+      case TsunamiGrade.none:
+        return '津波警報・注意報なし';
+    }
+  }
+
+  static String _whewsJmaClassName(TsunamiGrade grade) {
+    switch (grade) {
+      case TsunamiGrade.majorWarning:
+        return 'purple';
+      case TsunamiGrade.warning:
+        return 'red';
+      case TsunamiGrade.watch:
+        return 'yellow';
+      case TsunamiGrade.none:
+        return 'gray';
+    }
   }
 
   static String? _parseNmefcClassName(String level) {

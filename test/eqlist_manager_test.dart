@@ -36,6 +36,22 @@ void main() {
     expect(manager.jmaList, hasLength(1));
     expect(manager.jmaList.single.eventId, 'fan-jma-1');
   });
+
+  test('keeps the newest 50 JMA items in source order', () {
+    final origin = DateTime(2026, 7, 28, 18);
+    manager.updateJmaList([
+      for (var index = 0; index < 60; index++)
+        _quake(
+          source: QuakeSourceType.wolfx,
+          eventId: 'jma-$index',
+          originTime: origin.subtract(Duration(minutes: index)),
+        ),
+    ]);
+
+    expect(manager.jmaList, hasLength(50));
+    expect(manager.jmaList.first.eventId, 'jma-0');
+    expect(manager.jmaList.last.eventId, 'jma-49');
+  });
 }
 
 void _clear(EqlistManager manager) {

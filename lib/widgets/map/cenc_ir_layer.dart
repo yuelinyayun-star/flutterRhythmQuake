@@ -2,12 +2,30 @@ import 'dart:collection';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart'
-    show TargetPlatform, defaultTargetPlatform;
+    show TargetPlatform, defaultTargetPlatform, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../../models/cenc_ir_data.dart';
 import '../../core/intensity_calculator.dart';
+import '../../core/utils/world_wrap.dart';
+
+@visibleForTesting
+double cencIrStationRadiusForZoom(double zoom) {
+  final overview = ((zoom - 3.2) / 3.8).clamp(0.0, 1.0).toDouble();
+  return 8.0 + overview * 2.0;
+}
+
+@visibleForTesting
+double cencIrRomanFontSize(double radius, int length) {
+  final scale = switch (length) {
+    <= 1 => 1.34,
+    2 => 1.08,
+    3 => 0.90,
+    _ => 0.70,
+  };
+  return (radius * scale).clamp(6.4, 12.0).toDouble();
+}
 
 class CencIrLayer extends StatelessWidget {
   final CencIrData? data;
@@ -76,8 +94,59 @@ class CencIrPainter extends CustomPainter {
     _drawStationIntensities(canvas, size);
   }
 
+  /// 绘制光晕效果（与 history_marker_layer 统一 UI 震中红叉一致）
+  void _drawCrosshairGlow(Canvas canvas, Offset center) {
+    final glowPaint = Paint()
+      ..color = Colors.red.withValues(alpha: 0.25)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 8.0
+      ..strokeCap = StrokeCap.round;
+
+    const s = 16.0;
+    canvas.drawLine(
+      Offset(center.dx - s, center.dy - s),
+      Offset(center.dx + s, center.dy + s),
+      glowPaint,
+    );
+    canvas.drawLine(
+      Offset(center.dx + s, center.dy - s),
+      Offset(center.dx - s, center.dy + s),
+      glowPaint,
+    );
+  }
+
+  /// 绘制十字标记（与 history_marker_layer 统一 UI 震中红叉一致）
+  void _drawCrosshair(Canvas canvas, Offset center) {
+    final paint = Paint()
+      ..color = Colors.red
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.5
+      ..strokeCap = StrokeCap.round;
+
+    const s = 14.0;
+    canvas.drawLine(
+      Offset(center.dx - s, center.dy - s),
+      Offset(center.dx + s, center.dy + s),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(center.dx + s, center.dy - s),
+      Offset(center.dx - s, center.dy + s),
+      paint,
+    );
+
+    final dotPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(center, 3.0, dotPaint);
+  }
+
   void _drawEpicenter(Canvas canvas, Size size) {
-    final offset = camera.getOffsetFromOrigin(LatLng(data.epiLat, data.epiLon));
+    final epicenter = WorldWrap.latLngClosestToCamera(
+      LatLng(data.epiLat, data.epiLon),
+      camera,
+    );
+    final offset = camera.getOffsetFromOrigin(epicenter);
     if (offset.dx < -100 ||
         offset.dx > size.width + 100 ||
         offset.dy < -100 ||
@@ -85,28 +154,9 @@ class CencIrPainter extends CustomPainter {
       return;
     }
 
-    final outerPaint = Paint()
-      ..color = const Color(0xFFFF4500).withValues(alpha: 0.25)
-      ..style = PaintingStyle.fill
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
-    canvas.drawCircle(offset, 14, outerPaint);
-
-    final midPaint = Paint()
-      ..color = const Color(0xFFFF4500).withValues(alpha: 0.4)
-      ..style = PaintingStyle.fill
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
-    canvas.drawCircle(offset, 8, midPaint);
-
-    final ringPaint = Paint()
-      ..color = Colors.white
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2;
-    canvas.drawCircle(offset, 7, ringPaint);
-
-    final centerPaint = Paint()
-      ..color = const Color(0xFFFF4500)
-      ..style = PaintingStyle.fill;
-    canvas.drawCircle(offset, 4, centerPaint);
+    // 与 history_marker_layer 中统一 UI 传入的震中红叉样式保持一致
+    _drawCrosshairGlow(canvas, offset);
+    _drawCrosshair(canvas, offset);
 
     if (compact) return;
 
@@ -387,7 +437,7 @@ class CencIrPainter extends CustomPainter {
       canvas,
       Offset(
         offset.dx - style.textPainter.width / 2,
-        offset.dy - style.textPainter.height / 2,
+        offset.dy + style.textTopOffset,
       ),
     );
 
@@ -416,13 +466,14 @@ class CencIrPainter extends CustomPainter {
           text: lines[i],
           style: TextStyle(
             color: Colors.white.withValues(alpha: i == 0 ? 1.0 : 0.75),
-            fontSize: i == 0 ? 10 : 8.5,
+            fontSize: i == 0 ? 11 : 9.5,
             fontWeight: i == 0 ? FontWeight.w600 : FontWeight.w400,
+            shadows: const [Shadow(color: Colors.black87, blurRadius: 2.5)],
           ),
         ),
         textDirection: TextDirection.ltr,
       )..layout();
-      lp.paint(canvas, Offset(offset.dx - lp.width / 2, labelY + i * 12));
+      lp.paint(canvas, Offset(offset.dx - lp.width / 2, labelY + i * 14));
     }
   }
 
@@ -454,12 +505,7 @@ class CencIrPainter extends CustomPainter {
   }
 
   double _romanFontSize(double radius, int length) {
-    final scale = switch (length) {
-      <= 1 => 1.45,
-      2 => 1.12,
-      _ => 0.82,
-    };
-    return (radius * scale).clamp(5.8, 10.0).toDouble();
+    return cencIrRomanFontSize(radius, length);
   }
 
   Color _getIntensityColor(int level) {
@@ -475,18 +521,22 @@ class CencIrPainter extends CustomPainter {
       final color = _getIntensityColor(level);
       final intText = _csisRomanLabel(level);
       final labelColor = _labelColor(color);
+      final fontSize = _romanFontSize(radius, intText.length);
       final textPainter = TextPainter(
         text: TextSpan(
           text: intText,
           style: TextStyle(
             color: labelColor,
-            fontSize: _romanFontSize(radius, intText.length),
+            fontFamily: 'JetBrainsMono',
+            fontSize: fontSize,
             fontWeight: FontWeight.w900,
             height: 1.0,
           ),
         ),
         textDirection: TextDirection.ltr,
+        textAlign: TextAlign.center,
       )..layout();
+      final textTopOffset = -textPainter.height / 2 + fontSize * 0.06;
       return _CencStationStyle(
         radius: radius,
         fillPaint: Paint()
@@ -495,14 +545,15 @@ class CencIrPainter extends CustomPainter {
         borderPaint: Paint()
           ..color = Colors.white.withValues(alpha: 0.8)
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.4,
+          ..strokeWidth = (radius * 0.19).clamp(1.5, 1.9),
         textPainter: textPainter,
+        textTopOffset: textTopOffset,
       );
     });
   }
 
   double _stationRadius() {
-    return 7.0;
+    return cencIrStationRadiusForZoom(camera.zoom);
   }
 
   Color _labelColor(Color background) {
@@ -511,7 +562,9 @@ class CencIrPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CencIrPainter oldDelegate) {
-    return oldDelegate.data.uniEventId != data.uniEventId ||
+    return oldDelegate.data.reportId != data.reportId ||
+        oldDelegate.data.uniEventId != data.uniEventId ||
+        oldDelegate.data.gmtCreate != data.gmtCreate ||
         oldDelegate.camera != camera ||
         oldDelegate.compact != compact;
   }
@@ -529,12 +582,14 @@ class _CencStationStyle {
   final Paint fillPaint;
   final Paint borderPaint;
   final TextPainter textPainter;
+  final double textTopOffset;
 
   const _CencStationStyle({
     required this.radius,
     required this.fillPaint,
     required this.borderPaint,
     required this.textPainter,
+    required this.textTopOffset,
   });
 }
 

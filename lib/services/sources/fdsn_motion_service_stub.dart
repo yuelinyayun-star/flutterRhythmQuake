@@ -63,6 +63,7 @@ class FdsnMotionService {
   final ValueNotifier<int> targetStationLimitNotifier = ValueNotifier<int>(
     defaultStationLimit,
   );
+  final ValueNotifier<DateTime?> dataTimeNotifier = ValueNotifier(null);
 
   void Function(bool connected)? onStatusChanged;
 
@@ -75,6 +76,7 @@ class FdsnMotionService {
       targetStationLimitNotifier.value = normalizedLimit;
     }
     linkedStationCountNotifier.value = 0;
+    dataTimeNotifier.value = null;
     onStatusChanged?.call(false);
   }
 
@@ -86,6 +88,7 @@ class FdsnMotionService {
   void dispose() {
     linkedStationCountNotifier.dispose();
     targetStationLimitNotifier.dispose();
+    dataTimeNotifier.dispose();
     _controller.close();
   }
 }

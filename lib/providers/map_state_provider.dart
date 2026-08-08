@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/quake_message.dart';
 import '../widgets/map/map_config.dart';
 import '../core/calculator.dart';
@@ -9,13 +10,73 @@ import '../core/travel_time_service.dart';
 import '../core/utils/world_wrap.dart';
 import '../core/utils/quake_time.dart';
 import '../services/ntp_service.dart';
+import '../services/location_service.dart';
 import 'dart:math';
 
 enum MapCameraMode { autoFollow, manualLocked }
 
 class MapStateProvider with ChangeNotifier {
-  static const LatLng defaultCenter = LatLng(34.34127, 108.93984);
-  static const double defaultZoom = 4.0;
+  static const LatLng fallbackCenter = LatLng(34.34127, 108.93984);
+  static const double fallbackZoom = 4.0;
+  static const String preferredViewModeKey = 'map_preferred_view_mode';
+  static const Duration gestureAutoFollowResumeDelay = Duration(seconds: 8);
+
+  /// 用户持久化的首选视野：'location' / 'system_default' / null（跟随智能默认）。
+  String? _preferredViewMode;
+  String? get preferredViewMode => _preferredViewMode;
+
+  /// 当前生效的默认视野中心：优先按用户保存的视野模式，否则按所在地/系统默认。
+  LatLng get defaultCenter {
+    if (_preferredViewMode == 'system_default') return fallbackCenter;
+    final pos = LocationService().currentPosition;
+    if (pos != null) return LatLng(pos.latitude, pos.longitude);
+    return fallbackCenter;
+  }
+
+  /// 当前生效的默认缩放：统一使用系统默认缩放。
+  double get defaultZoom => fallbackZoom;
+
+  /// 设置并可选持久化首选视野模式。
+  Future<void> setPreferredViewMode(String? mode, {bool persist = true}) async {
+    if (_preferredViewMode == mode) return;
+    _preferredViewMode = mode;
+    notifyListeners();
+    if (persist) {
+      final prefs = await SharedPreferences.getInstance();
+      if (mode == null) {
+        await prefs.remove(preferredViewModeKey);
+      } else {
+        await prefs.setString(preferredViewModeKey, mode);
+      }
+    }
+  }
+
+  /// 把地图切换到“所在地视野”。未设置所在地时返回 false，调用方提示。
+  bool moveToLocationView({bool animate = true}) {
+    final pos = LocationService().currentPosition;
+    if (pos == null) return false;
+    pauseAutoZoom();
+    _doAnimatedMove(
+      LatLng(pos.latitude, pos.longitude),
+      fallbackZoom,
+      animate,
+      wrapLongitude: false,
+    );
+    unawaited(setPreferredViewMode('location'));
+    return true;
+  }
+
+  /// 把地图切换到“默认视野”（系统默认中心 + 缩放）。
+  void moveToSystemDefaultView({bool animate = true}) {
+    pauseAutoZoom();
+    _doAnimatedMove(
+      fallbackCenter,
+      fallbackZoom,
+      animate,
+      wrapLongitude: false,
+    );
+    unawaited(setPreferredViewMode('system_default'));
+  }
 
   MapController? _mapController;
   QuakeMessage? _selectedHistoryEvent;
@@ -24,9 +85,11 @@ class MapStateProvider with ChangeNotifier {
     'cloudLayer': false,
     'windLayer': false,
     'rainLayer': false,
+    'radarChinaLayer': false,
+    'satelliteCloudLayer': false,
     'cnContour': false,
     'volcanoLayer': false,
-    'typhoonLayer': true,
+    'typhoonLayer': false,
     'fdsnEarthScope': false,
     'fdsnGeofon': false,
   };
@@ -35,11 +98,17 @@ class MapStateProvider with ChangeNotifier {
   bool get showEstimatedEpicenter => _showEstimatedEpicenter;
 
   static const int _cameraAnimationFps = 60;
+  // EEW wave targets arrive once per second. Spreading 25 moves across that
+  // second keeps the old average move budget while removing the idle gap.
+  static const int _continuousCameraAnimationFps = 25;
 
   bool _isAutoZoom = true;
   Timer? _autoZoomResumeTimer;
+  Timer? _gestureAutoFollowResumeTimer;
+  DateTime? _autoZoomResumeAt;
   Timer? _moveAnimationTimer;
   MapCameraMode _cameraMode = MapCameraMode.autoFollow;
+  bool _isGestureAutoFollowPaused = false;
   final Map<String, DateTime> _lastMoveBySource = {};
   String? _lastCameraKey;
   DateTime? _lastCameraMovedAt;
@@ -51,6 +120,7 @@ class MapStateProvider with ChangeNotifier {
   Map<String, bool> get overlayEnabledMap => Map.unmodifiable(_overlayEnabled);
   bool get isAutoZoom => _isAutoZoom;
   MapCameraMode get cameraMode => _cameraMode;
+  bool get isGestureAutoFollowPaused => _isGestureAutoFollowPaused;
   bool get canAutoFollow =>
       _isAutoZoom && _cameraMode == MapCameraMode.autoFollow;
 
@@ -70,21 +140,6 @@ class MapStateProvider with ChangeNotifier {
   }
 
   void _logBaseTileState(String action) {
-    if (_tileKey == MapConfig.tencentJsMapKey) {
-      debugPrint(
-        '[MapTile] base tile $action: key=$_tileKey mode=js-api '
-        'apiKey=${MapConfig.hasTencentWmtsApiKey ? "set" : "empty"}',
-      );
-      return;
-    }
-    if (_tileKey == MapConfig.tencentStaticMapKey ||
-        _tileKey == MapConfig.tencentWmtsKey) {
-      debugPrint(
-        '[MapTile] base tile $action: key=$_tileKey '
-        'url=${MapConfig.redactTencentWmtsUrl(MapConfig.currentTileUrl)}',
-      );
-      return;
-    }
     debugPrint('[MapTile] base tile $action: key=$_tileKey');
   }
 
@@ -133,11 +188,30 @@ class MapStateProvider with ChangeNotifier {
   }
 
   void pauseAutoZoom({Duration resumeAfter = const Duration(seconds: 60)}) {
+    _gestureAutoFollowResumeTimer?.cancel();
+    _isGestureAutoFollowPaused = false;
+    _pauseAutoZoom(resumeAfter);
+  }
+
+  void _pauseAutoZoom(
+    Duration resumeAfter, {
+    bool preserveLongerPause = false,
+  }) {
     final wasAutoFollow = canAutoFollow;
     _isAutoZoom = false;
     _cameraMode = MapCameraMode.manualLocked;
+    final now = DateTime.now();
+    final requestedResumeAt = now.add(resumeAfter);
+    final currentResumeAt = _autoZoomResumeAt;
+    final resumeAt =
+        preserveLongerPause &&
+            currentResumeAt != null &&
+            currentResumeAt.isAfter(requestedResumeAt)
+        ? currentResumeAt
+        : requestedResumeAt;
+    _autoZoomResumeAt = resumeAt;
     _autoZoomResumeTimer?.cancel();
-    _autoZoomResumeTimer = Timer(resumeAfter, () {
+    _autoZoomResumeTimer = Timer(resumeAt.difference(now), () {
       resumeAutoZoom();
     });
     if (wasAutoFollow) {
@@ -145,9 +219,24 @@ class MapStateProvider with ChangeNotifier {
     }
   }
 
+  void pauseAutoZoomForGesture() {
+    _stopMoveAnimation();
+    _isGestureAutoFollowPaused = true;
+    _gestureAutoFollowResumeTimer?.cancel();
+    _gestureAutoFollowResumeTimer = Timer(gestureAutoFollowResumeDelay, () {
+      if (!_isGestureAutoFollowPaused) return;
+      _isGestureAutoFollowPaused = false;
+      notifyListeners();
+    });
+    _pauseAutoZoom(gestureAutoFollowResumeDelay, preserveLongerPause: true);
+  }
+
   void resumeAutoZoom() {
+    _gestureAutoFollowResumeTimer?.cancel();
+    _isGestureAutoFollowPaused = false;
     _isAutoZoom = true;
     _autoZoomResumeTimer?.cancel();
+    _autoZoomResumeAt = null;
     _cameraMode = MapCameraMode.autoFollow;
     notifyListeners();
   }
@@ -158,9 +247,18 @@ class MapStateProvider with ChangeNotifier {
     _doAnimatedMove(defaultCenter, defaultZoom, animate, wrapLongitude: false);
   }
 
-  void animatedMove(LatLng destLocation, double destZoom) {
+  void animatedMove(
+    LatLng destLocation,
+    double destZoom, {
+    bool continuousFollow = false,
+  }) {
     if (_mapController == null) return;
-    _doAnimatedMove(destLocation, destZoom, true);
+    _doAnimatedMove(
+      destLocation,
+      destZoom,
+      true,
+      continuousFollow: continuousFollow,
+    );
   }
 
   void animatedMoveNoAnimate(LatLng destLocation, double destZoom) {
@@ -181,24 +279,21 @@ class MapStateProvider with ChangeNotifier {
   void animatedMoveWithScreenOffset(
     LatLng focusLocation,
     double destZoom,
-    Offset screenOffset,
-  ) {
+    Offset screenOffset, {
+    bool continuousFollow = false,
+  }) {
     if (_mapController == null) return;
-
-    final currCenter = _mapController!.camera.center;
-    final wrappedFocus = LatLng(
-      focusLocation.latitude,
-      WorldWrap.longitudeClosestTo(
-        focusLocation.longitude,
-        currCenter.longitude,
-      ),
+    final adjustedCenter = _centerForScreenOffset(
+      focusLocation,
+      destZoom,
+      screenOffset,
     );
-    final proj = _mapController!.camera.crs.projection;
-    final focusPoint = proj.project(wrappedFocus);
-    final adjustedCenter = proj.unproject(
-      Point(focusPoint.dx - screenOffset.dx, focusPoint.dy - screenOffset.dy),
+    _doAnimatedMove(
+      adjustedCenter,
+      destZoom,
+      true,
+      continuousFollow: continuousFollow,
     );
-    _doAnimatedMove(adjustedCenter, destZoom, true);
   }
 
   void _doAnimatedMove(
@@ -206,6 +301,7 @@ class MapStateProvider with ChangeNotifier {
     double destZoom,
     bool animate, {
     bool wrapLongitude = true,
+    bool continuousFollow = false,
   }) {
     if (_mapController == null) return;
 
@@ -239,13 +335,19 @@ class MapStateProvider with ChangeNotifier {
     );
     final zoomTween = Tween<double>(begin: currZoom, end: destZoom);
 
-    const duration = Duration(milliseconds: 800);
+    final duration = continuousFollow
+        ? const Duration(milliseconds: 1000)
+        : const Duration(milliseconds: 800);
+    final curve = continuousFollow ? Curves.linear : Curves.fastOutSlowIn;
+    final animationFps = continuousFollow
+        ? _continuousCameraAnimationFps
+        : _cameraAnimationFps;
     final stopwatch = Stopwatch()..start();
 
     void tick() {
       final rawT = stopwatch.elapsedMicroseconds / duration.inMicroseconds;
       final t = rawT.clamp(0.0, 1.0);
-      final eased = Curves.fastOutSlowIn.transform(t);
+      final eased = curve.transform(t);
       _mapController!.move(
         LatLng(latTween.transform(eased), lngTween.transform(eased)),
         zoomTween.transform(eased),
@@ -257,7 +359,7 @@ class MapStateProvider with ChangeNotifier {
 
     tick();
     _moveAnimationTimer = Timer.periodic(
-      const Duration(milliseconds: 1000 ~/ _cameraAnimationFps),
+      Duration(microseconds: Duration.microsecondsPerSecond ~/ animationFps),
       (_) => tick(),
     );
   }
@@ -290,11 +392,10 @@ class MapStateProvider with ChangeNotifier {
     return LatLngBounds(LatLng(minLat, minLng), LatLng(maxLat, maxLng));
   }
 
-  void smartMoveToEvents(
+  double? smartMoveToEvents(
     List<QuakeMessage> events, {
     double padding = 2.0,
     List<QuakeMessage> waveEvents = const [],
-    List<LatLng> gridPoints = const [],
     double minZoom = 3.0,
     double maxZoom = 8.0,
     Offset screenOffset = Offset.zero,
@@ -302,25 +403,24 @@ class MapStateProvider with ChangeNotifier {
     String sourceTag = 'events',
     bool force = false,
     Duration minInterval = const Duration(milliseconds: 900),
+    bool continuousFollow = false,
   }) {
-    if (!_canApplyAutoMove(respectAutoZoom)) return;
-    if (_mapController == null) return;
-    if (events.isEmpty) return;
+    if (!_canApplyAutoMove(respectAutoZoom)) return null;
+    if (_mapController == null) return null;
+    if (events.isEmpty) return null;
 
-    // kanameishi: 观测网激活时用网格点代替 S 波填充 (与 kanameishi-dev 一致)
-    final effectiveWaveEvents = gridPoints.isNotEmpty
-        ? const <QuakeMessage>[]
-        : waveEvents;
-    final view = _calcWrappedEventView(
-      events,
-      waveEvents: effectiveWaveEvents,
-      gridPoints: gridPoints,
-    );
-    if (view == null) return;
+    final view = _calcWrappedEventView(events, waveEvents: waveEvents);
+    if (view == null) return null;
 
-    final center = view.center;
-    final maxDiff = max(view.latDiff, view.lngDiff) + padding * 2;
-    final zoom = _zoomForDiff(maxDiff).clamp(minZoom, maxZoom).toDouble();
+    final fittedCamera = waveEvents.isEmpty
+        ? null
+        : _fitWaveViewToViewport(view, minZoom: minZoom, maxZoom: maxZoom);
+    final center = fittedCamera?.center ?? view.center;
+    final zoom =
+        fittedCamera?.zoom ??
+        _zoomForDiff(
+          max(view.latDiff, view.lngDiff) + padding * 2,
+        ).clamp(minZoom, maxZoom).toDouble();
     final targetCenter = screenOffset == Offset.zero
         ? center
         : _centerForScreenOffset(center, zoom, screenOffset);
@@ -331,7 +431,7 @@ class MapStateProvider with ChangeNotifier {
     if (currZoom == zoom &&
         (currCenter.latitude - targetCenter.latitude).abs() < err &&
         (currCenter.longitude - targetCenter.longitude).abs() < err) {
-      return;
+      return zoom;
     }
     if (!_acquireMovePermit(
       sourceTag,
@@ -340,14 +440,20 @@ class MapStateProvider with ChangeNotifier {
       force,
       minInterval,
     )) {
-      return;
+      return zoom;
     }
 
     if (screenOffset == Offset.zero) {
-      animatedMove(center, zoom);
+      animatedMove(center, zoom, continuousFollow: continuousFollow);
     } else {
-      animatedMoveWithScreenOffset(center, zoom, screenOffset);
+      animatedMoveWithScreenOffset(
+        center,
+        zoom,
+        screenOffset,
+        continuousFollow: continuousFollow,
+      );
     }
+    return zoom;
   }
 
   void smartMoveToPoints(
@@ -457,17 +563,14 @@ class MapStateProvider with ChangeNotifier {
         currCenter.longitude,
       ),
     );
-    final proj = _mapController!.camera.crs.projection;
-    final focusPoint = proj.project(wrappedFocus);
-    return proj.unproject(
-      Point(focusPoint.dx - screenOffset.dx, focusPoint.dy - screenOffset.dy),
-    );
+    final camera = _mapController!.camera;
+    final focusPoint = camera.projectAtZoom(wrappedFocus, destZoom);
+    return camera.unprojectAtZoom(focusPoint - screenOffset, destZoom);
   }
 
   _WrappedEventView? _calcWrappedEventView(
     List<QuakeMessage> events, {
     List<QuakeMessage> waveEvents = const [],
-    List<LatLng> gridPoints = const [],
   }) {
     final validEvents = events
         .where((e) => e.latitude != 0.0 || e.longitude != 0.0)
@@ -500,14 +603,6 @@ class MapStateProvider with ChangeNotifier {
       final lngDelta = (radiusKm / (111.32 * cosLat)).clamp(0.0, 180.0);
       longitudes.add(_toPositiveLongitude(e.longitude - lngDelta));
       longitudes.add(_toPositiveLongitude(e.longitude + lngDelta));
-    }
-
-    // kanameishi: 观测网网格点扩展视口 (替代 S 波填充)
-    for (final pt in gridPoints) {
-      _addPointToView(pt.latitude, pt.longitude, longitudes, (lat) {
-        if (lat < minLat) minLat = lat;
-        if (lat > maxLat) maxLat = lat;
-      });
     }
 
     longitudes.sort();
@@ -608,6 +703,44 @@ class MapStateProvider with ChangeNotifier {
     longitudes.add(_toPositiveLongitude(longitude));
   }
 
+  MapCamera? _fitWaveViewToViewport(
+    _WrappedEventView view, {
+    required double minZoom,
+    required double maxZoom,
+  }) {
+    final camera = _mapController!.camera;
+    final size = camera.nonRotatedSize;
+    if (!size.width.isFinite ||
+        !size.height.isFinite ||
+        size.width <= 100 ||
+        size.height <= 100) {
+      return null;
+    }
+
+    final centerLng = WorldWrap.normalizeLongitude(view.center.longitude);
+    final halfLat = view.latDiff / 2;
+    final halfLng = view.lngDiff / 2;
+    final south = view.center.latitude - halfLat;
+    final north = view.center.latitude + halfLat;
+    final west = centerLng - halfLng;
+    final east = centerLng + halfLng;
+    if (south < -85 || north > 85 || west < -180 || east > 180) {
+      return null;
+    }
+
+    return CameraFit.bounds(
+      bounds: LatLngBounds.unsafe(
+        north: north,
+        south: south,
+        east: east,
+        west: west,
+      ),
+      padding: const EdgeInsets.all(50),
+      minZoom: minZoom,
+      maxZoom: maxZoom,
+    ).fit(camera);
+  }
+
   double _calcAutoZoomWaveRadiusKm(QuakeMessage event) {
     final normalizedOrigin = QuakeTime.normalizedOriginLocal(event);
     final elapsed = QuakeCalculator.getElapsedSeconds(
@@ -618,40 +751,30 @@ class MapStateProvider with ChangeNotifier {
 
     final tts = TravelTimeService();
     double pRadiusKm = 0;
-    double sRadiusKm = 0;
     if (tts.isLoaded) {
       var pInfo = tts.calcWaveDistance('jma2001', true, event.depth, elapsed);
       if (pInfo.radius > 2000) {
         pInfo = tts.calcWaveDistance('jb', true, event.depth, elapsed);
       }
       pRadiusKm = pInfo.radius;
-
-      var sInfo = tts.calcWaveDistance('jma2001', false, event.depth, elapsed);
-      if (sInfo.radius > 2000) {
-        sInfo = tts.calcWaveDistance('jb', false, event.depth, elapsed);
-      }
-      sRadiusKm = sInfo.radius;
     } else {
       final depthFactor = event.depth > 0
           ? (1.0 - (event.depth / 700) * 0.15).clamp(0.85, 1.0)
           : 1.0;
       pRadiusKm = elapsed * QuakeCalculator.pWaveSpeed * depthFactor;
-      sRadiusKm = elapsed * QuakeCalculator.sWaveSpeed * depthFactor;
     }
 
-    // The visual wave layer can keep expanding, but camera fitting should stay
-    // near the actionable EEW area instead of zooming out to cover the whole
-    // propagated wave front.
-    final cameraRadiusCap = min(
-      max(18 * event.magnitude * event.magnitude, 180),
-      520,
-    );
-    return max(pRadiusKm, sRadiusKm).clamp(0.0, cameraRadiusCap).toDouble();
+    // Keep camera bounds on the same current P-wave radius used by the layer.
+    // A magnitude-based cap makes the bounds stop growing while the visible
+    // wave continues expanding, leaving the circle outside the viewport.
+    return pRadiusKm.isFinite && pRadiusKm > 0 ? pRadiusKm : 0;
   }
 
   @override
   void dispose() {
     _autoZoomResumeTimer?.cancel();
+    _gestureAutoFollowResumeTimer?.cancel();
+    _autoZoomResumeAt = null;
     _stopMoveAnimation();
     super.dispose();
   }
@@ -703,6 +826,10 @@ class MapStateProvider with ChangeNotifier {
   void _rememberMove(String sourceTag, LatLng center, double zoom) {
     final now = DateTime.now();
     _lastMoveBySource[sourceTag] = now;
+    if (_lastMoveBySource.length > 128) {
+      final cutoff = now.subtract(const Duration(minutes: 10));
+      _lastMoveBySource.removeWhere((_, movedAt) => movedAt.isBefore(cutoff));
+    }
     _lastCameraKey = _cameraKey(center, zoom);
     _lastCameraMovedAt = now;
   }

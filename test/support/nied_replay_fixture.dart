@@ -6,7 +6,6 @@ import 'dart:ui' as ui;
 import 'package:latlong2/latlong.dart';
 
 import 'package:flutterrhythmquake/models/nied_station_db.dart';
-import 'package:flutterrhythmquake/services/sources/jp_shindo_scale.dart';
 import 'package:flutterrhythmquake/services/sources/nied_monitor.dart';
 
 class NiedDecodedGifFrame {
@@ -117,7 +116,7 @@ Future<List<NiedStation>> buildYahooReplayStations(
             ),
             network: 'K-NET',
             prefecture: '',
-            expireSeconds: 30,
+            expireSeconds: NiedStation.kaExpireSeconds,
           ),
         );
       }
@@ -136,7 +135,7 @@ Future<List<NiedStation>> buildYahooReplayStations(
         ),
         network: (station['network'] as String?) ?? 'K-NET',
         prefecture: (station['pref'] as String?) ?? '',
-        expireSeconds: 30,
+        expireSeconds: NiedStation.kaExpireSeconds,
       ),
     );
   }
@@ -159,12 +158,26 @@ bool applyYahooReplayFrame(
   ) {
     final detectLevel = intensity.codeUnitAt(index) - 100;
     final station = stations[index];
-    station.update(
-      JpShindoScale.levelFromKanameishiLevel(detectLevel),
-      newDetectLevel: detectLevel,
-    );
+    final previous = station.lastDataTime;
+    if (previous != null) {
+      final diffMs = observedAt.difference(previous).inMilliseconds;
+      if (diffMs > 1000) {
+        final missingFrames = ((diffMs / 1000).round() - 1)
+            .clamp(0, NiedStation.maxExpireSeconds)
+            .toInt();
+        station.recentLevel.insertAll(0, List<int>.filled(missingFrames, -1));
+        if (station.recentLevel.length > NiedStation.maxExpireSeconds) {
+          station.recentLevel = station.recentLevel.sublist(
+            0,
+            NiedStation.maxExpireSeconds,
+          );
+        }
+        if (diffMs > 10000) station.isActive = false;
+      }
+    }
     station.lastUpdate = observedAt;
     station.lastDataTime = observedAt;
+    station.update(detectLevel);
   }
   return true;
 }

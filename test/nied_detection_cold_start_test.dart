@@ -75,7 +75,7 @@ void main() {
       _feedFrame(stations, List.filled(stations.length, 5));
       _runDetection(stations);
 
-      _feedFrame(stations, List.filled(stations.length, 8));
+      _feedFrame(stations, List.filled(stations.length, 7));
       final snapshot = _runDetection(stations);
 
       expect(snapshot.stage, ShakeDetectStage.weak);

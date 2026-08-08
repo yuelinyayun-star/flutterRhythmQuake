@@ -5,80 +5,19 @@ import 'package:latlong2/latlong.dart';
 
 import '../../models/nied_calibration.dart';
 import '../../models/nied_station_db.dart';
+import '../../services/sources/jp_shindo_scale.dart';
+import '../../services/sources/nied_detection_rules.dart';
 import 'jma2001_travel_time_approximation.dart';
+import 'kanameishi_jma2001_travel_time_table.dart';
 import 'kotoho7_js_eew_bridge.dart';
 import 'kotoho7_js_receiver_bridge.dart' as kotoho7_js;
+import 'nied_pgv_magnitude_diagnostics.dart';
 import 'source_estimation_models.dart';
 import 'station_observation_history.dart';
 
 part 'kotoho7_scratch_reference_tables.dart';
 
 const int _kotoho7ScratchStationCount = 1748;
-const List<double> _kotoho7Shindo30ToConverted = <double>[
-  -3.0,
-  -2.5,
-  -2.0,
-  -1.5,
-  -1.17,
-  -0.84,
-  -0.5,
-  -0.17,
-  0.16,
-  0.5,
-  0.83,
-  1.16,
-  1.5,
-  1.83,
-  2.16,
-  2.5,
-  2.83,
-  3.16,
-  3.5,
-  3.83,
-  4.16,
-  4.5,
-  4.75,
-  5.0,
-  5.25,
-  5.5,
-  5.75,
-  6.0,
-  6.25,
-  6.5,
-];
-
-const List<double> _kotoho7Shindo30ToGridDetectionMax = <double>[
-  -1.0,
-  -1.0,
-  -1.0,
-  -1.0,
-  -1.0,
-  -1.0,
-  0.0,
-  0.0,
-  0.0,
-  1.0,
-  1.0,
-  1.0,
-  2.0,
-  2.0,
-  2.0,
-  3.0,
-  3.0,
-  3.0,
-  4.0,
-  4.0,
-  4.0,
-  5.0,
-  5.0,
-  6.0,
-  6.0,
-  7.0,
-  7.0,
-  8.0,
-  8.0,
-  9.0,
-];
 
 final Map<String, int> _kotoho7NiedStationIndexByCode = <String, int>{
   for (var index = 0; index < _kotoho7ScratchStationCount; index++)
@@ -112,6 +51,12 @@ abstract class SourceEstimator {
   bool supports(SourceEstimationRequest request);
 
   SourceEstimate? estimate(SourceEstimationRequest request);
+}
+
+abstract interface class SourceEstimatorLifecycleOwner {
+  bool get requiresEveryFrame;
+
+  bool get ownsOutputLifecycle;
 }
 
 class WeightedCentroidSourceEstimator implements SourceEstimator {
@@ -1195,6 +1140,9 @@ class Kotoho7JsReceiverSourceEstimator implements SourceEstimator {
         'js_map_max_shindo_class': kotoho7_js.doubleValue(
           bridgeResult.finalState['mapDisplayedMaxShindoClass'],
         ),
+        'js_map_max_shindo_index': kotoho7_js.doubleValue(
+          bridgeResult.finalState['mapDisplayedMaxShindoIndex'],
+        ),
         'best_source_frame': best['frame'],
         'best_source_error': error,
         'best_source_applied_count': appliedCount,
@@ -1348,106 +1296,280 @@ double? _doubleFromObject(Object? value) {
   return null;
 }
 
-class NiedDartHypSourceEstimator extends Kotoho7ReferenceHypSourceEstimator {
-  NiedDartHypSourceEstimator({super.maxCachedEvents, super.bboxPaddingDeg});
-  final Map<String, SourceEstimate> _workerAcceptedEstimateByEvent =
-      <String, SourceEstimate>{};
+enum NiedHypWritebackPolicy {
+  historicalMinimumMultiplier,
+  nonIncreasingCurrent,
+}
+
+enum NiedHypSearchSchedule {
+  scratchViewerFiveStage,
+  referenceBroadFourStage,
+  scratchFiveStageWithBroadRescue,
+  scratchFiveStageJointNeighborhood,
+}
+
+class NiedDartHypSourceEstimator
+    implements SourceEstimator, SourceEstimatorLifecycleOwner {
+  NiedDartHypSourceEstimator({
+    this.maxCachedEvents = 8,
+    this.bboxPaddingDeg = 0.60,
+    this.writebackPolicy = NiedHypWritebackPolicy.historicalMinimumMultiplier,
+    this.historicalMinimumMultiplier = 1.7,
+    this.searchSchedule = NiedHypSearchSchedule.scratchViewerFiveStage,
+  }) : assert(historicalMinimumMultiplier > 0);
+  final int maxCachedEvents;
+  final double bboxPaddingDeg;
+  final NiedHypWritebackPolicy writebackPolicy;
+  final double historicalMinimumMultiplier;
+  final NiedHypSearchSchedule searchSchedule;
   final Expando<_NiedHypWorkerFrame> _workerFrameByRequest =
       Expando<_NiedHypWorkerFrame>('nied_dart_hyp_worker_frame');
+  final Map<String, _NiedHypEventState> _states =
+      <String, _NiedHypEventState>{};
 
   @override
   String get methodId => 'nied_dart_hyp_v1';
 
   @override
+  bool get requiresEveryFrame => true;
+
+  @override
+  bool get ownsOutputLifecycle => true;
+
+  @override
   bool supports(SourceEstimationRequest request) {
     final workerFrame = _cachedNiedHypWorkerFrame(request);
-    if (workerFrame != null) return workerFrame.activeStations.length >= 5;
-    return super.supports(request);
+    if (workerFrame == null) return false;
+    final state = _states[_stateKey(request)];
+    if (state != null && state.hasLifecycleState) return true;
+    return workerFrame.activeStations.length >= 5;
   }
 
   @override
   SourceEstimate? estimate(SourceEstimationRequest request) {
     final workerFrame = _cachedNiedHypWorkerFrame(request);
-    if (workerFrame != null) {
-      final workerEstimate = _estimateNiedHypWorkerFrame(
-        request,
-        workerFrame,
-        methodId: methodId,
-      );
-      if (workerEstimate != null) {
-        return _acceptedWorkerEstimate(request, workerEstimate);
+    if (workerFrame == null) return null;
+    request.metadata
+      ..['source_estimator_owns_output_lifecycle'] = true
+      ..remove('nied_dart_hyp_clear_published_source')
+      ..remove('nied_dart_hyp_source_clear_reason');
+    final eventState = _stateFor(request);
+    var effectiveFrames = eventState.mergeFrame(
+      workerFrame,
+      observedAt: request.observedAt,
+      scratchRuntimeTimerSeconds: _doubleFromObject(
+        request.metadata['kotoho7_scratch_runtime_timer_s'],
+      ),
+      referenceAligned:
+          searchSchedule == NiedHypSearchSchedule.referenceBroadFourStage,
+    );
+    request.metadata
+      ..['nied_dart_hyp_assignment_accepted'] = Map<String, String>.from(
+        eventState.lastAssignmentAcceptedByCode,
+      )
+      ..['nied_dart_hyp_assignment_rejected'] = Map<String, String>.from(
+        eventState.lastAssignmentRejectedByCode,
+      )
+      ..['nied_dart_hyp_station_detection_ids'] =
+          eventState.stationDetectionIds;
+
+    final estimatesById = <int, SourceEstimate>{};
+    final metadataById = <int, Map<String, Object?>>{};
+    final referenceAligned =
+        searchSchedule == NiedHypSearchSchedule.referenceBroadFourStage;
+    void evaluateFrames(Map<int, _NiedHypWorkerFrame> frames) {
+      for (final entry in frames.entries) {
+        final detectionState = eventState.detectionIds[entry.key];
+        if (detectionState == null || !detectionState.active) continue;
+        if (referenceAligned &&
+            detectionState.referenceEvaluated &&
+            !detectionState.referenceDirty) {
+          final cached = detectionState.worker.previousEstimate;
+          if (cached != null) estimatesById[entry.key] = cached;
+          continue;
+        }
+        final childMetadata = Map<String, Object?>.from(request.metadata);
+        final childRequest = SourceEstimationRequest(
+          sourceId: request.sourceId,
+          eventId: '${request.eventId}:detection:${entry.key}',
+          observedAt: request.observedAt,
+          stageName: request.stageName,
+          maxShindo: request.maxShindo,
+          stations: request.stations,
+          metadata: childMetadata,
+          sensorSelection: request.sensorSelection,
+        );
+        final estimate = _estimateNiedHypWorkerFrame(
+          childRequest,
+          entry.value,
+          detectionState.worker,
+          firstStationCode: detectionState.firstStationCode,
+          detectionCreatedAt: detectionState.createdAt,
+          methodId: methodId,
+          writebackPolicy: writebackPolicy,
+          historicalMinimumMultiplier: historicalMinimumMultiplier,
+          searchSchedule: searchSchedule,
+        );
+        metadataById[entry.key] = childMetadata;
+        if (estimate != null) estimatesById[entry.key] = estimate;
+        if (referenceAligned) {
+          detectionState
+            ..referenceEvaluated = true
+            ..referenceDirty = false;
+        }
       }
     }
 
-    final estimate = super.estimate(request);
-    if (estimate == null) return null;
-    final diagnostics = Map<String, Object?>.from(estimate.diagnostics)
-      ..['method'] = methodId
-      ..['reference_scope'] = 'dart_station_hypocenter_state_machine'
-      ..['scoring_model'] = 'article_error_level_with_s_flag_proxy_v2'
-      ..remove('reference_url')
-      ..remove('reference_title');
-    return SourceEstimate(
-      latitude: estimate.latitude,
-      longitude: estimate.longitude,
-      depthKm: estimate.depthKm,
-      magnitude: estimate.magnitude,
-      originTime: estimate.originTime,
-      confidence: estimate.confidence,
-      method: methodId,
-      supportingStationCount: estimate.supportingStationCount,
-      diagnostics: diagnostics,
+    evaluateFrames(effectiveFrames);
+    if (searchSchedule == NiedHypSearchSchedule.referenceBroadFourStage) {
+      while (eventState.mergeReferenceCloseClusters(
+        observedAt: request.observedAt,
+      )) {
+        estimatesById.clear();
+        metadataById.clear();
+        effectiveFrames = eventState._referenceWorkerFrames(workerFrame);
+        evaluateFrames(effectiveFrames);
+      }
+    } else {
+      eventState.mergeSameSourceDetectionIds(observedAt: request.observedAt);
+    }
+    final selectedId = eventState.selectOutputDetectionId(
+      currentActiveCodes: {
+        for (final station in workerFrame.activeStations) station.code,
+      },
+      estimatedIds: estimatesById.keys.toSet(),
     );
-  }
-
-  SourceEstimate _acceptedWorkerEstimate(
-    SourceEstimationRequest request,
-    SourceEstimate candidate,
-  ) {
-    final key = '${request.sourceId}:${request.eventId}';
-    final previous = _workerAcceptedEstimateByEvent[key];
-    final candidateSupport =
-        _intFromObject(candidate.diagnostics['effective_station_count']) ??
-        candidate.supportingStationCount;
-    if (candidateSupport < 10) {
-      return previous ?? candidate;
+    final idDiagnostics = eventState.diagnostics(
+      estimatesById: estimatesById,
+      selectedId: selectedId,
+      observedAt: request.observedAt,
+    );
+    request.metadata['nied_dart_hyp_detection_ids'] = idDiagnostics;
+    final hasActiveDetectionId = eventState.hasActiveDetectionId;
+    request.metadata['nied_dart_hyp_has_active_detection_id'] =
+        hasActiveDetectionId;
+    if (selectedId == null) {
+      final clearReason =
+          eventState.lastSourceClearReason ??
+          (hasActiveDetectionId
+              ? 'scratch_active_detection_id_has_no_published_source'
+              : 'scratch_no_active_detection_id');
+      request.metadata
+        ..['nied_dart_hyp_clear_published_source'] = true
+        ..['nied_dart_hyp_source_clear_reason'] = clearReason;
+      return null;
     }
-    if (previous == null) {
-      _workerAcceptedEstimateByEvent[key] = candidate;
-      return candidate;
+    final selected = estimatesById[selectedId];
+    if (selected == null) {
+      request.metadata
+        ..['nied_dart_hyp_clear_published_source'] = true
+        ..['nied_dart_hyp_source_clear_reason'] =
+            'scratch_selected_detection_id_has_no_published_source';
+      return null;
     }
-    final candidateScore = _doubleFromObject(candidate.diagnostics['score']);
-    final previousScore = _doubleFromObject(previous.diagnostics['score']);
-    final previousSupport =
-        _intFromObject(previous.diagnostics['effective_station_count']) ??
-        previous.supportingStationCount;
-    final accept =
-        candidateScore != null &&
-        candidateScore.isFinite &&
-        (previousScore == null ||
-            !previousScore.isFinite ||
-            previousSupport < 10 ||
-            candidateScore < previousScore * 1.7);
-    if (accept) {
-      _workerAcceptedEstimateByEvent[key] = candidate;
-      return candidate;
+    final selectedMetadata = metadataById[selectedId];
+    if (selectedMetadata != null) {
+      for (final key in const <String>[
+        'nied_dart_hyp_worker_input',
+        'nied_dart_hyp_worker_active_count',
+        'nied_dart_hyp_worker_effective_active_count',
+        'nied_dart_hyp_worker_zero_contribution_count',
+        'nied_dart_hyp_worker_inactive_count',
+        'nied_dart_hyp_worker_reused',
+        'nied_dart_hyp_worker_null_reason',
+      ]) {
+        if (selectedMetadata.containsKey(key)) {
+          request.metadata[key] = selectedMetadata[key];
+        } else {
+          request.metadata.remove(key);
+        }
+      }
     }
-    return SourceEstimate(
-      latitude: previous.latitude,
-      longitude: previous.longitude,
-      depthKm: previous.depthKm,
-      magnitude: previous.magnitude,
-      originTime: previous.originTime,
-      confidence: previous.confidence,
-      method: previous.method,
-      supportingStationCount: previous.supportingStationCount,
+    final selectedState = eventState.detectionIds[selectedId]!;
+    final pgvMagnitudeDiagnostics = niedGifPgvMagnitudeDiagnostics(
+      stations: request.stations,
+      sourceLatitude: selected.latitude,
+      sourceLongitude: selected.longitude,
+      depthKm: selected.depthKm,
+      sourceTriggerMemberIds: _sourceTriggerMemberIdsForMagnitude(
+        request.metadata,
+      ),
+    );
+    final jmaStyleMagnitudeDiagnostics =
+        niedGifJmaStyleIntensityMagnitudeDiagnostics(
+          stations: request.stations,
+          sourceLatitude: selected.latitude,
+          sourceLongitude: selected.longitude,
+          depthKm: selected.depthKm,
+          sourceTriggerMemberIds: _sourceTriggerMemberIdsForMagnitude(
+            request.metadata,
+          ),
+        );
+    final distanceWeightedPgvMagnitudeDiagnostics =
+        niedGifPgvDistanceWeightedMagnitudeDiagnostics(
+          stations: request.stations,
+          sourceLatitude: selected.latitude,
+          sourceLongitude: selected.longitude,
+          depthKm: selected.depthKm,
+          sourceTriggerMemberIds: _sourceTriggerMemberIdsForMagnitude(
+            request.metadata,
+          ),
+        );
+    final realtimeMagnitudeDiagnostics = <String, Object?>{
+      ...pgvMagnitudeDiagnostics,
+      ...jmaStyleMagnitudeDiagnostics,
+      ...distanceWeightedPgvMagnitudeDiagnostics,
+    };
+    if (identical(selectedState.lastOutputBaseEstimate, selected) &&
+        selectedState.lastOutputEstimate != null &&
+        _sameNiedRealtimeMagnitudeDiagnostics(
+          selectedState.lastOutputEstimate!.diagnostics,
+          realtimeMagnitudeDiagnostics,
+        )) {
+      return selectedState.lastOutputEstimate;
+    }
+    final output = SourceEstimate(
+      latitude: selected.latitude,
+      longitude: selected.longitude,
+      depthKm: selected.depthKm,
+      magnitude: selected.magnitude,
+      originTime: selected.originTime,
+      confidence: selected.confidence,
+      method: selected.method,
+      supportingStationCount: selected.supportingStationCount,
       diagnostics: {
-        ...previous.diagnostics,
-        'worker_candidate_held_by_score_gate': true,
-        'worker_rejected_candidate_score': candidateScore,
-        'worker_previous_score': previousScore,
+        ...selected.diagnostics,
+        ...realtimeMagnitudeDiagnostics,
+        'detection_id_model':
+            'scratch_id3_id4_assignment_with_ka_detection_grid_v1',
+        'selected_detection_id': selectedId,
+        'detection_ids': idDiagnostics,
+        'detection_id_active': selectedState.active,
+        'detection_id_expire_at': selectedState.expireAt.toIso8601String(),
+        'source_visible': true,
+        'source_clear_reason': null,
       },
     );
+    selectedState
+      ..lastOutputBaseEstimate = selected
+      ..lastOutputEstimate = output;
+    return output;
+  }
+
+  String _stateKey(SourceEstimationRequest request) {
+    return '${request.sourceId}:${request.eventId}';
+  }
+
+  _NiedHypEventState _stateFor(SourceEstimationRequest request) {
+    final key = _stateKey(request);
+    final existing = _states[key];
+    if (existing != null) return existing;
+    if (_states.length >= maxCachedEvents && _states.isNotEmpty) {
+      _states.remove(_states.keys.first);
+    }
+    final state = _NiedHypEventState();
+    _states[key] = state;
+    return state;
   }
 
   _NiedHypWorkerFrame? _cachedNiedHypWorkerFrame(
@@ -1459,6 +1581,21 @@ class NiedDartHypSourceEstimator extends Kotoho7ReferenceHypSourceEstimator {
     if (parsed != null) _workerFrameByRequest[request] = parsed;
     return parsed;
   }
+}
+
+bool _sameNiedRealtimeMagnitudeDiagnostics(
+  Map<String, Object?> previous,
+  Map<String, Object?> current,
+) {
+  for (final entry in current.entries) {
+    if (previous[entry.key] != entry.value) return false;
+  }
+  return true;
+}
+
+Set<String> _sourceTriggerMemberIdsForMagnitude(Map<String, Object?> metadata) {
+  final raw = metadata['source_trigger_member_ids'];
+  return raw is Iterable ? raw.whereType<String>().toSet() : const <String>{};
 }
 
 class Kotoho7ReferenceHypSourceEstimator implements SourceEstimator {
@@ -2241,7 +2378,7 @@ class Kotoho7ReferenceHypSourceEstimator implements SourceEstimator {
               'plus_8': 'scratch ten:推定用 slot +8; predicted S arrival',
             },
             'current_shindo_mapping':
-                'Scratch ten:震度 is current-frame 30-step shindo index; current rawLevel>0, detectLevel>0, or value>-3.0',
+                'NIED input is current-frame KA level -1..20 in rawLevel/detectLevel; value retains continuous shindo',
             'change_speed_mapping': 'lastAscend>0',
             'state_counts': _kotoho7StationPermissionStateCounts(state),
             'plus_5_pending_cloud_time_count':
@@ -4030,14 +4167,14 @@ class Kotoho7ReferenceHypSourceEstimator implements SourceEstimator {
           3,
         );
         if (minimumPointCount >= 4) continue;
-        final ownConverted = _kotoho7ScratchShindoIndexToConverted(
+        final ownConverted = _kotoho7KaLevelToContinuousShindo(
           state.scratchDetectionPermittedShindo[code],
         );
         if (ownConverted == null) continue;
         var neighborPermittedSum = 3.0;
         var inspectedNeighborCount = 0;
         for (final neighbor in _kotoho7Nearest7Records(record, records)) {
-          final converted = _kotoho7ScratchShindoIndexToConverted(
+          final converted = _kotoho7KaLevelToContinuousShindo(
             state.scratchDetectionPermittedShindo[neighbor
                 .record
                 .descriptor
@@ -4126,9 +4263,7 @@ class Kotoho7ReferenceHypSourceEstimator implements SourceEstimator {
             (currentShindo > 9.0 && triggerAgeSeconds < 400.0) ||
             triggerAgeSeconds < 30.0;
         if (!isFreshEnough) continue;
-        final converted = _kotoho7ScratchShindoIndexToGridDetectionMax(
-          currentShindo,
-        );
+        final converted = _kotoho7KaLevelToGridDetectionMax(currentShindo);
         if (converted == null) continue;
         if (previous < converted) {
           state.scratchGridDetectionMax[gridNumber] = converted;
@@ -5598,14 +5733,10 @@ class Kotoho7ReferenceHypSourceEstimator implements SourceEstimator {
     }
     final value = record.lastValue;
     if (value != null && value.isFinite) return value;
-    final shindoIndex = record.lastRawLevel ?? record.lastDetectLevel;
-    if (shindoIndex != null &&
-        shindoIndex > 0 &&
-        shindoIndex <= _kotoho7Shindo30ToConverted.length) {
-      return _kotoho7Shindo30ToConverted[shindoIndex - 1];
-    }
-    if (shindoIndex == 0) return 0.45;
-    return null;
+    final kaLevel = record.lastRawLevel ?? record.lastDetectLevel;
+    return kaLevel == null
+        ? null
+        : JpShindoScale.rawShindoFromKanameishiLevel(kaLevel);
   }
 
   bool _kotoho7HasCurrentFrameEvidenceRecord(
@@ -5627,11 +5758,14 @@ class Kotoho7ReferenceHypSourceEstimator implements SourceEstimator {
     required int? detectLevel,
     required double? value,
   }) {
-    if (rawLevel != null && rawLevel > 0) return rawLevel.toDouble();
-    if (detectLevel != null && detectLevel > 0) {
+    if (rawLevel != null && rawLevel >= 0) return rawLevel.toDouble();
+    if (detectLevel != null && detectLevel >= 0) {
       return detectLevel.toDouble();
     }
-    if (value != null && value.isFinite && value > -3.0) return value;
+    if (value != null && value.isFinite) {
+      final kaLevel = JpShindoScale.kanameishiLevelFromShindo(value);
+      if (kaLevel >= 0) return kaLevel.toDouble();
+    }
     return null;
   }
 
@@ -5680,7 +5814,7 @@ class Kotoho7ReferenceHypSourceEstimator implements SourceEstimator {
     var maxConverted = double.negativeInfinity;
     for (final code in state.assignedStationCodes) {
       final permitted = state.scratchDetectionPermittedShindo[code];
-      final converted = _kotoho7ScratchShindoIndexToConverted(permitted);
+      final converted = _kotoho7KaLevelToContinuousShindo(permitted);
       if (converted == null) continue;
       if (converted > maxConverted) maxConverted = converted;
     }
@@ -5848,37 +5982,29 @@ class Kotoho7ReferenceHypSourceEstimator implements SourceEstimator {
   double? _kotoho7FrameConvertedShindo(SeismicStationObservationFrame frame) {
     final value = frame.value;
     if (value != null && value.isFinite) return value;
-    final shindoIndex = frame.rawLevel ?? frame.detectLevel;
-    if (shindoIndex != null &&
-        shindoIndex > 0 &&
-        shindoIndex <= _kotoho7Shindo30ToConverted.length) {
-      return _kotoho7Shindo30ToConverted[shindoIndex - 1];
-    }
-    if (shindoIndex == 0) return 0.45;
-    return null;
+    final kaLevel = frame.rawLevel ?? frame.detectLevel;
+    return kaLevel == null
+        ? null
+        : JpShindoScale.rawShindoFromKanameishiLevel(kaLevel);
   }
 
-  double? _kotoho7ScratchShindoIndexToConverted(double? shindoIndex) {
-    if (shindoIndex == null || !shindoIndex.isFinite) return null;
-    final rounded = shindoIndex.round();
-    if ((shindoIndex - rounded).abs() < 1e-6 &&
-        rounded > 0 &&
-        rounded <= _kotoho7Shindo30ToConverted.length) {
-      return _kotoho7Shindo30ToConverted[rounded - 1];
+  double? _kotoho7KaLevelToContinuousShindo(double? level) {
+    if (level == null || !level.isFinite) return null;
+    final rounded = level.round();
+    if ((level - rounded).abs() >= 1e-6 || rounded < 0 || rounded > 20) {
+      return null;
     }
-    if (shindoIndex == 0) return 0.45;
-    return shindoIndex;
+    return JpShindoScale.rawShindoFromKanameishiLevel(rounded);
   }
 
-  double? _kotoho7ScratchShindoIndexToGridDetectionMax(double? shindoIndex) {
-    if (shindoIndex == null || !shindoIndex.isFinite) return null;
-    final rounded = shindoIndex.round();
-    if ((shindoIndex - rounded).abs() < 1e-6 &&
-        rounded > 0 &&
-        rounded <= _kotoho7Shindo30ToGridDetectionMax.length) {
-      return _kotoho7Shindo30ToGridDetectionMax[rounded - 1];
+  double? _kotoho7KaLevelToGridDetectionMax(double? level) {
+    if (level == null || !level.isFinite) return null;
+    final rounded = level.round();
+    if ((level - rounded).abs() >= 1e-6 || rounded < 0 || rounded > 20) {
+      return null;
     }
-    return null;
+    if (rounded < 6) return -1.0;
+    return JpShindoScale.jmaIndexFromKanameishiLevel(rounded).toDouble();
   }
 
   int _kotoho7ScratchThresholdCode(SeismicStationEventRecord record) {
@@ -8850,10 +8976,20 @@ class TriggerTimeDepthGridSearchEstimator implements SourceEstimator {
 }
 
 _NiedHypWorkerFrame? _niedHypWorkerFrame(SourceEstimationRequest request) {
+  final hasWorkerInput =
+      request.metadata.containsKey('nied_hypocenter_active_stations') ||
+      request.metadata.containsKey('nied_hypocenter_new_active_stations') ||
+      request.metadata.containsKey('nied_hypocenter_inactive_stations') ||
+      request.metadata.containsKey('activeStations') ||
+      request.metadata.containsKey('newActiveStations') ||
+      request.metadata.containsKey('inactiveStations');
   final activeSnapshots = _niedHypSnapshotList(
     request.metadata['nied_hypocenter_active_stations'] ??
         request.metadata['activeStations'],
   );
+  final hasExplicitNewActiveInput =
+      request.metadata.containsKey('nied_hypocenter_new_active_stations') ||
+      request.metadata.containsKey('newActiveStations');
   final newActiveSnapshots = _niedHypSnapshotList(
     request.metadata['nied_hypocenter_new_active_stations'] ??
         request.metadata['newActiveStations'],
@@ -8864,7 +9000,8 @@ _NiedHypWorkerFrame? _niedHypWorkerFrame(SourceEstimationRequest request) {
   );
   if (activeSnapshots.isEmpty &&
       newActiveSnapshots.isEmpty &&
-      inactiveSnapshots.isEmpty) {
+      inactiveSnapshots.isEmpty &&
+      !hasWorkerInput) {
     return null;
   }
 
@@ -8873,6 +9010,14 @@ _NiedHypWorkerFrame? _niedHypWorkerFrame(SourceEstimationRequest request) {
     final code = _niedHypSnapshotCode(snapshot);
     if (code != null) activeByCode[code] = snapshot;
   }
+  final newActiveByCode = <String, Map<String, Object?>>{};
+  final registrationSnapshots = hasExplicitNewActiveInput
+      ? newActiveSnapshots
+      : activeSnapshots;
+  for (final snapshot in registrationSnapshots) {
+    final code = _niedHypSnapshotCode(snapshot);
+    if (code != null) newActiveByCode[code] = snapshot;
+  }
   final inactiveByCode = <String, Map<String, Object?>>{};
   for (final snapshot in inactiveSnapshots) {
     final code = _niedHypSnapshotCode(snapshot);
@@ -8880,24 +9025,85 @@ _NiedHypWorkerFrame? _niedHypWorkerFrame(SourceEstimationRequest request) {
       inactiveByCode[code] = snapshot;
     }
   }
-  if (activeByCode.isEmpty && inactiveByCode.isEmpty) return null;
+  if (activeByCode.isEmpty && inactiveByCode.isEmpty && !hasWorkerInput) {
+    return null;
+  }
+  final adjacencyByStationId = _niedHypSnapshotAdjacency(
+    request.metadata['nied_hypocenter_adj_station_ids'] ??
+        request.metadata['adjStationIds'],
+  );
+  final detectionAdjacencyByCode = _niedHypSnapshotAdjacency(
+    request.metadata['nied_detection_adj_station_codes'] ??
+        request.metadata['detectionAdjStationCodes'],
+  );
+  final detectionGridDecimal = _niedHypDetectionGridDecimal(
+    request.metadata['nied_hypocenter_detection_grid'] ??
+        request.metadata['detectionGrid'],
+  );
 
   final active = <_NiedHypWorkerStation>[];
   for (final snapshot in activeByCode.values) {
     final station = _niedHypStationFromSnapshot(snapshot, active: true);
     if (station != null) active.add(station);
   }
-  active.sort((a, b) => a.triggerAt!.compareTo(b.triggerAt!));
+  final newActive = <_NiedHypWorkerStation>[];
+  for (final snapshot in newActiveByCode.values) {
+    final station = _niedHypStationFromSnapshot(snapshot, active: true);
+    if (station != null) newActive.add(station);
+  }
+  final newActiveStationIdsWithoutTrigger = <String>{
+    for (final snapshot in newActiveByCode.values)
+      if (_niedHypSnapshotTime(snapshot['triggerStamp']) == null)
+        (snapshot['id'] ?? _niedHypSnapshotCode(snapshot)).toString(),
+  };
+  request.metadata['nied_dart_hyp_input_station_order_model'] =
+      'ka_active_station_table_order_matching_scratch_point_index';
+  request.metadata['nied_dart_hyp_input_station_order'] = [
+    for (final station in active) station.code,
+  ];
   final inactive = <_NiedHypWorkerStation>[];
   for (final snapshot in inactiveByCode.values) {
     final station = _niedHypStationFromSnapshot(snapshot, active: false);
     if (station != null) inactive.add(station);
   }
-  if (active.isEmpty && inactive.isEmpty) return null;
   return _NiedHypWorkerFrame(
+    newActiveStations: newActive,
+    newActiveStationIdsWithoutTrigger: newActiveStationIdsWithoutTrigger,
     activeStations: active,
     inactiveStations: inactive,
+    adjacencyByStationId: adjacencyByStationId,
+    detectionAdjacencyByCode: detectionAdjacencyByCode,
+    detectionGridDecimal: detectionGridDecimal,
+    inactiveScope: request.metadata['nied_hypocenter_inactive_scope']
+        ?.toString(),
   );
+}
+
+({double latitude, double longitude})? _niedHypDetectionGridDecimal(
+  Object? value,
+) {
+  if (value is! Map) return null;
+  final decimal = value['decimal'];
+  if (decimal is! Iterable) return null;
+  final values = decimal.toList(growable: false);
+  if (values.length < 2) return null;
+  final latitude = _doubleFromObject(values[0]);
+  final longitude = _doubleFromObject(values[1]);
+  if (latitude == null || longitude == null) return null;
+  return (latitude: latitude, longitude: longitude);
+}
+
+Map<String, Set<String>> _niedHypSnapshotAdjacency(Object? value) {
+  if (value is! Map) return const <String, Set<String>>{};
+  final result = <String, Set<String>>{};
+  for (final entry in value.entries) {
+    final neighbors = entry.value;
+    if (neighbors is! Iterable) continue;
+    result[entry.key.toString()] = {
+      for (final neighbor in neighbors) neighbor.toString(),
+    };
+  }
+  return result;
 }
 
 List<Map<String, Object?>> _niedHypSnapshotList(Object? value) {
@@ -8928,8 +9134,6 @@ _NiedHypWorkerStation? _niedHypStationFromSnapshot(
   final triggerAt = _niedHypSnapshotTime(snapshot['triggerStamp']);
   if (active && triggerAt == null) return null;
   final level = _intFromObject(snapshot['level']);
-  final detectLevel = _intFromObject(snapshot['detectLevel']);
-  final activity = _doubleFromObject(snapshot['activity']) ?? 0.0;
   final ascend = _intFromObject(snapshot['ascend']) ?? 0;
   return _NiedHypWorkerStation(
     id: snapshot['id']?.toString() ?? code,
@@ -8938,9 +9142,7 @@ _NiedHypWorkerStation? _niedHypStationFromSnapshot(
     triggerAt: triggerAt,
     updateAt: updateAt,
     level: level,
-    detectLevel: detectLevel,
     ascend: ascend,
-    activity: activity,
     active: active,
   );
 }
@@ -8978,12 +9180,1459 @@ DateTime? _niedHypSnapshotTime(Object? value) {
 
 class _NiedHypWorkerFrame {
   const _NiedHypWorkerFrame({
+    required this.newActiveStations,
+    this.newActiveStationIdsWithoutTrigger = const <String>{},
     required this.activeStations,
     required this.inactiveStations,
+    required this.adjacencyByStationId,
+    this.detectionAdjacencyByCode = const <String, Set<String>>{},
+    this.detectionGridDecimal,
+    required this.inactiveScope,
   });
 
+  final List<_NiedHypWorkerStation> newActiveStations;
+  final Set<String> newActiveStationIdsWithoutTrigger;
   final List<_NiedHypWorkerStation> activeStations;
   final List<_NiedHypWorkerStation> inactiveStations;
+  final Map<String, Set<String>> adjacencyByStationId;
+  final Map<String, Set<String>> detectionAdjacencyByCode;
+  final ({double latitude, double longitude})? detectionGridDecimal;
+  final String? inactiveScope;
+}
+
+class _NiedHypEventState {
+  final Map<int, _NiedHypDetectionState> detectionIds =
+      <int, _NiedHypDetectionState>{};
+  final Map<String, int> _stationDetectionIdByCode = <String, int>{};
+  final Map<String, _NiedHypGridCarrier> _gridCarrierByKey =
+      <String, _NiedHypGridCarrier>{};
+  final Map<String, String> lastAssignmentAcceptedByCode = <String, String>{};
+  final Map<String, String> lastAssignmentRejectedByCode = <String, String>{};
+  int _nextDetectionId = 1;
+  int? _selectedDetectionId;
+  DateTime? _lastObservedAt;
+  ({double latitude, double longitude})? _gridDecimal;
+  int _sameSourceMergeCount = 0;
+  int _referenceUpdateVersion = 0;
+  String? _referenceInactiveStationsKey;
+  final Set<String> _referenceIgnoredArrivalIds = <String>{};
+  final Map<int, _NiedHypReferenceSubcluster> _referenceSubclustersById =
+      <int, _NiedHypReferenceSubcluster>{};
+  final Map<String, int> _referenceSubclusterIdByStationId = <String, int>{};
+  int _nextReferenceSubclusterId = 1;
+  String? lastSourceClearReason;
+
+  bool get hasLifecycleState => detectionIds.isNotEmpty;
+
+  bool get hasActiveDetectionId =>
+      detectionIds.values.any((state) => state.active);
+
+  Map<String, int> get stationDetectionIds => Map<String, int>.unmodifiable(
+    Map<String, int>.from(_stationDetectionIdByCode),
+  );
+
+  Map<int, _NiedHypWorkerFrame> mergeFrame(
+    _NiedHypWorkerFrame frame, {
+    required DateTime observedAt,
+    required double? scratchRuntimeTimerSeconds,
+    required bool referenceAligned,
+  }) {
+    lastSourceClearReason = null;
+    final previousObservedAt = _lastObservedAt;
+    if (previousObservedAt != null && observedAt.isBefore(previousObservedAt)) {
+      _reset();
+    }
+    _lastObservedAt = observedAt;
+    _gridDecimal ??= frame.detectionGridDecimal;
+    if (_gridDecimal == null && frame.activeStations.isNotEmpty) {
+      final coordinate = frame.activeStations.first.coordinate;
+      _gridDecimal = (
+        latitude: niedDetectionGridDecimalPart(coordinate.latitude),
+        longitude: niedDetectionGridDecimalPart(coordinate.longitude),
+      );
+    }
+    if (!referenceAligned) {
+      mergeSameSourceDetectionIds(observedAt: observedAt);
+    }
+    lastAssignmentAcceptedByCode.clear();
+    lastAssignmentRejectedByCode.clear();
+    for (final state in detectionIds.values) {
+      state.worker
+        ..lastAssignmentAcceptedByCode.clear()
+        ..lastAssignmentRejectedByCode.clear();
+    }
+
+    if (referenceAligned) {
+      return _mergeReferenceAlignedFrame(frame, observedAt: observedAt);
+    }
+
+    final incoming = frame.activeStations.toList(growable: false);
+    for (final station in incoming) {
+      final ownerId = _stationDetectionIdByCode[station.code];
+      final owner = ownerId == null ? null : detectionIds[ownerId];
+      if (owner != null && owner.active) {
+        owner.worker.activeStationsByCode[station.code] = _mergeNiedHypStation(
+          owner.worker.activeStationsByCode[station.code],
+          station,
+        );
+      }
+    }
+
+    for (final station in frame.newActiveStations) {
+      final ownerId = _stationDetectionIdByCode[station.code];
+      final owner = ownerId == null ? null : detectionIds[ownerId];
+      if (owner != null && owner.active) continue;
+      final selection = _selectDetectionId(
+        station,
+        frame: frame,
+        observedAt: observedAt,
+        scratchRuntimeTimerSeconds: scratchRuntimeTimerSeconds,
+      );
+      if (selection == null) {
+        lastAssignmentRejectedByCode[station.code] =
+            'scratch_id3_reject_no_candidate_max_two_ids';
+        continue;
+      }
+      _assignStation(
+        selection.state,
+        station,
+        observedAt: observedAt,
+        reason: selection.reason,
+      );
+    }
+
+    _rebuildGridCarriers(incoming, observedAt: observedAt);
+    if (_gridCarrierByKey.isEmpty && detectionIds.isNotEmpty) {
+      _clearForEmptyGridCarrier();
+    } else {
+      _updateActiveLifecycle(observedAt);
+    }
+    final result = <int, _NiedHypWorkerFrame>{};
+    for (final state in detectionIds.values) {
+      if (!state.active) continue;
+      final active = state.worker.activeStationsByCode.values.toList(
+        growable: false,
+      );
+      final inactive = _inactiveForDetectionId(state, frame.inactiveStations);
+      result[state.id] = _NiedHypWorkerFrame(
+        newActiveStations: const <_NiedHypWorkerStation>[],
+        activeStations: active,
+        inactiveStations: inactive,
+        adjacencyByStationId: frame.adjacencyByStationId,
+        detectionAdjacencyByCode: frame.detectionAdjacencyByCode,
+        detectionGridDecimal: _gridDecimal,
+        inactiveScope: frame.inactiveScope,
+      );
+    }
+    return result;
+  }
+
+  Map<int, _NiedHypWorkerFrame> _mergeReferenceAlignedFrame(
+    _NiedHypWorkerFrame frame, {
+    required DateTime observedAt,
+  }) {
+    if (frame.activeStations.isEmpty) {
+      // NiedNet resets its worker whenever the active station set is empty.
+      // Keep a later, separate detection from inheriting this cluster's history.
+      _clearReferenceForEmptyActiveStations();
+      return const <int, _NiedHypWorkerFrame>{};
+    }
+
+    final updateVersion = ++_referenceUpdateVersion;
+    _referenceIgnoredArrivalIds
+      ..addAll(frame.newActiveStationIdsWithoutTrigger)
+      ..removeAll(frame.newActiveStations.map((station) => station.id));
+    final inactiveStationsKey =
+        '${frame.inactiveStations.length}:'
+        '${frame.inactiveStations.map((station) => station.id).join(',')}';
+    if (_referenceInactiveStationsKey != inactiveStationsKey) {
+      _referenceInactiveStationsKey = inactiveStationsKey;
+      for (final state in detectionIds.values) {
+        if (state.active) _referenceMarkUpdated(state, updateVersion);
+      }
+    }
+    final stateByStationId = _referenceActiveStatesByStationId();
+    for (final station in frame.activeStations) {
+      final state = stateByStationId[station.id];
+      if (state == null) continue;
+      final existing = state.worker.activeStationsByCode[station.code];
+      final merged = _mergeNiedHypStation(existing, station);
+      state.worker.activeStationsByCode[station.code] = merged;
+      if (existing == null ||
+          existing.level != merged.level ||
+          existing.ascend != merged.ascend) {
+        _referenceMarkUpdated(state, updateVersion);
+      }
+    }
+
+    // The source snapshot can stop flagging a still-active station as new.
+    // Restore it like NiedHypoInf's persistent active-station map, except for
+    // stations first observed without a valid trigger timestamp: the original
+    // addActiveStation() ignores those until a future valid new arrival.
+    final arrivalsById = <String, _NiedHypWorkerStation>{
+      for (final station in frame.newActiveStations)
+        if (station.triggerAt != null) station.id: station,
+      for (final station in frame.activeStations)
+        if (!stateByStationId.containsKey(station.id) &&
+            !_referenceIgnoredArrivalIds.contains(station.id))
+          station.id: station,
+    };
+    for (final station in arrivalsById.values) {
+      if (stateByStationId.containsKey(station.id)) continue;
+      final neighborSubclusters = _referenceNeighborSubclusters(
+        station,
+        frame.adjacencyByStationId,
+      );
+      final matchingSubcluster = _referenceBestResidualSubcluster(station);
+      // Keep both links when an arriving station bridges an adjacent cluster
+      // and a cluster whose current result predicts its trigger. The reference
+      // implementation merges the union rather than discarding either link.
+      if (matchingSubcluster != null &&
+          !neighborSubclusters.contains(matchingSubcluster)) {
+        neighborSubclusters.add(matchingSubcluster);
+      }
+      late final _NiedHypDetectionState state;
+      late final String assignmentReason;
+      if (neighborSubclusters.isEmpty) {
+        state = _referenceCreateState(station, observedAt: observedAt);
+        _referenceCreateSubcluster(state);
+        assignmentReason = 'kanameishi_reference_residual_or_new_cluster';
+      } else if (neighborSubclusters.length == 1) {
+        state = neighborSubclusters.single.state;
+        assignmentReason = 'kanameishi_reference_adjacent_cluster';
+      } else {
+        final neighborStates = <_NiedHypDetectionState>{
+          for (final cluster in neighborSubclusters) cluster.state,
+        };
+        state = _referenceMergeAdjacentStates(
+          station,
+          neighborStates,
+          observedAt: observedAt,
+          updateVersion: updateVersion,
+          stateByStationId: stateByStationId,
+        );
+        _referenceMergeAdjacentSubclusters(
+          arriving: station,
+          clusters: neighborSubclusters,
+          mergedState: state,
+        );
+        assignmentReason = 'kanameishi_reference_adjacent_cluster';
+      }
+      _referenceAssignStation(
+        state,
+        station,
+        observedAt: observedAt,
+        updateVersion: updateVersion,
+        stateByStationId: stateByStationId,
+        reason: assignmentReason,
+      );
+      _referenceAddStationToSubcluster(state, station);
+    }
+
+    _referenceRemoveInactiveStates(
+      frame.inactiveStations,
+      updateVersion: updateVersion,
+      observedAt: observedAt,
+    );
+    return _referenceWorkerFrames(frame);
+  }
+
+  Map<String, _NiedHypDetectionState> _referenceActiveStatesByStationId() {
+    _synchronizeReferenceSubclusters();
+    final result = <String, _NiedHypDetectionState>{};
+    for (final state in detectionIds.values) {
+      if (!state.active) continue;
+      for (final station in state.worker.activeStationsByCode.values) {
+        result[station.id] = state;
+      }
+    }
+    return result;
+  }
+
+  void _synchronizeReferenceSubclusters() {
+    final activeStates = detectionIds.values
+        .where((state) => state.active)
+        .toSet();
+    _referenceSubclustersById.removeWhere(
+      (_, cluster) => !activeStates.contains(cluster.state),
+    );
+    _referenceSubclusterIdByStationId.removeWhere(
+      (_, clusterId) => !_referenceSubclustersById.containsKey(clusterId),
+    );
+    for (final state in activeStates) {
+      if (_referenceSubclusterForState(state) != null) continue;
+      final cluster = _referenceCreateSubcluster(state);
+      for (final station in _referenceOrderedStations(state)) {
+        cluster.insert(station);
+        _referenceSubclusterIdByStationId[station.id] = cluster.id;
+      }
+    }
+  }
+
+  List<_NiedHypReferenceSubcluster> _referenceNeighborSubclusters(
+    _NiedHypWorkerStation station,
+    Map<String, Set<String>> adjacencyByStationId,
+  ) {
+    final result = <_NiedHypReferenceSubcluster>[];
+    final seen = <int>{};
+    for (final neighborId
+        in adjacencyByStationId[station.id] ?? const <String>{}) {
+      final subclusterId = _referenceSubclusterIdByStationId[neighborId];
+      final subcluster = subclusterId == null
+          ? null
+          : _referenceSubclustersById[subclusterId];
+      if (subcluster != null && seen.add(subcluster.id)) {
+        result.add(subcluster);
+      }
+    }
+    return result;
+  }
+
+  _NiedHypReferenceSubcluster _referenceCreateSubcluster(
+    _NiedHypDetectionState state,
+  ) {
+    final cluster = _NiedHypReferenceSubcluster(
+      id: _nextReferenceSubclusterId++,
+      state: state,
+    );
+    _referenceSubclustersById[cluster.id] = cluster;
+    return cluster;
+  }
+
+  _NiedHypReferenceSubcluster? _referenceSubclusterForState(
+    _NiedHypDetectionState state,
+  ) {
+    for (final cluster in _referenceSubclustersById.values) {
+      if (identical(cluster.state, state)) return cluster;
+    }
+    return null;
+  }
+
+  void _referenceAddStationToSubcluster(
+    _NiedHypDetectionState state,
+    _NiedHypWorkerStation station,
+  ) {
+    final cluster =
+        _referenceSubclusterForState(state) ??
+        _referenceCreateSubcluster(state);
+    cluster.insert(station);
+    _referenceSubclusterIdByStationId[station.id] = cluster.id;
+  }
+
+  _NiedHypReferenceSubcluster? _referenceBestResidualSubcluster(
+    _NiedHypWorkerStation station,
+  ) {
+    final triggerAt = station.triggerAt;
+    if (triggerAt == null) return null;
+    _NiedHypReferenceSubcluster? selected;
+    var selectedResidualSeconds = double.infinity;
+    for (final cluster in _referenceSubclustersById.values) {
+      final result = cluster.state.worker.previousResult;
+      if (result == null || !result.score.isFinite) continue;
+      final distanceKm = _haversineKm(
+        result.latitude,
+        result.longitude,
+        station.coordinate.latitude,
+        station.coordinate.longitude,
+      );
+      final originMilliseconds =
+          cluster.state.worker.referencePreviousOriginMilliseconds ??
+          result.originTime.millisecondsSinceEpoch.toDouble();
+      final observedSeconds =
+          (triggerAt.millisecondsSinceEpoch - originMilliseconds) / 1000.0;
+      final pResidual =
+          (observedSeconds -
+                  KanameishiJma2001TravelTimeTable.travelTimeSeconds(
+                    surfaceDistanceKm: distanceKm,
+                    depthKm: result.depthKm,
+                    pWave: true,
+                  ))
+              .abs();
+      final sResidual =
+          (observedSeconds -
+                  KanameishiJma2001TravelTimeTable.travelTimeSeconds(
+                    surfaceDistanceKm: distanceKm,
+                    depthKm: result.depthKm,
+                    pWave: false,
+                  ))
+              .abs();
+      final residual = math.min(pResidual, sResidual);
+      final limitSeconds = cluster.stationIds.length >= 50 ? 7.5 : 5.0;
+      if (residual <= limitSeconds && residual < selectedResidualSeconds) {
+        selected = cluster;
+        selectedResidualSeconds = residual;
+      }
+    }
+    return selected;
+  }
+
+  void _referenceMergeAdjacentSubclusters({
+    required _NiedHypWorkerStation arriving,
+    required List<_NiedHypReferenceSubcluster> clusters,
+    required _NiedHypDetectionState mergedState,
+  }) {
+    final merged = _referenceCreateSubcluster(mergedState);
+    // NiedHypoInf reconstructs a bridging cluster from the arriving station
+    // followed by each old cluster's existing insertion order.
+    merged.insert(arriving);
+    for (final cluster in clusters) {
+      for (final station in cluster.orderedStations) {
+        merged.insert(station);
+      }
+      _referenceSubclustersById.remove(cluster.id);
+    }
+    for (final station in merged.orderedStations) {
+      _referenceSubclusterIdByStationId[station.id] = merged.id;
+    }
+  }
+
+  _NiedHypDetectionState _referenceCreateState(
+    _NiedHypWorkerStation station, {
+    required DateTime observedAt,
+  }) {
+    final id = _nextDetectionId++;
+    final state = _NiedHypDetectionState(
+      id: id,
+      serial: id,
+      createdAt: observedAt,
+      firstStationCode: station.code,
+    );
+    detectionIds[id] = state;
+    return state;
+  }
+
+  void _referenceAssignStation(
+    _NiedHypDetectionState state,
+    _NiedHypWorkerStation station, {
+    required DateTime observedAt,
+    required int updateVersion,
+    required Map<String, _NiedHypDetectionState> stateByStationId,
+    required String reason,
+  }) {
+    state.worker.activeStationsByCode[station.code] = station;
+    _referenceInsertStationIntoOrder(state, station);
+    stateByStationId[station.id] = state;
+    _stationDetectionIdByCode[station.code] = state.id;
+    state.worker.lastAssignmentAcceptedByCode[station.code] = reason;
+    lastAssignmentAcceptedByCode[station.code] = reason;
+    state.lastAssignedAt = observedAt;
+    _referenceMarkUpdated(state, updateVersion);
+  }
+
+  void _referenceInsertStationIntoOrder(
+    _NiedHypDetectionState state,
+    _NiedHypWorkerStation station,
+  ) {
+    final order = state.referenceStationOrder;
+    if (order.contains(station.code)) return;
+    final triggerAt = station.triggerAt;
+    if (triggerAt == null) return;
+    var low = 0;
+    var high = order.length;
+    while (low < high) {
+      final middle = (low + high) ~/ 2;
+      final existing = state.worker.activeStationsByCode[order[middle]];
+      final existingAt = existing?.triggerAt;
+      if (existingAt != null && !existingAt.isAfter(triggerAt)) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+    order.insert(low, station.code);
+  }
+
+  List<_NiedHypWorkerStation> _referenceOrderedStations(
+    _NiedHypDetectionState state,
+  ) {
+    final stations = <_NiedHypWorkerStation>[
+      for (final code in state.referenceStationOrder)
+        ?state.worker.activeStationsByCode[code],
+    ];
+    if (stations.length == state.worker.activeStationsByCode.length) {
+      return stations;
+    }
+    final includedCodes = stations.map((station) => station.code).toSet();
+    return [
+      ...stations,
+      for (final station in state.worker.activeStationsByCode.values)
+        if (includedCodes.add(station.code)) station,
+    ];
+  }
+
+  void _referenceMarkUpdated(_NiedHypDetectionState state, int updateVersion) {
+    state.referenceDirty = true;
+    if (state.referenceLastUpdateVersion != updateVersion) {
+      state.referenceUpdates += 1;
+      state.referenceLastUpdateVersion = updateVersion;
+    }
+  }
+
+  _NiedHypDetectionState _referenceMergeAdjacentStates(
+    _NiedHypWorkerStation arriving,
+    Set<_NiedHypDetectionState> states, {
+    required DateTime observedAt,
+    required int updateVersion,
+    required Map<String, _NiedHypDetectionState> stateByStationId,
+  }) {
+    final base = states.reduce(_referenceSelectMergeBaseState);
+    final stations = <_NiedHypWorkerStation>[arriving];
+    for (final state in states) {
+      stations.addAll(_referenceOrderedStations(state));
+      detectionIds.remove(state.id);
+      state.active = false;
+    }
+    final merged = _referenceCreateState(stations.first, observedAt: observedAt)
+      ..referenceUpdates = base.referenceUpdates
+      ..referenceLastUpdateVersion = base.referenceLastUpdateVersion
+      ..referenceReportNum = base.referenceReportNum;
+    _referenceCopyWorkerState(merged.worker, base.worker);
+    for (final station in stations) {
+      merged.worker.activeStationsByCode[station.code] = station;
+      _referenceInsertStationIntoOrder(merged, station);
+    }
+    for (final station in _referenceOrderedStations(merged)) {
+      stateByStationId[station.id] = merged;
+      _stationDetectionIdByCode[station.code] = merged.id;
+    }
+    _referenceMarkUpdated(merged, updateVersion);
+    return merged;
+  }
+
+  _NiedHypDetectionState _referenceSelectMergeBaseState(
+    _NiedHypDetectionState left,
+    _NiedHypDetectionState right,
+  ) {
+    final leftCount = left.worker.activeStationsByCode.length;
+    final rightCount = right.worker.activeStationsByCode.length;
+    if (leftCount != rightCount) return leftCount > rightCount ? left : right;
+    return left.referenceUpdates >= right.referenceUpdates ? left : right;
+  }
+
+  void _referenceCopyWorkerState(
+    _NiedHypWorkerState target,
+    _NiedHypWorkerState source,
+  ) {
+    target
+      ..previousResult = source.previousResult
+      ..previousEstimate = source.previousEstimate
+      ..referencePreviousOriginMilliseconds =
+          source.referencePreviousOriginMilliseconds
+      ..publishedCurvePanels = source.publishedCurvePanels
+      ..publishedCurveRevision = source.publishedCurveRevision
+      ..minimumPublishedScore = source.minimumPublishedScore;
+    target.referencePreviousWavesByFirstWave
+      ..clear()
+      ..addAll({
+        for (final entry in source.referencePreviousWavesByFirstWave.entries)
+          entry.key: Map<String, bool>.from(entry.value),
+      });
+  }
+
+  void _referenceRemoveInactiveStates(
+    List<_NiedHypWorkerStation> inactiveStations, {
+    required int updateVersion,
+    required DateTime observedAt,
+  }) {
+    final inactiveIds = inactiveStations.map((station) => station.id).toSet();
+    for (final state in detectionIds.values.toList(growable: false)) {
+      final stations = state.worker.activeStationsByCode.values;
+      final fullyInactive =
+          stations.isNotEmpty &&
+          stations.every((station) => inactiveIds.contains(station.id));
+      if (!fullyInactive) {
+        state.referenceInactiveUpdateCount = 0;
+        continue;
+      }
+      _referenceMarkUpdated(state, updateVersion);
+      state.referenceInactiveUpdateCount += 1;
+      if (state.referenceInactiveUpdateCount < 10) continue;
+      detectionIds.remove(state.id);
+      state
+        ..active = false
+        ..inactiveAt = observedAt
+        ..inactiveReason = 'kanameishi_reference_cluster_inactive_10_updates';
+      for (final station in stations) {
+        _stationDetectionIdByCode.remove(station.code);
+      }
+    }
+  }
+
+  bool mergeReferenceCloseClusters({required DateTime observedAt}) {
+    final active = detectionIds.values
+        .where((state) => state.active)
+        .toList(growable: false);
+    for (var leftIndex = 0; leftIndex < active.length; leftIndex++) {
+      final left = active[leftIndex];
+      for (
+        var rightIndex = leftIndex + 1;
+        rightIndex < active.length;
+        rightIndex++
+      ) {
+        final right = active[rightIndex];
+        if (!_referenceClusterResultsCanMerge(left, right)) continue;
+        _referenceMergeCloseStates(left, right, observedAt: observedAt);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool _referenceClusterResultsCanMerge(
+    _NiedHypDetectionState left,
+    _NiedHypDetectionState right,
+  ) {
+    final leftResult = left.worker.previousResult;
+    final rightResult = right.worker.previousResult;
+    if (leftResult == null || rightResult == null) return false;
+    if (!leftResult.score.isFinite || !rightResult.score.isFinite) return false;
+    if ((leftResult.latitude - rightResult.latitude).abs() > 1.0) {
+      return false;
+    }
+    final longitudeDifference = (leftResult.longitude - rightResult.longitude)
+        .abs();
+    if (math.min(longitudeDifference, 360.0 - longitudeDifference) > 1.0) {
+      return false;
+    }
+    if ((leftResult.depthKm - rightResult.depthKm).abs() > 100.0) {
+      return false;
+    }
+    return (leftResult.originTime
+                .difference(rightResult.originTime)
+                .inMilliseconds)
+            .abs() <=
+        10000;
+  }
+
+  void _referenceMergeCloseStates(
+    _NiedHypDetectionState left,
+    _NiedHypDetectionState right, {
+    required DateTime observedAt,
+  }) {
+    final base = _referenceSelectMergeBaseState(left, right);
+    final stations = <_NiedHypWorkerStation>[
+      ..._referenceOrderedStations(left),
+      ..._referenceOrderedStations(right),
+    ];
+    detectionIds
+      ..remove(left.id)
+      ..remove(right.id);
+    left.active = false;
+    right.active = false;
+    final merged = _referenceCreateState(stations.first, observedAt: observedAt)
+      ..referenceUpdates = base.referenceUpdates
+      ..referenceLastUpdateVersion = base.referenceLastUpdateVersion
+      ..referenceReportNum = base.referenceReportNum;
+    _referenceCopyWorkerState(merged.worker, base.worker);
+    for (final station in stations) {
+      merged.worker.activeStationsByCode[station.code] = station;
+      _referenceInsertStationIntoOrder(merged, station);
+    }
+    for (final station in _referenceOrderedStations(merged)) {
+      _stationDetectionIdByCode[station.code] = merged.id;
+    }
+  }
+
+  Map<int, _NiedHypWorkerFrame> _referenceWorkerFrames(
+    _NiedHypWorkerFrame frame,
+  ) {
+    final result = <int, _NiedHypWorkerFrame>{};
+    for (final state in detectionIds.values) {
+      if (!state.active) continue;
+      final active = _referenceOrderedStations(state);
+      final activeIds = active.map((station) => station.id).toSet();
+      result[state.id] = _NiedHypWorkerFrame(
+        newActiveStations: const <_NiedHypWorkerStation>[],
+        activeStations: active,
+        inactiveStations: frame.inactiveStations
+            .where((station) => !activeIds.contains(station.id))
+            .toList(growable: false),
+        adjacencyByStationId: frame.adjacencyByStationId,
+        detectionAdjacencyByCode: frame.detectionAdjacencyByCode,
+        detectionGridDecimal: _gridDecimal,
+        inactiveScope: frame.inactiveScope,
+      );
+    }
+    return result;
+  }
+
+  void _clearReferenceForEmptyActiveStations() {
+    lastSourceClearReason = 'kanameishi_reference_active_station_set_empty';
+    detectionIds.clear();
+    _stationDetectionIdByCode.clear();
+    _gridCarrierByKey.clear();
+    _selectedDetectionId = null;
+    _nextDetectionId = 1;
+    _referenceInactiveStationsKey = null;
+    _referenceIgnoredArrivalIds.clear();
+    _referenceSubclustersById.clear();
+    _referenceSubclusterIdByStationId.clear();
+    _nextReferenceSubclusterId = 1;
+  }
+
+  _NiedHypDetectionSelection? _selectDetectionId(
+    _NiedHypWorkerStation station, {
+    required _NiedHypWorkerFrame frame,
+    required DateTime observedAt,
+    required double? scratchRuntimeTimerSeconds,
+  }) {
+    final activeStates =
+        detectionIds.values
+            .where((state) => state.active)
+            .toList(growable: false)
+          ..sort((left, right) => left.serial.compareTo(right.serial));
+    if (activeStates.isEmpty) {
+      return detectionIds.length < 2
+          ? _newDetectionId(station, observedAt: observedAt)
+          : null;
+    }
+
+    if (scratchRuntimeTimerSeconds != null &&
+        scratchRuntimeTimerSeconds >= 0 &&
+        scratchRuntimeTimerSeconds < 10) {
+      return _NiedHypDetectionSelection(
+        activeStates.last,
+        'scratch_id3_latest_id_shortcut',
+      );
+    }
+
+    final nearest = _nearestExistingIdSelection(station, frame: frame);
+    if (nearest != null) return nearest;
+
+    final latestDistance = _latestIdDistanceSelection(
+      station,
+      observedAt: observedAt,
+    );
+    if (latestDistance != null) return latestDistance;
+
+    final gridKey = _gridKey(station.coordinate);
+    final currentCarrier = gridKey == null ? null : _gridCarrierByKey[gridKey];
+    if (currentCarrier != null && currentCarrier.state.active) {
+      final ageSeconds =
+          observedAt.difference(currentCarrier.updatedAt).inMilliseconds /
+          1000.0;
+      if (ageSeconds >= 0 && ageSeconds < 2) {
+        return _NiedHypDetectionSelection(
+          currentCarrier.state,
+          'scratch_grid_current',
+        );
+      }
+    }
+
+    _NiedHypDetectionState? bestState;
+    double? bestResidual;
+    String? bestReason;
+    for (final state in activeStates.reversed) {
+      final decision = _niedHypWorkerAssignmentDecision(
+        station,
+        state.worker.activeStationsByCode.values.toList(growable: false),
+        state.worker.previousResult,
+        observedAt: observedAt,
+        allowInitialSeed: false,
+      );
+      if (!decision.accepted || decision.residualSeconds == null) continue;
+      if (bestResidual == null || decision.residualSeconds! < bestResidual) {
+        bestState = state;
+        bestResidual = decision.residualSeconds;
+        bestReason = decision.reason;
+      }
+    }
+    if (bestState != null) {
+      return _NiedHypDetectionSelection(bestState, bestReason!);
+    }
+
+    final around = _aroundGridCarrierSelection(station, observedAt: observedAt);
+    if (around != null) return around;
+    if (detectionIds.length < 2) {
+      return _newDetectionId(station, observedAt: observedAt);
+    }
+    return null;
+  }
+
+  _NiedHypDetectionSelection? _nearestExistingIdSelection(
+    _NiedHypWorkerStation station, {
+    required _NiedHypWorkerFrame frame,
+  }) {
+    final candidateCodes = frame.detectionAdjacencyByCode[station.code];
+    final candidates = <({String code, double distanceKm})>[];
+    for (final entry in _stationDetectionIdByCode.entries) {
+      if (candidateCodes != null && !candidateCodes.contains(entry.key)) {
+        continue;
+      }
+      final state = detectionIds[entry.value];
+      final neighbor = state?.worker.activeStationsByCode[entry.key];
+      if (state == null || !state.active || neighbor == null) continue;
+      final distanceKm = _haversineKm(
+        station.coordinate.latitude,
+        station.coordinate.longitude,
+        neighbor.coordinate.latitude,
+        neighbor.coordinate.longitude,
+      );
+      candidates.add((code: entry.key, distanceKm: distanceKm));
+    }
+    candidates.sort((left, right) {
+      final distanceCompare = left.distanceKm.compareTo(right.distanceKm);
+      return distanceCompare != 0
+          ? distanceCompare
+          : left.code.compareTo(right.code);
+    });
+    _NiedHypDetectionState? selected;
+    var selectedDeltaSeconds = 10.0;
+    for (final candidate in candidates.take(7)) {
+      if (candidate.distanceKm > 40) break;
+      final id = _stationDetectionIdByCode[candidate.code];
+      final state = id == null ? null : detectionIds[id];
+      final neighbor = state?.worker.activeStationsByCode[candidate.code];
+      if (state == null ||
+          neighbor?.triggerAt == null ||
+          station.triggerAt == null) {
+        continue;
+      }
+      final deltaSeconds =
+          (station.triggerAt!.difference(neighbor!.triggerAt!).inMilliseconds)
+              .abs() /
+          1000.0;
+      if (deltaSeconds < selectedDeltaSeconds) {
+        selected = state;
+        selectedDeltaSeconds = deltaSeconds;
+      }
+    }
+    return selected == null
+        ? null
+        : _NiedHypDetectionSelection(
+            selected,
+            'scratch_id4_1_nearest7_existing_id',
+          );
+  }
+
+  _NiedHypDetectionSelection? _latestIdDistanceSelection(
+    _NiedHypWorkerStation station, {
+    required DateTime observedAt,
+  }) {
+    final rows = detectionIds.values.toList(growable: false)
+      ..sort((left, right) => left.serial.compareTo(right.serial));
+    if (rows.isEmpty) return null;
+    final latest = rows.last;
+    if (!latest.active) return null;
+    if (rows.length >= 2) {
+      final previous = rows[rows.length - 2];
+      final previousAgeSeconds =
+          observedAt.difference(previous.createdAt).inMilliseconds / 1000.0;
+      if (previous.worker.activeStationsByCode.length <= 2 ||
+          previousAgeSeconds <= 40) {
+        return null;
+      }
+    }
+    final ageSeconds =
+        observedAt.difference(latest.createdAt).inMilliseconds / 1000.0;
+    if (ageSeconds < 0 || ageSeconds >= 10) return null;
+    final first = latest.worker.activeStationsByCode[latest.firstStationCode];
+    if (first == null) return null;
+    final distanceKm = _haversineKm(
+      first.coordinate.latitude,
+      first.coordinate.longitude,
+      station.coordinate.latitude,
+      station.coordinate.longitude,
+    );
+    if (distanceKm >= 400) return null;
+    return _NiedHypDetectionSelection(latest, 'scratch_id4_latest_id_distance');
+  }
+
+  _NiedHypDetectionSelection? _aroundGridCarrierSelection(
+    _NiedHypWorkerStation station, {
+    required DateTime observedAt,
+  }) {
+    final center = _gridIndices(station.coordinate);
+    if (center == null) return null;
+    _NiedHypGridCarrier? best;
+    for (var latitudeOffset = -1; latitudeOffset <= 1; latitudeOffset++) {
+      for (var longitudeOffset = -1; longitudeOffset <= 1; longitudeOffset++) {
+        final key = niedDetectionGridKey(
+          center.latitude + latitudeOffset,
+          center.longitude + longitudeOffset,
+        );
+        final carrier = _gridCarrierByKey[key];
+        if (carrier == null || !carrier.state.active) continue;
+        final ageSeconds =
+            observedAt.difference(carrier.updatedAt).inMilliseconds / 1000.0;
+        if (ageSeconds < 0 || ageSeconds > 5) continue;
+        if (best == null || carrier.updatedAt.isAfter(best.updatedAt)) {
+          best = carrier;
+        }
+      }
+    }
+    return best == null
+        ? null
+        : _NiedHypDetectionSelection(best.state, 'scratch_grid_around_9');
+  }
+
+  _NiedHypDetectionSelection _newDetectionId(
+    _NiedHypWorkerStation station, {
+    required DateTime observedAt,
+  }) {
+    final id = _nextDetectionId++;
+    final state = _NiedHypDetectionState(
+      id: id,
+      serial: id,
+      createdAt: observedAt,
+      firstStationCode: station.code,
+    );
+    detectionIds[id] = state;
+    return _NiedHypDetectionSelection(state, 'scratch_id3_new_detection_id');
+  }
+
+  void _assignStation(
+    _NiedHypDetectionState state,
+    _NiedHypWorkerStation station, {
+    required DateTime observedAt,
+    required String reason,
+  }) {
+    final previousOwnerId = _stationDetectionIdByCode[station.code];
+    if (previousOwnerId != null && previousOwnerId != state.id) {
+      detectionIds[previousOwnerId]?.worker.activeStationsByCode.remove(
+        station.code,
+      );
+      detectionIds[previousOwnerId]?.worker.stationSFlagByCode.remove(
+        station.code,
+      );
+    }
+    state.worker.activeStationsByCode[station.code] = station;
+    state.lastAssignedAt = observedAt;
+    _stationDetectionIdByCode[station.code] = state.id;
+    state.worker.lastAssignmentAcceptedByCode[station.code] = reason;
+    lastAssignmentAcceptedByCode[station.code] = reason;
+    final key = _gridKey(station.coordinate);
+    if (key != null) {
+      _gridCarrierByKey[key] = _NiedHypGridCarrier(
+        state: state,
+        updatedAt: observedAt,
+        stationCode: station.code,
+      );
+    }
+  }
+
+  void _rebuildGridCarriers(
+    List<_NiedHypWorkerStation> currentActive, {
+    required DateTime observedAt,
+  }) {
+    _gridCarrierByKey.removeWhere((_, carrier) => !carrier.state.active);
+    for (final station in currentActive) {
+      final ownerId = _stationDetectionIdByCode[station.code];
+      final state = ownerId == null ? null : detectionIds[ownerId];
+      final key = _gridKey(station.coordinate);
+      if (state == null || !state.active || key == null) continue;
+      final prior = _gridCarrierByKey[key];
+      _gridCarrierByKey[key] = _NiedHypGridCarrier(
+        state: state,
+        updatedAt: prior != null && prior.state.id == state.id
+            ? prior.updatedAt
+            : observedAt,
+        stationCode: station.code,
+      );
+    }
+  }
+
+  void _updateActiveLifecycle(DateTime observedAt) {
+    final presentIds = {
+      for (final carrier in _gridCarrierByKey.values) carrier.state.id,
+    };
+    for (final state in detectionIds.values) {
+      if (!state.active) continue;
+      final ageSeconds =
+          observedAt.difference(state.createdAt).inMilliseconds / 1000.0;
+      if (!presentIds.contains(state.id) && ageSeconds > 2) {
+        state
+          ..active = false
+          ..inactiveAt = observedAt
+          ..inactiveReason = 'scratch_detection_id_grid_presence_disappeared';
+        continue;
+      }
+      final assignedCount = state.worker.activeStationsByCode.length;
+      final expireSeconds = assignedCount < 200 ? (3 + assignedCount) * 2 : 400;
+      if (ageSeconds > expireSeconds) {
+        state
+          ..active = false
+          ..inactiveAt = observedAt
+          ..inactiveReason = 'scratch_detection_id_expire_at_passed';
+        continue;
+      }
+      if (ageSeconds > 150 && assignedCount < 50) {
+        state
+          ..active = false
+          ..inactiveAt = observedAt
+          ..inactiveReason = 'scratch_detection_id_age_150_small_cluster';
+        continue;
+      }
+      if (assignedCount < 2) {
+        state
+          ..active = false
+          ..inactiveAt = observedAt
+          ..inactiveReason = 'scratch_detection_id_member_count_below_2';
+        continue;
+      }
+
+      final first = state.worker.activeStationsByCode[state.firstStationCode];
+      var maxDetectedDistanceKm = 0.0;
+      var maxJmaShindo = -1;
+      if (first != null) {
+        for (final station in state.worker.activeStationsByCode.values) {
+          maxDetectedDistanceKm = math.max(
+            maxDetectedDistanceKm,
+            _scratchDetectionIdDistanceKm(first.coordinate, station.coordinate),
+          );
+          final level = station.level;
+          if (level != null) {
+            maxJmaShindo = math.max(
+              maxJmaShindo,
+              JpShindoScale.jmaNumberFromKanameishiLevel(level),
+            );
+          }
+        }
+      }
+      final publishedScore =
+          state.worker.previousResult?.score ?? double.infinity;
+      if (assignedCount < 5 &&
+          maxDetectedDistanceKm < 80 &&
+          publishedScore > 3000 &&
+          maxJmaShindo < 3 &&
+          ageSeconds > 10) {
+        state
+          ..active = false
+          ..inactiveAt = observedAt
+          ..inactiveReason =
+              'scratch_detection_id_small_low_intensity_high_error';
+      }
+    }
+    if (_selectedDetectionId != null &&
+        detectionIds[_selectedDetectionId]?.active != true) {
+      _selectedDetectionId = null;
+    }
+  }
+
+  void _clearForEmptyGridCarrier() {
+    lastSourceClearReason = 'scratch_grid_carrier_id_set_empty';
+    detectionIds.clear();
+    _stationDetectionIdByCode.clear();
+    _gridCarrierByKey.clear();
+    _selectedDetectionId = null;
+    _nextDetectionId = 1;
+  }
+
+  List<_NiedHypWorkerStation> _inactiveForDetectionId(
+    _NiedHypDetectionState state,
+    List<_NiedHypWorkerStation> inactive,
+  ) {
+    return inactive
+        .where(
+          (station) =>
+              !state.worker.activeStationsByCode.containsKey(station.code),
+        )
+        .toList(growable: false);
+  }
+
+  void mergeSameSourceDetectionIds({required DateTime observedAt}) {
+    final active =
+        detectionIds.values
+            .where(
+              (state) =>
+                  state.active &&
+                  state.worker.previousResult != null &&
+                  state.worker.previousResult!.score < 500,
+            )
+            .toList(growable: false)
+          ..sort((left, right) => left.serial.compareTo(right.serial));
+    if (active.length < 2) return;
+    final source = active[active.length - 2];
+    final target = active.last;
+    final firstDetectionDeltaSeconds =
+        (target.createdAt.difference(source.createdAt).inMilliseconds).abs() /
+        1000.0;
+    if (firstDetectionDeltaSeconds >= 20) return;
+    final sourceResult = source.worker.previousResult!;
+    final targetResult = target.worker.previousResult!;
+    final distanceKm = _haversineKm(
+      sourceResult.latitude,
+      sourceResult.longitude,
+      targetResult.latitude,
+      targetResult.longitude,
+    );
+    final averageRadius =
+        (_maxFirstStationDistance(source) + _maxFirstStationDistance(target)) /
+        2.0;
+    if (distanceKm >= 50 + averageRadius / 2.0) return;
+
+    for (final entry in source.worker.activeStationsByCode.entries) {
+      target.worker.activeStationsByCode.putIfAbsent(
+        entry.key,
+        () => entry.value,
+      );
+      _stationDetectionIdByCode[entry.key] = target.id;
+    }
+    for (final entry in source.worker.stationSFlagByCode.entries) {
+      target.worker.stationSFlagByCode.putIfAbsent(
+        entry.key,
+        () => entry.value,
+      );
+    }
+    if (sourceResult.score < targetResult.score) {
+      target.worker
+        ..previousResult = sourceResult
+        ..previousEstimate = source.worker.previousEstimate
+        ..publishedCurvePanels = source.worker.publishedCurvePanels;
+    }
+    final sourceMinimum = source.worker.minimumPublishedScore;
+    final targetMinimum = target.worker.minimumPublishedScore;
+    if (sourceMinimum != null) {
+      target.worker.minimumPublishedScore = targetMinimum == null
+          ? sourceMinimum
+          : math.min(sourceMinimum, targetMinimum);
+    }
+    target
+      ..lastOutputBaseEstimate = null
+      ..lastOutputEstimate = null;
+    for (final entry in _gridCarrierByKey.entries.toList(growable: false)) {
+      if (entry.value.state.id != source.id) continue;
+      _gridCarrierByKey[entry.key] = _NiedHypGridCarrier(
+        state: target,
+        updatedAt: entry.value.updatedAt,
+        stationCode: entry.value.stationCode,
+      );
+    }
+    source
+      ..active = false
+      ..inactiveAt = observedAt
+      ..inactiveReason = 'scratch_same_source_merged_into_${target.id}';
+    if (_selectedDetectionId == source.id) _selectedDetectionId = target.id;
+    _sameSourceMergeCount += 1;
+  }
+
+  double _maxFirstStationDistance(_NiedHypDetectionState state) {
+    final first = state.worker.activeStationsByCode[state.firstStationCode];
+    if (first == null) return 0;
+    var maximum = 0.0;
+    for (final station in state.worker.activeStationsByCode.values) {
+      maximum = math.max(
+        maximum,
+        _scratchDetectionIdDistanceKm(first.coordinate, station.coordinate),
+      );
+    }
+    return maximum;
+  }
+
+  int? selectOutputDetectionId({
+    required Set<String> currentActiveCodes,
+    required Set<int> estimatedIds,
+  }) {
+    final candidates = estimatedIds
+        .map((id) => detectionIds[id])
+        .whereType<_NiedHypDetectionState>()
+        .where((state) => state.active)
+        .toList(growable: false);
+    if (candidates.isEmpty) return null;
+    candidates.sort((left, right) {
+      final leftOverlap = left.worker.activeStationsByCode.keys
+          .where(currentActiveCodes.contains)
+          .length;
+      final rightOverlap = right.worker.activeStationsByCode.keys
+          .where(currentActiveCodes.contains)
+          .length;
+      final overlapCompare = rightOverlap.compareTo(leftOverlap);
+      if (overlapCompare != 0) return overlapCompare;
+      if (left.id == _selectedDetectionId) return -1;
+      if (right.id == _selectedDetectionId) return 1;
+      return right.serial.compareTo(left.serial);
+    });
+    _selectedDetectionId = candidates.first.id;
+    return _selectedDetectionId;
+  }
+
+  List<Map<String, Object?>> diagnostics({
+    required Map<int, SourceEstimate> estimatesById,
+    required int? selectedId,
+    required DateTime observedAt,
+  }) {
+    final states = detectionIds.values.toList(growable: false)
+      ..sort((left, right) => left.serial.compareTo(right.serial));
+    return List<Map<String, Object?>>.unmodifiable([
+      for (final state in states)
+        {
+          'id': state.id,
+          'serial': state.serial,
+          'selected': state.id == selectedId,
+          'active': state.active,
+          'created_at': state.createdAt.toIso8601String(),
+          'age_s':
+              observedAt.difference(state.createdAt).inMilliseconds / 1000.0,
+          'last_assigned_at': state.lastAssignedAt.toIso8601String(),
+          'first_station_code': state.firstStationCode,
+          'station_order_model':
+              'ka_active_station_table_order_matching_scratch_point_index',
+          'assigned_station_order': state.worker.activeStationsByCode.keys
+              .toList(growable: false),
+          'assigned_station_count': state.worker.activeStationsByCode.length,
+          'assigned_station_codes':
+              (state.worker.activeStationsByCode.keys.toList()..sort()),
+          'cached_s_flag_count': state.worker.stationSFlagByCode.values
+              .where((value) => value)
+              .length,
+          'has_estimate': estimatesById.containsKey(state.id),
+          'score': state.worker.previousResult?.score.isFinite == true
+              ? state.worker.previousResult!.score
+              : null,
+          'inactive_at': state.inactiveAt?.toIso8601String(),
+          'inactive_reason': state.inactiveReason,
+          'grid_carrier_count': _gridCarrierByKey.values
+              .where((entry) => entry.state.id == state.id)
+              .length,
+          'same_source_merge_count': _sameSourceMergeCount,
+          'output_selection_model':
+              'current_ka_active_station_overlap_keep_previous_on_tie',
+        },
+    ]);
+  }
+
+  ({int latitude, int longitude})? _gridIndices(LatLng coordinate) {
+    final decimal = _gridDecimal;
+    if (decimal == null) return null;
+    return (
+      latitude: niedDetectionGridAxisIndex(
+        coordinate.latitude,
+        decimal.latitude,
+      ),
+      longitude: niedDetectionGridAxisIndex(
+        coordinate.longitude,
+        decimal.longitude,
+      ),
+    );
+  }
+
+  String? _gridKey(LatLng coordinate) {
+    final indices = _gridIndices(coordinate);
+    return indices == null
+        ? null
+        : niedDetectionGridKey(indices.latitude, indices.longitude);
+  }
+
+  void _reset() {
+    detectionIds.clear();
+    _stationDetectionIdByCode.clear();
+    _gridCarrierByKey.clear();
+    lastAssignmentAcceptedByCode.clear();
+    lastAssignmentRejectedByCode.clear();
+    _nextDetectionId = 1;
+    _selectedDetectionId = null;
+    _gridDecimal = null;
+    _sameSourceMergeCount = 0;
+    _referenceIgnoredArrivalIds.clear();
+    _referenceSubclustersById.clear();
+    _referenceSubclusterIdByStationId.clear();
+    _nextReferenceSubclusterId = 1;
+    lastSourceClearReason = 'scratch_event_time_reversed_reset';
+  }
+}
+
+class _NiedHypDetectionState {
+  _NiedHypDetectionState({
+    required this.id,
+    required this.serial,
+    required this.createdAt,
+    required this.firstStationCode,
+  }) : lastAssignedAt = createdAt;
+
+  final int id;
+  final int serial;
+  final DateTime createdAt;
+  final String firstStationCode;
+  final _NiedHypWorkerState worker = _NiedHypWorkerState();
+  final List<String> referenceStationOrder = <String>[];
+  DateTime lastAssignedAt;
+  bool active = true;
+  DateTime? inactiveAt;
+  String? inactiveReason;
+  int referenceUpdates = 0;
+  int referenceReportNum = 0;
+  int referenceInactiveUpdateCount = 0;
+  int? referenceLastUpdateVersion;
+  bool referenceDirty = true;
+  bool referenceEvaluated = false;
+  SourceEstimate? lastOutputBaseEstimate;
+  SourceEstimate? lastOutputEstimate;
+
+  int get expireSeconds {
+    final count = worker.activeStationsByCode.length;
+    return count < 200 ? (3 + count) * 2 : 400;
+  }
+
+  DateTime get expireAt => createdAt.add(Duration(seconds: expireSeconds));
+}
+
+/// Reference-only cluster bookkeeping. The app-visible detection state remains
+/// the owner of inference/output, while this preserves NiedHypoInf's exact
+/// station insertion order across temporary adjacent clusters.
+class _NiedHypReferenceSubcluster {
+  _NiedHypReferenceSubcluster({required this.id, required this.state});
+
+  final int id;
+  final _NiedHypDetectionState state;
+  final Map<String, _NiedHypWorkerStation> _stationsById =
+      <String, _NiedHypWorkerStation>{};
+  final List<String> stationIds = <String>[];
+
+  List<_NiedHypWorkerStation> get orderedStations => [
+    for (final id in stationIds) ?_stationsById[id],
+  ];
+
+  void insert(_NiedHypWorkerStation station) {
+    final existing = _stationsById[station.id];
+    _stationsById[station.id] = station;
+    if (existing != null) return;
+    final triggerAt = station.triggerAt;
+    if (triggerAt == null) return;
+    var low = 0;
+    var high = stationIds.length;
+    while (low < high) {
+      final middle = (low + high) ~/ 2;
+      final existingAt = _stationsById[stationIds[middle]]?.triggerAt;
+      if (existingAt != null && !existingAt.isAfter(triggerAt)) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+    stationIds.insert(low, station.id);
+  }
+}
+
+class _NiedHypDetectionSelection {
+  const _NiedHypDetectionSelection(this.state, this.reason);
+
+  final _NiedHypDetectionState state;
+  final String reason;
+}
+
+class _NiedHypGridCarrier {
+  const _NiedHypGridCarrier({
+    required this.state,
+    required this.updatedAt,
+    required this.stationCode,
+  });
+
+  final _NiedHypDetectionState state;
+  final DateTime updatedAt;
+  final String stationCode;
+}
+
+_NiedHypWorkerStation _mergeNiedHypStation(
+  _NiedHypWorkerStation? existing,
+  _NiedHypWorkerStation incoming,
+) {
+  if (existing == null) return incoming;
+  return _NiedHypWorkerStation(
+    id: existing.id,
+    code: existing.code,
+    coordinate: existing.coordinate,
+    triggerAt: existing.triggerAt,
+    updateAt: incoming.updateAt ?? existing.updateAt,
+    level: math.max(existing.level ?? -1, incoming.level ?? -1).toInt(),
+    ascend: math.max(existing.ascend, incoming.ascend),
+    active: true,
+  );
+}
+
+class _NiedHypWorkerState {
+  final Map<String, _NiedHypWorkerStation> activeStationsByCode =
+      <String, _NiedHypWorkerStation>{};
+  final Map<String, bool> stationSFlagByCode = <String, bool>{};
+  final Map<String, Map<String, bool>> referencePreviousWavesByFirstWave =
+      <String, Map<String, bool>>{'P': <String, bool>{}, 'S': <String, bool>{}};
+  final Map<String, String> lastAssignmentAcceptedByCode = <String, String>{};
+  final Map<String, String> lastAssignmentRejectedByCode = <String, String>{};
+  _NiedHypWorkerResult? previousResult;
+  SourceEstimate? previousEstimate;
+  List<Map<String, Object?>>? publishedCurvePanels;
+  int publishedCurveRevision = 0;
+  double? minimumPublishedScore;
+  double? referencePreviousOriginMilliseconds;
+  DateTime? lastObservedAt;
+
+  _NiedHypWorkerFrame mergeFrame(
+    _NiedHypWorkerFrame frame, {
+    required DateTime observedAt,
+  }) {
+    final previousObservedAt = lastObservedAt;
+    if (previousObservedAt != null && observedAt.isBefore(previousObservedAt)) {
+      activeStationsByCode.clear();
+      stationSFlagByCode.clear();
+      referencePreviousWavesByFirstWave
+        ..clear()
+        ..['P'] = <String, bool>{}
+        ..['S'] = <String, bool>{};
+      previousResult = null;
+      previousEstimate = null;
+      publishedCurvePanels = null;
+      publishedCurveRevision = 0;
+      minimumPublishedScore = null;
+      referencePreviousOriginMilliseconds = null;
+    }
+    lastObservedAt = observedAt;
+    lastAssignmentAcceptedByCode.clear();
+    lastAssignmentRejectedByCode.clear();
+
+    for (final incoming in frame.activeStations) {
+      final existing = activeStationsByCode[incoming.code];
+      if (existing == null) {
+        final decision = _niedHypWorkerAssignmentDecision(
+          incoming,
+          activeStationsByCode.values.toList(growable: false),
+          previousResult,
+          observedAt: observedAt,
+        );
+        if (!decision.accepted) {
+          lastAssignmentRejectedByCode[incoming.code] = decision.reason;
+          continue;
+        }
+        lastAssignmentAcceptedByCode[incoming.code] = decision.reason;
+        activeStationsByCode[incoming.code] = incoming;
+        continue;
+      }
+      activeStationsByCode[incoming.code] = _NiedHypWorkerStation(
+        id: existing.id,
+        code: existing.code,
+        coordinate: existing.coordinate,
+        triggerAt: existing.triggerAt,
+        updateAt: incoming.updateAt ?? existing.updateAt,
+        level: math.max(existing.level ?? -1, incoming.level ?? -1).toInt(),
+        ascend: math.max(existing.ascend, incoming.ascend),
+        active: true,
+      );
+    }
+
+    final active = activeStationsByCode.values.toList(growable: false)
+      ..sort((left, right) {
+        final leftAt = left.triggerAt;
+        final rightAt = right.triggerAt;
+        if (leftAt == null && rightAt == null) {
+          return left.code.compareTo(right.code);
+        }
+        if (leftAt == null) return 1;
+        if (rightAt == null) return -1;
+        final timeCompare = leftAt.compareTo(rightAt);
+        return timeCompare != 0 ? timeCompare : left.code.compareTo(right.code);
+      });
+    final inactive = frame.inactiveStations
+        .where((station) => !activeStationsByCode.containsKey(station.code))
+        .toList(growable: false);
+    stationSFlagByCode.removeWhere(
+      (code, _) => !activeStationsByCode.containsKey(code),
+    );
+    return _NiedHypWorkerFrame(
+      newActiveStations: const <_NiedHypWorkerStation>[],
+      activeStations: active,
+      inactiveStations: inactive,
+      adjacencyByStationId: frame.adjacencyByStationId,
+      inactiveScope: frame.inactiveScope,
+    );
+  }
 }
 
 class _NiedHypWorkerStation {
@@ -8994,9 +10643,7 @@ class _NiedHypWorkerStation {
     required this.triggerAt,
     required this.updateAt,
     required this.level,
-    required this.detectLevel,
     required this.ascend,
-    required this.activity,
     required this.active,
   });
 
@@ -9006,10 +10653,26 @@ class _NiedHypWorkerStation {
   final DateTime? triggerAt;
   final DateTime? updateAt;
   final int? level;
-  final int? detectLevel;
   final int ascend;
-  final double activity;
   final bool active;
+}
+
+class _NiedHypWorkerCandidateConstraints {
+  const _NiedHypWorkerCandidateConstraints({
+    required this.firstLatitude,
+    required this.firstLongitude,
+    required this.maxDetectedDistanceKm,
+    required this.maxAllowedDepthKm,
+    required this.maxAllowedDistanceKm,
+    required this.referenceAligned,
+  });
+
+  final double firstLatitude;
+  final double firstLongitude;
+  final double maxDetectedDistanceKm;
+  final double maxAllowedDepthKm;
+  final double maxAllowedDistanceKm;
+  final bool referenceAligned;
 }
 
 class _NiedHypWorkerResult {
@@ -9018,9 +10681,16 @@ class _NiedHypWorkerResult {
     required this.longitude,
     required this.depthKm,
     required this.originTime,
+    required this.originOffsetSeconds,
     required this.score,
+    required this.errorLevel,
     required this.rmse,
+    required this.weightSum,
+    required this.weightedResidualSquares,
+    required this.stationScale,
     required this.inactivePenalty,
+    required this.inactivePRadiusKm,
+    required this.inactiveReferenceDistanceKm,
     required this.inactivePenaltyWeight,
     required this.waveCountPenaltyMultiplier,
     required this.effectiveStationCount,
@@ -9030,15 +10700,25 @@ class _NiedHypWorkerResult {
     required this.sWaveCount,
     required this.otherWaveCount,
     required this.searchStages,
+    this.referencePreviousWavesByFirstWave =
+        const <String, Map<String, bool>>{},
+    this.referenceScenarioDiagnostics = const <String, Object?>{},
   });
 
   final double latitude;
   final double longitude;
   final double depthKm;
   final DateTime originTime;
+  final double originOffsetSeconds;
   final double score;
+  final double errorLevel;
   final double rmse;
+  final double weightSum;
+  final double weightedResidualSquares;
+  final double stationScale;
   final double inactivePenalty;
+  final double inactivePRadiusKm;
+  final double inactiveReferenceDistanceKm;
   final double inactivePenaltyWeight;
   final double waveCountPenaltyMultiplier;
   final int effectiveStationCount;
@@ -9048,143 +10728,772 @@ class _NiedHypWorkerResult {
   final int sWaveCount;
   final int otherWaveCount;
   final List<Map<String, Object?>> searchStages;
+  final Map<String, Map<String, bool>> referencePreviousWavesByFirstWave;
+  // Only populated by the kanameishi-aligned experiment. This keeps replay
+  // comparison evidence with the estimate without changing the default path.
+  final Map<String, Object?> referenceScenarioDiagnostics;
+}
+
+class _NiedReferenceScenario {
+  const _NiedReferenceScenario({
+    required this.result,
+    required this.wavesByStationId,
+  });
+
+  final _NiedHypWorkerResult result;
+  final Map<String, bool> wavesByStationId;
+}
+
+({bool accepted, String reason, double? residualSeconds})
+_niedHypWorkerAssignmentDecision(
+  _NiedHypWorkerStation station,
+  List<_NiedHypWorkerStation> assigned,
+  _NiedHypWorkerResult? previousResult, {
+  required DateTime observedAt,
+  bool allowInitialSeed = true,
+}) {
+  if (assigned.isEmpty || (previousResult == null && allowInitialSeed)) {
+    return (
+      accepted: true,
+      reason: 'initial_event_station_without_previous_source',
+      residualSeconds: null,
+    );
+  }
+  final timedAssigned =
+      assigned.where((item) => item.triggerAt != null).toList(growable: false)
+        ..sort((left, right) {
+          final byTime = left.triggerAt!.compareTo(right.triggerAt!);
+          return byTime != 0 ? byTime : left.code.compareTo(right.code);
+        });
+  final triggerAt = station.triggerAt;
+  if (timedAssigned.isEmpty || triggerAt == null) {
+    return (
+      accepted: false,
+      reason: 'scratch_4_2_reject_no_station_time',
+      residualSeconds: null,
+    );
+  }
+  final earliestAt = timedAssigned.first.triggerAt!;
+  final detectionIdAgeSeconds =
+      observedAt.difference(earliestAt).inMilliseconds / 1000.0;
+  final useSourceCache =
+      previousResult != null &&
+      previousResult.score.isFinite &&
+      detectionIdAgeSeconds > 5.0 &&
+      previousResult.score < 500.0;
+
+  late final double latitude;
+  late final double longitude;
+  late final double depthKm;
+  late final double originOffsetSeconds;
+  if (useSourceCache) {
+    final sourceCache = previousResult;
+    latitude = (sourceCache.latitude * 60.0).round() / 60.0;
+    longitude = (sourceCache.longitude * 60.0).round() / 60.0;
+    depthKm = sourceCache.depthKm.roundToDouble();
+    originOffsetSeconds =
+        (sourceCache.originTime.difference(earliestAt).inMilliseconds / 1000.0)
+            .roundToDouble();
+  } else if (assigned.length > 4) {
+    latitude = _roundTo(timedAssigned.first.coordinate.latitude, 0.01);
+    longitude = _roundTo(timedAssigned.first.coordinate.longitude, 0.01);
+    depthKm = 10.0;
+    originOffsetSeconds = -3.0;
+  } else {
+    return (
+      accepted: false,
+      reason: 'scratch_4_2_reject_no_source_or_fallback',
+      residualSeconds: null,
+    );
+  }
+
+  final surfaceDistanceKm = _haversineKm(
+    latitude,
+    longitude,
+    station.coordinate.latitude,
+    station.coordinate.longitude,
+  );
+  final hypocentralDistanceKm = math.sqrt(
+    surfaceDistanceKm * surfaceDistanceKm + depthKm * depthKm,
+  );
+  final stationObservedSeconds =
+      triggerAt.difference(earliestAt).inMilliseconds / 1000.0;
+  final pTravelSeconds = Jma2001TravelTimeApproximation.travelTimeSeconds(
+    hypocentralDistanceKm: hypocentralDistanceKm,
+    depthKm: depthKm,
+    pWave: true,
+  );
+  final pArrivalSeconds = originOffsetSeconds + pTravelSeconds;
+  final pToleranceSeconds = 5.0 + surfaceDistanceKm / 120.0;
+  final pResidualSeconds = (pArrivalSeconds - stationObservedSeconds).abs();
+  if (pResidualSeconds <= pToleranceSeconds) {
+    return (
+      accepted: true,
+      reason: 'scratch_4_2_accept_p_window',
+      residualSeconds: pResidualSeconds,
+    );
+  }
+
+  final sTravelSeconds = Jma2001TravelTimeApproximation.travelTimeSeconds(
+    hypocentralDistanceKm: hypocentralDistanceKm,
+    depthKm: depthKm,
+    pWave: false,
+  );
+  final sArrivalSeconds = originOffsetSeconds + sTravelSeconds;
+  final sToleranceSeconds = 8.0 + surfaceDistanceKm / 120.0;
+  if (stationObservedSeconds < pArrivalSeconds - pToleranceSeconds) {
+    return (
+      accepted: false,
+      reason: 'scratch_4_2_reject_before_p_window',
+      residualSeconds: pResidualSeconds,
+    );
+  }
+  if (stationObservedSeconds > sArrivalSeconds + sToleranceSeconds) {
+    return (
+      accepted: false,
+      reason: 'scratch_4_2_reject_after_s_window',
+      residualSeconds: (sArrivalSeconds - stationObservedSeconds).abs(),
+    );
+  }
+  return (
+    accepted: true,
+    reason: 'scratch_4_2_accept_s_range',
+    residualSeconds: (sArrivalSeconds - stationObservedSeconds).abs(),
+  );
 }
 
 SourceEstimate? _estimateNiedHypWorkerFrame(
   SourceEstimationRequest request,
-  _NiedHypWorkerFrame frame, {
+  _NiedHypWorkerFrame frame,
+  _NiedHypWorkerState state, {
+  required String firstStationCode,
+  required DateTime detectionCreatedAt,
   required String methodId,
+  required NiedHypWritebackPolicy writebackPolicy,
+  required double historicalMinimumMultiplier,
+  required NiedHypSearchSchedule searchSchedule,
 }) {
   const minInferenceClusterSize = 5;
-  final active =
-      frame.activeStations
-          .where((station) => station.triggerAt != null)
+  final indexedClusterStations =
+      frame.activeStations.indexed
+          .where((entry) => entry.$2.triggerAt != null)
           .toList(growable: false)
-        ..sort((a, b) => a.triggerAt!.compareTo(b.triggerAt!));
-  if (active.length < minInferenceClusterSize) {
+        ..sort((left, right) {
+          final byTime = left.$2.triggerAt!.compareTo(right.$2.triggerAt!);
+          return byTime != 0 ? byTime : left.$1.compareTo(right.$1);
+        });
+  final clusterStations = indexedClusterStations
+      .map((entry) => entry.$2)
+      .toList(growable: false);
+  final weightedActive = clusterStations
+      .where((station) => station.ascend >= 2)
+      .toList(growable: false);
+  final zeroContributionStations = clusterStations
+      .where((station) => station.ascend < 2)
+      .toList(growable: false);
+  final referenceAlignedSearch =
+      searchSchedule == NiedHypSearchSchedule.referenceBroadFourStage;
+  // NiedHypoInf admits a cluster once five active stations have formed.  A
+  // station with a small/zero ascend may contribute little to the score, but
+  // it must not make the cluster fail the HYP trigger threshold.
+  if (clusterStations.length < minInferenceClusterSize) {
     request.metadata['nied_dart_hyp_worker_null_reason'] =
-        'active_station_count_below_5';
-    request.metadata['nied_dart_hyp_worker_active_count'] = active.length;
+        'ka_active_cluster_count_below_5';
+    request.metadata
+      ..['nied_dart_hyp_worker_active_count'] = clusterStations.length
+      ..['nied_dart_hyp_worker_effective_active_count'] = weightedActive.length
+      ..['nied_dart_hyp_worker_zero_contribution_count'] =
+          zeroContributionStations.length;
     return null;
   }
+  // NiedHypoInf keeps zero-weight L stations in trigger order. They do not
+  // enter residuals, but they do determine rank weights for the whole cluster.
+  final active = referenceAlignedSearch ? clusterStations : weightedActive;
+  final inactive = _niedHypWorkerNearbyInactiveStations(frame, active);
 
+  // Relative chart/scoring time starts at the first station that actually
+  // contributes to this pass. Shifting the reference leaves absolute origin
+  // time and every residual unchanged, while excluded KA zero-weight members
+  // no longer create a hidden offset in the published curve.
   final earliestAt = active.first.triggerAt!;
+  _NiedHypWorkerStation? seedStation;
+  for (final station in clusterStations) {
+    if (station.code == firstStationCode) {
+      seedStation = station;
+      break;
+    }
+  }
+  if (seedStation == null) {
+    request.metadata['nied_dart_hyp_worker_null_reason'] =
+        'scratch_detection_id_first_station_missing';
+    request.metadata['nied_dart_hyp_worker_first_station_code'] =
+        firstStationCode;
+    return null;
+  }
+  final seedTriggerAt = referenceAlignedSearch
+      ? earliestAt
+      : seedStation.triggerAt!;
   final earliestStations = active
       .where((station) => station.triggerAt == earliestAt)
       .toList(growable: false);
-  final seedLat = _roundTo(
-    earliestStations
-            .map((station) => station.coordinate.latitude)
-            .reduce((a, b) => a + b) /
-        earliestStations.length,
-    0.1,
+  final seedLat = referenceAlignedSearch
+      ? _roundTo(
+          earliestStations
+                  .map((station) => station.coordinate.latitude)
+                  .reduce((sum, value) => sum + value) /
+              earliestStations.length,
+          0.1,
+        )
+      : (seedStation.coordinate.latitude * 60).roundToDouble() / 60.0;
+  final seedLng = referenceAlignedSearch
+      ? _roundTo(
+          earliestStations
+                  .map((station) => station.coordinate.longitude)
+                  .reduce((sum, value) => sum + value) /
+              earliestStations.length,
+          0.1,
+        )
+      : (seedStation.coordinate.longitude * 60).roundToDouble() / 60.0;
+  final seedOriginAt = seedTriggerAt.subtract(const Duration(seconds: 2));
+  final candidateConstraints = _niedHypWorkerCandidateConstraints(
+    active,
+    firstStation: seedStation,
+    referenceAligned: referenceAlignedSearch,
   );
-  final seedLng = _roundTo(
-    earliestStations
-            .map((station) => station.coordinate.longitude)
-            .reduce((a, b) => a + b) /
-        earliestStations.length,
-    0.1,
-  );
+  final elapsedSinceFirstTriggerSeconds =
+      request.observedAt.difference(seedTriggerAt).inMilliseconds / 1000.0;
+  final elapsedSinceDetectionSeconds =
+      request.observedAt.difference(detectionCreatedAt).inMilliseconds / 1000.0;
+  final hypAgeSeconds = elapsedSinceDetectionSeconds;
+  final allowSWave = elapsedSinceDetectionSeconds > 15.0;
+  final inactivePenaltyGateOpen =
+      elapsedSinceDetectionSeconds <= 3.0 ||
+      (elapsedSinceDetectionSeconds <= 10.0 && active.length < 30);
+  request.metadata['nied_dart_hyp_worker_reused'] = false;
+  final previousResult = state.previousResult;
+  if (hypAgeSeconds >= 120.0) {
+    final previousEstimate = state.previousEstimate;
+    if (previousResult == null || previousEstimate == null) {
+      request.metadata['nied_dart_hyp_worker_null_reason'] =
+          'scratch_hyp_age_limit_without_published_source';
+      return null;
+    }
+    final waveRadii = _niedHypWorkerWaveRadii(
+      observedAt: request.observedAt,
+      originTime: previousResult.originTime,
+      depthKm: previousResult.depthKm,
+      maxDetectedDistanceKm: candidateConstraints.maxDetectedDistanceKm,
+    );
+    request.metadata
+      ..['nied_dart_hyp_worker_input'] = 'ka_nied_station_snapshot_v1'
+      ..['nied_dart_hyp_worker_active_count'] = clusterStations.length
+      ..['nied_dart_hyp_worker_effective_active_count'] = active.length
+      ..['nied_dart_hyp_worker_zero_contribution_count'] =
+          zeroContributionStations.length
+      ..['nied_dart_hyp_worker_inactive_count'] = inactive.length
+      ..remove('nied_dart_hyp_worker_null_reason');
+    final estimate = SourceEstimate(
+      latitude: previousEstimate.latitude,
+      longitude: previousEstimate.longitude,
+      depthKm: previousEstimate.depthKm,
+      magnitude: previousEstimate.magnitude,
+      originTime: previousEstimate.originTime,
+      confidence: previousEstimate.confidence,
+      method: previousEstimate.method,
+      supportingStationCount: previousEstimate.supportingStationCount,
+      diagnostics: {
+        ...previousEstimate.diagnostics,
+        'elapsed_since_first_trigger_s': elapsedSinceFirstTriggerSeconds,
+        'elapsed_since_detection_id_created_s': elapsedSinceDetectionSeconds,
+        'hyp_age_s': hypAgeSeconds,
+        'hyp_calculation_enabled': false,
+        'search_cycle_ran': false,
+        'search_cycle_finished': true,
+        'search_termination_reason': 'scratch_hyp_age_limit_120s',
+        'wave_elapsed_s': waveRadii.elapsedSeconds,
+        'wave_radius_cap_km': waveRadii.radiusCapKm,
+        'wave_radius_visible': waveRadii.visible,
+        'best_source_p_radius_km': waveRadii.pRadiusKm,
+        'best_source_s_radius_km': waveRadii.sRadiusKm,
+      },
+    );
+    state.previousEstimate = estimate;
+    return estimate;
+  }
+  if (previousResult != null) {
+    _refreshNiedHypWorkerStationSFlags(
+      state.stationSFlagByCode,
+      active,
+      previousResult,
+    );
+  }
+  final scoringSFlagByCode = Map<String, bool>.from(state.stationSFlagByCode);
+  final useTemporaryEpicenter = referenceAlignedSearch
+      ? previousResult == null
+      : previousResult == null || elapsedSinceDetectionSeconds < 10.0;
+  final startLatitude = useTemporaryEpicenter
+      ? seedLat
+      : previousResult.latitude;
+  final startLongitude = useTemporaryEpicenter
+      ? seedLng
+      : previousResult.longitude;
+  final startDepthKm = useTemporaryEpicenter ? 10.0 : previousResult.depthKm;
+  final searchStopwatch = Stopwatch()..start();
+  var candidateScoreCallCount = 1;
   var current = _scoreNiedHypWorkerCandidate(
     active,
-    frame.inactiveStations,
+    inactive,
     observedAt: request.observedAt,
     earliestAt: earliestAt,
-    latitude: seedLat,
-    longitude: seedLng,
-    depthKm: 10.0,
+    latitude: startLatitude,
+    longitude: startLongitude,
+    depthKm: startDepthKm,
+    allowSWave: allowSWave,
+    applyInactivePenalty: inactivePenaltyGateOpen,
+    stationSFlagByCode: scoringSFlagByCode,
+    candidateConstraints: candidateConstraints,
+    adjacencyByStationId: frame.adjacencyByStationId,
+    referenceAligned: referenceAlignedSearch,
+    referencePreviousWavesByFirstWave: state.referencePreviousWavesByFirstWave,
   );
   final stages = <Map<String, Object?>>[];
-  const steps = <({double degree, double depth})>[
-    (degree: 3.0, depth: 100.0),
-    (degree: 1.0, depth: 50.0),
-    (degree: 0.3, depth: 20.0),
-    (degree: 0.1, depth: 10.0),
-  ];
-  var iteration = 0;
+  final steps = switch (searchSchedule) {
+    NiedHypSearchSchedule.scratchViewerFiveStage =>
+      <({double degree, double? depth, bool enabled, int moveLimit})>[
+        (
+          degree: 0.5,
+          depth: null,
+          enabled: active.length > 10,
+          moveLimit: elapsedSinceDetectionSeconds < 5.0 ? 15 : 30,
+        ),
+        (
+          degree: 0.1,
+          depth: null,
+          enabled: true,
+          moveLimit: elapsedSinceDetectionSeconds < 5.0
+              ? (active.length < 10 ? 6 : 40)
+              : 80,
+        ),
+        (degree: 0.1, depth: 50.0, enabled: true, moveLimit: 100),
+        (degree: 0.1, depth: 10.0, enabled: true, moveLimit: 100),
+        (degree: 1 / 60, depth: null, enabled: true, moveLimit: 10),
+      ],
+    NiedHypSearchSchedule.referenceBroadFourStage =>
+      <({double degree, double? depth, bool enabled, int moveLimit})>[
+        (degree: 3.0, depth: 100.0, enabled: true, moveLimit: 1000),
+        (degree: 1.0, depth: 50.0, enabled: true, moveLimit: 1000),
+        (degree: 0.3, depth: 20.0, enabled: true, moveLimit: 1000),
+        (degree: 0.1, depth: 10.0, enabled: true, moveLimit: 1000),
+      ],
+    NiedHypSearchSchedule.scratchFiveStageWithBroadRescue =>
+      <({double degree, double? depth, bool enabled, int moveLimit})>[
+        (
+          degree: 0.5,
+          depth: null,
+          enabled: active.length > 10,
+          moveLimit: elapsedSinceDetectionSeconds < 5.0 ? 15 : 30,
+        ),
+        (
+          degree: 0.1,
+          depth: null,
+          enabled: true,
+          moveLimit: elapsedSinceDetectionSeconds < 5.0
+              ? (active.length < 10 ? 6 : 40)
+              : 80,
+        ),
+        (degree: 0.1, depth: 50.0, enabled: true, moveLimit: 100),
+        (degree: 0.1, depth: 10.0, enabled: true, moveLimit: 100),
+        (degree: 1 / 60, depth: null, enabled: true, moveLimit: 10),
+        (degree: 3.0, depth: 100.0, enabled: true, moveLimit: 1000),
+        (degree: 1.0, depth: 50.0, enabled: true, moveLimit: 1000),
+        (degree: 0.3, depth: 20.0, enabled: true, moveLimit: 1000),
+        (degree: 0.1, depth: 10.0, enabled: true, moveLimit: 1000),
+        (degree: 0.1, depth: 10.0, enabled: true, moveLimit: 100),
+        (degree: 1 / 60, depth: null, enabled: true, moveLimit: 10),
+      ],
+    NiedHypSearchSchedule.scratchFiveStageJointNeighborhood =>
+      <({double degree, double? depth, bool enabled, int moveLimit})>[
+        (
+          degree: 0.5,
+          depth: null,
+          enabled: active.length > 10,
+          moveLimit: elapsedSinceDetectionSeconds < 5.0 ? 15 : 30,
+        ),
+        (
+          degree: 0.1,
+          depth: null,
+          enabled: true,
+          moveLimit: elapsedSinceDetectionSeconds < 5.0
+              ? (active.length < 10 ? 6 : 40)
+              : 80,
+        ),
+        (degree: 0.1, depth: 50.0, enabled: true, moveLimit: 100),
+        (degree: 0.1, depth: 10.0, enabled: true, moveLimit: 100),
+        (degree: 1 / 60, depth: null, enabled: true, moveLimit: 10),
+      ],
+  };
+  var totalIteration = 0;
+  var stageIteration = 0;
+  var stageEvaluatedCandidateCount = 0;
+  var stageRejectedCandidateCount = 0;
+  var stageRejectedReasonCounts = <String, int>{};
+  var stageMoves = <Map<String, Object?>>[];
   var stepIndex = 0;
-  while (stepIndex < steps.length && iteration < 1000) {
-    iteration += 1;
+  while (stepIndex < steps.length && totalIteration < 1000) {
     final step = steps[stepIndex];
-    var bestCandidate = _scoreNiedHypWorkerCandidate(
-      active,
-      frame.inactiveStations,
-      observedAt: request.observedAt,
-      earliestAt: earliestAt,
-      latitude: current.latitude,
-      longitude: current.longitude + step.degree,
-      depthKm: current.depthKm,
-    );
-    void scoreCandidate(double lat, double lng, double depthKm) {
+    if (!step.enabled) {
+      stages.add({
+        'step_index': stepIndex,
+        'degree_step': step.degree,
+        'depth_step_km': step.depth,
+        'move_limit': step.moveLimit,
+        'termination_reason': 'skipped_station_count',
+        'iterations': 0,
+        'total_iterations': totalIteration,
+        'evaluated_candidate_count': 0,
+        'rejected_candidate_count': 0,
+        'rejected_reason_counts': const <String, int>{},
+        'moves': const <Map<String, Object?>>[],
+        'best_score': current.score,
+        'best_latitude': current.latitude,
+        'best_longitude': current.longitude,
+        'best_depth_km': current.depthKm,
+        'terminal_center': {
+          'latitude': current.latitude,
+          'longitude': current.longitude,
+          'depth_km': current.depthKm,
+          'score': current.score,
+          'error_level': current.errorLevel,
+          'inactive_penalty': current.inactivePenalty,
+        },
+        'terminal_candidates': const <Map<String, Object?>>[],
+      });
+      stepIndex += 1;
+      continue;
+    }
+    totalIteration += 1;
+    stageIteration += 1;
+    _NiedHypWorkerResult? bestCandidate;
+    String? bestDirection;
+    final iterationCandidates = <Map<String, Object?>>[];
+    void scoreCandidate(
+      String direction,
+      double lat,
+      double lng,
+      double depthKm,
+    ) {
+      final rejectReason = _niedHypWorkerCandidateRejectReason(
+        latitude: lat,
+        longitude: lng,
+        depthKm: depthKm,
+        constraints: candidateConstraints,
+      );
+      if (rejectReason != null) {
+        stageRejectedCandidateCount += 1;
+        stageRejectedReasonCounts[rejectReason] =
+            (stageRejectedReasonCounts[rejectReason] ?? 0) + 1;
+        iterationCandidates.add({
+          'direction': direction,
+          'latitude': lat,
+          'longitude': lng,
+          'depth_km': depthKm,
+          'evaluated': false,
+          'reject_reason': rejectReason,
+        });
+        return;
+      }
+      stageEvaluatedCandidateCount += 1;
+      candidateScoreCallCount += 1;
       final candidate = _scoreNiedHypWorkerCandidate(
         active,
-        frame.inactiveStations,
+        inactive,
         observedAt: request.observedAt,
         earliestAt: earliestAt,
         latitude: lat,
         longitude: lng,
-        depthKm: depthKm.clamp(0.0, 700.0).toDouble(),
+        depthKm: depthKm,
+        allowSWave: allowSWave,
+        applyInactivePenalty: inactivePenaltyGateOpen,
+        stationSFlagByCode: scoringSFlagByCode,
+        candidateConstraints: candidateConstraints,
+        adjacencyByStationId: frame.adjacencyByStationId,
+        referenceAligned: referenceAlignedSearch,
+        referencePreviousWavesByFirstWave:
+            state.referencePreviousWavesByFirstWave,
       );
-      if (candidate.score < bestCandidate.score) bestCandidate = candidate;
+      iterationCandidates.add({
+        'direction': direction,
+        'latitude': candidate.latitude,
+        'longitude': candidate.longitude,
+        'depth_km': candidate.depthKm,
+        'score': candidate.score,
+        'error_level': candidate.errorLevel,
+        'inactive_penalty': candidate.inactivePenalty,
+        'evaluated': true,
+      });
+      if (bestCandidate == null || candidate.score < bestCandidate!.score) {
+        bestCandidate = candidate;
+        bestDirection = direction;
+      }
     }
 
-    scoreCandidate(
-      current.latitude - step.degree,
-      current.longitude,
-      current.depthKm,
-    );
-    scoreCandidate(
-      current.latitude,
-      current.longitude - step.degree,
-      current.depthKm,
-    );
-    scoreCandidate(
-      current.latitude + step.degree,
-      current.longitude,
-      current.depthKm,
-    );
-    scoreCandidate(
-      current.latitude,
-      current.longitude,
-      current.depthKm - step.depth,
-    );
-    scoreCandidate(
-      current.latitude,
-      current.longitude,
-      current.depthKm + step.depth,
-    );
-    if (bestCandidate.score + 1e-9 < current.score) {
-      current = bestCandidate;
+    // NiedHypoInf.js searches this exact neighbor order. Its score surface is
+    // discrete because phase assignment changes per candidate, so preserving
+    // the order preserves the reference implementation's tie-breaking path.
+    final lateralDirections = referenceAlignedSearch
+        ? <(String, double, double)>[
+            ('lng+${step.degree}', 0.0, step.degree),
+            ('lat-${step.degree}', -step.degree, 0.0),
+            ('lng-${step.degree}', 0.0, -step.degree),
+            ('lat+${step.degree}', step.degree, 0.0),
+          ]
+        : <(String, double, double)>[
+            ('lng+${step.degree}', 0.0, step.degree),
+            ('lng-${step.degree}', 0.0, -step.degree),
+            ('lat+${step.degree}', step.degree, 0.0),
+            ('lat-${step.degree}', -step.degree, 0.0),
+          ];
+    for (final direction in lateralDirections) {
+      scoreCandidate(
+        direction.$1,
+        current.latitude + direction.$2,
+        current.longitude + direction.$3,
+        current.depthKm,
+      );
+    }
+    final depthStep = step.depth;
+    if (depthStep != null) {
+      scoreCandidate(
+        'depth-${depthStep.toInt()}',
+        current.latitude,
+        current.longitude,
+        current.depthKm - depthStep,
+      );
+      scoreCandidate(
+        'depth+${depthStep.toInt()}',
+        current.latitude,
+        current.longitude,
+        current.depthKm + depthStep,
+      );
+      if (searchSchedule ==
+          NiedHypSearchSchedule.scratchFiveStageJointNeighborhood) {
+        for (final latDirection in const [-1, 0, 1]) {
+          for (final lngDirection in const [-1, 0, 1]) {
+            for (final depthDirection in const [-1, 0, 1]) {
+              final changedAxisCount =
+                  (latDirection == 0 ? 0 : 1) +
+                  (lngDirection == 0 ? 0 : 1) +
+                  (depthDirection == 0 ? 0 : 1);
+              if (changedAxisCount < 2) continue;
+              scoreCandidate(
+                'joint_lat${latDirection >= 0 ? '+' : ''}$latDirection'
+                '_lng${lngDirection >= 0 ? '+' : ''}$lngDirection'
+                '_depth${depthDirection >= 0 ? '+' : ''}$depthDirection',
+                current.latitude + latDirection * step.degree,
+                current.longitude + lngDirection * step.degree,
+                current.depthKm + depthDirection * depthStep,
+              );
+            }
+          }
+        }
+      }
+    }
+    final selectedCandidate = bestCandidate;
+    if (selectedCandidate != null &&
+        selectedCandidate.score + 1e-9 < current.score) {
+      stageMoves.add({
+        'stage_iteration': stageIteration,
+        'total_iteration': totalIteration,
+        'direction': bestDirection,
+        'from': {
+          'latitude': current.latitude,
+          'longitude': current.longitude,
+          'depth_km': current.depthKm,
+          'score': current.score,
+          'weighted_residual_squares': current.weightedResidualSquares,
+          'weight_sum': current.weightSum,
+          'inactive_penalty': current.inactivePenalty,
+          'inactive_p_radius_km': current.inactivePRadiusKm,
+          'station_scale': current.stationScale,
+          'wave_count_penalty_multiplier': current.waveCountPenaltyMultiplier,
+        },
+        'to': {
+          'latitude': selectedCandidate.latitude,
+          'longitude': selectedCandidate.longitude,
+          'depth_km': selectedCandidate.depthKm,
+          'score': selectedCandidate.score,
+          'weighted_residual_squares':
+              selectedCandidate.weightedResidualSquares,
+          'weight_sum': selectedCandidate.weightSum,
+          'inactive_penalty': selectedCandidate.inactivePenalty,
+          'inactive_p_radius_km': selectedCandidate.inactivePRadiusKm,
+          'station_scale': selectedCandidate.stationScale,
+          'wave_count_penalty_multiplier':
+              selectedCandidate.waveCountPenaltyMultiplier,
+        },
+      });
+      current = selectedCandidate;
+      // Scratch exits after the move counter exceeds the stage limit.
+      if (stageMoves.length > step.moveLimit) {
+        stages.add({
+          'step_index': stepIndex,
+          'degree_step': step.degree,
+          'depth_step_km': step.depth,
+          'move_limit': step.moveLimit,
+          'termination_reason': 'move_limit',
+          'iterations': stageIteration,
+          'total_iterations': totalIteration,
+          'evaluated_candidate_count': stageEvaluatedCandidateCount,
+          'rejected_candidate_count': stageRejectedCandidateCount,
+          'rejected_reason_counts': stageRejectedReasonCounts,
+          'moves': stageMoves,
+          'best_score': current.score,
+          'best_latitude': current.latitude,
+          'best_longitude': current.longitude,
+          'best_depth_km': current.depthKm,
+          'terminal_center': {
+            'latitude': current.latitude,
+            'longitude': current.longitude,
+            'depth_km': current.depthKm,
+            'score': current.score,
+            'error_level': current.errorLevel,
+            'inactive_penalty': current.inactivePenalty,
+          },
+          'terminal_candidates': iterationCandidates,
+        });
+        stepIndex += 1;
+        stageIteration = 0;
+        stageEvaluatedCandidateCount = 0;
+        stageRejectedCandidateCount = 0;
+        stageRejectedReasonCounts = <String, int>{};
+        stageMoves = <Map<String, Object?>>[];
+      }
     } else {
       stages.add({
         'step_index': stepIndex,
         'degree_step': step.degree,
         'depth_step_km': step.depth,
-        'iterations': iteration,
+        'move_limit': step.moveLimit,
+        'termination_reason': 'local_minimum',
+        'iterations': stageIteration,
+        'total_iterations': totalIteration,
+        'evaluated_candidate_count': stageEvaluatedCandidateCount,
+        'rejected_candidate_count': stageRejectedCandidateCount,
+        'rejected_reason_counts': stageRejectedReasonCounts,
+        'moves': stageMoves,
         'best_score': current.score,
         'best_latitude': current.latitude,
         'best_longitude': current.longitude,
         'best_depth_km': current.depthKm,
+        'terminal_center': {
+          'latitude': current.latitude,
+          'longitude': current.longitude,
+          'depth_km': current.depthKm,
+          'score': current.score,
+          'error_level': current.errorLevel,
+          'inactive_penalty': current.inactivePenalty,
+        },
+        'terminal_candidates': iterationCandidates,
       });
       stepIndex += 1;
+      stageIteration = 0;
+      stageEvaluatedCandidateCount = 0;
+      stageRejectedCandidateCount = 0;
+      stageRejectedReasonCounts = <String, int>{};
+      stageMoves = <Map<String, Object?>>[];
     }
   }
-  final result = current.copyWith(searchStages: stages);
-  final curvePanels = _niedHypWorkerCurvePanels(
-    result,
-    active,
-    frame.inactiveStations,
-    earliestAt: earliestAt,
+  final searchedResult = current.copyWith(searchStages: stages);
+  searchStopwatch.stop();
+  // NiedHypoInf keeps rejected clusters internally, but does not publish one
+  // until it has at least one effective station with a real score. The
+  // reference port uses a finite 1e12 sentinel for some rejected candidates,
+  // so checking `isFinite` alone would leak a support-0 placeholder to the
+  // map and unified UI.
+  final hasPublishableResult =
+      searchedResult.effectiveStationCount > 0 &&
+      searchedResult.weightSum > 0 &&
+      searchedResult.score.isFinite &&
+      searchedResult.errorLevel.isFinite;
+  if (!hasPublishableResult) {
+    request.metadata['nied_dart_hyp_worker_null_reason'] =
+        'nied_hyp_candidate_has_no_effective_station_result';
+    return null;
+  }
+  final previousPublishedResult = state.previousResult;
+  final minimumPublishedScore = state.minimumPublishedScore;
+  final searchResultAccepted = referenceAlignedSearch
+      ? true
+      : switch (writebackPolicy) {
+          _
+              when previousPublishedResult == null ||
+                  elapsedSinceDetectionSeconds < 10.0 =>
+            true,
+          NiedHypWritebackPolicy.historicalMinimumMultiplier =>
+            minimumPublishedScore == null ||
+                searchedResult.score <
+                    minimumPublishedScore * historicalMinimumMultiplier,
+          NiedHypWritebackPolicy.nonIncreasingCurrent =>
+            searchedResult.score <= previousPublishedResult.score,
+        };
+  final result = searchResultAccepted
+      ? searchedResult
+      : previousPublishedResult!;
+  late final List<Map<String, Object?>> curvePanels;
+  if (searchResultAccepted) {
+    curvePanels = _niedHypWorkerCurvePanels(
+      result,
+      active,
+      earliestAt: earliestAt,
+      allowSWave: allowSWave,
+      stationSFlagByCode: scoringSFlagByCode,
+      candidateConstraints: candidateConstraints,
+    );
+    state.publishedCurveRevision += 1;
+    _refreshNiedHypWorkerStationSFlags(
+      state.stationSFlagByCode,
+      active,
+      result,
+    );
+    state
+      ..previousResult = result
+      ..publishedCurvePanels = curvePanels
+      ..minimumPublishedScore = minimumPublishedScore == null
+          ? result.score
+          : math.min(minimumPublishedScore, result.score);
+    if (referenceAlignedSearch) {
+      state.referencePreviousWavesByFirstWave
+        ..clear()
+        ..addAll({
+          for (final entry in result.referencePreviousWavesByFirstWave.entries)
+            entry.key: Map<String, bool>.from(entry.value),
+        });
+      state.referencePreviousOriginMilliseconds =
+          earliestAt.millisecondsSinceEpoch +
+          result.originOffsetSeconds * 1000.0;
+    }
+  } else {
+    curvePanels =
+        state.publishedCurvePanels ??
+        _niedHypPublishedCurvePanelsFromEstimate(state.previousEstimate) ??
+        const <Map<String, Object?>>[];
+  }
+  final waveRadii = _niedHypWorkerWaveRadii(
     observedAt: request.observedAt,
+    originTime: result.originTime,
+    depthKm: result.depthKm,
+    maxDetectedDistanceKm: candidateConstraints.maxDetectedDistanceKm,
   );
   final confidence = _niedHypWorkerConfidence(result);
   request.metadata
-    ..['nied_dart_hyp_worker_input'] = 'find_nied_hypocenter_worker_update_v1'
-    ..['nied_dart_hyp_worker_active_count'] = active.length
-    ..['nied_dart_hyp_worker_inactive_count'] = frame.inactiveStations.length
+    ..['nied_dart_hyp_worker_input'] = 'ka_nied_station_snapshot_v1'
+    ..['nied_dart_hyp_worker_active_count'] = clusterStations.length
+    ..['nied_dart_hyp_worker_effective_active_count'] = active.length
+    ..['nied_dart_hyp_worker_zero_contribution_count'] =
+        zeroContributionStations.length
+    ..['nied_dart_hyp_worker_inactive_count'] = inactive.length
     ..remove('nied_dart_hyp_worker_null_reason');
-  return SourceEstimate(
+  final estimate = SourceEstimate(
     latitude: result.latitude,
     longitude: result.longitude,
     depthKm: result.depthKm,
@@ -9194,19 +11503,130 @@ SourceEstimate? _estimateNiedHypWorkerFrame(
     supportingStationCount: result.effectiveStationCount,
     diagnostics: {
       'method': methodId,
-      'input_format': 'find_nied_hypocenter_worker_update_v1',
-      'calculation_model': 'dart_port_of_find_nied_hypocenter_core_v1',
-      'search_steps': const [
-        {'degree': 3.0, 'depth': 100.0},
-        {'degree': 1.0, 'depth': 50.0},
-        {'degree': 0.3, 'depth': 20.0},
-        {'degree': 0.1, 'depth': 10.0},
+      'input_format': 'ka_nied_station_snapshot_v1',
+      'inactive_station_scope':
+          frame.inactiveScope ?? 'legacy_hypocenter_adjacency',
+      'detection_grid': request.metadata['nied_hypocenter_detection_grid'],
+      'calculation_model': referenceAlignedSearch
+          ? 'kanameishi_find_nied_hypocenter_reference_port_v1'
+          : 'article_scratch_hypocenter_core_v2',
+      'temporary_epicenter_seed_model': referenceAlignedSearch
+          ? 'kanameishi_earliest_timestamp_station_mean_round_0_1_degree'
+          : 'scratch_hyp_first_station_round_to_1_60_degree_origin_minus_2s',
+      'search_start_model': useTemporaryEpicenter
+          ? (referenceAlignedSearch
+                ? 'kanameishi_initial_hypocenter_before_first_result'
+                : 'article_step2_temporary_epicenter_within_first_10s')
+          : (referenceAlignedSearch
+                ? 'kanameishi_previous_cluster_hypocenter'
+                : 'article_step2_previous_hypocenter_after_first_10s'),
+      'elapsed_since_first_trigger_s': elapsedSinceFirstTriggerSeconds,
+      'elapsed_since_detection_id_created_s': elapsedSinceDetectionSeconds,
+      'hyp_age_s': hypAgeSeconds,
+      'hyp_calculation_enabled': true,
+      'search_cycle_ran': true,
+      'search_cycle_finished': true,
+      'search_candidate_score_call_count': candidateScoreCallCount,
+      'search_elapsed_ms': searchStopwatch.elapsedMilliseconds,
+      'search_termination_reason': 'scratch_all_enabled_stages_finished',
+      'search_result_update_model': referenceAlignedSearch
+          ? 'kanameishi_dirty_cluster_replaces_current_result'
+          : switch (writebackPolicy) {
+              NiedHypWritebackPolicy.historicalMinimumMultiplier =>
+                'scratch_4_4_first_10s_or_below_historical_min_times_multiplier',
+              NiedHypWritebackPolicy.nonIncreasingCurrent =>
+                'experiment_first_10s_or_non_increasing_current_score',
+            },
+      'search_result_writeback_policy': writebackPolicy.name,
+      'search_schedule': searchSchedule.name,
+      'search_schedule_reference': switch (searchSchedule) {
+        NiedHypSearchSchedule.scratchViewerFiveStage =>
+          'scratch_project_hyp_viewer_five_stage',
+        NiedHypSearchSchedule.referenceBroadFourStage =>
+          'kanameishi_nied_hypo_inf_broad_four_stage_experiment_same_article_score',
+        NiedHypSearchSchedule.scratchFiveStageWithBroadRescue =>
+          'scratch_five_stage_then_broad_lower_score_only_then_fine_experiment',
+        NiedHypSearchSchedule.scratchFiveStageJointNeighborhood =>
+          'scratch_five_stage_with_joint_lat_lng_depth_neighbors_experiment',
+      },
+      'historical_minimum_score_multiplier': historicalMinimumMultiplier,
+      'search_result_accepted': searchResultAccepted,
+      'historical_minimum_published_score': state.minimumPublishedScore,
+      'searched_result': {
+        'latitude': searchedResult.latitude,
+        'longitude': searchedResult.longitude,
+        'depth_km': searchedResult.depthKm,
+        'origin_time': searchedResult.originTime.toIso8601String(),
+        'score': searchedResult.score,
+      },
+      's_wave_gate_open': allowSWave,
+      'phase_cache_reference_model':
+          'scratch_4_4_quantized_assignment_only_lat_lng_1_60_depth_origin_integer',
+      'station_assignment_model':
+          'scratch_4_2_previous_source_p_window_then_s_range',
+      'station_contribution_model':
+          'ka_zero_weight_gate_max_ascend_below_2_then_scratch_distance_weight',
+      'cluster_station_count': clusterStations.length,
+      'effective_input_station_count': active.length,
+      'zero_contribution_station_count': zeroContributionStations.length,
+      'zero_contribution_station_codes': [
+        for (final station in zeroContributionStations.take(80)) station.code,
+      ],
+      'candidate_constraints': {
+        'model': referenceAlignedSearch
+            ? 'reference_hypocenter_normalized_global_domain'
+            : 'scratch_hyp_dynamic_candidate_domain',
+        'first_station_code': seedStation.code,
+        'max_detected_distance_km': candidateConstraints.maxDetectedDistanceKm,
+        'max_allowed_depth_km': candidateConstraints.maxAllowedDepthKm,
+        'max_allowed_first_station_distance_km':
+            candidateConstraints.maxAllowedDistanceKm,
+        'latitude_min': referenceAlignedSearch ? -90.0 : 15.0,
+        'latitude_max': referenceAlignedSearch ? 90.0 : 55.0,
+        'longitude_min': referenceAlignedSearch ? -180.0 : 115.0,
+        'longitude_max': referenceAlignedSearch ? 180.0 : 155.0,
+      },
+      'station_assignment_accepted': Map<String, String>.from(
+        state.lastAssignmentAcceptedByCode,
+      ),
+      'station_assignment_rejected': Map<String, String>.from(
+        state.lastAssignmentRejectedByCode,
+      ),
+      'cached_s_flag_count': state.stationSFlagByCode.values
+          .where((isS) => isS)
+          .length,
+      'historical_active_count': clusterStations.length,
+      'temporary_epicenter_seed': {
+        'station_code': seedStation.code,
+        'trigger_at': seedTriggerAt.toIso8601String(),
+        'origin_time': seedOriginAt.toIso8601String(),
+        'latitude': seedLat,
+        'longitude': seedLng,
+        'depth_km': 10.0,
+      },
+      'search_steps': [
+        for (final step in steps)
+          {
+            'degree': step.degree,
+            'depth': step.depth,
+            'enabled': step.enabled,
+            'move_limit': step.moveLimit,
+          },
       ],
       'score_model':
-          'article_step3_weighted_origin_rmse_plus_inactive_penalty',
+          'scratch_hyp_weighted_variance_station_scale_inactive_plus_s_multiplier',
+      'inactive_penalty_gate_model':
+          'kotoho7_article_elapsed_le_3_or_elapsed_le_10_and_active_lt_30',
+      'inactive_penalty_gate_open': inactivePenaltyGateOpen,
       'score': result.score,
+      'error_level': result.errorLevel,
       'rmse': result.rmse,
+      'weight_sum': result.weightSum,
+      'weighted_residual_squares': result.weightedResidualSquares,
+      'station_scale': result.stationScale,
       'inactive_penalty': result.inactivePenalty,
+      'inactive_p_radius_km': result.inactivePRadiusKm,
+      'inactive_reference_distance_km': result.inactiveReferenceDistanceKm,
       'inactive_penalty_weight': result.inactivePenaltyWeight,
       'wave_count_penalty_multiplier': result.waveCountPenaltyMultiplier,
       'effective_station_count': result.effectiveStationCount,
@@ -9217,97 +11637,127 @@ SourceEstimate? _estimateNiedHypWorkerFrame(
         'S': result.sWaveCount,
         'O': result.otherWaveCount,
       },
-      'search': {'type': 'reference_neighbor_descent', 'stages': stages},
+      if (result.referenceScenarioDiagnostics.isNotEmpty)
+        'reference_scenario_diagnostics': result.referenceScenarioDiagnostics,
+      'wave_radius_model': 'scratch_4_4_jma2001_inverse_capped_by_cluster',
+      'wave_elapsed_s': waveRadii.elapsedSeconds,
+      'wave_radius_cap_km': waveRadii.radiusCapKm,
+      'wave_radius_visible': waveRadii.visible,
+      'best_source_p_radius_km': waveRadii.pRadiusKm,
+      'best_source_s_radius_km': waveRadii.sRadiusKm,
+      'search': {'type': 'article_scratch_neighbor_descent', 'stages': stages},
+      'map_candidate_model': 'published_result_only',
+      'travel_time_curve_source': 'published_result_accepted_scoring_snapshot',
+      'travel_time_curve_frozen': !searchResultAccepted,
+      'travel_time_curve_revision': state.publishedCurveRevision,
+      'travel_time_curve_sample_count': curvePanels.isEmpty
+          ? 0
+          : ((curvePanels.first['samples'] as List?)?.length ?? 0),
       'travel_time_curve_panels': curvePanels,
     },
   );
+  state.previousEstimate = estimate;
+  return estimate;
+}
+
+({
+  double elapsedSeconds,
+  double pRadiusKm,
+  double sRadiusKm,
+  double radiusCapKm,
+  bool visible,
+})
+_niedHypWorkerWaveRadii({
+  required DateTime observedAt,
+  required DateTime originTime,
+  required double depthKm,
+  required double maxDetectedDistanceKm,
+}) {
+  const hiddenRadius = 999999.0;
+  final radiusCapKm = 100.0 + maxDetectedDistanceKm * 3.0;
+  final elapsedSeconds = math.max(
+    0.0,
+    observedAt.difference(originTime).inMilliseconds / 1000.0,
+  );
+  if (elapsedSeconds >= 300.0) {
+    return (
+      elapsedSeconds: elapsedSeconds,
+      pRadiusKm: hiddenRadius,
+      sRadiusKm: hiddenRadius,
+      radiusCapKm: radiusCapKm,
+      visible: false,
+    );
+  }
+  return (
+    elapsedSeconds: elapsedSeconds,
+    pRadiusKm: math.min(
+      Jma2001TravelTimeApproximation.epicentralRadiusKm(
+        elapsedSeconds: elapsedSeconds,
+        depthKm: depthKm,
+        pWave: true,
+      ),
+      radiusCapKm,
+    ),
+    sRadiusKm: math.min(
+      Jma2001TravelTimeApproximation.epicentralRadiusKm(
+        elapsedSeconds: elapsedSeconds,
+        depthKm: depthKm,
+        pWave: false,
+      ),
+      radiusCapKm,
+    ),
+    radiusCapKm: radiusCapKm,
+    visible: true,
+  );
+}
+
+List<_NiedHypWorkerStation> _niedHypWorkerNearbyInactiveStations(
+  _NiedHypWorkerFrame frame,
+  List<_NiedHypWorkerStation> active,
+) {
+  if (frame.inactiveScope == 'ka_detection_surrounding_9_grid' ||
+      frame.inactiveScope ==
+          'ka_level_present_all_network_scratch_dynamic_radius') {
+    return frame.inactiveStations;
+  }
+  if (frame.adjacencyByStationId.isEmpty) return frame.inactiveStations;
+  final nearbyIds = <String>{};
+  for (final station in active) {
+    nearbyIds.addAll(frame.adjacencyByStationId[station.id] ?? const {});
+  }
+  return frame.inactiveStations
+      .where((station) => nearbyIds.contains(station.id))
+      .toList(growable: false);
 }
 
 List<Map<String, Object?>> _niedHypWorkerCurvePanels(
   _NiedHypWorkerResult center,
-  List<_NiedHypWorkerStation> active,
-  List<_NiedHypWorkerStation> inactive, {
+  List<_NiedHypWorkerStation> active, {
   required DateTime earliestAt,
-  required DateTime observedAt,
+  required bool allowSWave,
+  required Map<String, bool> stationSFlagByCode,
+  required _NiedHypWorkerCandidateConstraints candidateConstraints,
 }) {
-  const neighborStepDeg = 0.1;
-  const neighborDepthKm = 10.0;
-  final candidates = <({String label, _NiedHypWorkerResult result})>[
-    (label: 'current', result: center),
-    (
-      label: 'lat-0.1',
-      result: _scoreNiedHypWorkerCandidate(
-        active,
-        inactive,
-        observedAt: observedAt,
-        earliestAt: earliestAt,
-        latitude: center.latitude - neighborStepDeg,
-        longitude: center.longitude,
-        depthKm: center.depthKm,
-      ),
-    ),
-    (
-      label: 'lat+0.1',
-      result: _scoreNiedHypWorkerCandidate(
-        active,
-        inactive,
-        observedAt: observedAt,
-        earliestAt: earliestAt,
-        latitude: center.latitude + neighborStepDeg,
-        longitude: center.longitude,
-        depthKm: center.depthKm,
-      ),
-    ),
-    (
-      label: 'lng-0.1',
-      result: _scoreNiedHypWorkerCandidate(
-        active,
-        inactive,
-        observedAt: observedAt,
-        earliestAt: earliestAt,
-        latitude: center.latitude,
-        longitude: center.longitude - neighborStepDeg,
-        depthKm: center.depthKm,
-      ),
-    ),
-    (
-      label: 'lng+0.1',
-      result: _scoreNiedHypWorkerCandidate(
-        active,
-        inactive,
-        observedAt: observedAt,
-        earliestAt: earliestAt,
-        latitude: center.latitude,
-        longitude: center.longitude + neighborStepDeg,
-        depthKm: center.depthKm,
-      ),
-    ),
-    (
-      label: 'depth+10',
-      result: _scoreNiedHypWorkerCandidate(
-        active,
-        inactive,
-        observedAt: observedAt,
-        earliestAt: earliestAt,
-        latitude: center.latitude,
-        longitude: center.longitude,
-        depthKm: (center.depthKm + neighborDepthKm).clamp(0.0, 700.0),
-      ),
-    ),
-  ];
   return [
-    for (final candidate in candidates)
-      _niedHypWorkerCurvePanel(
-        candidate.result,
-        active,
-        earliestAt: earliestAt,
-        label: candidate.label,
-        selected:
-            candidate.result.latitude == center.latitude &&
-            candidate.result.longitude == center.longitude &&
-            candidate.result.depthKm == center.depthKm,
-      ),
+    _niedHypWorkerCurvePanel(
+      center,
+      active,
+      earliestAt: earliestAt,
+      label: 'current',
+      selected: true,
+      allowSWave: allowSWave,
+      stationSFlagByCode: stationSFlagByCode,
+      candidateConstraints: candidateConstraints,
+    ),
   ];
+}
+
+List<Map<String, Object?>>? _niedHypPublishedCurvePanelsFromEstimate(
+  SourceEstimate? estimate,
+) {
+  final rawPanels = estimate?.diagnostics['travel_time_curve_panels'];
+  if (rawPanels is List<Map<String, Object?>>) return rawPanels;
+  return null;
 }
 
 Map<String, Object?> _niedHypWorkerCurvePanel(
@@ -9316,6 +11766,9 @@ Map<String, Object?> _niedHypWorkerCurvePanel(
   required DateTime earliestAt,
   required String label,
   required bool selected,
+  required bool allowSWave,
+  required Map<String, bool> stationSFlagByCode,
+  required _NiedHypWorkerCandidateConstraints candidateConstraints,
 }) {
   final samples = <Map<String, Object?>>[];
   var maxDistanceKm = 0.0;
@@ -9324,8 +11777,19 @@ Map<String, Object?> _niedHypWorkerCurvePanel(
   final firstDetectedDistanceKm = _niedHypWorkerFirstDetectedDistanceKm(
     result.latitude,
     result.longitude,
-    active,
+    candidateConstraints,
   );
+  final stationRows =
+      <
+        ({
+          _NiedHypWorkerStation station,
+          double distanceKm,
+          double observedSeconds,
+          double selectedTravelSeconds,
+          double weight,
+          bool useS,
+        })
+      >[];
   for (final station in active) {
     final distanceKm = _haversineKm(
       result.latitude,
@@ -9345,24 +11809,46 @@ Map<String, Object?> _niedHypWorkerCurvePanel(
     final hypocentralDistanceKm = math.sqrt(
       distanceKm * distanceKm + result.depthKm * result.depthKm,
     );
-    final pTravel = Jma2001TravelTimeApproximation.travelTimeSeconds(
+    final useS = allowSWave && (stationSFlagByCode[station.code] ?? false);
+    final selectedTravel = Jma2001TravelTimeApproximation.travelTimeSeconds(
       hypocentralDistanceKm: hypocentralDistanceKm,
       depthKm: result.depthKm,
-      pWave: true,
+      pWave: !useS,
     );
-    final predictedSeconds =
-        result.originTime.difference(earliestAt).inMilliseconds / 1000.0 +
-        pTravel;
+    final weight = _niedHypWorkerDistanceWeight(
+      firstDetectedDistanceKm,
+      distanceKm,
+    );
+    stationRows.add((
+      station: station,
+      distanceKm: distanceKm,
+      observedSeconds: observedSeconds,
+      selectedTravelSeconds: selectedTravel,
+      weight: weight,
+      useS: useS,
+    ));
+  }
+  final originOffsetSeconds = result.originOffsetSeconds;
+  for (final row in stationRows) {
+    final station = row.station;
+    final predictedSeconds = originOffsetSeconds + row.selectedTravelSeconds;
     samples.add({
+      'id': station.id,
       'code': station.code,
-      'distance_km': distanceKm,
-      'observed_s': observedSeconds,
-      'predicted_s': predictedSeconds,
-      'residual_s': observedSeconds - predictedSeconds,
-      'weight': _niedHypWorkerDistanceWeight(
-        firstDetectedDistanceKm,
-        distanceKm,
+      'latitude': station.coordinate.latitude,
+      'longitude': station.coordinate.longitude,
+      'trigger_stamp': station.triggerAt!.millisecondsSinceEpoch,
+      'update_stamp': station.updateAt?.millisecondsSinceEpoch,
+      'distance_km': row.distanceKm,
+      'epicentral_distance_km': row.distanceKm,
+      'hypocentral_distance_km': math.sqrt(
+        row.distanceKm * row.distanceKm + result.depthKm * result.depthKm,
       ),
+      'observed_s': row.observedSeconds,
+      'predicted_s': predictedSeconds,
+      'residual_s': row.observedSeconds - predictedSeconds,
+      'wave': row.useS ? 'S' : 'P',
+      'weight': row.weight,
       'level': station.level,
       'ascend': station.ascend,
     });
@@ -9372,10 +11858,15 @@ Map<String, Object?> _niedHypWorkerCurvePanel(
       (right['distance_km']! as num).toDouble(),
     ),
   );
-  final lineMaxKm = math.max(50.0, (maxDistanceKm / 25.0).ceil() * 25.0);
-  final originOffsetSeconds =
-      result.originTime.difference(earliestAt).inMilliseconds / 1000.0;
-  final curve = <Map<String, Object?>>[];
+  // The panel is an inspection view of this exact scoring pass. Keep its
+  // distance domain tied to the farthest real station instead of extending it
+  // to a display-friendly synthetic boundary.
+  final lineMaxKm = maxDistanceKm > 0 ? maxDistanceKm : 1.0;
+  final activeTimingRmse = result.weightSum > 0
+      ? math.sqrt(result.weightedResidualSquares / result.weightSum)
+      : null;
+  final pCurve = <Map<String, Object?>>[];
+  final sCurve = <Map<String, Object?>>[];
   for (var i = 0; i <= 32; i++) {
     final distanceKm = lineMaxKm * i / 32.0;
     final hypocentralDistanceKm = math.sqrt(
@@ -9386,9 +11877,18 @@ Map<String, Object?> _niedHypWorkerCurvePanel(
       depthKm: result.depthKm,
       pWave: true,
     );
-    curve.add({
+    final sTravel = Jma2001TravelTimeApproximation.travelTimeSeconds(
+      hypocentralDistanceKm: hypocentralDistanceKm,
+      depthKm: result.depthKm,
+      pWave: false,
+    );
+    pCurve.add({
       'distance_km': distanceKm,
       'arrival_s': originOffsetSeconds + pTravel,
+    });
+    sCurve.add({
+      'distance_km': distanceKm,
+      'arrival_s': originOffsetSeconds + sTravel,
     });
   }
   return {
@@ -9397,16 +11897,614 @@ Map<String, Object?> _niedHypWorkerCurvePanel(
     'latitude': result.latitude,
     'longitude': result.longitude,
     'depth_km': result.depthKm,
+    'origin_time': result.originTime.toIso8601String(),
+    'time_reference': earliestAt.toIso8601String(),
+    'time_reference_model': 'earliest_effective_scoring_station_trigger',
+    'distance_axis_model': 'epicentral_surface_distance_haversine_6371_km',
+    'travel_time_model':
+        'jma2001_scratch_polynomial_hypocentral_distance_input',
     'origin_offset_s': originOffsetSeconds,
     'score': result.score,
+    'error_level': result.errorLevel,
     'rmse': result.rmse,
+    'active_timing_rmse': activeTimingRmse,
+    'weight_sum': result.weightSum,
+    'weighted_residual_squares': result.weightedResidualSquares,
+    'station_scale': result.stationScale,
+    'wave_count_penalty_multiplier': result.waveCountPenaltyMultiplier,
+    'p_wave_count': result.pWaveCount,
+    's_wave_count': result.sWaveCount,
+    'effective_station_count': result.effectiveStationCount,
+    'inactive_penalty': result.inactivePenalty,
+    'inactive_p_radius_km': result.inactivePRadiusKm,
+    'inactive_reference_distance_km': result.inactiveReferenceDistanceKm,
     'quality_rank': result.qualityRank,
     'observed_min_s': minObservedSeconds.isFinite ? minObservedSeconds : null,
     'observed_max_s': maxObservedSeconds.isFinite ? maxObservedSeconds : null,
     'distance_max_km': maxDistanceKm,
-    'samples': samples.take(80).toList(growable: false),
-    'curve': curve,
+    'samples': selected ? samples : samples.take(80).toList(growable: false),
+    'curve': pCurve,
+    'p_curve': pCurve,
+    's_curve': sCurve,
   };
+}
+
+void _refreshNiedHypWorkerStationSFlags(
+  Map<String, bool> stationSFlagByCode,
+  List<_NiedHypWorkerStation> active,
+  _NiedHypWorkerResult reference,
+) {
+  final referenceLatitude = (reference.latitude * 60.0).round() / 60.0;
+  final referenceLongitude = (reference.longitude * 60.0).round() / 60.0;
+  final referenceDepthKm = reference.depthKm.roundToDouble();
+  final referenceOriginTime = DateTime.fromMillisecondsSinceEpoch(
+    (reference.originTime.millisecondsSinceEpoch / 1000.0).round() * 1000,
+    isUtc: reference.originTime.isUtc,
+  );
+  for (final station in active) {
+    if (stationSFlagByCode.containsKey(station.code)) continue;
+    final triggerAt = station.triggerAt;
+    if (triggerAt == null) continue;
+    final surfaceDistanceKm = _haversineKm(
+      referenceLatitude,
+      referenceLongitude,
+      station.coordinate.latitude,
+      station.coordinate.longitude,
+    );
+    final hypocentralDistanceKm = math.sqrt(
+      surfaceDistanceKm * surfaceDistanceKm +
+          referenceDepthKm * referenceDepthKm,
+    );
+    final pTravel = Jma2001TravelTimeApproximation.travelTimeSeconds(
+      hypocentralDistanceKm: hypocentralDistanceKm,
+      depthKm: referenceDepthKm,
+      pWave: true,
+    );
+    final sTravel = Jma2001TravelTimeApproximation.travelTimeSeconds(
+      hypocentralDistanceKm: hypocentralDistanceKm,
+      depthKm: referenceDepthKm,
+      pWave: false,
+    );
+    final pArrival = referenceOriginTime.add(
+      Duration(milliseconds: (pTravel * 1000).round()),
+    );
+    final sArrival = referenceOriginTime.add(
+      Duration(milliseconds: (sTravel * 1000).round()),
+    );
+    final pResidualMs = triggerAt.difference(pArrival).inMilliseconds.abs();
+    final sResidualMs = triggerAt.difference(sArrival).inMilliseconds.abs();
+    stationSFlagByCode[station.code] = sResidualMs < pResidualMs;
+  }
+}
+
+_NiedHypWorkerResult _scoreNiedReferenceCandidate(
+  List<_NiedHypWorkerStation> active,
+  List<_NiedHypWorkerStation> inactive, {
+  required double latitude,
+  required double longitude,
+  required double depthKm,
+  required DateTime earliestAt,
+  required Map<String, Set<String>> adjacencyByStationId,
+  required Map<String, Map<String, bool>> referencePreviousWavesByFirstWave,
+}) {
+  final stationCount = active.length;
+  if (stationCount < 5) {
+    return _invalidNiedHypWorkerResult(
+      latitude: latitude,
+      longitude: longitude,
+      depthKm: depthKm,
+      originTime: earliestAt,
+      activeCount: stationCount,
+    );
+  }
+  final weights = List<double>.generate(stationCount, (index) {
+    final station = active[index];
+    final densityWeight =
+        1.0 /
+        math.sqrt(math.max(1, adjacencyByStationId[station.id]?.length ?? 0));
+    final rankRatio = (index + 1) / math.max(stationCount, 100);
+    final rankWeight = rankRatio <= 0.2
+        ? 1.0
+        : rankRatio <= 0.4
+        ? 1.5 - rankRatio * 2.5
+        : rankRatio <= 0.8
+        ? 0.9 - rankRatio
+        : 0.1;
+    final ascendWeight = station.ascend >= 4
+        ? math.min(0.2 * station.ascend, 2.0)
+        : station.ascend >= 3
+        ? 0.3
+        : station.ascend >= 2
+        ? 0.1
+        : 0.0;
+    return densityWeight * rankWeight * ascendWeight;
+  });
+
+  final pOrigins = List<double>.filled(stationCount, 0.0);
+  final sOrigins = List<double>.filled(stationCount, 0.0);
+  for (var index = 0; index < stationCount; index++) {
+    final station = active[index];
+    final distanceKm = _kanameishiHaversineKm(
+      latitude,
+      longitude,
+      station.coordinate.latitude,
+      station.coordinate.longitude,
+    );
+    final observedSeconds =
+        station.triggerAt!.difference(earliestAt).inMilliseconds / 1000.0;
+    pOrigins[index] =
+        observedSeconds -
+        KanameishiJma2001TravelTimeTable.travelTimeSeconds(
+          surfaceDistanceKm: distanceKm,
+          depthKm: depthKm,
+          pWave: true,
+        );
+    sOrigins[index] =
+        observedSeconds -
+        KanameishiJma2001TravelTimeTable.travelTimeSeconds(
+          surfaceDistanceKm: distanceKm,
+          depthKm: depthKm,
+          pWave: false,
+        );
+  }
+  double originFor(int index, bool useS) =>
+      useS ? sOrigins[index] : pOrigins[index];
+
+  double? weightedOriginForIndexes(Iterable<int> indexes, List<bool?> waves) {
+    var sum = 0.0;
+    var weightSum = 0.0;
+    for (final index in indexes) {
+      final wave = waves[index];
+      if (wave == null || weights[index] <= 0) continue;
+      sum += originFor(index, wave) * weights[index];
+      weightSum += weights[index];
+    }
+    return weightSum > 0 ? sum / weightSum : null;
+  }
+
+  double? weightedOrigin(List<bool?> waves) =>
+      weightedOriginForIndexes(Iterable<int>.generate(stationCount), waves);
+
+  void inferMissingWaves(List<bool?> waves, List<int> orderedOriginIndexes) {
+    // NiedHypoInf.js retains originEntries in insertion order: the two anchors
+    // first, then each middle-out inference. The floating-point accumulation
+    // affects close P/S scenario comparisons, so do not rebuild by station ID.
+    for (final index in _niedReferenceMiddleOutIndexes(stationCount)) {
+      if (waves[index] != null) continue;
+      final center = weightedOriginForIndexes(orderedOriginIndexes, waves);
+      if (center == null || weights[index] <= 0) continue;
+      final pDifference = (originFor(index, false) - center).abs();
+      final sDifference = (originFor(index, true) - center).abs();
+      // calcGreedyScenarioLikelihood() uses the default residual filter once
+      // 30 weighted stations have established an origin-time center.
+      if (orderedOriginIndexes.length >= 30) {
+        var residualSum = 0.0;
+        for (final item in orderedOriginIndexes) {
+          residualSum += (originFor(item, waves[item]!) - center).abs();
+        }
+        final meanResidual = residualSum / orderedOriginIndexes.length;
+        final threshold = math.max(meanResidual * 3.0, 5.0);
+        if (pDifference > threshold && sDifference > threshold) continue;
+      }
+      waves[index] = pDifference <= sDifference * 2.0 ? false : true;
+      orderedOriginIndexes.add(index);
+    }
+  }
+
+  _NiedReferenceScenario? scoreScenario(
+    List<bool?> waves, {
+    required String scenario,
+    required String firstWave,
+    String? lastWave,
+    int filterStageLevel = 0,
+    List<int>? orderedOriginIndexes,
+  }) {
+    final originIndexes =
+        orderedOriginIndexes ??
+        <int>[
+          for (var index = 0; index < stationCount; index++)
+            if (waves[index] != null && weights[index] > 0) index,
+        ];
+    final originSeconds = weightedOriginForIndexes(originIndexes, waves);
+    if (originSeconds == null) return null;
+    var weightSum = 0.0;
+    var residualSquares = 0.0;
+    var pCount = 0;
+    var sCount = 0;
+    var lCount = 0;
+    var oCount = 0;
+    for (final index in originIndexes) {
+      final wave = waves[index]!;
+      final weight = weights[index];
+      final residual = originFor(index, wave) - originSeconds;
+      weightSum += weight;
+      residualSquares += weight * residual * residual;
+    }
+    for (var index = 0; index < stationCount; index++) {
+      final wave = waves[index];
+      final weight = weights[index];
+      if (wave == null) {
+        if (weight <= 0) {
+          lCount += 1;
+        } else {
+          oCount += 1;
+        }
+      } else if (wave) {
+        sCount += 1;
+      } else {
+        pCount += 1;
+      }
+    }
+    final effectiveCount = pCount + sCount;
+    if (weightSum <= 0 || effectiveCount == 0) return null;
+
+    final referenceDistances = <double>[
+      for (final station in active)
+        if (station.ascend >= 3 && (station.level ?? -1) >= 4)
+          _kanameishiHaversineKm(
+            latitude,
+            longitude,
+            station.coordinate.latitude,
+            station.coordinate.longitude,
+          ),
+    ]..sort();
+    var inactivePenalty = 0.0;
+    if (referenceDistances.isNotEmpty) {
+      final referenceDistance =
+          referenceDistances[math.max(
+            (referenceDistances.length * 0.9).floor() - 1,
+            0,
+          )];
+      final inactiveDistances = <double>[
+        for (final station in inactive)
+          if (station.updateAt != null)
+            _kanameishiHaversineKm(
+              latitude,
+              longitude,
+              station.coordinate.latitude,
+              station.coordinate.longitude,
+            ),
+      ]..sort();
+      final penalized = inactiveDistances
+          .takeWhile((distance) => distance <= referenceDistance)
+          .length;
+      if (inactiveDistances.length > effectiveCount &&
+          inactiveDistances[effectiveCount] <= referenceDistance) {
+        return null;
+      }
+      inactivePenalty = penalized / effectiveCount;
+    }
+    final rmse = math.sqrt(residualSquares / weightSum);
+    final inactiveWeight = effectiveCount >= 50
+        ? 0.0
+        : 10.0 * (1.0 - effectiveCount / 50.0);
+    final waveMultiplier = math.min(
+      math.max(sCount / math.max(1, pCount) - 2.0, 1.0),
+      3.0,
+    );
+    final score = (rmse + inactivePenalty * inactiveWeight) * waveMultiplier;
+    final qualityScore =
+        3.8 + math.sqrt(effectiveCount / 10.0) * 0.2 - score * 5.0 / 3.0;
+    final result = _NiedHypWorkerResult(
+      latitude: latitude,
+      longitude: longitude,
+      depthKm: depthKm,
+      originTime: earliestAt.add(
+        Duration(milliseconds: (originSeconds * 1000).round()),
+      ),
+      originOffsetSeconds: originSeconds,
+      score: score,
+      errorLevel: score,
+      rmse: rmse,
+      weightSum: weightSum,
+      weightedResidualSquares: residualSquares,
+      stationScale: 1.0,
+      inactivePenalty: inactivePenalty,
+      inactivePRadiusKm: 0.0,
+      inactiveReferenceDistanceKm: 0.0,
+      inactivePenaltyWeight: inactiveWeight,
+      waveCountPenaltyMultiplier: waveMultiplier,
+      effectiveStationCount: effectiveCount,
+      qualityScore: qualityScore,
+      qualityRank: _niedHypWorkerQualityRank(qualityScore, effectiveCount),
+      pWaveCount: pCount,
+      sWaveCount: sCount,
+      otherWaveCount: stationCount - effectiveCount,
+      searchStages: const [],
+      referenceScenarioDiagnostics: <String, Object?>{
+        'reference_scenario': scenario,
+        'reference_first_wave': firstWave,
+        'reference_last_wave': lastWave,
+        'reference_filter_stage_level': filterStageLevel,
+        'reference_p_wave_count': pCount,
+        'reference_s_wave_count': sCount,
+        'reference_l_wave_count': lCount,
+        'reference_o_wave_count': oCount,
+        'reference_inactive_penalty': inactivePenalty,
+        'reference_inactive_penalty_weight': inactiveWeight,
+        'reference_wave_count_penalty_multiplier': waveMultiplier,
+      },
+    );
+    return _NiedReferenceScenario(
+      result: result,
+      wavesByStationId: <String, bool>{
+        for (var index = 0; index < stationCount; index++)
+          if (waves[index] != null) active[index].id: waves[index]!,
+      },
+    );
+  }
+
+  Iterable<int> anchorCandidates(
+    int preferred,
+    int center,
+    int centerDirection,
+  ) sync* {
+    final emitted = <int>{};
+    void add(int index) => emitted.add(index);
+    final step = centerDirection > 0 ? 1 : -1;
+    for (
+      var index = preferred;
+      centerDirection > 0 ? index <= center : index >= center;
+      index += step
+    ) {
+      if (index >= 0 && index < stationCount) add(index);
+    }
+    for (
+      var offset = 1;
+      preferred - offset >= 0 || preferred + offset < stationCount;
+      offset++
+    ) {
+      if (preferred - offset >= 0) add(preferred - offset);
+      if (preferred + offset < stationCount) add(preferred + offset);
+    }
+    yield* emitted;
+  }
+
+  int? findAnchor(int preferred, int center, int direction, Set<int> used) {
+    for (final index in anchorCandidates(preferred, center, direction)) {
+      if (!used.contains(index) && weights[index] > 0) return index;
+    }
+    return null;
+  }
+
+  _NiedReferenceScenario? greedy(bool firstUsesS, bool lastUsesS) {
+    final lastIndex = stationCount - 1;
+    final firstAnchor = findAnchor(
+      (lastIndex * 0.25).ceil(),
+      (lastIndex * 0.75).floor(),
+      1,
+      <int>{},
+    );
+    if (firstAnchor == null) return null;
+    final lastAnchor = findAnchor(
+      (lastIndex * 0.75).floor(),
+      (lastIndex * 0.25).ceil(),
+      -1,
+      <int>{firstAnchor},
+    );
+    if (lastAnchor == null) return null;
+    final waves = List<bool?>.filled(stationCount, null)
+      ..[firstAnchor] = firstUsesS
+      ..[lastAnchor] = lastUsesS;
+    final orderedOriginIndexes = <int>[firstAnchor, lastAnchor];
+    inferMissingWaves(waves, orderedOriginIndexes);
+    return scoreScenario(
+      waves,
+      scenario: '${firstUsesS ? 'S' : 'P'}${lastUsesS ? 'S' : 'P'}',
+      firstWave: firstUsesS ? 'S' : 'P',
+      lastWave: lastUsesS ? 'S' : 'P',
+      orderedOriginIndexes: orderedOriginIndexes,
+    );
+  }
+
+  _NiedReferenceScenario? inherited(Map<String, bool> prior, bool firstUsesS) {
+    final waves = List<bool?>.generate(stationCount, (index) {
+      final wave = prior[active[index].id];
+      return weights[index] > 0 ? wave : null;
+    });
+    final inheritedIndexes = <int>[
+      // NiedHypoInf.js builds inherited originEntries through
+      // createScenarioInferenceIndexes(), which is middle-out. Keep that
+      // insertion order through filtering, inference, and final scoring: the
+      // weighted mean has observable floating-point differences for dense
+      // clusters when rebuilt in station-array order.
+      for (final index in _niedReferenceMiddleOutIndexes(stationCount))
+        if (waves[index] != null) index,
+    ];
+    if (inheritedIndexes.isEmpty || weightedOrigin(waves) == null) return null;
+
+    // Literal units from NiedHypoInf.js are milliseconds; originFor is seconds.
+    var filterStageLevel = 0;
+    var pWaveBias = 2.0;
+    ({int minCount, double ratio, double minResidual})? selectedFilter;
+    final inheritedOrigin = weightedOrigin(waves)!;
+    final meanResidual =
+        inheritedIndexes
+            .map(
+              (index) =>
+                  (originFor(index, waves[index]!) - inheritedOrigin).abs(),
+            )
+            .fold(0.0, (sum, value) => sum + value) /
+        inheritedIndexes.length;
+    final stages =
+        <
+          ({
+            int level,
+            int minCount,
+            double minRemainingRatio,
+            double ratio,
+            double minResidual,
+            double? maxMeanResidual,
+            double pWaveBias,
+          })
+        >[
+          (
+            level: 3,
+            minCount: 100,
+            minRemainingRatio: 0.9,
+            ratio: 2.0,
+            minResidual: 3.0,
+            maxMeanResidual: 1.5,
+            pWaveBias: 1.0,
+          ),
+          (
+            level: 2,
+            minCount: 30,
+            minRemainingRatio: 0.8,
+            ratio: 2.5,
+            minResidual: 4.0,
+            maxMeanResidual: 2.0,
+            pWaveBias: 1.5,
+          ),
+          (
+            level: 1,
+            minCount: 10,
+            minRemainingRatio: 0.5,
+            ratio: 3.0,
+            minResidual: 5.0,
+            maxMeanResidual: null,
+            pWaveBias: 2.0,
+          ),
+        ];
+    for (final stage in stages) {
+      if (inheritedIndexes.length < stage.minCount ||
+          (stage.maxMeanResidual != null &&
+              meanResidual > stage.maxMeanResidual!)) {
+        continue;
+      }
+      final threshold = math.max(meanResidual * stage.ratio, stage.minResidual);
+      final outliers = <int>{
+        for (final index in inheritedIndexes)
+          if (index > 0 &&
+              (originFor(index, waves[index]!) - inheritedOrigin).abs() >
+                  threshold)
+            index,
+      };
+      final remaining = inheritedIndexes.length - outliers.length;
+      final weightedCount = weights.where((weight) => weight > 0).length;
+      if (remaining < stage.minCount ||
+          remaining < weightedCount * stage.minRemainingRatio) {
+        continue;
+      }
+      for (final index in outliers) {
+        waves[index] = null;
+      }
+      inheritedIndexes.removeWhere((index) => outliers.contains(index));
+      filterStageLevel = stage.level;
+      pWaveBias = stage.pWaveBias;
+      selectedFilter = (
+        minCount: stage.minCount,
+        ratio: stage.ratio,
+        minResidual: stage.minResidual,
+      );
+      break;
+    }
+
+    for (final index in _niedReferenceMiddleOutIndexes(stationCount)) {
+      if (waves[index] != null || weights[index] <= 0) continue;
+      final center = weightedOriginForIndexes(inheritedIndexes, waves);
+      if (center == null) return null;
+      final pDifference = (originFor(index, false) - center).abs();
+      final sDifference = (originFor(index, true) - center).abs();
+      if (selectedFilter != null) {
+        if (inheritedIndexes.length >= selectedFilter.minCount) {
+          final mean =
+              inheritedIndexes
+                  .map((item) => (originFor(item, waves[item]!) - center).abs())
+                  .fold(0.0, (sum, value) => sum + value) /
+              inheritedIndexes.length;
+          final threshold = math.max(
+            mean * selectedFilter.ratio,
+            selectedFilter.minResidual,
+          );
+          if (pDifference > threshold && sDifference > threshold) {
+            continue;
+          }
+        }
+      }
+      waves[index] = pDifference <= sDifference * pWaveBias ? false : true;
+      inheritedIndexes.add(index);
+    }
+    return scoreScenario(
+      waves,
+      scenario: '${firstUsesS ? 'S' : 'P'}_PREV',
+      firstWave: firstUsesS ? 'S' : 'P',
+      filterStageLevel: filterStageLevel,
+      orderedOriginIndexes: inheritedIndexes,
+    );
+  }
+
+  final previousResults = <String, _NiedReferenceScenario>{};
+  final previousWaves = <String, Map<String, bool>>{};
+  final candidateSummaries = <Map<String, Object?>>[];
+  for (final firstUsesS in const [false, true]) {
+    final candidates = <_NiedReferenceScenario?>[
+      greedy(firstUsesS, false),
+      greedy(firstUsesS, true),
+      if ((referencePreviousWavesByFirstWave[firstUsesS ? 'S' : 'P'] ??
+              const <String, bool>{})
+          .isNotEmpty)
+        inherited(
+          referencePreviousWavesByFirstWave[firstUsesS ? 'S' : 'P']!,
+          firstUsesS,
+        ),
+    ].whereType<_NiedReferenceScenario>().toList(growable: false);
+    if (candidates.isEmpty) continue;
+    candidateSummaries.addAll([
+      for (final candidate in candidates)
+        <String, Object?>{
+          'first_wave': firstUsesS ? 'S' : 'P',
+          'scenario': candidate
+              .result
+              .referenceScenarioDiagnostics['reference_scenario'],
+          'score': candidate.result.score,
+          'rmse': candidate.result.rmse,
+          'p_wave_count': candidate.result.pWaveCount,
+          's_wave_count': candidate.result.sWaveCount,
+          'filter_stage_level': candidate
+              .result
+              .referenceScenarioDiagnostics['reference_filter_stage_level'],
+        },
+    ]);
+    final selected = candidates.reduce(
+      (best, item) => item.result.score < best.result.score ? item : best,
+    );
+    final key = firstUsesS ? 'S' : 'P';
+    previousResults[key] = selected;
+    previousWaves[key] = Map<String, bool>.from(selected.wavesByStationId);
+  }
+  if (previousResults.isEmpty) {
+    return _niedReferenceRejectedCandidate(
+      latitude: latitude,
+      longitude: longitude,
+      depthKm: depthKm,
+      originTime: earliestAt,
+      activeCount: stationCount,
+    );
+  }
+  final best = previousResults.values.reduce(
+    (best, item) => item.result.score < best.result.score ? item : best,
+  );
+  return best.result.copyWith(
+    referencePreviousWavesByFirstWave: previousWaves,
+    referenceScenarioDiagnostics: <String, Object?>{
+      ...best.result.referenceScenarioDiagnostics,
+      'reference_scenario_candidates': candidateSummaries,
+    },
+  );
+}
+
+Iterable<int> _niedReferenceMiddleOutIndexes(int count) sync* {
+  final middle = (count - 1) ~/ 2;
+  yield middle;
+  for (
+    var offset = 1;
+    middle - offset >= 0 || middle + offset < count;
+    offset++
+  ) {
+    if (middle + offset < count) yield middle + offset;
+    if (middle - offset >= 0) yield middle - offset;
+  }
 }
 
 _NiedHypWorkerResult _scoreNiedHypWorkerCandidate(
@@ -9417,16 +12515,51 @@ _NiedHypWorkerResult _scoreNiedHypWorkerCandidate(
   required double latitude,
   required double longitude,
   required double depthKm,
+  required bool allowSWave,
+  required bool applyInactivePenalty,
+  required Map<String, bool> stationSFlagByCode,
+  required _NiedHypWorkerCandidateConstraints candidateConstraints,
+  required Map<String, Set<String>> adjacencyByStationId,
+  required bool referenceAligned,
+  required Map<String, Map<String, bool>> referencePreviousWavesByFirstWave,
 }) {
-  final pOrigins = <double>[];
+  if (_niedHypWorkerCandidateRejectReason(
+        latitude: latitude,
+        longitude: longitude,
+        depthKm: depthKm,
+        constraints: candidateConstraints,
+      ) !=
+      null) {
+    return _invalidNiedHypWorkerResult(
+      latitude: latitude,
+      longitude: longitude,
+      depthKm: depthKm,
+      originTime: earliestAt,
+      activeCount: active.length,
+    );
+  }
+  if (referenceAligned) {
+    return _scoreNiedReferenceCandidate(
+      active,
+      inactive,
+      latitude: latitude,
+      longitude: longitude,
+      depthKm: depthKm,
+      earliestAt: earliestAt,
+      adjacencyByStationId: adjacencyByStationId,
+      referencePreviousWavesByFirstWave: referencePreviousWavesByFirstWave,
+    );
+  }
+  final originSamples = <double>[];
   final weights = <double>[];
-  var weightedOriginSum = 0.0;
+  final selectedWaves = <String>[];
+  var originSum = 0.0;
   var weightSum = 0.0;
   var effectiveStationCount = 0;
   final firstDetectedDistanceKm = _niedHypWorkerFirstDetectedDistanceKm(
     latitude,
     longitude,
-    active,
+    candidateConstraints,
   );
 
   for (var index = 0; index < active.length; index++) {
@@ -9440,81 +12573,86 @@ _NiedHypWorkerResult _scoreNiedHypWorkerCandidate(
     final hypocentralDistanceKm = math.sqrt(
       distanceKm * distanceKm + depthKm * depthKm,
     );
-    final pTravel = Jma2001TravelTimeApproximation.travelTimeSeconds(
+    final useS = allowSWave && (stationSFlagByCode[station.code] ?? false);
+    final selectedTravel = Jma2001TravelTimeApproximation.travelTimeSeconds(
       hypocentralDistanceKm: hypocentralDistanceKm,
       depthKm: depthKm,
-      pWave: true,
+      pWave: !useS,
     );
     final observedSeconds =
         station.triggerAt!.difference(earliestAt).inMilliseconds / 1000.0;
-    final pOrigin = observedSeconds - pTravel;
+    final stationOrigin = observedSeconds - selectedTravel;
     final weight = _niedHypWorkerDistanceWeight(
       firstDetectedDistanceKm,
       distanceKm,
     );
-    pOrigins.add(pOrigin);
+    originSamples.add(stationOrigin);
     weights.add(weight);
+    selectedWaves.add(useS ? 'S' : 'P');
+    originSum += stationOrigin;
     if (weight > 0) {
       effectiveStationCount += 1;
       weightSum += weight;
-      weightedOriginSum += pOrigin * weight;
     }
   }
 
   if (effectiveStationCount == 0 || weightSum <= 0) {
-    return _NiedHypWorkerResult(
+    return _invalidNiedHypWorkerResult(
       latitude: latitude,
       longitude: longitude,
       depthKm: depthKm,
       originTime: earliestAt,
-      score: double.infinity,
-      rmse: double.infinity,
-      inactivePenalty: 0,
-      inactivePenaltyWeight: 0,
-      waveCountPenaltyMultiplier: 1,
-      effectiveStationCount: 0,
-      qualityScore: double.negativeInfinity,
-      qualityRank: 'D',
-      pWaveCount: 0,
-      sWaveCount: 0,
-      otherWaveCount: active.length,
-      searchStages: const [],
+      activeCount: active.length,
     );
   }
 
-  // Article step (3): each station estimates an origin time by
-  // observedTrigger - travelTime, then the error level is the weighted spread
-  // around the mean origin time. The weight is first-detected distance /
-  // station distance, fixed to 1 inside 50 km.
-  final originSeconds = weightedOriginSum / weightSum;
+  // Article step (3): use the mean origin time of all detected stations,
+  // then sum each squared residual multiplied by its distance weight.
+  final originSeconds = originSum / originSamples.length;
   var weightedResidualSquares = 0.0;
-  for (var index = 0; index < pOrigins.length; index++) {
-    final residual = (pOrigins[index] - originSeconds).abs();
+  var pCount = 0;
+  var sCount = 0;
+  for (var index = 0; index < originSamples.length; index++) {
+    final residual = (originSamples[index] - originSeconds).abs();
     weightedResidualSquares += residual * residual * weights[index];
+    if (weights[index] <= 0) continue;
+    if (selectedWaves[index] == 'S') {
+      sCount += 1;
+    } else {
+      pCount += 1;
+    }
   }
-  final rmse = math.sqrt(weightedResidualSquares / weightSum);
-  final pCount = effectiveStationCount;
-  const sCount = 0;
-  final inactivePenalty = _niedHypWorkerInactivePenalty(
-    inactive,
-    active,
-    latitude: latitude,
-    longitude: longitude,
-    depthKm: depthKm,
-    originSeconds: originSeconds,
-    observedSeconds: observedAt.difference(earliestAt).inMilliseconds / 1000.0,
-    effectiveStationCount: effectiveStationCount,
-    activeStationCount: active.length,
+  final inactiveEvaluation = applyInactivePenalty
+      ? _niedHypWorkerInactivePenalty(
+          inactive,
+          latitude: latitude,
+          longitude: longitude,
+          depthKm: depthKm,
+          originSeconds: originSeconds,
+          observedSeconds:
+              observedAt.difference(earliestAt).inMilliseconds / 1000.0,
+          maxDetectedDistanceKm: candidateConstraints.maxDetectedDistanceKm,
+        )
+      : (penalty: 0.0, pRadiusKm: 0.0, referenceDistanceKm: 0.0);
+  final inactivePenalty = inactiveEvaluation.penalty;
+  final scaledResidualSquares = weightedResidualSquares + inactivePenalty;
+  final stationScale =
+      30.0 +
+      20000.0 / (1.0 + originSamples.length * originSamples.length) +
+      2000.0 / (50.0 + originSamples.length);
+  final waveCountPenaltyMultiplier = math.max(
+    0.25,
+    1.0 - sCount * 3.0 / originSamples.length,
   );
-  final inactivePenaltyWeight = _niedHypWorkerInactivePenaltyWeight(
-    effectiveStationCount,
-  );
-  const waveCountPenaltyMultiplier = 1.0;
-  final score =
-      (rmse + inactivePenalty * inactivePenaltyWeight) *
-      waveCountPenaltyMultiplier;
+  final inactivePenaltyWeight =
+      stationScale / weightSum * waveCountPenaltyMultiplier;
+  final rmse = math.sqrt(scaledResidualSquares / weightSum);
+  final errorLevel = scaledResidualSquares / weightSum * stationScale;
+  final score = errorLevel * waveCountPenaltyMultiplier;
   final qualityScore =
-      3.8 + math.sqrt(effectiveStationCount / 10) * 0.2 - score * 5 / 3;
+      3.8 +
+      math.sqrt(effectiveStationCount / 10) * 0.2 -
+      (rmse + inactivePenalty / math.max(1, effectiveStationCount)) * 5 / 3;
   final qualityRank = _niedHypWorkerQualityRank(
     qualityScore,
     effectiveStationCount,
@@ -9526,9 +12664,16 @@ _NiedHypWorkerResult _scoreNiedHypWorkerCandidate(
     originTime: earliestAt.add(
       Duration(milliseconds: (originSeconds * 1000).round()),
     ),
+    originOffsetSeconds: originSeconds,
     score: score,
+    errorLevel: errorLevel,
     rmse: rmse,
+    weightSum: weightSum,
+    weightedResidualSquares: weightedResidualSquares,
+    stationScale: stationScale,
     inactivePenalty: inactivePenalty,
+    inactivePRadiusKm: inactiveEvaluation.pRadiusKm,
+    inactiveReferenceDistanceKm: inactiveEvaluation.referenceDistanceKm,
     inactivePenaltyWeight: inactivePenaltyWeight,
     waveCountPenaltyMultiplier: waveCountPenaltyMultiplier,
     effectiveStationCount: effectiveStationCount,
@@ -9541,20 +12686,186 @@ _NiedHypWorkerResult _scoreNiedHypWorkerCandidate(
   );
 }
 
+String? _niedHypWorkerDepthRejectReason(double depthKm) {
+  if (!depthKm.isFinite) return 'non_finite_depth';
+  if (depthKm < 10.0) return 'depth_below_10_km';
+  if (depthKm > 700.0) return 'depth_above_700_km';
+  return null;
+}
+
+_NiedHypWorkerCandidateConstraints _niedHypWorkerCandidateConstraints(
+  List<_NiedHypWorkerStation> active, {
+  required _NiedHypWorkerStation firstStation,
+  required bool referenceAligned,
+}) {
+  var maxDetectedDistanceKm = 0.0;
+  for (final station in active) {
+    maxDetectedDistanceKm = math.max(
+      maxDetectedDistanceKm,
+      _scratchDetectionIdDistanceKm(
+        firstStation.coordinate,
+        station.coordinate,
+      ),
+    );
+  }
+  return _NiedHypWorkerCandidateConstraints(
+    firstLatitude: firstStation.coordinate.latitude,
+    firstLongitude: firstStation.coordinate.longitude,
+    maxDetectedDistanceKm: maxDetectedDistanceKm,
+    maxAllowedDepthKm: referenceAligned
+        ? 700.0
+        : (11.0 + math.pow(maxDetectedDistanceKm, 3) * 0.00008).roundToDouble(),
+    maxAllowedDistanceKm: referenceAligned
+        ? 20038.0
+        : (50.0 + 0.3 * (active.length * 10.0 + maxDetectedDistanceKm))
+              .roundToDouble(),
+    referenceAligned: referenceAligned,
+  );
+}
+
+double _scratchDetectionIdDistanceKm(LatLng first, LatLng second) {
+  double mercatorLatitudeDegrees(double latitude) {
+    final radians = latitude * math.pi / 180.0;
+    return math.log(math.tan(math.pi / 4.0 + radians / 2.0)) * 180.0 / math.pi;
+  }
+
+  final xDifference = (second.longitude - first.longitude) * 10.0;
+  final yDifference =
+      (mercatorLatitudeDegrees(second.latitude) -
+          mercatorLatitudeDegrees(first.latitude)) *
+      10.0;
+  return math.sqrt(xDifference * xDifference + yDifference * yDifference) *
+      11.0;
+}
+
+String? _niedHypWorkerCandidateRejectReason({
+  required double latitude,
+  required double longitude,
+  required double depthKm,
+  required _NiedHypWorkerCandidateConstraints constraints,
+}) {
+  final depthReason = constraints.referenceAligned
+      ? (!depthKm.isFinite
+            ? 'non_finite_depth'
+            : depthKm < 0.0
+            ? 'depth_below_0_km'
+            : depthKm > 700.0
+            ? 'depth_above_700_km'
+            : null)
+      : _niedHypWorkerDepthRejectReason(depthKm);
+  if (depthReason != null) return depthReason;
+  if (!constraints.referenceAligned &&
+      depthKm > constraints.maxAllowedDepthKm) {
+    return 'depth_above_scratch_dynamic_max';
+  }
+  if (!longitude.isFinite || !latitude.isFinite) {
+    return 'non_finite_coordinate';
+  }
+  if (!constraints.referenceAligned &&
+      (longitude < 115.0 || longitude > 155.0)) {
+    return 'longitude_outside_scratch_bounds';
+  }
+  if (constraints.referenceAligned
+      ? latitude < -90.0 || latitude > 90.0
+      : latitude < 15.0 || latitude > 55.0) {
+    return 'latitude_outside_scratch_bounds';
+  }
+  final firstStationDistanceKm = _haversineKm(
+    latitude,
+    longitude,
+    constraints.firstLatitude,
+    constraints.firstLongitude,
+  );
+  if (!constraints.referenceAligned &&
+      firstStationDistanceKm > constraints.maxAllowedDistanceKm) {
+    return 'distance_from_first_station_above_scratch_max';
+  }
+  return null;
+}
+
+_NiedHypWorkerResult _invalidNiedHypWorkerResult({
+  required double latitude,
+  required double longitude,
+  required double depthKm,
+  required DateTime originTime,
+  required int activeCount,
+}) {
+  return _NiedHypWorkerResult(
+    latitude: latitude,
+    longitude: longitude,
+    depthKm: depthKm,
+    originTime: originTime,
+    originOffsetSeconds: 0,
+    score: double.infinity,
+    errorLevel: double.infinity,
+    rmse: double.infinity,
+    weightSum: 0,
+    weightedResidualSquares: double.infinity,
+    stationScale: double.infinity,
+    inactivePenalty: 0,
+    inactivePRadiusKm: 0,
+    inactiveReferenceDistanceKm: 0,
+    inactivePenaltyWeight: 0,
+    waveCountPenaltyMultiplier: 1,
+    effectiveStationCount: 0,
+    qualityScore: double.negativeInfinity,
+    qualityRank: 'D',
+    pWaveCount: 0,
+    sWaveCount: 0,
+    otherWaveCount: activeCount,
+    searchStages: const [],
+  );
+}
+
+_NiedHypWorkerResult _niedReferenceRejectedCandidate({
+  required double latitude,
+  required double longitude,
+  required double depthKm,
+  required DateTime originTime,
+  required int activeCount,
+}) {
+  const rejectedScore = 1e12;
+  return _NiedHypWorkerResult(
+    latitude: latitude,
+    longitude: longitude,
+    depthKm: depthKm,
+    originTime: originTime,
+    originOffsetSeconds: 0.0,
+    score: rejectedScore,
+    errorLevel: rejectedScore,
+    rmse: rejectedScore,
+    weightSum: 0.0,
+    weightedResidualSquares: rejectedScore,
+    stationScale: 1.0,
+    inactivePenalty: rejectedScore,
+    inactivePRadiusKm: 0.0,
+    inactiveReferenceDistanceKm: 0.0,
+    inactivePenaltyWeight: 0.0,
+    waveCountPenaltyMultiplier: 1.0,
+    effectiveStationCount: 0,
+    qualityScore: -rejectedScore,
+    qualityRank: 'D',
+    pWaveCount: 0,
+    sWaveCount: 0,
+    otherWaveCount: activeCount,
+    searchStages: const [],
+  );
+}
+
 double _niedHypWorkerFirstDetectedDistanceKm(
   double latitude,
   double longitude,
-  List<_NiedHypWorkerStation> active,
+  _NiedHypWorkerCandidateConstraints constraints,
 ) {
-  if (active.isEmpty) return 50.0;
-  final first = active.first;
-  final distanceKm = _haversineKm(
-    latitude,
-    longitude,
-    first.coordinate.latitude,
-    first.coordinate.longitude,
+  return math.max(
+    50.0,
+    _haversineKm(
+      latitude,
+      longitude,
+      constraints.firstLatitude,
+      constraints.firstLongitude,
+    ),
   );
-  return math.max(50.0, distanceKm);
 }
 
 double _niedHypWorkerDistanceWeight(
@@ -9564,38 +12875,35 @@ double _niedHypWorkerDistanceWeight(
   return firstDetectedDistanceKm / math.max(50.0, stationDistanceKm);
 }
 
-double _niedHypWorkerInactivePenalty(
-  List<_NiedHypWorkerStation> inactive,
-  List<_NiedHypWorkerStation> active, {
+({double penalty, double pRadiusKm, double referenceDistanceKm})
+_niedHypWorkerInactivePenalty(
+  List<_NiedHypWorkerStation> inactive, {
   required double latitude,
   required double longitude,
   required double depthKm,
   required double originSeconds,
   required double observedSeconds,
-  required int effectiveStationCount,
-  required int activeStationCount,
+  required double maxDetectedDistanceKm,
 }) {
-  if (inactive.isEmpty || effectiveStationCount >= 50) return 0.0;
-  if (observedSeconds > 3.0 &&
-      !(observedSeconds <= 10.0 && activeStationCount < 30)) {
-    return 0.0;
-  }
-  final activeDistances = [
-    for (final station in active)
-      if (station.ascend >= 3 && (station.level ?? -1) >= 4)
-        _haversineKm(
-          latitude,
-          longitude,
-          station.coordinate.latitude,
-          station.coordinate.longitude,
-        ),
-  ]..sort();
-  if (activeDistances.isEmpty) return 0.0;
-  final referenceIndex = math.max(
-    (activeDistances.length * 0.9).floor() - 1,
-    0,
+  final elapsedSinceOriginSeconds = math.max(
+    0.0,
+    observedSeconds - originSeconds,
   );
-  final referenceDistance = activeDistances[referenceIndex];
+  final rawPRadiusKm = Jma2001TravelTimeApproximation.epicentralRadiusKm(
+    elapsedSeconds: elapsedSinceOriginSeconds,
+    depthKm: depthKm,
+    pWave: true,
+  );
+  final pRadiusCapKm = 100.0 + maxDetectedDistanceKm * 3.0;
+  final pRadiusKm = math.min(rawPRadiusKm, pRadiusCapKm);
+  final referenceDistance = pRadiusKm + 30.0;
+  if (inactive.isEmpty) {
+    return (
+      penalty: 0.0,
+      pRadiusKm: pRadiusKm,
+      referenceDistanceKm: referenceDistance,
+    );
+  }
   var penalty = 0;
   for (final station in inactive) {
     final surfaceDistanceKm = _haversineKm(
@@ -9615,12 +12923,11 @@ double _niedHypWorkerInactivePenalty(
     );
     if (originSeconds + pTravel <= observedSeconds) penalty += 1;
   }
-  return effectiveStationCount > 0 ? penalty / effectiveStationCount : 0.0;
-}
-
-double _niedHypWorkerInactivePenaltyWeight(int clusterSize) {
-  if (clusterSize >= 50) return 0.0;
-  return 10.0 * (1.0 - clusterSize / 50.0);
+  return (
+    penalty: penalty.toDouble(),
+    pRadiusKm: pRadiusKm,
+    referenceDistanceKm: referenceDistance,
+  );
 }
 
 String _niedHypWorkerQualityRank(double qualityScore, int effectiveCount) {
@@ -9659,15 +12966,26 @@ double _niedHypWorkerConfidence(_NiedHypWorkerResult result) {
 double _roundTo(double value, double step) => (value / step).round() * step;
 
 extension on _NiedHypWorkerResult {
-  _NiedHypWorkerResult copyWith({List<Map<String, Object?>>? searchStages}) {
+  _NiedHypWorkerResult copyWith({
+    List<Map<String, Object?>>? searchStages,
+    Map<String, Map<String, bool>>? referencePreviousWavesByFirstWave,
+    Map<String, Object?>? referenceScenarioDiagnostics,
+  }) {
     return _NiedHypWorkerResult(
       latitude: latitude,
       longitude: longitude,
       depthKm: depthKm,
       originTime: originTime,
+      originOffsetSeconds: originOffsetSeconds,
       score: score,
+      errorLevel: errorLevel,
       rmse: rmse,
+      weightSum: weightSum,
+      weightedResidualSquares: weightedResidualSquares,
+      stationScale: stationScale,
       inactivePenalty: inactivePenalty,
+      inactivePRadiusKm: inactivePRadiusKm,
+      inactiveReferenceDistanceKm: inactiveReferenceDistanceKm,
       inactivePenaltyWeight: inactivePenaltyWeight,
       waveCountPenaltyMultiplier: waveCountPenaltyMultiplier,
       effectiveStationCount: effectiveStationCount,
@@ -9677,6 +12995,11 @@ extension on _NiedHypWorkerResult {
       sWaveCount: sWaveCount,
       otherWaveCount: otherWaveCount,
       searchStages: searchStages ?? this.searchStages,
+      referencePreviousWavesByFirstWave:
+          referencePreviousWavesByFirstWave ??
+          this.referencePreviousWavesByFirstWave,
+      referenceScenarioDiagnostics:
+          referenceScenarioDiagnostics ?? this.referenceScenarioDiagnostics,
     );
   }
 }
@@ -11876,9 +15199,12 @@ double? _hypPretriggerCacheSeconds(
 }
 
 double? _hypFrameSignal(SeismicStationObservationFrame frame) {
-  if (frame.value != null) return frame.value;
-  if (frame.detectLevel != null) return frame.detectLevel!.toDouble();
-  if (frame.rawLevel != null) return frame.rawLevel!.toDouble();
+  final value = frame.value;
+  if (value != null && value.isFinite) return value;
+  final kaLevel = frame.rawLevel ?? frame.detectLevel;
+  if (kaLevel != null) {
+    return JpShindoScale.rawShindoFromKanameishiLevel(kaLevel);
+  }
   return null;
 }
 
@@ -12865,6 +16191,26 @@ double _nearestStrongPenalty(List<double> distances, List<double> values) {
 
 double _haversineKm(double lat1, double lng1, double lat2, double lng2) {
   const earthRadiusKm = 6371.0;
+  final dLat = _degToRad(lat2 - lat1);
+  final dLng = _degToRad(lng2 - lng1);
+  final a =
+      math.pow(math.sin(dLat / 2), 2) +
+      math.cos(_degToRad(lat1)) *
+          math.cos(_degToRad(lat2)) *
+          math.pow(math.sin(dLng / 2), 2);
+  final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+  return earthRadiusKm * c;
+}
+
+// NiedHypoInf.js uses this geodesic radius in its candidate scorer. Keep this
+// isolated from the application's existing distance model.
+double _kanameishiHaversineKm(
+  double lat1,
+  double lng1,
+  double lat2,
+  double lng2,
+) {
+  const earthRadiusKm = 6371.0088;
   final dLat = _degToRad(lat2 - lat1);
   final dLng = _degToRad(lng2 - lng1);
   final a =

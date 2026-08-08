@@ -14,10 +14,7 @@ class NiedGifFrame {
   final DateTime dataTime;
   final Uint8List surfaceGifBytes;
 
-  const NiedGifFrame({
-    required this.dataTime,
-    required this.surfaceGifBytes,
-  });
+  const NiedGifFrame({required this.dataTime, required this.surfaceGifBytes});
 }
 
 class LmoniImageService {
@@ -99,7 +96,7 @@ class LmoniImageService {
         coordinate: LatLng(lat, lng),
         network: (s['network'] as String?) ?? 'K-NET',
         prefecture: (s['pref'] as String?) ?? '',
-        expireSeconds: 30,
+        expireSeconds: NiedStation.kaExpireSeconds,
         pixelX: px,
         pixelY: py,
         scanReliable: true,
@@ -116,10 +113,7 @@ class LmoniImageService {
     _stations = list;
     _backgroundScanConfigs = List<NiedScanConfig>.unmodifiable([
       for (final station in list)
-        NiedScanConfig(
-          pixelX: station.pixelX,
-          pixelY: station.pixelY,
-        ),
+        NiedScanConfig(pixelX: station.pixelX, pixelY: station.pixelY),
     ]);
     _backgroundScanConfigSignature = list
         .map(
@@ -149,24 +143,18 @@ class LmoniImageService {
 
     for (int i = 0; i < _stations!.length; i++) {
       final s = _stations![i];
-
-      final rawLevel = _sampleRawLevel(packedRgb, s);
-      if (rawLevel == -1) {
-        s.updateFromContinuousShindo(-1, null);
-        s
-          ..lastUpdate = stamp
-          ..lastDataTime = stamp
-          ..lastReceivedAt = frameReceivedAt;
-        continue;
-      }
-
-      // GIF path: keep the true continuous shindo value, then derive the
-      // 21-step kanameishi detection level from that continuous range only.
-      s.updateFromContinuousShindo(rawLevel, s.continuousShindo);
       s
         ..lastUpdate = stamp
         ..lastDataTime = stamp
         ..lastReceivedAt = frameReceivedAt;
+
+      final shindo = _sampleRealtimeShindo(packedRgb, s);
+      if (shindo == null) {
+        s.updateFromContinuousShindo(null);
+        continue;
+      }
+
+      s.updateFromContinuousShindo(shindo);
     }
 
     if (surfaceGifBytes != null) {
@@ -202,27 +190,26 @@ class LmoniImageService {
     for (var i = 0; i < _stations!.length; i++) {
       final station = _stations![i];
       final sample = frame.samples[i];
-      final rawLevel = sample.surfaceRawLevel;
       final position = sample.surfacePosition;
+      station
+        ..lastUpdate = stamp
+        ..lastDataTime = stamp
+        ..lastReceivedAt = frameReceivedAt;
 
-      if (rawLevel == -1 || position == null) {
+      if (position == null) {
         station.clearGifObservation(
           NiedGifLayer.realtimeShindo,
           qualityFlag: 'pixel_undecodable',
         );
-        station.updateFromContinuousShindo(-1, null);
+        station.updateFromContinuousShindo(null);
       } else {
         final observation = NiedGifValueDecoder.decodeObservationFromPosition(
           position,
           layer: NiedGifLayer.realtimeShindo,
         );
         station.updateGifObservation(observation);
-        station.updateFromContinuousShindo(rawLevel, observation.shindo);
+        station.updateFromContinuousShindo(observation.shindo);
       }
-      station
-        ..lastUpdate = stamp
-        ..lastDataTime = stamp
-        ..lastReceivedAt = frameReceivedAt;
     }
 
     final gifFrame = NiedGifFrame(
@@ -294,10 +281,10 @@ class LmoniImageService {
     onStatusChanged?.call(true);
   }
 
-  int _sampleRawLevel(List<int> sourcePixels, NiedStation station) {
+  double? _sampleRealtimeShindo(List<int> sourcePixels, NiedStation station) {
     final x = station.pixelX;
     final y = station.pixelY;
-    if (x < 0 || x >= _imgW || y < 0 || y >= _imgH) return -1;
+    if (x < 0 || x >= _imgW || y < 0 || y >= _imgH) return null;
 
     final rgb = sourcePixels[y * _imgW + x];
     final r = (rgb >> 16) & 0xFF;
@@ -309,27 +296,20 @@ class LmoniImageService {
         NiedGifLayer.realtimeShindo,
         qualityFlag: 'pixel_undecodable',
       );
-      return -1;
+      return null;
     }
     final position = ShindoColorUtil.rgbaToPosition(r, g, b);
-    if (position != null && position.isFinite && position > 0) {
-      station.updateGifObservation(
-        NiedGifValueDecoder.decodeObservationFromPosition(
-          position,
-          layer: NiedGifLayer.realtimeShindo,
-        ),
+    if (position != null && position.isFinite) {
+      final observation = NiedGifValueDecoder.decodeObservationFromPosition(
+        position,
+        layer: NiedGifLayer.realtimeShindo,
       );
+      station.updateGifObservation(observation);
+      return observation.shindo;
     } else {
       station.updateGifObservation(NiedGifObservation(shindo: shindo));
+      return shindo;
     }
-    final rawLevel = ShindoColorUtil.shindoToRawLevel(shindo);
-    if (rawLevel >= 0) {
-      // Keep rendered intensity and detection intensity on the same GIF-derived
-      // shindo track; otherwise the detector can outrun what the map is showing.
-      station.continuousShindo = shindo;
-      return rawLevel;
-    }
-    return -1;
   }
 
   double? _sampleColorPosition(List<int> sourcePixels, NiedStation station) {
@@ -361,13 +341,12 @@ class LmoniImageService {
       _lastFrameTime = stamp;
       for (final station in _stations!) {
         station.recentLevel.clear();
-        station.recentDetectLevel.clear();
         station.expireSeconds = station.defaultExpireSeconds;
         station.isActive = false;
         station.activeTimer?.cancel();
         station.ascend = 0;
         station.activity = 0;
-        station.detectLevel = -1;
+        station.level = -1;
       }
       return;
     }
@@ -392,21 +371,6 @@ class LmoniImageService {
           NiedStation.maxExpireSeconds,
         );
       }
-      station.recentDetectLevel.insertAll(0, noData);
-      if (station.recentDetectLevel.length > NiedStation.maxExpireSeconds) {
-        station.recentDetectLevel = station.recentDetectLevel.sublist(
-          0,
-          NiedStation.maxExpireSeconds,
-        );
-      }
-
-      if (station.expireSeconds > station.defaultExpireSeconds) {
-        final nextExpire = station.expireSeconds - missingFrames;
-        station.expireSeconds = nextExpire < station.defaultExpireSeconds
-            ? station.defaultExpireSeconds
-            : nextExpire;
-      }
-
       if (stale) {
         station.isActive = false;
       }

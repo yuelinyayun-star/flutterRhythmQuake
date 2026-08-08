@@ -45,10 +45,7 @@ class CencEqlistService {
       );
 
       if (items.isNotEmpty) {
-        print('CENC eqlist: ${items.length} items');
         onListUpdated?.call(items);
-      } else {
-        print('CENC eqlist: 0 items parsed');
       }
     } catch (e) {
       print('CENC eqlist fetch error: $e');

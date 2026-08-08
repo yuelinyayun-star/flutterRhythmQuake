@@ -1,3 +1,5 @@
+import 'source_estimation_models.dart';
+
 class SeismicStationObservationFrame {
   const SeismicStationObservationFrame({
     required this.dataTime,
@@ -7,6 +9,7 @@ class SeismicStationObservationFrame {
     required this.detectLevel,
     required this.isTriggered,
     required this.qualityFlags,
+    this.physicalObservations = const {},
   });
 
   final DateTime dataTime;
@@ -16,6 +19,7 @@ class SeismicStationObservationFrame {
   final int? detectLevel;
   final bool isTriggered;
   final Set<String> qualityFlags;
+  final Map<StationValueType, SeismicPhysicalObservation> physicalObservations;
 
   bool get isMissing => qualityFlags.contains('missing_observation');
   bool get isStale => qualityFlags.contains('stale_observation');

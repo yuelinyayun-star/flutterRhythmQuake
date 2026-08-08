@@ -1,0 +1,70 @@
+{
+  "schemaVersion": "matsuzaki_2006_fixed_saturation_selection_v1",
+  "status": "frozen_before_2018_evaluation",
+  "selectionDate": "2026-07-19",
+  "sourceReport": ".dart_tool/matsuzaki_2006_near_far_balance/report.json",
+  "sourceArchiveManifest": "tmp/jma_intensity_nearfield_expansion/archive_manifest.json",
+  "split": {
+    "distanceShapeCalibrationYears": [2010, 2011, 2012, 2013, 2014, 2015, 2016],
+    "sourceTermCalibrationYears": [2010, 2011, 2012, 2013, 2014, 2015, 2016],
+    "selectionYear": 2017,
+    "frozenEvaluationYear": 2018,
+    "year2018ReadDuringSelection": false
+  },
+  "predeclaredGate": {
+    "nearCondition": "2017 event-equal nearfield RMS strictly below published coefficients",
+    "allDistanceCondition": "2017 event-equal all-distance RMS not above published coefficients",
+    "structuralCondition": "saturationCoefficient=0.00675 and saturationMagnitudeExponent=0.5 remain fixed",
+    "selectionRule": "lowest 2017 event-equal nearfield RMS among models passing every condition"
+  },
+  "publishedValidation": {
+    "nearfieldEventRms": 0.8348773110038874,
+    "allDistanceEventRms": 0.6493117814771593
+  },
+  "acceptedCandidates": [
+    {
+      "model": "fixedNaturalAllSource",
+      "nearfieldEventRms": 0.8227748494061108,
+      "allDistanceEventRms": 0.5144155581907478
+    },
+    {
+      "model": "fixedNearWeight25AllSource",
+      "nearfieldEventRms": 0.7758130420042085,
+      "allDistanceEventRms": 0.5175523424578011
+    },
+    {
+      "model": "fixedNearWeight50AllSource",
+      "nearfieldEventRms": 0.7690377498532083,
+      "allDistanceEventRms": 0.5195505440048888
+    },
+    {
+      "model": "fixedNearWeight75AllSource",
+      "nearfieldEventRms": 0.766981753191652,
+      "allDistanceEventRms": 0.5220689292927482
+    }
+  ],
+  "selectedModel": "fixedNearWeight75AllSource",
+  "selectedModelPolicy": {
+    "distanceShapeEvents": "2010-2016 events containing at least two stations with point-source hypocentral distance below 30 km",
+    "distanceShapeStations": "all nearfield and farfield stations in selected events",
+    "eventWeighting": "equal total weight per event",
+    "nearGroupWeightWhenBothGroupsExist": 0.75,
+    "farGroupWeightWhenBothGroupsExist": 0.25,
+    "sourceTermEvents": "all accepted 2010-2016 events",
+    "sourceTermWeighting": "distance-balanced event mean when both groups exist; present group receives full event weight otherwise"
+  },
+  "coefficients": {
+    "magnitudeCoefficient": 0.8896413436205897,
+    "logDistanceCoefficient": 2.844856161729879,
+    "saturationCoefficient": 0.00675,
+    "saturationMagnitudeExponent": 0.5,
+    "depthCoefficient": 0.006584255361450257,
+    "intercept": 2.6535217617405977
+  },
+  "selectedValidation": {
+    "nearfieldEventRms": 0.766981753191652,
+    "allDistanceEventRms": 0.5220689292927482,
+    "distanceShapeTrainingObjective": 0.2923277708815321
+  },
+  "productionAdoption": false
+}

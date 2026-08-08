@@ -10,6 +10,7 @@ class TyphoonService {
   static const String _endpoint = 'https://api.fanstudio.tech/we/typhoon.php';
   static const Duration _timeout = Duration(seconds: 14);
   static const Duration _cacheMaxAge = Duration(hours: 24);
+  static const Duration fallbackRefreshInterval = Duration(hours: 1);
   static const String _cacheBodyKey = 'typhoon_active_cache_body';
   static const String _cacheSavedAtKey = 'typhoon_active_cache_saved_at';
 
@@ -22,16 +23,20 @@ class TyphoonService {
 
   bool get isRunning => _timer != null;
 
-  void start({Duration interval = const Duration(minutes: 10)}) {
+  void start({Duration interval = fallbackRefreshInterval}) {
     _timer?.cancel();
     _emitCachedActive();
     fetchNow();
     _timer = Timer.periodic(interval, (_) => fetchNow());
   }
 
-  void stop() {
+  void stop({bool clearState = false}) {
     _timer?.cancel();
     _timer = null;
+    if (clearState) {
+      _lastSignature = '';
+      _lastTyphoons = const [];
+    }
   }
 
   Future<void> fetchNow() async {

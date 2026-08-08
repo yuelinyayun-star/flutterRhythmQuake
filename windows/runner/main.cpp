@@ -2,8 +2,37 @@
 #include <flutter/flutter_view_controller.h>
 #include <windows.h>
 
+#include <string>
+
 #include "flutter_window.h"
 #include "utils.h"
+
+namespace {
+
+constexpr wchar_t kRhythmQuakeWindowClass[] =
+    L"FLUTTER_RUNNER_WIN32_WINDOW";
+constexpr wchar_t kWAuthReturnUri[] = L"rhythmquake://wauth-complete";
+
+bool FocusRunningRhythmQuake(const wchar_t* command_line) {
+  const std::wstring arguments = command_line == nullptr ? L"" : command_line;
+  if (arguments.find(kWAuthReturnUri) == std::wstring::npos) {
+    return false;
+  }
+
+  const HWND existing_window =
+      ::FindWindow(kRhythmQuakeWindowClass, nullptr);
+  if (existing_window == nullptr) {
+    return false;
+  }
+
+  ::ShowWindow(existing_window,
+               ::IsIconic(existing_window) ? SW_RESTORE : SW_SHOW);
+  ::BringWindowToTop(existing_window);
+  ::SetForegroundWindow(existing_window);
+  return true;
+}
+
+}  // namespace
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
@@ -11,6 +40,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // new console when running with a debugger.
   if (!::AttachConsole(ATTACH_PARENT_PROCESS) && ::IsDebuggerPresent()) {
     CreateAndAttachConsole();
+  }
+
+  if (FocusRunningRhythmQuake(command_line)) {
+    return EXIT_SUCCESS;
   }
 
   EnableProcessEfficiencyMode();

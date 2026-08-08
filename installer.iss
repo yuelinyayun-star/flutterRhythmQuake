@@ -3,7 +3,7 @@
 ; 使用前请先运行: .\build_windows.ps1 -Release
 
 #define MyAppName "FlutterRhythmQuake"
-#define MyAppVersion "1.0.1"
+#define MyAppVersion "1.0.3"
 #define MyAppPublisher "com.example"
 #define MyAppURL ""
 #define MyAppExeName "flutterrhythmquake.exe"
@@ -55,6 +55,12 @@ Source: "build\windows\x64\runner\Release\data\*"; DestDir: "{app}\data"; Flags:
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+
+[Registry]
+Root: HKA; Subkey: "Software\Classes\rhythmquake"; ValueType: string; ValueName: ""; ValueData: "URL:RhythmQuake Protocol"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\rhythmquake"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKA; Subkey: "Software\Classes\rhythmquake\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"
+Root: HKA; Subkey: "Software\Classes\rhythmquake\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
 
 [Run]
 ; 安装完成后可选启动程序

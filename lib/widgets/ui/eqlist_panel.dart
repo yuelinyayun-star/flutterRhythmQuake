@@ -7,7 +7,6 @@ import '../../providers/map_state_provider.dart';
 import '../../models/quake_message.dart';
 import '../../core/utils/quake_time.dart';
 import 'package:intl/intl.dart';
-import 'package:latlong2/latlong.dart';
 import 'ui_scale.dart';
 
 /// 地震列表面板组件
@@ -534,12 +533,35 @@ class _EqCardState extends State<_EqCard> {
     return const Color(0xFF4B7BB1);
   }
 
+  static bool _isCmtSource(QuakeSourceType s) {
+    return s == QuakeSourceType.fssnCmt ||
+        s == QuakeSourceType.cencCmt ||
+        s == QuakeSourceType.usgsCmt ||
+        s == QuakeSourceType.jmaCmt ||
+        s == QuakeSourceType.fnetCmt ||
+        s == QuakeSourceType.hinetAquaCmt;
+  }
+
+  static bool _isReviewed(QuakeMessage eq) {
+    final rt = eq.reviewType;
+    return rt == '正式测定' || rt == 'reviewed' || rt == 'formal';
+  }
+
   static String _sourceLabelStatic(QuakeSourceType s) {
     switch (s) {
       case QuakeSourceType.cenc:
       case QuakeSourceType.cea:
       case QuakeSourceType.cea_pr:
+      case QuakeSourceType.cencCmt:
         return 'CENC';
+      case QuakeSourceType.usgsCmt:
+        return 'USGS';
+      case QuakeSourceType.jmaCmt:
+        return 'JMA';
+      case QuakeSourceType.fnetCmt:
+        return 'F-net';
+      case QuakeSourceType.hinetAquaCmt:
+        return 'Hi-net';
       case QuakeSourceType.wolfx:
         return 'JMA';
       case QuakeSourceType.p2p:
@@ -653,14 +675,10 @@ class _EqCardState extends State<_EqCard> {
     final mapState = context.read<MapStateProvider>();
     if (mapState.isSelectedHistoryEvent(eq)) {
       mapState.clearSelectedHistoryEvent();
-      Future.delayed(const Duration(milliseconds: 300), () {
-        mapState.resumeAutoZoom();
-      });
     } else {
       mapState.selectHistoryEvent(eq);
-      mapState.pauseAutoZoom();
-      mapState.animatedMove(LatLng(eq.latitude, eq.longitude), 7.0);
     }
+    mapState.resumeAutoZoom();
   }
 
   @override
@@ -685,15 +703,11 @@ class _EqCardState extends State<_EqCard> {
             final mapState = context.read<MapStateProvider>();
             if (mapState.isSelectedHistoryEvent(eq)) {
               mapState.clearSelectedHistoryEvent();
-              Future.delayed(const Duration(milliseconds: 300), () {
-                if (!context.mounted) return;
-                context.read<MapStateProvider>().resumeAutoZoom();
-              });
+              mapState.resumeAutoZoom();
               return;
             }
             mapState.selectHistoryEvent(eq);
-            mapState.pauseAutoZoom();
-            mapState.animatedMove(LatLng(eq.latitude, eq.longitude), 7.0);
+            mapState.resumeAutoZoom();
           },
           child: Container(
             margin: EdgeInsets.symmetric(vertical: _s(2), horizontal: _s(4)),
@@ -767,12 +781,15 @@ class _EqCardState extends State<_EqCard> {
                                     ),
                                   ),
                                 const Spacer(),
-                                if ((eq.source == QuakeSourceType.cenc ||
-                                        eq.source == QuakeSourceType.usgs) &&
-                                    (eq.infoTypeName != null &&
-                                            eq.infoTypeName!.isNotEmpty ||
+                                if (((eq.source == QuakeSourceType.cenc ||
+                                            eq.source == QuakeSourceType.usgs) &&
+                                        (eq.infoTypeName != null &&
+                                                eq.infoTypeName!.isNotEmpty ||
+                                            eq.reviewType != null &&
+                                                eq.reviewType!.isNotEmpty)) ||
+                                    (_isCmtSource(eq.source) &&
                                         eq.reviewType != null &&
-                                            eq.reviewType!.isNotEmpty))
+                                        eq.reviewType!.isNotEmpty))
                                   Container(
                                     padding: EdgeInsets.symmetric(
                                       horizontal: _s(5),
@@ -783,9 +800,7 @@ class _EqCardState extends State<_EqCard> {
                                       color:
                                           (eq.source == QuakeSourceType.cenc
                                                   ? const Color(0xFF2ECC71)
-                                                  : eq.reviewType == '正式测定' ||
-                                                        eq.reviewType ==
-                                                            'reviewed'
+                                                  : _isReviewed(eq)
                                                   ? const Color(0xFF2ECC71)
                                                   : const Color(0xFFE67E22))
                                               .withValues(alpha: 0.15),
@@ -798,16 +813,14 @@ class _EqCardState extends State<_EqCard> {
                                               eq.infoTypeName != null &&
                                               eq.infoTypeName!.isNotEmpty
                                           ? eq.infoTypeName!
-                                          : eq.reviewType == '正式测定' ||
-                                                eq.reviewType == 'reviewed'
+                                          : _isReviewed(eq)
                                           ? '正式测定'
                                           : '自动测定',
                                       style: TextStyle(
                                         fontSize: _s(9),
                                         color: eq.source == QuakeSourceType.cenc
                                             ? const Color(0xFF2ECC71)
-                                            : eq.reviewType == '正式测定' ||
-                                                  eq.reviewType == 'reviewed'
+                                            : _isReviewed(eq)
                                             ? const Color(0xFF2ECC71)
                                             : const Color(0xFFE67E22),
                                         fontWeight: FontWeight.w600,

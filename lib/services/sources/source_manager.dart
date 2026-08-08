@@ -138,6 +138,7 @@ class SourceManager {
 
   final List<StreamSubscription<QuakeMessage>> _sourceSubscriptions = [];
   bool _started = false;
+  final Set<String> _disabledSourceNames = {};
 
   /// 注册数据源服务
   ///
@@ -160,6 +161,28 @@ class SourceManager {
     };
   }
 
+  void setSourceEnabled(String sourceName, bool enabled) {
+    if (isSourceEnabled(sourceName) == enabled) return;
+    BaseSourceService? source;
+    for (final item in _sources) {
+      if (item.name == sourceName) {
+        source = item;
+        break;
+      }
+    }
+    if (enabled) {
+      _disabledSourceNames.remove(sourceName);
+      if (_started) source?.connect();
+    } else {
+      _disabledSourceNames.add(sourceName);
+      source?.disconnect();
+    }
+  }
+
+  bool isSourceEnabled(String sourceName) {
+    return !_disabledSourceNames.contains(sourceName);
+  }
+
   /// 启动所有数据源
   ///
   /// 遍历所有已注册的数据源，依次建立连接并开始监听消息。
@@ -174,7 +197,7 @@ class SourceManager {
     if (_started) return;
     _started = true;
     for (var source in _sources) {
-      if (source.autoStart) {
+      if (source.autoStart && isSourceEnabled(source.name)) {
         source.connect();
       }
       _sourceSubscriptions.add(source.onEvent.listen(_handleIncomingEvent));

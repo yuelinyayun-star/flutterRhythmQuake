@@ -33,9 +33,9 @@ class JmaEqlistService {
   /// P2PQuake API地址
   ///
   /// codes=551 表示地震情报
-  /// limit=20 获取最近20条
+  /// 先获取最近100条情报，过滤无完整震源的速报后由列表管理器保留最新50条。
   static const String _url =
-      'https://api.p2pquake.net/v2/history?codes=551&limit=20';
+      'https://api.p2pquake.net/v2/history?codes=551&limit=100';
 
   /// 定时器
   Timer? _timer;

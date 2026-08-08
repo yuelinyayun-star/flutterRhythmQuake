@@ -255,7 +255,6 @@ class SnetService {
 
   Future<bool> _fetchAndParseTiles() async {
     final stopwatch = Stopwatch()..start();
-    debugPrint('[S-net] ===== 开始新一轮数据获取 =====');
     final times = await _fetchTargetTimes();
     if (times == null) {
       debugPrint('[S-net] ✗ targetTimes.json 获取失败');
@@ -263,9 +262,7 @@ class SnetService {
     }
     final basetime = times['basetime'] as String;
     final validtime = times['validtime'] as String;
-    debugPrint('[S-net] basetime=$basetime validtime=$validtime');
     if (basetime == _lastBasetime) {
-      debugPrint('[S-net] basetime 未变化，跳过本轮');
       return true;
     }
     _lastBasetime = basetime;
@@ -277,11 +274,9 @@ class SnetService {
     }
     stopwatch.reset();
     _processImageData(rawRgba);
-    debugPrint('[S-net] 解析像素耗时: ${stopwatch.elapsedMilliseconds}ms');
     stopwatch.stop();
 
     onDataUpdated?.call(_stations);
-    debugPrint('[S-net] ===== 本轮完成 =====');
     return true;
   }
 
@@ -308,21 +303,14 @@ class SnetService {
     String basetime,
     String validtime,
   ) async {
-    final stopwatch = Stopwatch()..start();
-    final totalTiles = (_xMax - _xMin + 1) * (_yMax - _yMin + 1);
-    debugPrint(
-      '[S-net] 开始下载瓦片 z=$_z x=$_xMin..$_xMax y=$_yMin..$_yMax 共$totalTiles张',
-    );
     final result = Int32List(_imgW * _imgH);
     int usedTiles = 0;
-    int failedTiles = 0;
     try {
       for (int y = _yMin; y <= _yMax; y++) {
         for (int x = _xMin; x <= _xMax; x++) {
           final tileData = await _downloadTile(basetime, validtime, _z, x, y);
           if (tileData == null) {
             debugPrint('[S-net] ✗ tile z=$_z x=$x y=$y 下载失败');
-            failedTiles++;
             continue;
           }
           final tileX = (x - _xMin) * _tileSize;
@@ -342,15 +330,9 @@ class SnetService {
           usedTiles++;
         }
       }
-      final elapsed = stopwatch.elapsedMilliseconds;
-      debugPrint(
-        '[S-net] 瓦片下载完成: $usedTiles/$totalTiles 成功, $failedTiles 失败, 耗时 ${elapsed}ms',
-      );
-      stopwatch.stop();
       return usedTiles > 0 ? result : null;
     } catch (e) {
       debugPrint('[S-net] 瓦片拼接异常: $e');
-      stopwatch.stop();
       return null;
     }
   }
@@ -373,9 +355,6 @@ class SnetService {
         );
         return null;
       }
-      debugPrint(
-        '[S-net] ✓ tile z=$z x=$x y=$y -> ${response.bodyBytes.length} bytes',
-      );
       final codec = await ui.instantiateImageCodec(response.bodyBytes);
       final frame = await codec.getNextFrame();
       final image = frame.image;
@@ -396,8 +375,6 @@ class SnetService {
 
   void _processImageData(Int32List packedRgb) {
     final stamp = DateTime.now();
-    int activeCount = 0;
-    final activeStations = <String>[];
     for (int i = 0; i < _stations.length; i++) {
       final s = _stations[i];
       final x = s.pixelX;
@@ -428,16 +405,6 @@ class SnetService {
       s.intensity = s.shindo;
       s.lastUpdate = stamp;
       s.isActive = true;
-      activeCount++;
-      if (s.shindo >= 0.5) {
-        activeStations.add('${s.code}(shindo ${s.shindo.toStringAsFixed(1)})');
-      }
-    }
-    debugPrint('[S-net] 像素解析完成: $activeCount/${_stations.length} 活跃');
-    if (activeStations.isNotEmpty) {
-      debugPrint('[S-net] 活跃测站详情: ${activeStations.join(", ")}');
-    } else {
-      debugPrint('[S-net] 无显著震度测站');
     }
   }
 
@@ -463,6 +430,11 @@ class SnetService {
   }
 
   bool get isMonitoring => _isMonitoring;
+
+  void clearStations() {
+    _stations.clear();
+    onDataUpdated?.call(_stations);
+  }
 
   void dispose() {
     stopMonitoring();

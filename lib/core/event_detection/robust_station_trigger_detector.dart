@@ -43,7 +43,7 @@ class RobustStationTriggerDetector implements StationTriggerDetector {
     );
     final previousObservedAt = history.lastObservedAt;
     final signal = _signalValue(observation);
-    final baseline = _median(history.samples.map((sample) => sample.value));
+    final baseline = _median(history);
     final ascend = signal == null || history.samples.isEmpty
         ? 0
         : (signal - history.samples.last.value).round();
@@ -134,7 +134,7 @@ class RobustStationTriggerDetector implements StationTriggerDetector {
       ..state = nextState
       ..lastObservedAt = observation.observedAt;
     if (signal != null) {
-      history.samples.add(
+      history.addSample(
         _TimedSignal(observedAt: observation.observedAt, value: signal),
       );
       _trimHistory(history, observation.observedAt);
@@ -233,12 +233,18 @@ class RobustStationTriggerDetector implements StationTriggerDetector {
     final oldest = observedAt.subtract(
       Duration(seconds: config.historySeconds),
     );
-    history.samples.removeWhere((sample) => sample.observedAt.isBefore(oldest));
+    history.removeBefore(oldest);
   }
 
-  double? _median(Iterable<double> values) {
-    final sorted = values.toList(growable: false)..sort();
-    if (sorted.isEmpty) return null;
+  double? _median(_StationTriggerHistory history) {
+    if (history.samples.isEmpty) return null;
+
+    final histogramMedian = history.boundedIntegerMedian;
+    if (histogramMedian != null) return histogramMedian;
+
+    final sorted =
+        history.samples.map((sample) => sample.value).toList(growable: false)
+          ..sort();
     final middle = sorted.length ~/ 2;
     if (sorted.length.isOdd) return sorted[middle];
     return (sorted[middle - 1] + sorted[middle]) / 2.0;
@@ -246,7 +252,15 @@ class RobustStationTriggerDetector implements StationTriggerDetector {
 }
 
 class _StationTriggerHistory {
+  static const int _minimumHistogramValue = -32;
+  static const int _maximumHistogramValue = 63;
+
   final List<_TimedSignal> samples = [];
+  final List<int> _boundedIntegerCounts = List<int>.filled(
+    _maximumHistogramValue - _minimumHistogramValue + 1,
+    0,
+  );
+  bool _containsOnlyBoundedIntegers = true;
   StationTriggerState state = StationTriggerState.idle;
   DateTime? lastObservedAt;
   ObservationTimeInterval? firstRiseInterval;
@@ -261,6 +275,67 @@ class _StationTriggerHistory {
       state == StationTriggerState.triggered ||
       state == StationTriggerState.strong ||
       state == StationTriggerState.decaying;
+
+  double? get boundedIntegerMedian {
+    if (!_containsOnlyBoundedIntegers || samples.isEmpty) return null;
+    final lowerRank = (samples.length - 1) ~/ 2;
+    final upperRank = samples.length ~/ 2;
+    int? lowerValue;
+    int? upperValue;
+    var seen = 0;
+    for (var index = 0; index < _boundedIntegerCounts.length; index++) {
+      final count = _boundedIntegerCounts[index];
+      if (count == 0) continue;
+      final nextSeen = seen + count;
+      final value = index + _minimumHistogramValue;
+      if (lowerValue == null && lowerRank < nextSeen) {
+        lowerValue = value;
+      }
+      if (upperRank < nextSeen) {
+        upperValue = value;
+        break;
+      }
+      seen = nextSeen;
+    }
+    if (lowerValue == null || upperValue == null) return null;
+    return (lowerValue + upperValue) / 2.0;
+  }
+
+  void addSample(_TimedSignal sample) {
+    samples.add(sample);
+    final index = _histogramIndex(sample.value);
+    if (index == null) {
+      _containsOnlyBoundedIntegers = false;
+      return;
+    }
+    _boundedIntegerCounts[index]++;
+  }
+
+  void removeBefore(DateTime cutoff) {
+    var writeIndex = 0;
+    for (final sample in samples) {
+      if (sample.observedAt.isBefore(cutoff)) {
+        final index = _histogramIndex(sample.value);
+        if (index != null) {
+          _boundedIntegerCounts[index]--;
+        }
+        continue;
+      }
+      samples[writeIndex++] = sample;
+    }
+    if (writeIndex < samples.length) {
+      samples.removeRange(writeIndex, samples.length);
+    }
+  }
+
+  int? _histogramIndex(double value) {
+    if (!value.isFinite || value != value.truncateToDouble()) return null;
+    final integer = value.toInt();
+    if (integer < _minimumHistogramValue || integer > _maximumHistogramValue) {
+      return null;
+    }
+    return integer - _minimumHistogramValue;
+  }
 
   void clearEventState() {
     firstRiseInterval = null;

@@ -4,9 +4,15 @@ import 'package:flutter/material.dart';
 class UiRuntimeFlags {
   UiRuntimeFlags._();
 
+  static const String niedHypCurvePanelVisiblePreferenceKey =
+      'debug_nied_hyp_curve_panel_visible';
+
   static final ValueNotifier<bool> sideInfoAutoShowBetaNotifier =
       ValueNotifier<bool>(false);
 
   static final ValueNotifier<bool> weatherMarqueeEnabledNotifier =
+      ValueNotifier<bool>(false);
+
+  static final ValueNotifier<bool> niedHypCurvePanelVisibleNotifier =
       ValueNotifier<bool>(false);
 }

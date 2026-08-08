@@ -11,6 +11,7 @@ class NiedIntensityLayer extends StatefulWidget {
   final List<NiedStation>? stations;
   final bool hideGrid;
   final bool blinkOn;
+  final bool displayShindo0;
   final Map<String, NiedDetectionGridCell>? detectionGridCells;
   final void Function(List<LatLng> centers)? onGridCellsChanged;
 
@@ -19,6 +20,7 @@ class NiedIntensityLayer extends StatefulWidget {
     this.stations,
     this.hideGrid = false,
     this.blinkOn = true,
+    this.displayShindo0 = false,
     this.detectionGridCells,
     this.onGridCellsChanged,
   });
@@ -78,7 +80,6 @@ class _NiedIntensityLayerState extends State<NiedIntensityLayer> {
 
     final overview = _overviewFactor(zoom);
     final dotSize = (0.9 + (zoom - 3) * 0.95).clamp(0.9, 7.5);
-    final dotOpacity = (0.08 + overview * 0.62).clamp(0.08, 0.78);
     final dotBorderWidth = (0.35 + overview * 0.55).clamp(0.35, 0.9);
 
     final detectionCells = widget.detectionGridCells;
@@ -107,12 +108,12 @@ class _NiedIntensityLayerState extends State<NiedIntensityLayer> {
             coordinate: station.coordinate,
             color: _idleColor,
             radius: dotSize / 2,
-            fillOpacity: dotOpacity * 0.12,
-            borderOpacity: dotOpacity * 0.32,
+            fillOpacity: 0.08 + overview * 0.10,
+            borderOpacity: 0.22 + overview * 0.38,
             borderWidth: dotBorderWidth,
           ),
         );
-      } else if (level <= 5 || zoom < 4) {
+      } else if (level < (widget.displayShindo0 ? 6 : 8) || zoom < 4) {
         final dotColor =
             _niedDotColors[level.clamp(0, _niedDotColors.length - 1)];
         dots.add(
@@ -120,8 +121,8 @@ class _NiedIntensityLayerState extends State<NiedIntensityLayer> {
             coordinate: station.coordinate,
             color: dotColor,
             radius: dotSize / 2,
-            fillOpacity: dotOpacity * 0.22,
-            borderOpacity: dotOpacity * 0.68,
+            fillOpacity: 0.14 + overview * 0.22,
+            borderOpacity: 0.45 + overview * 0.45,
             borderWidth: dotBorderWidth,
           ),
         );
@@ -202,7 +203,7 @@ class _NiedIntensityLayerState extends State<NiedIntensityLayer> {
   }
 
   static int _levelToJmaIndex(int level) {
-    return JpShindoScale.jmaIndexFromLevel(level);
+    return JpShindoScale.jmaIndexFromKanameishiLevel(level);
   }
 
   static double _overviewFactor(double zoom) {
@@ -223,7 +224,7 @@ class _IntensityMarker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isHigh = JpShindoScale.jmaIndexFromLevel(level) >= 7;
+    final isHigh = JpShindoScale.jmaIndexFromKanameishiLevel(level) >= 7;
 
     return Container(
       decoration: BoxDecoration(
@@ -238,7 +239,7 @@ class _IntensityMarker extends StatelessWidget {
         child: Text(
           label,
           style: TextStyle(
-            color: JpShindoScale.jmaIndexFromLevel(level) >= 4
+            color: JpShindoScale.jmaIndexFromKanameishiLevel(level) >= 4
                 ? Colors.black
                 : Colors.white,
             fontSize: isHigh ? 8 : 7,

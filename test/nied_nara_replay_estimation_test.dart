@@ -108,7 +108,7 @@ void main() {
         'topStations': activeStations
             .map(
               (s) =>
-                  '${s.code}:${JpShindoScale.rawShindoFromLevel(s.level).toStringAsFixed(2)}',
+                  '${s.code}:${JpShindoScale.rawShindoFromKanameishiLevel(s.level).toStringAsFixed(2)}',
             )
             .take(8)
             .toList(),
@@ -180,7 +180,7 @@ void main() {
         'topStations': activeStations
             .map(
               (s) =>
-                  '${s.code}:${JpShindoScale.rawShindoFromLevel(s.level).toStringAsFixed(2)}',
+                  '${s.code}:${JpShindoScale.rawShindoFromKanameishiLevel(s.level).toStringAsFixed(2)}',
             )
             .take(8)
             .toList(),

@@ -112,6 +112,46 @@ void main() {
     },
   );
 
+  test('USGS cached body skips repeated updateTime-only push', () {
+    final provider = QuakeProvider();
+    addTearDown(provider.dispose);
+
+    final event = UnifiedQuakeData(
+      source: 'usgsEqlist',
+      origin: 1,
+      eventId: '6000t8pa',
+      isEew: false,
+      timeZone: 8,
+      titleText: 'USGS 地震情报正式测定',
+      reportNumText: '',
+      useShindo: false,
+      maxIntensity: '5.0',
+      className: 'green',
+      hypocenter: '阿富汗',
+      originTime: DateTime(2026, 6, 27, 21, 34, 52),
+      reportTime: DateTime(2026, 6, 27, 22, 44, 30),
+      magnitude: 6.1,
+      depth: 199,
+      depthText: '深度: 199km',
+      lat: 36.4731,
+      lng: 70.7644,
+    );
+
+    expect(provider.shouldSuppressCachedUsgsInfoBodyForTest(event), isFalse);
+    expect(
+      provider.shouldSuppressCachedUsgsInfoBodyForTest(
+        event.copyWith(reportTime: DateTime(2026, 6, 28, 0, 10)),
+      ),
+      isTrue,
+    );
+    expect(
+      provider.shouldSuppressCachedUsgsInfoBodyForTest(
+        event.copyWith(magnitude: 6.2, maxIntensity: '6.0'),
+      ),
+      isFalse,
+    );
+  });
+
   test('no-update FAN event is suppressed after it was already seen', () {
     final provider = QuakeProvider();
     addTearDown(provider.dispose);

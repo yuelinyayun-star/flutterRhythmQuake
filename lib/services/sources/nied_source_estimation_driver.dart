@@ -11,6 +11,7 @@ import '../../core/source_estimation/station_event_tracker.dart';
 import 'package:flutter/foundation.dart';
 import 'jp_shindo_scale.dart';
 import 'nied_gif_observation.dart';
+import 'nied_detection_rules.dart';
 import 'nied_monitor.dart';
 import 'nied_station_observation_adapter.dart';
 
@@ -35,14 +36,35 @@ class NiedSourceEstimationDriver {
   final String sourceId;
 
   EventDetection? _lastEventDetection;
-  String? _gifReceiverEventId;
-  DateTime? _gifReceiverLastObservedAt;
+  String? _directReceiverEventId;
+  DateTime? _directReceiverLastObservedAt;
   Set<String> _dartHypActiveStationCodes = <String>{};
+  final Map<String, DateTime> _dartHypActiveTriggerAtByCode =
+      <String, DateTime>{};
   String? _dartHypAdjStationIdsKey;
   Map<String, List<int>> _dartHypAdjStationIds = const <String, List<int>>{};
-  String? _dartHypAdjStationCodesKey;
-  Map<String, List<String>> _dartHypAdjStationCodes =
+  String? _dartDetectionAdjStationCodesKey;
+  Map<String, List<String>> _dartDetectionAdjStationCodes =
       const <String, List<String>>{};
+  List<double> _dartHypGridDecimal = const <double>[0.0, 0.0];
+  bool _dartHypGridInitialized = false;
+  int _sensitivity = 2;
+  final Map<
+    String,
+    ({
+      int id,
+      String network,
+      String prefecture,
+      double latitude,
+      double longitude,
+      int thresholdCode,
+      int pixelX,
+      int pixelY,
+      bool isKik,
+      SeismicStationDescriptor descriptor,
+    })
+  >
+  _descriptorCache = {};
 
   NiedSourceEstimationDriver({
     StationTriggerDetector? stationTriggerDetector,
@@ -67,18 +89,23 @@ class NiedSourceEstimationDriver {
 
   EventDetection? get lastEventDetection => _lastEventDetection;
 
+  void setSensitivity(int level) {
+    _sensitivity = level.clamp(1, 3);
+  }
+
   void reset() {
     stationTriggerDetector.reset();
     eventDetector.reset();
     sourceContinuityGate.reset();
     _lastEventDetection = null;
-    _gifReceiverEventId = null;
-    _gifReceiverLastObservedAt = null;
-    _dartHypActiveStationCodes = <String>{};
+    _directReceiverEventId = null;
+    _directReceiverLastObservedAt = null;
+    _resetDartHypocenterEventState();
     _dartHypAdjStationIdsKey = null;
     _dartHypAdjStationIds = const <String, List<int>>{};
-    _dartHypAdjStationCodesKey = null;
-    _dartHypAdjStationCodes = const <String, List<String>>{};
+    _dartDetectionAdjStationCodesKey = null;
+    _dartDetectionAdjStationCodes = const <String, List<String>>{};
+    _descriptorCache.clear();
   }
 
   EventDetection processStations(
@@ -92,6 +119,7 @@ class NiedSourceEstimationDriver {
     final resolvedObservedAt = inputKind == 'gif'
         ? _truncateToGifSecond(rawObservedAt)
         : rawObservedAt;
+    _prepareDartHypocenterEventState(resolvedObservedAt);
     final stationTriggers = observationAdapter
         .fromStations(stations, observedAt: resolvedObservedAt)
         .map(stationTriggerDetector.update)
@@ -112,13 +140,26 @@ class NiedSourceEstimationDriver {
     );
     _lastEventDetection = eventDetection;
 
-    final isGifInput = inputKind == 'gif';
     final sourceTrigger = sourceTriggerGate.evaluate(eventDetection);
-    final shouldIngestFrame = isGifInput || sourceTrigger.shouldIngestFrame;
-    final trackerStageName = isGifInput ? 'confirmed' : sourceTrigger.stageName;
-    final trackerEventId = isGifInput
-        ? _resolveGifReceiverEventId(resolvedObservedAt)
-        : continuity.effectiveEventId ?? sourceTrigger.eventId;
+    final dartHypocenterInput = _dartHypocenterInput(
+      stations: stations,
+      observedAt: resolvedObservedAt,
+    );
+    final activeSnapshots =
+        dartHypocenterInput['activeStations']! as List<Map<String, Object?>>;
+    final hasKaActiveStations = activeSnapshots.isNotEmpty;
+    final currentEvent = stationEventTracker.currentNiedEvent.value;
+    // Keep the NIED HYP entry condition identical to Kanameishi: only the
+    // KA active-station chain may create or advance an inference event.  The
+    // generic detector remains diagnostic metadata; it must not bypass that
+    // chain merely because a GIF frame or a generic candidate is present.
+    // An existing event receives one idle frame after the active window ends
+    // so SeismicSourceTracker can close it and clear the map/UI state.
+    final shouldIngestFrame = hasKaActiveStations || currentEvent != null;
+    final trackerStageName = hasKaActiveStations ? 'confirmed' : 'idle';
+    final trackerEventId = hasKaActiveStations
+        ? _resolveDirectReceiverEventId(inputKind, resolvedObservedAt)
+        : currentEvent?.eventId;
     _debugLogGifSourceTrigger(
       observedAt: resolvedObservedAt,
       stations: stations,
@@ -129,15 +170,6 @@ class NiedSourceEstimationDriver {
       effectiveStageName: trackerStageName,
     );
     if (shouldIngestFrame) {
-      final dartHypocenterInput = _dartHypocenterInput(
-        stations: stations,
-        stationTriggers: stationTriggers,
-        eventDetection: eventDetection,
-        observedAt: resolvedObservedAt,
-      );
-      final triggersByCode = {
-        for (final trigger in stationTriggers) trigger.code: trigger,
-      };
       final replayLogger = NiedReplayLogger.instance;
       if (trackerStageName != 'idle') {
         replayLogger.startForSourceTrigger(
@@ -148,9 +180,7 @@ class NiedSourceEstimationDriver {
             'source_family': 'nied',
             'source_id': sourceId,
             'nied_input_kind': inputKind,
-            'source_estimation_entry': isGifInput
-                ? 'dart_nied_hypocenter_direct'
-                : 'flutter_source_trigger_gate',
+            'source_estimation_entry': 'ka_nied_hypocenter_direct',
             'nied_hypocenter_input_format':
                 'nied_station_hypocenter_snapshot_v1',
             'source_trigger_state': eventDetection.state.name,
@@ -183,19 +213,13 @@ class NiedSourceEstimationDriver {
         maxShindo: _maxJmaShindo(stations),
         samples: [
           for (final station in stations)
-            _sampleFromStation(
-              station,
-              trigger: triggersByCode[station.code],
-              observedAt: resolvedObservedAt,
-            ),
+            _sampleFromStation(station, observedAt: resolvedObservedAt),
         ],
         eventId: trackerEventId,
         metadata: {
           'source_family': 'nied',
           'nied_input_kind': inputKind,
-          'source_estimation_entry': isGifInput
-              ? 'dart_nied_hypocenter_direct'
-              : 'flutter_source_trigger_gate',
+          'source_estimation_entry': 'ka_nied_hypocenter_direct',
           'nied_hypocenter_input_format': 'nied_station_hypocenter_snapshot_v1',
           'nied_hypocenter_frame_key': resolvedObservedAt
               .toUtc()
@@ -206,8 +230,16 @@ class NiedSourceEstimationDriver {
               dartHypocenterInput['activeStations'],
           'nied_hypocenter_inactive_stations':
               dartHypocenterInput['inactiveStations'],
+          'nied_hypocenter_inactive_scope':
+              dartHypocenterInput['inactiveScope'],
+          'nied_hypocenter_detection_grid':
+              dartHypocenterInput['detectionGrid'],
           'nied_hypocenter_adj_station_ids':
               dartHypocenterInput['adjStationIds'],
+          'nied_detection_adj_station_codes':
+              dartHypocenterInput['detectionAdjStationCodes'],
+          'nied_hypocenter_input_diagnostics':
+              dartHypocenterInput['diagnostics'],
           'station_trigger_detector_id': stationTriggerDetector.detectorId,
           'station_trigger_active_count': stationTriggers
               .where((trigger) => trigger.isActiveLike)
@@ -224,6 +256,7 @@ class NiedSourceEstimationDriver {
           ...sourceTrigger.metadata,
           ...continuity.metadata,
           ...metadata,
+          'nied_max_jma_shindo_index': _maxJmaShindoIndex(stations),
         },
       );
       final estimate = stationEventTracker.currentNiedEvent.value?.estimate;
@@ -280,10 +313,15 @@ class NiedSourceEstimationDriver {
 
   SeismicStationSample _sampleFromStation(
     NiedStation station, {
-    required StationTriggerSnapshot? trigger,
     required DateTime observedAt,
   }) {
     final dataTime = station.lastDataTime ?? station.lastUpdate ?? observedAt;
+    final triggerAt = station.triggerStamp > 0
+        ? DateTime.fromMillisecondsSinceEpoch(
+            station.triggerStamp,
+            isUtc: false,
+          )
+        : null;
     return SeismicStationSample(
       descriptor: _descriptorFromNiedStation(station),
       observedAt: dataTime,
@@ -293,27 +331,43 @@ class NiedSourceEstimationDriver {
       observedPga: station.pgaObservation?.pga,
       observedPgv: station.pgvObservation?.pgv,
       observedPgd: station.pgdObservation?.pgd,
-      rawLevel: station.level >= 0 ? station.level : null,
-      detectLevel: station.detectLevel >= 0 ? station.detectLevel : null,
-      activity: trigger?.activity ?? 0,
-      ascend: trigger?.ascend ?? 0,
-      isTriggered:
-          trigger?.state == StationTriggerState.triggered ||
-          trigger?.state == StationTriggerState.strong,
-      firstRiseInterval: trigger?.firstRiseInterval,
-      firstTriggerInterval: trigger?.firstTriggerInterval,
+      physicalObservations: _physicalObservationsFromNiedStation(
+        station,
+        dataTime: dataTime,
+        receivedAt: station.lastReceivedAt ?? observedAt,
+      ),
+      rawLevel: station.kaLevel >= 0 ? station.kaLevel : null,
+      detectLevel: station.kaLevel >= 0 ? station.kaLevel : null,
+      activity: station.activity,
+      ascend: station.ascend,
+      isTriggered: station.isActive,
+      firstTriggerInterval: triggerAt == null
+          ? null
+          : ObservationTimeInterval(start: triggerAt, end: triggerAt),
       provenance: _provenanceFromNiedStation(station),
-      qualityFlags: {
-        ..._qualityFlagsFromNiedStation(station, frameDataTime: observedAt),
-        ...?trigger?.qualityFlags,
-        ...?trigger?.reasonCodes.map((reason) => 'trigger_reason:$reason'),
-      },
+      qualityFlags: _qualityFlagsFromNiedStation(
+        station,
+        frameDataTime: observedAt,
+      ),
     );
   }
 
   SeismicStationDescriptor _descriptorFromNiedStation(NiedStation station) {
     final isKik = station.network.toLowerCase().contains('kik');
-    return SeismicStationDescriptor(
+    final cached = _descriptorCache[station.code];
+    if (cached != null &&
+        cached.id == station.id &&
+        cached.network == station.network &&
+        cached.prefecture == station.prefecture &&
+        cached.latitude == station.coordinate.latitude &&
+        cached.longitude == station.coordinate.longitude &&
+        cached.thresholdCode == station.thresholdCode &&
+        cached.pixelX == station.pixelX &&
+        cached.pixelY == station.pixelY &&
+        cached.isKik == isKik) {
+      return cached.descriptor;
+    }
+    final descriptor = SeismicStationDescriptor(
       stationId: station.code,
       code: station.code,
       sourceId: sourceId,
@@ -330,6 +384,19 @@ class NiedSourceEstimationDriver {
         'physical_sensor_role': isKik ? 'kik_surface_or_borehole' : 'surface',
       },
     );
+    _descriptorCache[station.code] = (
+      id: station.id,
+      network: station.network,
+      prefecture: station.prefecture,
+      latitude: station.coordinate.latitude,
+      longitude: station.coordinate.longitude,
+      thresholdCode: station.thresholdCode,
+      pixelX: station.pixelX,
+      pixelY: station.pixelY,
+      isKik: isKik,
+      descriptor: descriptor,
+    );
+    return descriptor;
   }
 
   Set<String> _qualityFlagsFromNiedStation(
@@ -369,6 +436,37 @@ class NiedSourceEstimationDriver {
     };
   }
 
+  Map<StationValueType, SeismicPhysicalObservation>
+  _physicalObservationsFromNiedStation(
+    NiedStation station, {
+    required DateTime dataTime,
+    required DateTime receivedAt,
+  }) {
+    final observations = <StationValueType, SeismicPhysicalObservation>{};
+    for (final observation in station.gifObservations.values) {
+      final quantity = _quantityForLayer(observation.layer);
+      final value = switch (quantity) {
+        StationValueType.pga => observation.pga,
+        StationValueType.pgv => observation.pgv,
+        StationValueType.pgd => observation.pgd,
+        _ => null,
+      };
+      if (value == null || !value.isFinite) continue;
+      observations[quantity] = SeismicPhysicalObservation(
+        quantity: quantity,
+        layerId: observation.layer.id,
+        value: value,
+        colorPosition: observation.colorPosition,
+        dataTime: dataTime,
+        receivedAt: receivedAt,
+        qualityFlags: Set.unmodifiable(
+          station.gifLayerQualityFlags[observation.layer] ?? const <String>{},
+        ),
+      );
+    }
+    return Map.unmodifiable(observations);
+  }
+
   StationValueType _quantityForLayer(NiedGifLayer layer) => switch (layer) {
     NiedGifLayer.realtimeShindo => StationValueType.jmaShindo,
     NiedGifLayer.peakAcceleration => StationValueType.pga,
@@ -382,39 +480,49 @@ class NiedSourceEstimationDriver {
     if (gifShindo != null && gifShindo.isFinite) {
       return gifShindo;
     }
-    if (station.detectLevel >= 0) {
-      return JpShindoScale.rawShindoFromKanameishiLevel(station.detectLevel);
+    if (station.kaLevel >= 0) {
+      return JpShindoScale.rawShindoFromKanameishiLevel(station.kaLevel);
     }
     return null;
   }
 
   int _maxJmaShindo(List<NiedStation> stations) {
-    var maxDetectLevel = -1;
-    for (final station in stations) {
-      if (station.detectLevel > maxDetectLevel) {
-        maxDetectLevel = station.detectLevel;
-      }
-    }
+    final maxDetectLevel = _maxKanameishiLevel(stations);
     return maxDetectLevel >= 0
         ? JpShindoScale.jmaNumberFromKanameishiLevel(maxDetectLevel)
         : -1;
   }
 
+  int _maxJmaShindoIndex(List<NiedStation> stations) {
+    final maxDetectLevel = _maxKanameishiLevel(stations);
+    return maxDetectLevel >= 0
+        ? JpShindoScale.jmaIndexFromKanameishiLevel(maxDetectLevel)
+        : -1;
+  }
+
+  int _maxKanameishiLevel(List<NiedStation> stations) {
+    var maxDetectLevel = -1;
+    for (final station in stations) {
+      if (station.kaLevel > maxDetectLevel) {
+        maxDetectLevel = station.kaLevel;
+      }
+    }
+    return maxDetectLevel;
+  }
+
   Map<String, Object?> _dartHypocenterInput({
     required List<NiedStation> stations,
-    required List<StationTriggerSnapshot> stationTriggers,
-    required EventDetection eventDetection,
     required DateTime observedAt,
   }) {
-    final triggerByCode = {
-      for (final trigger in stationTriggers) trigger.code: trigger,
-    };
     final stationByCode = {
       for (final station in stations) station.code: station,
     };
 
     final adjStationIds = _dartHypocenterAdjStationIds(stations);
-    final adjByCode = _dartHypocenterAdjStationCodes(stations, adjStationIds);
+    final adjByCode = _dartDetectionAdjacencyByCode(stations);
+    final preexistingActiveCount = stations
+        .where((station) => station.isActive)
+        .length;
 
     // possibleStations: activity > 0
     final possibleStations = stations.where((s) => s.activity > 0).toList();
@@ -424,17 +532,17 @@ class NiedSourceEstimationDriver {
     final checkedStations = <String>{};
     final newActiveStations = <Map<String, Object?>>[];
     final activeStations = <Map<String, Object?>>[];
-    final inactiveStations = <Map<String, Object?>>[];
+    final inactiveCandidates = <NiedStation>[];
+    final stationPairAbnormalCache = <String, bool>{};
 
-    // Helper: build snapshot
-    Map<String, Object?> snapshot(NiedStation station) {
-      final trigger = triggerByCode[station.code];
-      final active = activeStationsSet.contains(station.code);
+    Map<String, Object?> snapshot(NiedStation station, {required bool active}) {
       return _dartHypocenterStationSnapshot(
         station,
-        trigger: trigger,
         observedAt: observedAt,
         active: active,
+        preservedTriggerAt: active
+            ? _dartHypActiveTriggerAtByCode[station.code]
+            : null,
       );
     }
 
@@ -460,82 +568,87 @@ class NiedSourceEstimationDriver {
       }
     }
 
-    if (eventDetection.hasActiveEvent) {
-      final memberIds = eventDetection.memberStationIds.toSet();
-      for (final trigger in stationTriggers) {
-        if (!trigger.isActiveLike ||
-            (!memberIds.contains(trigger.stationId) &&
-                !memberIds.contains(trigger.code))) {
-          continue;
+    bool hasAbnormalStationPair(List<NiedStation> candidates) {
+      for (var i = 0; i < candidates.length - 1; i++) {
+        for (var j = i + 1; j < candidates.length; j++) {
+          final first = candidates[i];
+          final second = candidates[j];
+          final lowId = math.min(first.id, second.id);
+          final highId = math.max(first.id, second.id);
+          final key = '$lowId-$highId';
+          final isAbnormal = stationPairAbnormalCache.putIfAbsent(
+            key,
+            () => isNiedAbnormalStationPair(
+              firstTriggerStamp: first.triggerStamp,
+              secondTriggerStamp: second.triggerStamp,
+              distanceKm: _haversineKm(
+                first.coordinate.latitude,
+                first.coordinate.longitude,
+                second.coordinate.latitude,
+                second.coordinate.longitude,
+              ),
+            ),
+          );
+          if (isAbnormal) return true;
         }
-        final station = stationByCode[trigger.code];
-        if (station == null) continue;
-        if (station.activity > 0) {
-          chainActivate(station);
+      }
+      return false;
+    }
+
+    for (final station in possibleStations) {
+      if (checkedStations.contains(station.code)) continue;
+
+      if (station.isActive && station.ascend > 0) {
+        chainActivate(station);
+        continue;
+      }
+
+      // Neighbor scoring
+      final neighborCodes = adjByCode[station.code] ?? <String>[];
+      final nearbyStations = neighborCodes
+          .map((code) => stationByCode[code])
+          .where((s) => s != null && s.kaLevel > -1)
+          .cast<NiedStation>()
+          .toList();
+
+      if (nearbyStations.isEmpty) continue;
+
+      // nearbyActiveNum: active station = 1, non-active with ascend > 1 = 1, ascend <= 1 = 0.5
+      double nearbyActiveNum = 0;
+      for (final nearby in nearbyStations) {
+        if (nearby.activity <= 0) continue;
+        if (nearby.isActive) {
+          nearbyActiveNum += 1;
+        } else if (nearby.ascend <= 1) {
+          nearbyActiveNum += 0.5;
         } else {
-          activeStationsSet.add(station.code);
+          nearbyActiveNum += 1;
         }
       }
 
-      for (final station in possibleStations) {
-        if (checkedStations.contains(station.code)) continue;
+      final nearbyCount = nearbyStations.length.clamp(
+        0,
+        niedNearbyStationLimit,
+      );
+      final numThres = niedStationCountThreshold(_sensitivity, nearbyCount);
+      var activityThres = niedActivityThreshold(_sensitivity, nearbyCount);
 
-        if (station.isActive && station.ascend > 0) {
-          chainActivate(station);
-          continue;
+      if (nearbyActiveNum >= numThres) {
+        final abnormalCandidates = nearbyStations
+            .where((station) => !station.isActive && station.ascend > 2)
+            .toList(growable: false);
+        if (hasAbnormalStationPair(abnormalCandidates)) {
+          activityThres *= 2;
         }
-
-        // Neighbor scoring
-        final neighborCodes = adjByCode[station.code] ?? <String>[];
-        final nearbyStations = neighborCodes
-            .map((code) => stationByCode[code])
-            .where((s) => s != null && s.level > -1)
-            .cast<NiedStation>()
-            .toList();
-
-        if (nearbyStations.isEmpty) continue;
-
-        // nearbyActiveNum: active station = 1, non-active with ascend > 1 = 1, ascend <= 1 = 0.5
-        double nearbyActiveNum = 0;
+        // nearbyActivity = sum(activity) + nearbyActiveNum * (nearbyActiveNum + 1) / 2
+        double nearbyActivity = 0;
         for (final nearby in nearbyStations) {
-          if (nearby.activity <= 0) continue;
-          if (nearby.isActive) {
-            nearbyActiveNum += 1;
-          } else if (nearby.ascend <= 1) {
-            nearbyActiveNum += 0.5;
-          } else {
-            nearbyActiveNum += 1;
-          }
+          nearbyActivity += nearby.activity;
         }
+        nearbyActivity += nearbyActiveNum * (nearbyActiveNum + 1) / 2;
 
-        // numThres and activityThres (default sensitivity = 2, medium)
-        final n = nearbyStations.length;
-        final numThres = n <= 2 ? (n + 1) / 2 : n / 2;
-        // activityThresArr2 = [Infinity, 8, 11, 13, 14, 15, 16]
-        final activityThresArr = <double>[
-          double.infinity,
-          8,
-          11,
-          13,
-          14,
-          15,
-          16,
-        ];
-        final activityThres = n < activityThresArr.length
-            ? activityThresArr[n]
-            : activityThresArr.last;
-
-        if (nearbyActiveNum >= numThres) {
-          // nearbyActivity = sum(activity) + nearbyActiveNum * (nearbyActiveNum + 1) / 2
-          double nearbyActivity = 0;
-          for (final nearby in nearbyStations) {
-            nearbyActivity += nearby.activity;
-          }
-          nearbyActivity += nearbyActiveNum * (nearbyActiveNum + 1) / 2;
-
-          if (nearbyActivity >= activityThres) {
-            chainActivate(station);
-          }
+        if (nearbyActivity >= activityThres) {
+          chainActivate(station);
         }
       }
     }
@@ -543,21 +656,107 @@ class NiedSourceEstimationDriver {
     // Build active/inactive/newActive lists
     for (final station in stations) {
       if (activeStationsSet.contains(station.code)) {
-        final wasActive = station.isActive;
+        final wasWorkerActive = _dartHypActiveStationCodes.contains(
+          station.code,
+        );
+        final triggerAt =
+            _dartHypocenterStationTriggerAt(station) ??
+            _dartHypActiveTriggerAtByCode[station.code];
+        if (triggerAt != null) {
+          _dartHypActiveTriggerAtByCode[station.code] = triggerAt;
+        }
         station.setActive();
-        final snap = snapshot(station);
+        final snap = snapshot(station, active: true);
         activeStations.add(snap);
-        if (!wasActive && !_dartHypActiveStationCodes.contains(station.code)) {
+        if (!wasWorkerActive) {
           newActiveStations.add(snap);
         }
-      } else if (station.level > -1 &&
-          station.level < 6 &&
+      } else if (station.isActive) {
+        final triggerAt =
+            _dartHypocenterStationTriggerAt(station) ??
+            _dartHypActiveTriggerAtByCode[station.code];
+        if (triggerAt != null) {
+          _dartHypActiveTriggerAtByCode[station.code] = triggerAt;
+        }
+        activeStations.add(snapshot(station, active: true));
+      } else if (station.kaLevel > -1 &&
+          station.kaLevel < 6 &&
           station.activity <= 0 &&
           !station.isActive) {
-        inactiveStations.add(snapshot(station));
+        inactiveCandidates.add(station);
       }
     }
-    _dartHypActiveStationCodes = activeStationsSet;
+
+    final activeGridStations = stations
+        .where((station) => station.isActive)
+        .toList(growable: false);
+    if (!_dartHypGridInitialized && activeGridStations.isNotEmpty) {
+      final strongest = activeGridStations.reduce(
+        (left, right) => left.kaLevel >= right.kaLevel ? left : right,
+      );
+      _dartHypGridDecimal = [
+        niedDetectionGridDecimalPart(strongest.coordinate.latitude),
+        niedDetectionGridDecimalPart(strongest.coordinate.longitude),
+      ];
+      _dartHypGridInitialized = true;
+    }
+
+    final activeGridLevels = <String, int>{};
+    for (final station in activeGridStations) {
+      final latitudeIndex = niedDetectionGridAxisIndex(
+        station.coordinate.latitude,
+        _dartHypGridDecimal[0],
+      );
+      final longitudeIndex = niedDetectionGridAxisIndex(
+        station.coordinate.longitude,
+        _dartHypGridDecimal[1],
+      );
+      final key = niedDetectionGridKey(latitudeIndex, longitudeIndex);
+      final previousLevel = activeGridLevels[key];
+      if (previousLevel == null || station.kaLevel > previousLevel) {
+        activeGridLevels[key] = station.kaLevel;
+      }
+    }
+    final surroundingGridKeys = niedDetectionSurroundingGridKeys(
+      activeGridLevels.keys,
+    );
+    final inactiveStations = <Map<String, Object?>>[
+      for (final station in inactiveCandidates)
+        snapshot(station, active: false),
+    ];
+    final activeGridCells =
+        [
+          for (final entry in activeGridLevels.entries)
+            () {
+              final parts = entry.key.split(',');
+              final latitudeIndex = int.parse(parts[0]);
+              final longitudeIndex = int.parse(parts[1]);
+              return <String, Object?>{
+                'key': entry.key,
+                'latitudeIndex': latitudeIndex,
+                'longitudeIndex': longitudeIndex,
+                'latitude': niedDetectionGridAxisCenter(
+                  latitudeIndex,
+                  _dartHypGridDecimal[0],
+                ),
+                'longitude': niedDetectionGridAxisCenter(
+                  longitudeIndex,
+                  _dartHypGridDecimal[1],
+                ),
+                'level': entry.value,
+              };
+            }(),
+        ]..sort(
+          (left, right) =>
+              (left['key']! as String).compareTo(right['key']! as String),
+        );
+    if (activeGridCells.isEmpty) {
+      _dartHypGridDecimal = const <double>[0.0, 0.0];
+      _dartHypGridInitialized = false;
+    }
+    _dartHypActiveStationCodes = activeStations
+        .map((snapshot) => snapshot['code']!.toString())
+        .toSet();
 
     return {
       'newActiveStations': List<Map<String, Object?>>.unmodifiable(
@@ -567,23 +766,76 @@ class NiedSourceEstimationDriver {
       'inactiveStations': List<Map<String, Object?>>.unmodifiable(
         inactiveStations,
       ),
+      'inactiveScope': 'ka_level_present_all_network_scratch_dynamic_radius',
+      'detectionGrid': {
+        'model': 'ka_detection_1deg_event_offset_surrounding_9_grid',
+        'decimal': List<double>.unmodifiable(_dartHypGridDecimal),
+        'activeCells': List<Map<String, Object?>>.unmodifiable(activeGridCells),
+        'surroundingCellCount': surroundingGridKeys.length,
+      },
       'adjStationIds': adjStationIds,
+      'detectionAdjStationCodes': Map<String, List<String>>.unmodifiable({
+        for (final entry in adjByCode.entries)
+          entry.key: List<String>.unmodifiable(entry.value),
+      }),
+      'diagnostics': {
+        'level_present_count': stations
+            .where((station) => station.kaLevel >= 0)
+            .length,
+        'ascend_positive_count': stations
+            .where((station) => station.ascend > 0)
+            .length,
+        'activity_positive_count': possibleStations.length,
+        'preexisting_active_count': preexistingActiveCount,
+        'selected_active_count': activeStations.length,
+        'selected_timed_active_count': activeStations
+            .where((snapshot) => snapshot['triggerStamp'] != null)
+            .length,
+        'new_active_count': newActiveStations.length,
+        'inactive_before_grid_count': inactiveCandidates.length,
+        'inactive_count': inactiveStations.length,
+        'active_grid_count': activeGridCells.length,
+        'surrounding_grid_count': surroundingGridKeys.length,
+        'max_level': stations.fold<int>(
+          -1,
+          (value, station) => math.max(value, station.kaLevel),
+        ),
+        'max_ascend': stations.fold<int>(
+          0,
+          (value, station) => math.max(value, station.ascend),
+        ),
+        'max_activity': stations.fold<double>(
+          0,
+          (value, station) => math.max(value, station.activity),
+        ),
+      },
     };
+  }
+
+  void _prepareDartHypocenterEventState(DateTime observedAt) {
+    final previous = _directReceiverLastObservedAt;
+    if (previous == null) return;
+    if (observedAt.isBefore(previous) ||
+        observedAt.difference(previous) > const Duration(seconds: 120)) {
+      _resetDartHypocenterEventState();
+    }
+  }
+
+  void _resetDartHypocenterEventState() {
+    _dartHypActiveStationCodes = <String>{};
+    _dartHypActiveTriggerAtByCode.clear();
+    _dartHypGridDecimal = const <double>[0.0, 0.0];
+    _dartHypGridInitialized = false;
   }
 
   Map<String, Object?> _dartHypocenterStationSnapshot(
     NiedStation station, {
-    required StationTriggerSnapshot? trigger,
     required DateTime observedAt,
     required bool active,
+    DateTime? preservedTriggerAt,
   }) {
-    final triggerAt = station.triggerStamp > 0
-        ? DateTime.fromMillisecondsSinceEpoch(
-            station.triggerStamp,
-            isUtc: false,
-          )
-        : (trigger?.firstTriggerInterval?.end ??
-              trigger?.firstRiseInterval?.end);
+    final triggerAt =
+        _dartHypocenterStationTriggerAt(station) ?? preservedTriggerAt;
     final updateAt = station.lastDataTime ?? station.lastUpdate ?? observedAt;
     return {
       'id': station.id,
@@ -592,11 +844,19 @@ class NiedSourceEstimationDriver {
       'triggerStamp': triggerAt?.millisecondsSinceEpoch,
       'updateStamp': updateAt.millisecondsSinceEpoch,
       'ascend': station.ascend,
-      'level': station.level,
-      'detectLevel': station.detectLevel,
-      'activity': station.activity,
+      'level': station.kaLevel,
       'isActive': active,
     };
+  }
+
+  DateTime? _dartHypocenterStationTriggerAt(NiedStation station) {
+    if (station.triggerStamp > 0) {
+      return DateTime.fromMillisecondsSinceEpoch(
+        station.triggerStamp,
+        isUtc: false,
+      );
+    }
+    return null;
   }
 
   Map<String, List<int>> _dartHypocenterAdjStationIds(
@@ -640,7 +900,7 @@ class NiedSourceEstimationDriver {
         }
       }
       for (final item in distances) {
-        if (coveredDirections.length >= 8) break;
+        if (coveredDirections.length >= 4) break;
         if (item.id == station.id ||
             item.distanceKm <= 30.0 ||
             item.distanceKm > 300.0) {
@@ -658,28 +918,57 @@ class NiedSourceEstimationDriver {
     return _dartHypAdjStationIds;
   }
 
-  Map<String, List<String>> _dartHypocenterAdjStationCodes(
+  Map<String, List<String>> _dartDetectionAdjacencyByCode(
     List<NiedStation> stations,
-    Map<String, List<int>> adjStationIds,
   ) {
     final key = stations.map((station) => station.code).join('|');
-    if (_dartHypAdjStationCodesKey == key) return _dartHypAdjStationCodes;
-    final idToCode = {for (final station in stations) station.id: station.code};
+    if (_dartDetectionAdjStationCodesKey == key) {
+      return _dartDetectionAdjStationCodes;
+    }
     final result = <String, List<String>>{};
-    for (final entry in adjStationIds.entries) {
-      result[entry.key] = List<String>.unmodifiable(
-        entry.value
-            .map((id) => idToCode[id] ?? '')
-            .where((code) => code.isNotEmpty),
+    for (final station in stations) {
+      final distances =
+          <({NiedStation station, double distanceKm})>[
+            for (final other in stations)
+              (
+                station: other,
+                distanceKm: _haversineKm(
+                  station.coordinate.latitude,
+                  station.coordinate.longitude,
+                  other.coordinate.latitude,
+                  other.coordinate.longitude,
+                ),
+              ),
+          ]..sort((left, right) {
+            final byDistance = left.distanceKm.compareTo(right.distanceKm);
+            return byDistance != 0
+                ? byDistance
+                : left.station.id.compareTo(right.station.id);
+          });
+      final nearby = distances
+          .where((item) => item.distanceKm <= 30.0)
+          .toList();
+      if (nearby.length <= 1) {
+        for (final candidate in distances) {
+          if (candidate.distanceKm > 30.0 && candidate.distanceKm <= 40.0) {
+            nearby.add(candidate);
+            break;
+          }
+        }
+      }
+      result[station.code] = List<String>.unmodifiable(
+        nearby.take(niedNearbyStationLimit).map((item) => item.station.code),
       );
     }
-    _dartHypAdjStationCodesKey = key;
-    _dartHypAdjStationCodes = Map<String, List<String>>.unmodifiable(result);
-    return _dartHypAdjStationCodes;
+    _dartDetectionAdjStationCodesKey = key;
+    _dartDetectionAdjStationCodes = Map<String, List<String>>.unmodifiable(
+      result,
+    );
+    return _dartDetectionAdjStationCodes;
   }
 
   int _bearingDirection(double bearingDeg) {
-    return (((bearingDeg % 360.0) + 22.5) ~/ 45) % 8;
+    return (((bearingDeg + 45.0) % 360.0) ~/ 90) % 4;
   }
 
   double _bearingDeg(double lat1, double lon1, double lat2, double lon2) {
@@ -731,16 +1020,17 @@ class NiedSourceEstimationDriver {
     );
   }
 
-  String _resolveGifReceiverEventId(DateTime observedAt) {
-    final previous = _gifReceiverLastObservedAt;
-    if (_gifReceiverEventId == null ||
+  String _resolveDirectReceiverEventId(String inputKind, DateTime observedAt) {
+    final previous = _directReceiverLastObservedAt;
+    if (_directReceiverEventId == null ||
         previous == null ||
         observedAt.isBefore(previous) ||
         observedAt.difference(previous) > const Duration(seconds: 120)) {
-      _gifReceiverEventId = 'nied-gif-dart-${observedAt.toIso8601String()}';
+      _directReceiverEventId =
+          'nied-$inputKind-dart-${observedAt.toIso8601String()}';
     }
-    _gifReceiverLastObservedAt = observedAt;
-    return _gifReceiverEventId!;
+    _directReceiverLastObservedAt = observedAt;
+    return _directReceiverEventId!;
   }
 
   void _debugLogGifSourceTrigger({

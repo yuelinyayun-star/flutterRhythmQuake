@@ -48,10 +48,130 @@ void main() {
       findsNothing,
     );
     expect(find.text('4'), findsOneWidget);
-    expect(find.text('\u9707\u5ea6'), findsOneWidget);
+    expect(find.text('\u68c0\u51fa\u9707\u5ea6'), findsOneWidget);
     expect(find.textContaining('JS\u8bef\u5dee 1.250'), findsOneWidget);
     expect(find.textContaining('\u89e6\u53d1 4\u7ad9'), findsOneWidget);
     expect(find.textContaining('\u652f\u6301 4\u7ad9'), findsWidgets);
+  });
+
+  for (final (jmaIndex, coarseShindo, main, suffix) in const [
+    (5, 5, '5', '-'),
+    (6, 5, '5', '+'),
+    (7, 6, '6', '-'),
+    (8, 6, '6', '+'),
+  ]) {
+    testWidgets('shows exact kotoho7 JMA badge index $jmaIndex', (
+      tester,
+    ) async {
+      final observedAt = DateTime.utc(2026, 7, 28, 1);
+      tracker.setNiedEstimator(
+        _Kotoho7JsUiEstimator(jmaIndex: jmaIndex, jmaClass: coarseShindo),
+      );
+      tracker.ingestNiedFrame(
+        stations: [
+          _station('N', const LatLng(36, 140), observedAt),
+          _station('E', const LatLng(35, 141), observedAt),
+          _station('S', const LatLng(34, 140), observedAt),
+          _station('W', const LatLng(35, 139), observedAt),
+        ],
+        observedAt: observedAt,
+        stageName: 'confirmed',
+        maxShindo: coarseShindo,
+        eventId: 'ui-kotoho7-shindo-$jmaIndex',
+        metadata: const {
+          'source_trigger_member_ids': ['N', 'E', 'S', 'W'],
+        },
+      );
+
+      await _pumpAlertModule(tester);
+      await tester.pump();
+
+      expect(find.text(main), findsOneWidget);
+      expect(find.text(suffix), findsOneWidget);
+      expect(find.text('\u68c0\u51fa\u9707\u5ea6'), findsOneWidget);
+    });
+
+    testWidgets('shows exact Dart HYP JMA badge index $jmaIndex', (
+      tester,
+    ) async {
+      final observedAt = DateTime.utc(2026, 7, 28, 1);
+      tracker.setNiedEstimator(const _DartHypUiEstimator());
+      tracker.ingestNiedFrame(
+        stations: [
+          _station('N', const LatLng(36, 140), observedAt),
+          _station('E', const LatLng(35, 141), observedAt),
+          _station('S', const LatLng(34, 140), observedAt),
+          _station('W', const LatLng(35, 139), observedAt),
+        ],
+        observedAt: observedAt,
+        stageName: 'confirmed',
+        maxShindo: coarseShindo,
+        eventId: 'ui-dart-hyp-shindo-$jmaIndex',
+        metadata: {
+          'nied_max_jma_shindo_index': jmaIndex,
+          'source_trigger_member_ids': const ['N', 'E', 'S', 'W'],
+        },
+      );
+
+      await _pumpAlertModule(tester);
+      await tester.pump();
+
+      expect(find.text(main), findsOneWidget);
+      expect(find.text(suffix), findsOneWidget);
+      expect(find.text('\u68c0\u51fa\u9707\u5ea6'), findsOneWidget);
+    });
+  }
+
+  testWidgets('shows only current Dart HYP result diagnostics and JST time', (
+    tester,
+  ) async {
+    final observedAt = DateTime.utc(2026, 7, 17, 19, 45, 22);
+    tracker.setNiedEstimator(const _DartHypUiEstimator());
+    tracker.ingestNiedFrame(
+      stations: [
+        _station('N', const LatLng(36, 140), observedAt),
+        _station('E', const LatLng(35, 141), observedAt),
+        _station('S', const LatLng(34, 140), observedAt),
+        _station('W', const LatLng(35, 139), observedAt),
+      ],
+      observedAt: observedAt,
+      stageName: 'confirmed',
+      maxShindo: 1,
+      eventId: 'ui-dart-hyp-event',
+      metadata: const {
+        'source_trigger_member_ids': ['N', 'E', 'S', 'W'],
+      },
+    );
+
+    await _pumpAlertModule(tester);
+    await tester.pump();
+
+    expect(find.text('\u9707\u6e90\u672c\u5730\u63a8\u7b97'), findsOneWidget);
+    expect(find.text('1'), findsOneWidget);
+    expect(find.text('\u68c0\u51fa\u9707\u5ea6'), findsOneWidget);
+    expect(find.text('35.783\u00b0N, 141.317\u00b0E'), findsOneWidget);
+    expect(
+      find.text(
+        '\u6df1\u5ea6 40km \u00b7 \u652f\u6301 5\u7ad9 \u00b7 Dart HYP',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.text('07-18 04:45:14  \u8bef\u5dee 12.35 \u00b7 \u8d28\u91cf C'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('\u89e6\u53d1 6\u7ad9 (P: 3 | S: 2 | O: 1)'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('37.0%'), findsNothing);
+    expect(find.textContaining('--s'), findsNothing);
+    expect(find.textContaining('P90 --km'), findsNothing);
+
+    tracker.resetNied();
+    await tester.pump();
+
+    expect(find.text('\u9707\u6e90\u672c\u5730\u63a8\u7b97'), findsNothing);
   });
 
   testWidgets('shows candidate region metadata without replacing epicenter', (
@@ -189,7 +309,10 @@ Future<void> _pumpAlertModule(
 }
 
 class _Kotoho7JsUiEstimator implements SourceEstimator {
-  const _Kotoho7JsUiEstimator();
+  const _Kotoho7JsUiEstimator({this.jmaIndex = 4, this.jmaClass = 4});
+
+  final int jmaIndex;
+  final int jmaClass;
 
   @override
   String get methodId => 'nied_gif_kotoho7_js_receiver_v1';
@@ -207,19 +330,55 @@ class _Kotoho7JsUiEstimator implements SourceEstimator {
       method: methodId,
       supportingStationCount: 4,
       originTime: request.observedAt,
-      diagnostics: const {
+      diagnostics: {
         'best_source_error': 1.25,
         'best_source_applied_count': 4,
         'processed_frame_count': 1,
         'peak_detection_id_count': 1,
         'bridge_elapsed_ms': 8,
-        'js_map_max_shindo_class': 4.0,
+        'js_map_max_shindo_class': jmaClass.toDouble(),
+        'js_map_max_shindo_index': jmaIndex.toDouble(),
         'best_source_phase_stations': [
           {'code': 'N', 'lat': 36.0, 'lng': 140.0, 'phase': 'p'},
           {'code': 'E', 'lat': 35.0, 'lng': 141.0, 'phase': 's'},
           {'code': 'S', 'lat': 34.0, 'lng': 140.0, 'phase': 'other'},
           {'code': 'W', 'lat': 35.0, 'lng': 139.0, 'phase': 'p'},
         ],
+      },
+    );
+  }
+}
+
+class _DartHypUiEstimator
+    implements SourceEstimator, SourceEstimatorLifecycleOwner {
+  const _DartHypUiEstimator();
+
+  @override
+  String get methodId => 'nied_dart_hyp_v1';
+
+  @override
+  bool get requiresEveryFrame => true;
+
+  @override
+  bool get ownsOutputLifecycle => true;
+
+  @override
+  bool supports(SourceEstimationRequest request) => true;
+
+  @override
+  SourceEstimate estimate(SourceEstimationRequest request) {
+    return SourceEstimate(
+      latitude: 35.783,
+      longitude: 141.317,
+      depthKm: 40,
+      originTime: DateTime.utc(2026, 7, 17, 19, 45, 14),
+      confidence: 0.37,
+      method: methodId,
+      supportingStationCount: 5,
+      diagnostics: const {
+        'error_level': 12.3456,
+        'quality_rank': 'C',
+        'wave_counts': {'P': 3, 'S': 2, 'O': 1},
       },
     );
   }
@@ -351,7 +510,7 @@ NiedStation _station(String code, LatLng coordinate, DateTime observedAt) {
       expireSeconds: 10,
     )
     ..level = 8
-    ..detectLevel = 7
+    ..level = 7
     ..continuousShindo = 0.5
     ..activity = 6
     ..ascend = 2

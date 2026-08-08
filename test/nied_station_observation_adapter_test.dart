@@ -19,7 +19,6 @@ void main() {
             expireSeconds: 10,
           )
           ..level = 8
-          ..detectLevel = 8
           ..activity = 12.5
           ..ascend = 3
           ..isActive = false
@@ -31,6 +30,7 @@ void main() {
     final active = adapter.fromStation(station, observedAt: observedAt);
 
     expect(inactive.detectLevel, 8);
+    expect(inactive.rawLevel, 8);
     expect(inactive.intensity, 0.5);
     expect(inactive.sensorRole, ObservationSensorRole.surface);
     expect(inactive.metadata['gif_display_primary_layer'], 'jma_s');

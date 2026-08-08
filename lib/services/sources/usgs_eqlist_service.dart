@@ -6,17 +6,17 @@ import '../../utils/fe_regions.dart';
 import '../../core/intensity_calculator.dart';
 
 /// USGS地震列表服务
-/// 
+///
 /// 该类提供美国地质调查局(USGS)地震数据获取功能。
 /// 通过HTTP轮询获取全球地震列表。
-/// 
+///
 /// 主要功能：
 /// - 定时轮询USGS GeoJSON API
 /// - 解析地震数据
 /// - 计算中国地震烈度(CSIS)
 /// - 转换地名显示
 /// - 时间转换为UTC+8
-/// 
+///
 /// 数据源：
 /// - USGS 2.5级以上一周内地震
 /// - URL: https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_week.geojson
@@ -26,27 +26,30 @@ class UsgsEqlistService {
   UsgsEqlistService._internal();
 
   /// USGS GeoJSON API地址
-  /// 
+  ///
   /// 获取最近一周2.5级以上的地震
   static const String _url =
       'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_week.geojson';
 
   /// 定时器
   Timer? _timer;
-  
+
   /// 最新地震列表
   final List<QuakeMessage> _latestList = [];
-  
+
   /// 获取最新列表（只读）
   List<QuakeMessage> get latestList => List.unmodifiable(_latestList);
 
   /// 列表更新回调
   void Function(List<QuakeMessage>)? onListUpdated;
 
+  /// 最新官方事件更新回调，字段格式与统一事件适配器的 USGS 输入一致。
+  void Function(Map<String, dynamic>)? onCurrentUpdated;
+
   /// 启动轮询
-  /// 
-  /// [interval] 轮询间隔，默认60秒
-  void start({Duration interval = const Duration(seconds: 60)}) {
+  ///
+  /// [interval] 轮询间隔，默认10秒，与 kanameishi 一致
+  void start({Duration interval = const Duration(seconds: 10)}) {
     _timer?.cancel();
     _fetch();
     _timer = Timer.periodic(interval, (_) => _fetch());
@@ -70,6 +73,8 @@ class UsgsEqlistService {
       final features = data['features'] as List?;
       if (features == null || features.isEmpty) return;
 
+      final currentPayload = normalizeFeatureForUnifiedUi(features.first);
+
       _latestList.clear();
       for (final f in features) {
         final props = f['properties'];
@@ -91,41 +96,119 @@ class UsgsEqlistService {
             double.tryParse(coords[2]?.toString() ?? '') ?? 0.0;
 
         final int timeMs = props['time'] ?? 0;
-        final DateTime originTimeUtc =
-            DateTime.fromMillisecondsSinceEpoch(timeMs, isUtc: true);
+        final DateTime originTimeUtc = DateTime.fromMillisecondsSinceEpoch(
+          timeMs,
+          isUtc: true,
+        );
         final DateTime originTime = originTimeUtc.add(const Duration(hours: 8));
 
-        final String eventId = f['id']?.toString() ??
-            props['code']?.toString() ??
-            'usgs_$timeMs';
+        final String eventId =
+            f['id']?.toString() ?? props['code']?.toString() ?? 'usgs_$timeMs';
 
         final String cnPlace = getFEName(latitude, longitude);
 
-        final int maxIntensity =
-            IntensityCalculator.calcCsisLevel(magnitude, depth, 0);
+        final int maxIntensity = IntensityCalculator.calcCsisLevel(
+          magnitude,
+          depth,
+          0,
+        );
 
         final String status = props['status']?.toString() ?? '';
-        final String reviewType = status.toLowerCase() == 'reviewed' 
-            ? '正式测定' 
+        final String reviewType = status.toLowerCase() == 'reviewed'
+            ? '正式测定'
             : '自动测定';
 
-        _latestList.add(QuakeMessage(
-          source: QuakeSourceType.usgs,
-          eventId: eventId,
-          location: cnPlace.isNotEmpty ? cnPlace : place,
-          magnitude: magnitude,
-          latitude: latitude,
-          longitude: longitude,
-          depth: depth,
-          originTime: originTime,
-          isHistory: true,
-          maxIntensity: maxIntensity,
-          reviewType: reviewType,
-          isInfoEvent: true,
-        ));
+        _latestList.add(
+          QuakeMessage(
+            source: QuakeSourceType.usgs,
+            eventId: eventId,
+            location: cnPlace.isNotEmpty ? cnPlace : place,
+            magnitude: magnitude,
+            latitude: latitude,
+            longitude: longitude,
+            depth: depth,
+            originTime: originTime,
+            isHistory: true,
+            maxIntensity: maxIntensity,
+            reviewType: reviewType,
+            isInfoEvent: true,
+          ),
+        );
       }
 
+      if (currentPayload != null) onCurrentUpdated?.call(currentPayload);
+      // 当前事件会同步进入统一列表桶；随后用官方完整列表覆盖，避免重复条目。
       onListUpdated?.call(_latestList);
     } catch (_) {}
+  }
+
+  /// 将 USGS GeoJSON feature 规范成统一 UI 已使用的 USGS 字段。
+  ///
+  /// 当前事件 ID 优先使用 `properties.code`，与 FAN 的 USGS `id` 对齐。
+  Map<String, dynamic>? normalizeFeatureForUnifiedUi(Object? feature) {
+    if (feature is! Map) return null;
+    final featureMap = Map<String, dynamic>.from(feature);
+    final propsRaw = featureMap['properties'];
+    final geometryRaw = featureMap['geometry'];
+    if (propsRaw is! Map || geometryRaw is! Map) return null;
+
+    final props = Map<String, dynamic>.from(propsRaw);
+    final geometry = Map<String, dynamic>.from(geometryRaw);
+    final coords = geometry['coordinates'];
+    if (coords is! List || coords.length < 3) return null;
+
+    final magnitude = double.tryParse(props['mag']?.toString() ?? '');
+    final longitude = double.tryParse(coords[0]?.toString() ?? '');
+    final latitude = double.tryParse(coords[1]?.toString() ?? '');
+    final depth = double.tryParse(coords[2]?.toString() ?? '');
+    final originTime = _formatEpochAsUtc8(props['time']);
+    final updateTime = _formatEpochAsUtc8(props['updated']);
+    if (magnitude == null ||
+        longitude == null ||
+        latitude == null ||
+        depth == null ||
+        originTime == null ||
+        updateTime == null) {
+      return null;
+    }
+
+    final code = props['code']?.toString().trim() ?? '';
+    final featureId = featureMap['id']?.toString().trim() ?? '';
+    final eventId = code.isNotEmpty ? code : featureId;
+    if (eventId.isEmpty) return null;
+
+    final place = props['place']?.toString() ?? 'Unknown';
+    final cnPlace = getFEName(latitude, longitude);
+    final status = props['status']?.toString() ?? '';
+    return {
+      'eventId': eventId,
+      'reviewType': status.toLowerCase() == 'reviewed'
+          ? 'reviewed'
+          : 'automatic',
+      'location': cnPlace.isNotEmpty ? cnPlace : place,
+      'latitude': latitude,
+      'longitude': longitude,
+      'depth': depth,
+      'originTime': originTime,
+      'shockTime': originTime,
+      'updateTime': updateTime,
+      'magnitude': magnitude,
+      'maxIntensity': IntensityCalculator.calcCsisLevel(magnitude, depth, 0),
+    };
+  }
+
+  String? _formatEpochAsUtc8(Object? value) {
+    final milliseconds = value is int
+        ? value
+        : int.tryParse(value?.toString() ?? '');
+    if (milliseconds == null || milliseconds <= 0) return null;
+    final time = DateTime.fromMillisecondsSinceEpoch(
+      milliseconds,
+      isUtc: true,
+    ).add(const Duration(hours: 8));
+    String two(int part) => part.toString().padLeft(2, '0');
+    return '${time.year.toString().padLeft(4, '0')}-'
+        '${two(time.month)}-${two(time.day)} '
+        '${two(time.hour)}:${two(time.minute)}:${two(time.second)}';
   }
 }

@@ -4,6 +4,11 @@ import '../../../models/quake_message.dart';
 import 'jma_eqlist_service.dart';
 import 'cenc_eqlist_service.dart';
 import 'cwa_eqlist_service.dart';
+import '../cenc_cmt_service.dart';
+import '../usgs_cmt_service.dart';
+import '../jma_cmt_service.dart';
+import '../fnet_cmt_service.dart';
+import '../hinet_aqua_cmt_service.dart';
 import '../usgs_eqlist_service.dart';
 import '../emsc_eqlist_service.dart';
 
@@ -22,9 +27,10 @@ import '../emsc_eqlist_service.dart';
 /// - JMA: 日本气象厅，通过HTTP轮询获取
 /// - CENC: 中国地震台网中心，通过FAN推送+Wolfx WS获取，HTTP轮询作为备用
 /// - USGS: 美国地质调查局，通过HTTP轮询获取
+/// - EMSC: 欧洲地中海地震中心，通过HTTP轮询获取
 /// - FSSN: 中国地震速报，通过FAN推送获取（列表订阅+实时推送）
 /// - KMA: 韩国气象厅，通过FAN实时推送获取
-/// - CWA: 台湾中央气象署，通过FAN推送获取（列表订阅+实时推送），HTTP轮询作为备用
+/// - CWA: 台湾中央气象署，通过ExpTech v2 HTTP轮询获取，FAN推送作为备用
 class EqlistManager {
   static final EqlistManager _instance = EqlistManager._internal();
   factory EqlistManager() => _instance;
@@ -44,6 +50,21 @@ class EqlistManager {
 
   /// EMSC地震列表服务
   final EmscEqlistService emsc = EmscEqlistService();
+
+  /// CENC 震源机制解（CMT）服务
+  final CencCmtService cencCmt = CencCmtService();
+
+  /// USGS 震源机制解（CMT）服务
+  final UsgsCmtService usgsCmt = UsgsCmtService();
+
+  /// JMA 震源机制解（CMT）服务
+  final JmaCmtService jmaCmt = JmaCmtService();
+
+  /// F-net 震源机制解（CMT）服务
+  final FnetCmtService fnetCmt = FnetCmtService();
+
+  /// Hi-net AQUA 震源机制解（CMT）服务
+  final HinetAquaCmtService hinetAquaCmt = HinetAquaCmtService();
 
   /// JMA地震列表缓存
   final List<QuakeMessage> _jmaList = [];
@@ -66,6 +87,21 @@ class EqlistManager {
   /// EMSC地震列表缓存
   final List<QuakeMessage> _emscList = [];
 
+  /// CENC CMT 震源机制解缓存
+  final List<QuakeMessage> _cencCmtList = [];
+
+  /// USGS CMT 震源机制解缓存
+  final List<QuakeMessage> _usgsCmtList = [];
+
+  /// JMA CMT 震源机制解缓存
+  final List<QuakeMessage> _jmaCmtList = [];
+
+  /// F-net CMT 震源机制解缓存
+  final List<QuakeMessage> _fnetCmtList = [];
+
+  /// Hi-net AQUA CMT 震源机制解缓存
+  final List<QuakeMessage> _hinetAquaCmtList = [];
+
   /// 获取JMA列表（只读）
   List<QuakeMessage> get jmaList => List.unmodifiable(_jmaList);
 
@@ -87,15 +123,46 @@ class EqlistManager {
   /// 获取EMSC列表（只读）
   List<QuakeMessage> get emscList => List.unmodifiable(_emscList);
 
+  /// 获取 CENC CMT 列表（只读）
+  List<QuakeMessage> get cencCmtList => List.unmodifiable(_cencCmtList);
+
+  /// 获取 USGS CMT 列表（只读）
+  List<QuakeMessage> get usgsCmtList => List.unmodifiable(_usgsCmtList);
+
+  /// 获取 JMA CMT 列表（只读）
+  List<QuakeMessage> get jmaCmtList => List.unmodifiable(_jmaCmtList);
+
+  /// 获取 F-net CMT 列表（只读）
+  List<QuakeMessage> get fnetCmtList => List.unmodifiable(_fnetCmtList);
+
+  /// 获取 Hi-net AQUA CMT 列表（只读）
+  List<QuakeMessage> get hinetAquaCmtList =>
+      List.unmodifiable(_hinetAquaCmtList);
+
   /// 任意列表更新时的回调
   void Function()? onAnyUpdated;
+
+  /// USGS 官方源最新事件回调，用于进入统一 UI。
+  void Function(Map<String, dynamic>)? onUsgsCurrentUpdated;
+
+  /// EMSC 官方源最新事件回调，用于进入统一 UI。
+  void Function(Map<String, dynamic>)? onEmscCurrentUpdated;
+
+  /// CWA 官方源最新事件回调，用于进入统一 UI。
+  void Function(Map<String, dynamic>)? onCwaCurrentUpdated;
   bool _running = false;
 
   /// 启动所有HTTP轮询服务
   ///
-  /// JMA、USGS通过HTTP轮询获取数据
-  /// CENC、FSSN、KMA、CWA通过FAN推送获取数据
-  void start() {
+  /// JMA、USGS、EMSC、CWA通过HTTP轮询获取数据
+  /// CENC、FSSN、KMA通过FAN推送获取数据
+  void start({
+    bool cencCmtEnabled = true,
+    bool usgsCmtEnabled = true,
+    bool jmaCmtEnabled = true,
+    bool fnetCmtEnabled = true,
+    bool hinetAquaCmtEnabled = true,
+  }) {
     if (_running) return;
     _running = true;
     jma.onListUpdated = (items) {
@@ -126,6 +193,9 @@ class EqlistManager {
       _trim(_usgsList);
       onAnyUpdated?.call();
     };
+    usgs.onCurrentUpdated = (data) => onUsgsCurrentUpdated?.call(data);
+    emsc.onCurrentUpdated = (data) => onEmscCurrentUpdated?.call(data);
+    cwa.onCurrentUpdated = (data) => onCwaCurrentUpdated?.call(data);
     emsc.onListUpdated = (items) {
       _emscList
         ..clear()
@@ -137,8 +207,14 @@ class EqlistManager {
     cenc.start();
     usgs.start();
     emsc.start();
+    cwa.start();
+    if (cencCmtEnabled) cencCmt.start();
+    if (usgsCmtEnabled) usgsCmt.start();
+    if (jmaCmtEnabled) jmaCmt.start();
+    if (fnetCmtEnabled) fnetCmt.start();
+    if (hinetAquaCmtEnabled) hinetAquaCmt.start();
     debugPrint(
-      'EqlistManager: JMA+USGS+CENC+EMSC HTTP poll, CWA+FSSN+KMA via FAN push',
+      'EqlistManager: JMA+USGS+EMSC+CWA HTTP poll, CENC+FSSN+KMA via FAN push, CENC CMT + USGS CMT + JMA CMT + F-net CMT + Hi-net AQUA CMT via HTTP poll',
     );
   }
 
@@ -149,7 +225,16 @@ class EqlistManager {
     jma.stop();
     cenc.stop();
     usgs.stop();
+    usgs.onCurrentUpdated = null;
     emsc.stop();
+    emsc.onCurrentUpdated = null;
+    cwa.stop();
+    cwa.onCurrentUpdated = null;
+    cencCmt.stop();
+    usgsCmt.stop();
+    jmaCmt.stop();
+    fnetCmt.stop();
+    hinetAquaCmt.stop();
   }
 
   /// 更新FSSN列表
@@ -263,6 +348,11 @@ class EqlistManager {
       'kmaEqlist' => _kmaList,
       'cwaEqlist' => _cwaList,
       'emscEqlist' => _emscList,
+      'cencCmt' => _cencCmtList,
+      'usgsCmt' => _usgsCmtList,
+      'jmaCmt' => _jmaCmtList,
+      'fnetCmt' => _fnetCmtList,
+      'hinetAquaCmt' => _hinetAquaCmtList,
       _ => null,
     };
     if (list == null) return;
@@ -335,5 +425,10 @@ class EqlistManager {
     'kmaEqlist': _kmaList,
     'cwaEqlist': _cwaList,
     'emscEqlist': _emscList,
+    'cencCmt': _cencCmtList,
+    'usgsCmt': _usgsCmtList,
+    'jmaCmt': _jmaCmtList,
+    'fnetCmt': _fnetCmtList,
+    'hinetAquaCmt': _hinetAquaCmtList,
   };
 }

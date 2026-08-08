@@ -107,6 +107,7 @@ class CwaStationService {
   bool _shake1Notified = false;
   bool _shake2Notified = false;
   DateTime? _lastRtsDataTime;
+  final ValueNotifier<DateTime?> dataTimeNotifier = ValueNotifier(null);
 
   static int gridLevelFromInstShindo(num instShindo) {
     final value = instShindo.toDouble();
@@ -334,6 +335,7 @@ class CwaStationService {
     _client?.close();
     _client = null;
     _lastRtsDataTime = null;
+    dataTimeNotifier.value = null;
     _isConnected = false;
     _clearRuntimeState(emitStations: true);
     if (wasConnected) {
@@ -418,6 +420,7 @@ class CwaStationService {
           return;
         }
         _lastRtsDataTime = dataTime;
+        dataTimeNotifier.value = dataTime;
       }
 
       final now = DateTime.now();

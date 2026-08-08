@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:ui';
+import 'dart:math' as math;
 import 'package:intl/intl.dart';
 import 'dart:async';
 import '../../services/ntp_service.dart';
@@ -41,6 +42,9 @@ class _TopStatusBarState extends State<TopStatusBar> {
   /// 当前显示时间
   late final ValueNotifier<DateTime> _currentTime;
 
+  OverlayEntry? _mockOverlayEntry;
+  ValueNotifier<Offset>? _mockOverlayPosition;
+
   @override
   void initState() {
     super.initState();
@@ -52,6 +56,7 @@ class _TopStatusBarState extends State<TopStatusBar> {
 
   @override
   void dispose() {
+    _closeMockOverlay();
     _timer.cancel();
     _currentTime.dispose();
     super.dispose();
@@ -79,41 +84,45 @@ class _TopStatusBarState extends State<TopStatusBar> {
               ),
             ),
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Row(
-                  children: [
-                    Icon(
-                      Icons.location_on,
-                      color: Colors.blueAccent,
-                      size: s(16),
-                    ),
-                    SizedBox(width: s(10)),
-                    ValueListenableBuilder(
-                      valueListenable: LocationService().statusListenable,
-                      builder: (context, status, _) {
-                        return ValueListenableBuilder(
-                          valueListenable: LocationService().positionListenable,
-                          builder: (context, position, _) {
-                            return Text(
-                              _locationText(status, position),
-                              style: TextStyle(
-                                fontFamily: 'JetBrainsMono',
-                                color: Colors.white60,
-                                fontSize: s(12),
-                                letterSpacing: 0,
-                              ),
+                Expanded(
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.location_on,
+                        color: Colors.blueAccent,
+                        size: s(16),
+                      ),
+                      SizedBox(width: s(10)),
+                      Flexible(
+                        child: ValueListenableBuilder(
+                          valueListenable: LocationService().statusListenable,
+                          builder: (context, status, _) {
+                            return ValueListenableBuilder(
+                              valueListenable:
+                                  LocationService().positionListenable,
+                              builder: (context, position, _) {
+                                return Text(
+                                  _locationText(status, position),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontFamily: 'JetBrainsMono',
+                                    color: Colors.white60,
+                                    fontSize: s(12),
+                                    letterSpacing: 0,
+                                  ),
+                                );
+                              },
                             );
                           },
-                        );
-                      },
-                    ),
-                  ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-
-                const Spacer(),
-
                 Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     IconButton(
                       tooltip: '模拟注入',
@@ -222,163 +231,275 @@ class _TopStatusBarState extends State<TopStatusBar> {
   /// 打开模拟注入对话框
   ///
   /// 用于调试和测试，可以手动注入预警消息
-  Future<void> _openMockDialog() async {
-    final controller = TextEditingController();
-    final zipController = TextEditingController();
-    final niedGifController = TextEditingController();
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF151515),
-          title: const Text('模拟注入'),
-          content: SizedBox(
-            width: 700,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  '粘贴 Wolfx / FAN / P2P 的 js/json 报文：',
-                  style: TextStyle(color: Colors.white70, fontSize: 12),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: controller,
-                  maxLines: 8,
-                  minLines: 6,
-                  style: TextStyle(fontFamily: 'JetBrainsMono', fontSize: 12),
-                  decoration: InputDecoration(
-                    hintText:
-                        '例如: const msg = {...}; 或 [{"type":"jma_eew",...}]',
-                    hintStyle: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.35),
-                    ),
-                    filled: true,
-                    fillColor: const Color(0xFF0E0E0E),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(
-                        color: Colors.white.withValues(alpha: 0.2),
+  void _openMockDialog() {
+    if (_mockOverlayEntry != null) return;
+
+    var payload = '';
+    var zipPath = '';
+    var niedGifPath = '';
+    final position = ValueNotifier<Offset>(const Offset(40, 74));
+    _mockOverlayPosition = position;
+
+    late final OverlayEntry entry;
+    entry = OverlayEntry(
+      builder: (overlayContext) {
+        final screenSize = MediaQuery.sizeOf(overlayContext);
+        final panelWidth = (screenSize.width - 32)
+            .clamp(280.0, 520.0)
+            .toDouble();
+        final panelHeight = (screenSize.height - 64)
+            .clamp(280.0, 560.0)
+            .toDouble();
+
+        return ValueListenableBuilder<Offset>(
+          valueListenable: position,
+          builder: (context, offset, _) {
+            final left = offset.dx
+                .clamp(0.0, math.max(0.0, screenSize.width - panelWidth))
+                .toDouble();
+            final top = offset.dy
+                .clamp(0.0, math.max(0.0, screenSize.height - panelHeight))
+                .toDouble();
+
+            return Positioned(
+              left: left,
+              top: top,
+              width: panelWidth,
+              height: panelHeight,
+              child: Material(
+                color: const Color(0xFF151515),
+                elevation: 18,
+                shadowColor: Colors.black.withValues(alpha: 0.65),
+                borderRadius: BorderRadius.circular(12),
+                clipBehavior: Clip.antiAlias,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 14, 24, 14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      SizedBox(
+                        height: 48,
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: MouseRegion(
+                                cursor: SystemMouseCursors.move,
+                                child: GestureDetector(
+                                  key: const ValueKey(
+                                    'mock-injection-drag-handle',
+                                  ),
+                                  behavior: HitTestBehavior.opaque,
+                                  onPanUpdate: (details) {
+                                    position.value =
+                                        position.value + details.delta;
+                                  },
+                                  child: const Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: Text(
+                                      '模拟注入',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: '关闭',
+                              onPressed: _closeMockOverlay,
+                              icon: const Icon(Icons.close),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Divider(color: Colors.white12),
-                const SizedBox(height: 8),
-                const Text(
-                  'K-NET ASCII zip 路径 (PGA → 检测)：',
-                  style: TextStyle(color: Colors.lightBlueAccent, fontSize: 12),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: zipController,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Colors.lightBlueAccent,
-                  ),
-                  decoration: InputDecoration(
-                    hintText: r'D:\Downloads\20260601055432_ascii.zip',
-                    hintStyle: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.3),
-                    ),
-                    filled: true,
-                    fillColor: const Color(0xFF0E0E0E),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(
-                        color: Colors.lightBlueAccent.withValues(alpha: 0.3),
+                      Expanded(
+                        child: SingleChildScrollView(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                '粘贴 Wolfx / FAN / P2P 的 js/json 报文：',
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              TextField(
+                                onChanged: (value) => payload = value,
+                                maxLines: 8,
+                                minLines: 6,
+                                style: const TextStyle(
+                                  fontFamily: 'JetBrainsMono',
+                                  fontSize: 12,
+                                ),
+                                decoration: InputDecoration(
+                                  hintText:
+                                      '例如: const msg = {...}; 或 [{"type":"jma_eew",...}]',
+                                  hintStyle: TextStyle(
+                                    color: Colors.white.withValues(alpha: 0.35),
+                                  ),
+                                  filled: true,
+                                  fillColor: const Color(0xFF0E0E0E),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                    borderSide: BorderSide(
+                                      color: Colors.white.withValues(
+                                        alpha: 0.2,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              const Divider(color: Colors.white12),
+                              const SizedBox(height: 8),
+                              const Text(
+                                'K-NET ASCII zip 路径 (PGA → 检测)：',
+                                style: TextStyle(
+                                  color: Colors.lightBlueAccent,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              TextField(
+                                onChanged: (value) => zipPath = value,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.lightBlueAccent,
+                                ),
+                                decoration: InputDecoration(
+                                  hintText:
+                                      r'D:\Downloads\20260601055432_ascii.zip',
+                                  hintStyle: TextStyle(
+                                    color: Colors.white.withValues(alpha: 0.3),
+                                  ),
+                                  filled: true,
+                                  fillColor: const Color(0xFF0E0E0E),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                    borderSide: BorderSide(
+                                      color: Colors.lightBlueAccent.withValues(
+                                        alpha: 0.3,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              const Divider(color: Colors.white12),
+                              const SizedBox(height: 8),
+                              const Text(
+                                'NIED GIF 文件/目录路径（直接按 GIF 注入）：',
+                                style: TextStyle(
+                                  color: Colors.lightBlueAccent,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              TextField(
+                                onChanged: (value) => niedGifPath = value,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.lightBlueAccent,
+                                ),
+                                decoration: InputDecoration(
+                                  hintText:
+                                      r'D:\captures\20260630_iwate 或 D:\captures\20260630112425.jma_s.gif',
+                                  hintStyle: TextStyle(
+                                    color: Colors.white.withValues(alpha: 0.3),
+                                  ),
+                                  filled: true,
+                                  fillColor: const Color(0xFF0E0E0E),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                    borderSide: BorderSide(
+                                      color: Colors.lightBlueAccent.withValues(
+                                        alpha: 0.3,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Divider(color: Colors.white12),
-                const SizedBox(height: 8),
-                const Text(
-                  'NIED GIF 文件/目录路径（直接按 GIF 注入）：',
-                  style: TextStyle(color: Colors.lightBlueAccent, fontSize: 12),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: niedGifController,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Colors.lightBlueAccent,
-                  ),
-                  decoration: InputDecoration(
-                    hintText:
-                        r'D:\captures\20260630_iwate 或 D:\captures\20260630112425.jma_s.gif',
-                    hintStyle: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.3),
-                    ),
-                    filled: true,
-                    fillColor: const Color(0xFF0E0E0E),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(
-                        color: Colors.lightBlueAccent.withValues(alpha: 0.3),
+                      const SizedBox(height: 12),
+                      const Divider(color: Colors.white12),
+                      const SizedBox(height: 4),
+                      Wrap(
+                        alignment: WrapAlignment.end,
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          TextButton(
+                            onPressed: _closeMockOverlay,
+                            child: const Text('取消'),
+                          ),
+                          ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.lightBlueAccent
+                                  .withValues(alpha: 0.15),
+                            ),
+                            onPressed: () {
+                              final path = zipPath.trim();
+                              if (path.isNotEmpty) _submitKnetZip(path);
+                            },
+                            child: const Text(
+                              '注入K-NET',
+                              style: TextStyle(color: Colors.lightBlueAccent),
+                            ),
+                          ),
+                          ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.lightBlueAccent
+                                  .withValues(alpha: 0.15),
+                            ),
+                            onPressed: () {
+                              final path = niedGifPath.trim();
+                              if (path.isNotEmpty) {
+                                unawaited(_submitNiedGifPath(path));
+                              }
+                            },
+                            child: const Text(
+                              '注入NIED GIF',
+                              style: TextStyle(color: Colors.lightBlueAccent),
+                            ),
+                          ),
+                          ElevatedButton(
+                            onPressed: () {
+                              if (payload.trim().isNotEmpty) {
+                                _submitMockPayload(payload);
+                              }
+                            },
+                            child: const Text('注入报文'),
+                          ),
+                        ],
                       ),
-                    ),
+                    ],
                   ),
                 ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('取消'),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.lightBlueAccent.withValues(alpha: 0.15),
               ),
-              onPressed: () {
-                final path = zipController.text.trim();
-                if (path.isNotEmpty) {
-                  final ok = _submitKnetZip(path);
-                  if (ok) Navigator.of(ctx).pop();
-                }
-              },
-              child: const Text(
-                '注入K-NET',
-                style: TextStyle(color: Colors.lightBlueAccent),
-              ),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.lightBlueAccent.withValues(alpha: 0.15),
-              ),
-              onPressed: () {
-                final path = niedGifController.text.trim();
-                if (path.isNotEmpty) {
-                  Navigator.of(ctx).pop();
-                  unawaited(_submitNiedGifPath(path));
-                }
-              },
-              child: const Text(
-                '注入NIED GIF',
-                style: TextStyle(color: Colors.lightBlueAccent),
-              ),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                if (controller.text.trim().isNotEmpty) {
-                  _submitMockPayload(controller.text);
-                }
-                Navigator.of(ctx).pop();
-              },
-              child: const Text('注入报文'),
-            ),
-          ],
+            );
+          },
         );
       },
     );
-    controller.dispose();
-    zipController.dispose();
-    niedGifController.dispose();
+
+    _mockOverlayEntry = entry;
+    Overlay.of(context, rootOverlay: true).insert(entry);
+  }
+
+  void _closeMockOverlay() {
+    final entry = _mockOverlayEntry;
+    _mockOverlayEntry = null;
+    _mockOverlayPosition?.dispose();
+    _mockOverlayPosition = null;
+    entry?.remove();
   }
 
   bool _submitKnetZip(String path) {

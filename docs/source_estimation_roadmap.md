@@ -1,7 +1,7 @@
 # 震源估算实施路线图
 
 > 状态：P1 进行中
-> 更新日期：2026-06-20
+> 更新日期：2026-07-18
 > 研究依据：[`source_estimation_research.md`](source_estimation_research.md)
 
 ## 1. 总体目标
@@ -14694,3 +14694,1047 @@ Result:
   `11.1 km` error, but late frames still drift to the west. The remaining gap
   is the reference cluster lifecycle/stable hypocenter and full P/S scenario
   scoring, not the worker input plumbing.
+
+### 2026-07-17 KA 输入与文章震源算法边界改造
+
+规范边界：
+
+- NIED 检出输入以 KA 为准：`level` 为 `-1..20`，并使用 KA 的
+  `recentLevel / ascend / activity / triggerStamp / active / inactive` 语义；
+- 震源核心以文章《揺れ検知から震央を検出してみる》为准；
+- Scratch `project.json` 只补充文章未展开的实现细节，不反向覆盖文章步骤；
+- 禁止用 Robust detector 时间、接收时间或固定间隔补造 worker
+  `triggerStamp`。
+
+本次修正：
+
+- Yahoo 与 GIF 共用 KA 的活动站筛选、`chainActivate`、未活动站筛选和
+  worker 快照，不再把 Yahoo 的旧 source-trigger 成员直接送入震源拟合；
+- worker 快照对齐 KA：`id / latLng / triggerStamp / updateStamp / ascend /
+  level / isActive`，仅额外保留本地 `code` 标识；
+- 修复邻站表 key 错误：旧代码以 station id 建表，却用 station code 查询，
+  导致所有站的邻站列表为空；
+- 拆分 KA 两张邻站表：检出使用 30 km 内最多 6 站（孤站可补一个
+  30--40 km 站），震源簇使用 30 km 内全部站并按四方向补站到 300 km；
+- KA 的 1 度事件偏移网格继续用于检出和 detection ID carrier；HYP 未着惩罚
+  后续已按当前 JS 修正为候选 P 波动态半径，不再固定为活动格周围 9 格；
+- 修复 GIF 输入更新时间顺序：先写本帧 `lastDataTime/updateStamp`，再执行
+  `NiedStation.updateFromContinuousShindo()`，确保 `calcAscend()` 生成的是
+  本帧真实 `triggerStamp`；
+- 修复 Yahoo 输入相同的更新时间顺序错误：原实现先执行 `station.update()`，
+  再写本帧时间，会让 `calcAscend()` 使用上一帧时间或初始 `0`；现已与 KA
+  `update(intensity, updateStamp)` 的先写 `updateStamp` 顺序一致；
+- KA 新版 `NiedNet.vue` 为每站固定传入 `expireSeconds = 10`。生产 Yahoo、GIF、
+  同步检出、后台检出及回放 fixture 已统一为 10 秒，并删除旧的“level 上升时
+  动态延长 expireSeconds”和缺帧时动态缩短逻辑；`recentLevel` 历史容量仍为 KA
+  的 60 帧，这里的 10 秒窗口与已删除的 Scratch 30 级输入是两个不同概念；
+- 修复 KA `level 0` 的连续震度回退值：精确为 `-3.0`，不使用通式得到
+  `-3.25`；
+- 删除生产 NIED 推算路径的 Scratch 30 级转换表和 30 级 fallback；
+- `NiedDartHypSourceEstimator` 有 KA 快照时不再退回旧
+  `Kotoho7ReferenceHypSourceEstimator`；不足 5 个真实触发时刻时直接不估算；
+- 此阶段曾删除旧实现中来源未核实的 `score * 1.7` 门；后续核对当前 Scratch
+  `HYP:震源検出` 原块后，已恢复其真实的“本轮分数小于历史最低已发布分数
+  `* 1.7` 才写回”语义；
+- 文章步骤（3）改为：所有活动站发震时刻的普通平均值、距离权重乘平方误差
+  后求和；规定时窗内每个理论已到但未检出的站对误差水平直接 `+1`；
+- 文章步骤（4）保持四阶段邻域下降：`0.5 deg`、`0.1 deg`、
+  `0.1 deg + 50 km`、`0.1 deg + 10 km`。
+- KA worker 的 `activeStations` 按 detection ID 累积，不再随单站 10 秒 active
+  窗口丢失；历史站继续参与本 ID 的走时拟合和 carrier 生命周期，但不再把固定
+  周围 9 格并集当作 HYP 未着范围；
+- 文章步骤（2）在首检出后 10 秒内从首站临时震源重新开始，10 秒后从上一轮
+  震源继续搜索；所有历史站仍只使用各自真实 KA `triggerStamp`；
+- Scratch 补充的 `ten:推定用 +6/+7/+8` 已接入：站点分配时用上一震源缓存
+  P/S 理论到时和 `abs(observed-S) < abs(observed-P)` 标记，首检出 15 秒内仍
+  全部按 P，15 秒后才按缓存标记选择 P/S。该标记采用 Scratch 默认的
+  assignment-only 生命周期，不随每次震源更新做全站重算；
+- P/S 缓存读取 Scratch `4-4 検出id震源要素` 的量化参考：纬经度 `1/60°`，
+  深度与发震时刻为整数；该补充细节不改变文章的搜索坐标和误差公式；
+- 新站并入事件前使用 Scratch `検出id4-2` 原始时间窗：P 容差
+  `5 + 震央距離/120` 秒；不在 P 窗时，只有处于 P 窗之后且不晚于
+  `S到时 + 8 + 震央距離/120` 的站才能按 S-range 并入。接受/拒绝原因写入
+  request metadata 和本轮估算 diagnostics；
+- 右下角真实算法曲线与评分共用同一 P/S 选择。诊断样本保留 station id/code、
+  经纬度、`triggerStamp/updateStamp`、距离、观测/预测时刻、残差、权重、KA
+  level、ascend 和 wave；出现真实 S 样本时同时绘制 P/S 理论曲线；
+- 曲线点颜色删除残留的 30 级阈值，直接使用 KA `-1..20` 色表；
+- 曲线上 P 站使用圆点，算法实际选择为 S 的站使用红色描边菱形；形状直接来自
+  同一评分样本的 `wave` 字段，不做显示侧推测；
+- 第 10 秒后若活动站 code/坐标/真实 `triggerStamp` 未变化且没有跨越 15 秒 P/S
+  门，复用同事件上一轮结果，跳过重复的四阶段搜索和 5 个曲线候选计算。新增站、
+  P/S 门变化和时间倒退仍强制重算。
+
+验证：
+
+```powershell
+flutter analyze lib\services\sources\nied_source_estimation_driver.dart `
+  lib\core\source_estimation\source_estimator.dart `
+  lib\services\sources\jp_shindo_scale.dart
+
+flutter test test\source_estimator_test.dart `
+  test\nied_source_estimation_driver_test.dart `
+  test\nied_detection_rules_test.dart `
+  test\nied_station_observation_adapter_test.dart `
+  test\station_event_tracker_test.dart --timeout 2m
+
+flutter test test\current_capture_replay_analysis_test.dart --timeout 10m
+```
+
+结果：
+
+- 最新静态分析通过；检出规则、driver、估算器和事件 tracker 定向测试 33 项
+  全部通过；
+- Yahoo/GIF 快照测试确认 KA level 与各站原始 `triggerStamp` 原样进入 worker；
+- 反例测试确认活动站缺少 KA `triggerStamp` 时保持 `null`，且不输出震源；
+- 后台 worker 测试确认所有测站固定收到 KA 的 10 秒 expire；测站测试确认
+  `triggerStamp = 本帧 updateStamp - latestMinIndex * 1000`；
+- 当前 capture 回放恢复真实估算，噪声窗口仍为 0 次估算；
+- 福島県浜通り M3.4：12 帧有估算，最终解 `36.840, 140.300`，误差
+  `80.5 km`，支持 13 站，深度 `40 km`；
+- 岩手県沖 M3.6：28 帧有估算，最终解 `40.370, 141.880`，误差
+  `27.3 km`，支持 39 站，深度 `90 km`；
+- `12:15 noise trigger` 仍为 0 次估算；
+- 历史站/P/S 改造没有普遍降低误差：岩手由 `34.2 km` 改进到 `27.3 km`，福岛
+  由 `61.1 km` 恶化到 `80.5 km`。福岛在 `12:09:36` 尚为
+  `37.040, 140.600 / 40 km / 45.7 km`，`12:09:37` 新加入 `SIT004`、
+  `GNMH12` 并按缓存标记使用 S 后，立即移动到最终偏西位置；
+- 把 P/S 缓存参考进一步对齐 Scratch `4-4` 的 `1/60°`/整数值后，两个事件的
+  S 标记、最终坐标和误差均未改变，因此可排除量化边界；
+- 加入 Scratch `4-2` 归属窗后，福岛 `SIT004/GNMH12` 和岩手
+  `IWTH22/IWT014/IWTH19` 均按原公式通过 `accept_s_range`，最终结果不变；
+- 回放报告增加只读真值分数探针：使用相同站集和缓存 wave，在目录真值经纬度
+  扫描 `0..700 km` 深度。福岛首个 S 帧当前误差水平 `5.157`、真值最佳
+  `58.778`；最终当前 `5.464`、真值最佳 `90.431`。岩手最终当前 `74.427`、
+  真值最佳 `119.208`。因此错误位置确实是当前步骤（3）误差面的更低谷；
+- KA 输入时刻顺序和固定 10 秒窗口修正阶段曾把同一报告从福岛 `192.5 km`、
+  岩手 `135.9 km` 降到 `61.1 km`、`34.2 km`；本轮再加入事件历史站和 Scratch
+  P/S 生命周期后变为 `80.5 km`、`27.3 km`。两个阶段都没有加入平滑、结果
+  保留门或伪造时刻；
+- 报告位置：`.dart_tool/current_capture_replay_analysis/report.md`。
+
+剩余问题：
+
+- KA 输入链已打通，当前剩余误差不再是 30 级错域、上一帧 Yahoo 时刻或动态
+  expire 窗口造成的假象；
+- 福岛当前误差跳变已锁定到两个真实晚加入站的 S 波选择，而不是网格搜索未运行、
+  历史站丢失或曲线伪造；岩手的三个晚加入 S 站则使最终误差略有下降；
+- 福岛真值探针中，原 P 站的反推发震时刻约集中在 `-19 s`，但 `SIT004`、
+  `GNMH12` 按 S 反推分别约为 `-26.945 s`、`-29.371 s`，两站单独贡献真值
+  误差水平约 `39.36/58.78`。当前偏西震源通过让这组触发贴近 S 曲线取得更低分；
+- 文章原文以 P 波为默认检出走时，同时明确说明“S 波と思われる検知には S 波の
+  走時を使用”；因此不能为了福岛真值误差而删除真实 S 选择。下一步只能继续核对
+  步骤（3）中晚加入站进入同一事件及误差水平的条件；不得用恢复 30 级、删除真实站
+  或补造触发时刻来压住漂移。
+
+### 2026-07-17 KA 输入下的多 detection ID 与网格 carrier
+
+边界：
+
+- 文章步骤（2）（3）（4）的临时震央、误差水平和四阶段搜索保持不变；
+- Scratch `project.json` 只补充测站属于哪个 detection ID、ID 何时失活/合并的
+  生命周期，不把旧 Scratch 30 级震度重新带回输入；
+- 每个 detection ID 独立保存历史站、assignment-only P/S 缓存、上一轮震源和
+  真实曲线；一个 ID 的站不会进入另一个 ID 的误差水平；
+- 网格 carrier 使用 KA 检出的 1 度事件偏移网格。carrier 只保存真实站所在格的
+  detection ID 和归属帧时刻，不是测站，不进入 P/S 走时或误差曲线。
+
+实现：
+
+- 新站归属顺序为：显式 Scratch runtime timer 捷径（生产未提供时不触发）、KA
+  邻站继承、Scratch 最新 ID 距离门、当前格 `<2 s`、`4-2` P/S 时间窗、周围
+  9 格 `<=5 s`，最后才新建 ID；
+- 与 Scratch 原始块一致，最多存在两个 detection ID；已有两个 ID 且所有候选门
+  都失败时拒绝该站，不无限创建 ID；
+- ID 寿命为成员数 `<200` 时 `(3 + 成员数) * 2 s`，否则 `400 s`；超过
+  `150 s` 且成员少于 50 站也失活；
+- 两个有效 ID 的首检出时刻相差小于 20 秒、文章分数均小于 500，且震源距离小于
+  `50 km + 两个首站最大半径平均值 / 2` 时，旧 ID 合并到较新 ID；
+- tracker 只能显示一个 `SourceEstimate`，输出层按本帧真实 KA 活动站与各 ID
+  成员的重合数选择；同分时保持上一输出 ID。该选择只决定显示哪个独立文章结果，
+  不进入任何 ID 的评分；所有 ID 状态均写入 `detection_ids` 诊断；
+- 回放报告改为逐帧深拷贝 metadata/diagnostics，避免历史帧引用同一个可变 Map 后
+  全部显示成末帧状态；estimator 返回 `null` 时也刷新 detection ID 诊断。
+
+验证：
+
+```powershell
+flutter analyze lib\core\source_estimation\source_estimator.dart `
+  lib\services\sources\nied_source_estimation_driver.dart `
+  test\source_estimator_test.dart `
+  test\current_capture_replay_analysis_test.dart
+
+flutter test test\source_estimator_test.dart `
+  test\nied_source_estimation_driver_test.dart `
+  test\nied_detection_rules_test.dart --concurrency=1
+
+flutter test test\current_capture_replay_analysis_test.dart `
+  --timeout 10m --concurrency=1
+```
+
+结果：
+
+- 静态分析通过；算法、driver 和 KA 规则共 30 项定向测试通过；真实回放测试约
+  9 秒完成；
+- 新增测试确认两个时空不相容的 KA 站群形成两个独立 ID，并分别保留自己的
+  站集/P-S 缓存；当前格 `0.5 s` 命中 `scratch_grid_current`，邻格
+  `3.5 s` 命中 `scratch_grid_around_9`；
+- 福島県浜通り M3.4：最终 `37.040, 140.600 / 40 km / 支持 10 站`，误差
+  `45.7 km`，取代上节单 ID 生命周期的 `80.5 km`；
+- 福岛 ID 1 在 `12:09:36` 按 10 站对应的 `26 s` 寿命失活。`12:09:37`
+  的 `SIT004/GNMH12` 均保留真实 `12:09:36` 触发时刻，`12:09:38` 的
+  `SITH08` 保留真实 `12:09:37` 触发时刻；其余 KA 活动站的触发时刻为 null，
+  因而新站群只有 3 个真实时刻，未达到文章最小 5 站门，未形成伪造的第二震源；
+- 岩手県沖 M3.6 保持 `40.370, 141.880 / 90 km / 支持 39 站`，误差
+  `27.3 km`。`IWTH22` 通过真实 `4-2 S` 窗进入 ID 1，`IWT014/IWTH19`
+  通过 KA 邻站继承进入 ID 1；
+- `12:15 noise trigger` 仍为 0 次估算；
+- 最新报告：`.dart_tool/current_capture_replay_analysis/report.md`。
+
+### 2026-07-17 当前 Scratch HYP 搜索与真实地图候选
+
+依据边界：
+
+- KA 继续只负责真实检出输入：`level -1..20`、`triggerStamp`、`activity`、
+  `ascend` 和 detection ID；没有恢复 Scratch 30 级输入；
+- 文章作者也是当前 Scratch 工程作者。文章解释算法目的和步骤，当前
+  `project.json`/编译 JS 决定 HYP 的实际改良参数；
+- 当前 JS 与文章旧截图的差异不是混用：临时震源和最终输出按 `1/60°` 量化，
+  四个文章阶段后还有水平 `1/60°` 精细搜索。
+
+搜索改造：
+
+- 当前 detection ID 的真实首检出站固定为初始化站。KA worker 保留
+  `activeStations` 的测站表顺序，Scratch `project.json` 的 `d ten:x/y` 点表
+  均为 1748 项，并按该点索引顺序执行 detection ID 分配；不得再按
+  `triggerStamp + code` 重排同秒测站。临时震源为
+  `round(coord * 60) / 60`、深度 `10 km`、发生时刻 `triggerStamp - 2 s`；
+- 搜索阶段对齐 JS：水平 `±0.5°`、水平 `±0.1°`、
+  `±0.1° + 深度 ±50 km`、`±0.1° + 深度 ±10 km`、水平 `±1/60°`；
+- 检出站数不超过 10 时跳过 `±0.5°`；早期帧和各阶段采用 JS 的移动次数上限，
+  diagnostics 区分 `skipped_station_count`、`local_minimum` 和 `move_limit`；
+- 候选顺序保持东、西、北、南、深度加、深度减；每个阶段停止时保存最后一轮
+  实际比较的坐标、深度、分数和拒绝原因，不再从曲线面板反推地图候选；
+- 候选有效域对齐 JS：深度 `10..700 km`、纬度 `15..55`、经度
+  `115..155`，并应用
+  `round(11 + 最大检出距离^3 * 0.00008)` 动态最大深度及
+  `round(50 + 0.3 * (站数 * 10 + 最大检出距离))` 首站距离上限；
+- `最大检出距离` 槽位继续按 Scratch detection ID 原式计算：
+  `dtc:Xpix=(经度-136)*10`、
+  `dtc:Ypix=(Mercator纬度-Mercator(35))*10`，两点投影差的欧氏长度再乘
+  `11`。它不是 HYP 候选到首站所用的球面距离；旧实现误用 haversine，福岛
+  首帧由错误的 `52.43 km` 修正为 `64.73 km`；
+- 非法深度直接拒绝，不 clamp 成伪造的 `0 km` 候选。
+- 10 秒后仅当本轮分数小于该 ID 历史最小已发布分数的 `1.7` 倍时写回
+  `4-4`；被拒绝的搜索结果保留在 `searched_result`，不覆盖当前震源。
+
+评分改造：
+
+- 发生时刻仍取所有真实检出站反推发生时刻的普通平均值；每站平方残差乘
+  `max(50, 首站震央距) / max(50, 本站震央距)`。临时震源、动态候选域和该
+  距离权重都显式读取 detection ID 的 `firstStationCode`，不再让重新排序后的
+  `active.first` 暗中替换首站；
+- JS 分数改为
+  `max(0.25, 1 - 3*S数/n) * ((加权平方和 + 未着数) / 权重和) *`
+  `(30 + 20000/(1+n^2) + 2000/(50+n))`；不再把后三项错误固定为 1；
+- 未着站主筛选改为同一候选发生时刻下 JMA2001 逆算的
+  `P波半径 + 30 km`，并使用 JS 的 `100 + 最大检出距离*3` 半径上限；删除本地
+  `最远活动站 + 30 km` 和 10 秒后直接关闭惩罚的非 JS 逻辑；
+- JS 为大站数使用的随机抽样分支没有伪造成确定值；当前实现使用其确定性的
+  P 波半径主分支，后续如同步随机抽样必须先定义可复现策略。
+
+地图显示：
+
+- Scratch 运行地图从 `4-4 检出id震源要素` 第 2/3 槽读取当前震源经纬度，
+  第 7/8 槽绘制 P/S 圈；它不保存文章示意图中的红色真值点；
+- 主地图显示真实首站临时点、当前解和最终 `1/60°` 阶段最后一轮真实候选。
+  当前/临时点使用橙色叉与圆环，候选使用绿色叉；同经纬度的深度候选合并到
+  当前点文字，避免重叠；
+- 若 JS `1.7` 倍写回门拒绝本轮结果，橙色点继续表示已发布当前解，本轮搜索中心
+  以绿色“未采用”显示；两者不会被混成一个点；
+- P/S 圈由当前估算震源、当前发生时刻和 JMA2001 逆算得到，并使用同一簇半径
+  上限；不使用固定波速或接收时刻补造半径；
+- 实时没有目录真值，因此不画文章示意图中的红色“实际震源”叉。
+
+验证：
+
+```powershell
+flutter analyze lib\core\source_estimation\source_estimator.dart `
+  lib\widgets\map\quake_map_view.dart `
+  test\source_estimator_test.dart
+
+flutter test test\source_estimator_test.dart --concurrency=1
+
+flutter test test\current_capture_replay_analysis_test.dart `
+  --timeout 10m --concurrency=1
+```
+
+结果：
+
+- 静态分析通过，震源估算器 11 项定向测试通过，真实回放约 9 秒完成；
+- 福岛首轮 KA worker 测站表顺序为
+  `IBR004, TCG001, TCG006, IBRH15, IBRH16, TCGH13, TCGH19`，因此当前
+  Scratch detection ID 的真实首站是 `IBR004 / 12:09:07`，JS 临时点为
+  `36.550000, 140.416667 / 10 km`。同秒时刻仍保留 KA 的整秒值，没有插值；
+- 首站修复后，福岛首个当前解为
+  `36.850000, 140.350000 / 10 km`。目录真值 `37.3, 141.0` 在相同 7 个 P 站、
+  相同 `IBR004` 距离权重和 JS 深度域下的 active timing residual 为
+  `1.4611`，低于当前解的 `1.6072`；但 7 站按 JS 条件跳过 `±0.5°`，搜索停在
+  西南侧局部极小值；
+- 投影距离修正后，福岛候选域首帧为 `最大深度 33 km / 首站半径 90 km`，
+  末帧为 `33 km / 99 km`；末帧目录真值到 `IBR004` 的 `98.36 km` 已进入合法
+  候选域，但 10 站仍不会触发 JS 的 `±0.5°` 粗搜索，因此最终解没有改变；
+- 福島県浜通り M3.4 最终为 `36.850, 140.400 / 10 km / 支持 10 站`，误差
+  `73.1 km`；岩手県沖 M3.6 最终为
+  `40.383, 141.900 / 80 km / 支持 36 站`，误差 `25.5 km`；
+- 仅用于定位的对照实验把 `±0.5°` 启用门从 JS 原值 `站数 > 10` 临时改为
+  `站数 >= 5`：福岛改善到 `36.950, 140.517 / 20 km / 57.9 km`，岩手保持
+  `25.5 km`。实验结束后已恢复 JS 原条件；该参数未进入生产代码；
+- `12:15 noise trigger` 仍为 0 次估算；本轮对齐使误差变大，说明旧的较小误差
+  不是 JS HYP 参数下的结果，不能为了贴近真值恢复非 JS 评分或伪造候选；
+- 最新报告：`.dart_tool/current_capture_replay_analysis/report.md` 和
+  `.dart_tool/current_capture_replay_analysis/report.json`。
+
+### 2026-07-17 当前 Scratch JS 的完成、稳定与消失生命周期
+
+语义边界：
+
+- `end1` 只表示本轮五阶段 HYP 搜索结束，当前临时震源已停在本轮局部谷底；
+  它不表示事件永久结束，也不停止后续接站、重算或波圈更新；
+- 本轮搜索结果是否写回 `4-4`，只服从 Scratch JS 的规则：首次检出后 10 秒内
+  直接写回，之后仅当本轮分数小于历史最低已发布分数的 `1.7` 倍时写回；
+- detection ID 是否仍活动、已发布震源是否仍显示，是独立于本轮搜索结束的状态；
+  没有导入 KA 的 15 次稳定门，也没有导入文章后半段气象厅改良 IPF 的 EQc
+  稳定 5 秒及 300--900 秒删除条件；
+- KA 仍只提供 `level -1..20`、真实 `triggerStamp`、`activity`、`ascend` 和
+  active/inactive 输入。生命周期中的“最大震度低于 3”直接由 KA level 映射到
+  JMA 震度判断，没有恢复 Scratch 30 级输入。
+
+实现：
+
+- 删除同站集超过 10 秒后直接复用整个 `SourceEstimate` 的错误缓存。每个不同的
+  真实帧时刻都会重新计算未着惩罚、搜索、`1.7` 写回门、diagnostics 和波圈；
+  完全相同的帧时刻与输入只计算一次，避免同一数据回调重复触发搜索；
+- detection ID 失活条件按当前 JS 原块实现：不在 grid carrier 中超过 2 秒；
+  成员数 `<200` 时超过 `(3 + 成员数) * 2 s`，否则超过 `400 s`；年龄
+  `>150 s` 且成员数 `<50`；成员数 `<2`；以及成员数 `<5`、首站最大投影
+  距离 `<80 km`、已发布误差 `>3000`、最大震度 `<3`、年龄 `>10 s` 的
+  小簇条件；
+- grid carrier ID 集合为空时清空 detection ID、已发布震源和地图状态，等价于
+  JS 同时清空 `4-3 检出id別情報` 与 `4-4 检出id震源要素`；
+- `NiedDartHypSourceEstimator` 显式拥有自己的输出生命周期。默认 NIED 路径不再
+  经过 tracker 的 15 秒暖机、60 km 跳变和 100 km 锚点稳定门；估算器发出
+  `nied_dart_hyp_clear_published_source` 后，tracker 必须清除旧震源，不能以
+  “低支持”名义保留；
+- HYP 只在 detection ID 年龄 `<120 s` 时运行。达到 120 秒后保留最后已发布
+  震源并继续按当前算法时刻更新 P/S 圈；发生后达到 `300 s` 时半径写为 JS 的
+  无效值并隐藏；
+- 主地图直播使用当前时刻，回放使用真实回放帧时刻，依据已发布发生时刻、深度和
+  JMA2001 逆算 P/S 半径，并应用同一簇 `100 + 最大检出距离 * 3` 上限；没有
+  UI 自增的伪造时刻。
+
+diagnostics 将四层状态分开记录：
+
+- `search_cycle_ran` / `search_cycle_finished` / `search_termination_reason`；
+- `search_result_accepted` 与 `historical_minimum_published_score`；
+- `detection_id_active` / `detection_id_expire_at` /
+  `nied_dart_hyp_has_active_detection_id`；
+- `hyp_calculation_enabled` / `hyp_age_s` / `source_visible` /
+  `source_clear_reason` / `wave_radius_visible`。
+
+验证：
+
+```powershell
+flutter analyze lib\services\sources\nied_monitor.dart `
+  lib\services\sources\nied_source_estimation_driver.dart `
+  lib\core\source_estimation\station_event_tracker.dart `
+  lib\core\source_estimation\seismic_source_tracker.dart `
+  lib\core\source_estimation\source_estimator.dart `
+  lib\widgets\map\quake_map_view.dart `
+  test\source_estimator_test.dart `
+  test\seismic_source_tracker_test.dart `
+  test\current_capture_replay_analysis_test.dart
+
+flutter test test\source_estimator_test.dart `
+  test\seismic_source_tracker_test.dart --concurrency=1
+
+flutter test test\current_capture_replay_analysis_test.dart `
+  --timeout 10m --concurrency=1
+```
+
+结果：
+
+- 9 个相关文件静态分析通过；估算器与 tracker 共 23 项测试通过；真实回放测试
+  通过；
+- 测试确认同一站集在下一真实帧不再返回冻结对象，elapsed、未着惩罚、搜索和
+  波圈继续变化；同一帧重复输入只计算一次；JS 自有输出可绕过通用稳定门，并在
+  detection ID 失活后清除旧震源；
+- 福島県浜通り M3.4 最终为
+  `36.800, 140.317 / 10 km / 支持 10 站 / 误差 82.3 km`；
+- 岩手県沖 M3.6 最终为
+  `40.383, 141.900 / 80 km / 支持 36 站 / 误差 25.5 km`；
+- `12:15 noise trigger` 仍为 0 次估算；
+- 最新报告：`.dart_tool/current_capture_replay_analysis/report.md` 和
+  `.dart_tool/current_capture_replay_analysis/report.json`。
+
+### 2026-07-17 Scratch 未着站动态半径
+
+事实核对：
+
+- JS `WHYP:誤差レベル計算` 不会把未着站固定限制在 detection active grid 的
+  周围 9 格。它逐候选计算当前 P 波半径，扫描候选周围
+  `P 波半径 + 130 km` 内的网格，并在确定性主分支中对
+  `P 波半径 + 30 km` 内、尚未属于当前 detection ID 的测站判断理论 P 波是否
+  已到达；
+- 固定 9 格是 KA 检出阶段的网格范围，不能继续充当 Scratch HYP 未着站范围；
+- 当前 Scratch 点表 `d ten:x/y` 均为 1748 项。KA 输入中 `level > -1` 的站
+  表示本帧有有效观测，可作为“尚未检出”的证据；`level == -1` 的缺测站不作为
+  未着证据；
+- JS 对大簇另有随机降采样，以及当前 detection ID carrier 格内的 50% 随机
+  补样。当前实现只同步确定性主分支，未把随机结果伪造成固定值。当前回放中，
+  正常 `P+30 km` 半径外但位于 carrier 格内的候选站并非 0：福岛最多 47 站、
+  岩手最多 24 站，因此该随机分支仍可能改变早期搜索，但不存在唯一可复现的
+  Scratch 输出可直接写成固定断言；
+
+实现：
+
+- driver 向 Scratch HYP 提供全网 KA `level > -1` 且未进入本帧活动输入的站，
+  不再预先裁成周围 9 格；
+- 每个 detection ID 在 worker 内排除自己的历史成员，其他 detection ID 的站仍
+  可作为本 ID 的未着证据；
+- 候选评分继续用 JMA2001 逆算 P 波半径，并在候选层执行
+  `surfaceDistance <= P 半径 + 30 km` 与理论 P 到时判断。直接按站距离过滤与
+  JS 先按 `+130 km` 网格粗筛、再按 `+30 km` 测站精筛的确定性结果等价，同时
+  避免为每个候选构造临时网格列表。
+- 1.7 写回门拒绝本轮结果时，发布震源继续使用 `4-4` 旧坐标，但右下角走时
+  曲线改为本轮真实 `searchedResult`，不再沿用旧发布帧的 score、origin 和未着
+  半径；主界面曲线刷新签名同时纳入 searched score、接受状态和 elapsed。
+
+验证结果：
+
+- driver 与 estimator 共 23 项定向测试通过，真实回放测试通过；
+- 岩手后段每帧输入约 1591 个 KA level 有效未着候选，但最终震源处真正满足
+  动态半径及理论到时条件的未着惩罚保持为 27。原固定 9 格版本在西移候选处只看
+  到局部 178 站，使该候选错误通过 `1.7` 写回门并产生 `53.0 km` 结果；动态
+  半径同步后西移候选被拒绝，最终恢复为 `25.5 km`；
+- 福岛由于候选间的全网动态未着约束发生变化，最终误差由 `73.1 km` 变为
+  `82.3 km`。该变化来自 JS 未着范围同步，没有调整搜索步长、真实触发时刻或
+  `1.7` 写回阈值；
+- 回放验证被拒绝帧的发布解与本轮曲线已分开：岩手 `elapsed=65 s` 的发布解仍为
+  `40.383, 141.900`，本轮 searched/曲线中心为 `40.267, 141.600`，曲线分数
+  `1000.02`、未着参考半径 `624.9 km`；
+- 最新报告：`.dart_tool/current_capture_replay_analysis/report.md` 和
+  `.dart_tool/current_capture_replay_analysis/report.json`。
+
+### 2026-07-18 P/S 波圈回放消失回归
+
+现象与原因：
+
+- detection ID 消失逻辑完成后，目录回放中的已发布震源仍存在，算法 diagnostics
+  也包含正常的正数 P/S 半径，但主地图没有绘制波圈；
+- 原因不在 detection ID 失活条件，而在地图层新增了第二次半径计算。该计算在
+  `niedReplayNotifier` 未启用时使用 `DateTime.now()`；目录回放、测试回放等入口
+  不一定通过这个设置开关，因此六月回放事件会被七月墙钟误判为发震后已超过
+  300 秒，地图把 P/S 半径改成 `999999` 并隐藏；
+- 这是 UI 层伪造算法时刻，覆盖了 estimator 已按真实回放帧计算的半径。
+
+修复：
+
+- 地图删除基于墙钟的二次 JMA2001 逆算，只读取 estimator diagnostics 中的
+  `best_source_p_radius_km` / `best_source_s_radius_km`；
+- 直播、设置页回放、目录回放和测试回放现在统一使用各自真实算法帧已经计算好的
+  半径；只有 estimator 按算法时刻写入 `999999` 时，CircleLayer 才隐藏波圈；
+- 新增纯函数 `niedWaveRadiiFromEstimate()` 和两项回归测试，确认历史 originTime
+  不会触发墙钟隐藏，并确认算法的 `999999` 隐藏哨兵仍被保留。
+
+验证：
+
+```powershell
+flutter analyze lib\widgets\map\quake_map_view.dart `
+  test\nied_wave_radius_display_test.dart
+
+flutter test test\nied_wave_radius_display_test.dart --concurrency=1
+
+flutter test test\current_capture_replay_analysis_test.dart `
+  --timeout 10m --concurrency=1
+```
+
+结果：静态分析通过；波圈显示回归测试 `2/2` 通过；真实回放测试通过。
+
+### 2026-07-18 JMA2001 曲线真实范围与逐站拟合误差
+
+问题事实：
+
+- 算法曲线原来把最远测站距离至少扩到 `50 km`，并按 `25 km` 向上取整；
+  painter 又把横轴乘以 `1.04`，并根据整条理论曲线扩大时间范围、额外添加
+  `12%` 纵向留白。因此面板显示的时间和距离并不是本轮算法测站输入范围；
+- 算法已经输出每站真实 `observed_s`、JMA2001 `predicted_s` 和
+  `residual_s`，但主界面预处理丢弃了 `residual_s`，painter 只画观测点，无法
+  直接判断每站到所选 P/S 曲线的拟合方向和误差；
+- 原标题把 `score` 简写为“误差”，第二行又显示包含未着惩罚的 `rmse`。
+  实际算法中三者定义不同：`score` 是搜索实际比较分值，`error_level` 是乘
+  S 站数系数前的误差水平，原 `rmse` 为
+  `sqrt((weightedResidualSquares + inactivePenalty) / weightSum)`；
+- 评分使用未取整的平均发生时刻，旧曲线却使用写入 `DateTime` 后已按毫秒取整的
+  `originTime`。单测确认这会使画面残差 RMSE 与评分残差出现约
+  `0.000005 s` 的细小但真实差异。
+
+修复：
+
+- 算法曲线距离域严格结束在本候选全部真实活动站的最大震中距，不再强制
+  `50 km`、不再按 `25 km` 取整；只有全部测站距离为 0 的退化输入使用
+  `0..1 km` 防止除零；
+- 正常事件坐标范围固定为
+  `X = 0..distance_max_km`、
+  `Y = observed_min_s..observed_max_s`。理论 P/S 曲线超出首站到末站的真实时间
+  窗口时由 plot clip 裁剪，不能反向扩大坐标轴；只有零时间跨度使用
+  `min..min+1 s` 防止除零；
+- 曲线发生时刻直接按本候选评分公式，从所有活动站的
+  `observed_s - selectedTravelTime` 求未取整平均值，不再经过毫秒化的
+  `DateTime`；因此曲线、每站预测点、残差和评分使用同一个精确 origin offset；
+- 新增 `active_timing_rmse =
+  sqrt(weightedResidualSquares / weightSum)`，它只表示真实活动测站点对所选
+  JMA2001 P/S 曲线的拟合，不包含未着惩罚；
+- 主界面保留每站 `code` 和 `residual_s`。每个有效站绘制同一距离上的
+  `predicted_s -> observed_s` 残差线，预测端画空心小点，观测端继续使用 KA
+  level 颜色；P 站为圆点，算法实际选择为 S 的站为红色描边菱形；
+- 当前选中的搜索候选保留全部真实活动站，UI 不再把有效站二次截断为前 48 个；
+  仅非选中的邻近对比候选继续保留 80 站诊断上限，避免多个辅助面板无界扩大
+  diagnostics；
+- 面板明确分列“搜索分值 `score`”“误差水平 `error_level`”“点 RMSE
+  `active_timing_rmse`”“含未着 RMSE”和“未着惩罚”，不再把不同公式都显示成
+  一个模糊的误差；坐标轴端点直接显示真实秒数和公里数。
+
+验证：
+
+```powershell
+flutter analyze lib\core\source_estimation\source_estimator.dart `
+  lib\screens\main_screen.dart `
+  test\source_estimator_test.dart
+
+flutter test test\source_estimator_test.dart --concurrency=1
+
+flutter test test\current_capture_replay_analysis_test.dart `
+  --timeout 10m --concurrency=1
+```
+
+结果：
+
+- 3 个相关文件静态分析通过；震源单测 `12/12` 通过；真实回放测试通过；
+- 福島県浜通り M3.4 最终搜索曲线范围为
+  `0..43.016123 km / 0..3 s`，曲线末端距离与最远站完全相同，搜索分值
+  `3641.180235`，误差水平 `5201.686050`，点 RMSE `1.001450 s`，未着惩罚
+  `189`；
+- 岩手県沖 M3.6 最终搜索曲线范围为
+  `0..135.327722 km / 0..20 s`，曲线末端距离与最远站完全相同，搜索分值
+  `1000.020175`，误差水平 `1300.026227`，点 RMSE `1.763105 s`，未着惩罚
+  `795`；
+- 两个真实事件逐站检查均满足
+  `residual_s == observed_s - predicted_s`，最大差值为 0；按显示样本重新计算的
+  点 RMSE 与面板 `active_timing_rmse` 完全一致；
+- `12:15 noise trigger` 仍为 0 次估算；最新报告位于
+  `.dart_tool/current_capture_replay_analysis/report.md` 和
+  `.dart_tool/current_capture_replay_analysis/report.json`。
+
+### 2026-07-18 山梨 M5.6 后期搜索误差与 Scratch 权重下限
+
+回放输入：
+
+- 目录：
+  `tmp/captures/20260626_yamanashi_east_fuji_five_lakes_m56_jma_p2p`；
+- `capture_manifest.json` 与本地 JMA/P2P 参考均记录
+  `35.6, 139.0 / 深度20 km / M5.6`；
+- 时间范围 `2026-06-26 22:28:30..22:31:00 JST`，实际读取 141 个
+  `jma_s` 帧，缺 10 秒。
+
+修复前逐帧事实：
+
+- 首个震源出现在 `22:29:05`；发布震源在 `22:29:24` 后保持
+  `35.517, 139.100 / 10 km`，真值水平误差 `12.95 km`，没有继续移动；
+- 继续变大的是本轮 `searched_result.score`，不是已发布震源误差：
+  `22:30:00` 为 `168.14`，`22:31:00` 为 `515.18`；历史最低发布分数
+  `76.78` 的 `1.7` 倍为 `130.53`，所以这些后期搜索结果均被 Scratch 写回门
+  拒绝；
+- 未着惩罚始终为 0。后期增长来自活动站曲线点 RMSE：从 `2.56 s` 增至
+  `4.20 s`；
+- `22:30:00` 与 `22:31:00` 比较，原有 638 站的 triggerStamp 和 P/S 标志均
+  没有变化，后一帧新增 242 个远站，最终搜索面板共有 880 个同 ID 站；
+- 最后一帧 KA 输入本身仍有 953 个 active 站，worker 选中 ID 使用其中 880
+  站，因此本事件不是 worker 保留已从 KA active 消失的旧站。远站是 KA 当前
+  active 输入，再通过 Scratch `検出id4-2` 的
+  `5 + distance/120` P 窗口或 P 到 S 的宽区间进入该 ID。
+
+确认的 Scratch 漏项：
+
+- `HYP:誤差レベル計算` 在计算距离权重前明确执行：
+
+  ```text
+  firstDetectedDistance = max(50 km, candidateToFirstStationDistance)
+  stationDistance = max(50 km, candidateToStationDistance)
+  weight = firstDetectedDistance / stationDistance
+  ```
+
+- 直接 NIED worker 原来只对 stationDistance 实现了 50 km 下限，却直接使用
+  candidateToFirstStationDistance 作为分子。山梨候选靠近首站时，50 km 外站权重
+  会错误接近 0；这些站仍进入未加权 origin 均值，却几乎不能用自己的残差约束
+  候选；
+- `_niedHypWorkerFirstDetectedDistanceKm()` 已改为
+  `max(50.0, haversineDistance)`；测试新增 50 km 外合成站，并断言远站权重严格
+  等于 `max(50, firstDistance) / stationDistance`。
+
+修复后回放：
+
+- 最小真值误差为 `19.97 km`（`22:29:12`）；最终发布震源为
+  `35.483, 139.183 / 20 km / 支持309站`，真值误差 `21.06 km`；
+- 最终发布分值 `110.52`，后期本轮搜索分值仍随远站增加而上升，最后为
+  `518.03`，但继续被 `1.7` 写回门拒绝；发布震源没有被后期搜索覆盖；
+- 最后一帧搜索面板有 880 个真实站，权重和为 `251.80`，点 RMSE
+  `4.707 s`，P/S 缓存中 S 站 96 个；
+- 水平真值误差比修复前增大，说明旧的 `12.95 km` 部分依赖漏掉 50 km 分子
+  下限后对远站的错误降权。不能为了贴近真值恢复该偏差；该修改是 Scratch 公式
+  对齐，不是真值调参。
+
+额外 JS 核查：
+
+- `検出id_推定PS時間id別再計算` 在参考 `project.json` 中存在定义，但完整调用图
+  中没有 `procedures_call`；因此不能把它解释为每次 HYP 后整批重算已有站 P/S；
+- 当前“站进入 detection ID 时根据量化 4-4 震源缓存写入 +6，已有站保持缓存”与
+  实际可达调用方向一致；本轮没有添加推测性的 P/S 重算；
+- 福島、岩手和噪声回放结果在权重下限修复前后不变，仍分别为
+  `82.3 km`、`25.5 km` 和 0 次估算。
+
+验证：
+
+```powershell
+flutter analyze lib\core\source_estimation\source_estimator.dart `
+  test\source_estimator_test.dart `
+  test\current_capture_replay_analysis_test.dart
+
+flutter test test\source_estimator_test.dart --concurrency=1
+
+flutter test test\current_capture_replay_analysis_test.dart `
+  --timeout 10m --concurrency=1
+```
+
+结果：静态分析通过；震源单测 `12/12` 通过；默认福島/岩手/噪声回放通过；
+山梨定向回放通过。山梨报告单独输出到
+`.dart_tool/yamanashi_m56_replay_analysis/report.md` 和 `report.json`。
+
+### 2026-07-18 KA new-active 输入语义与活动网格生命周期
+
+对照 KA 当前 `NiedNet.vue`、`FindNiedHypocenterWorker.js` 和
+`NiedHypoInf.js` 后确认，worker 的三类输入职责不同：
+
+- `newActiveStations` 只负责把本帧首次进入 KA active 窗口的测站注册进推算簇；
+- `activeStations` 只负责更新已注册站的 `level`、`ascend`、`updateStamp` 等当前
+  来源状态；
+- `inactiveStations` 供未着惩罚和簇消失判断使用；
+- KA worker 首次创建时由调用方把全部当前 active 站作为初始
+  `newActiveStations`，后续帧不再把全部 active 站重复作为新成员候选。
+
+发现并修复两个输入边界错误：
+
+- Dart 解析器原来把 `newActiveStations` 与 `activeStations` 合并成一张表，随后
+  detection-ID 层每帧都尝试把全部 KA active 站注册为新成员；现在 worker frame
+  保留两张独立表，已有 owner 的 active 站只更新状态，只有 new-active 站才进入
+  `検出id3/4` 注册路径；完全没有 new-active 字段的旧调用方保留首次兼容入口；
+- `_dartHypActiveStationCodes` 原来在整场事件中只追加不删除，含义实际变成
+  “曾经 active”，并被用于活动网格；现在每帧替换为当前 KA active 集合，活动
+  网格只读取当前 `station.isActive`，失活站不会继续维持陈旧网格，再次进入的站
+  可以重新出现在 new-active 输入中。
+
+震度处理边界：
+
+- Scratch `HYP:誤差レベル計算` 不直接使用 `level`；震度只影响上游成员/生命周期；
+- Scratch 30 级 `ten:震度 > 0` 表示有有效数据，其第 1 级就是 `-3.0`。映射到
+  KA 输入应为 `level >= 0`，不能把 KA `level == 0` 当成无效站删除；
+- KA `NiedHypoInf.js` 的拟合贡献主要由历史 `maxAscend`、测站密度、触发顺序和
+  异常值过滤决定；`maxLevel` 只参与未着惩罚参考站资格。由于生产核心仍按
+  文章/Scratch，本轮没有把 KA 权重混入 HYP 评分公式。
+
+山梨 M5.6 对比：
+
+- 修复前最终发布震源为 `35.483, 139.183 / 20 km`，误差 `21.06 km`，发布支持
+  309 站；最后一帧 worker 880 站，本轮搜索分值 `518.03`，点 RMSE `4.707 s`；
+- 修复后最终发布震源为 `35.517, 139.133 / 10 km`，误差 `15.21 km`，发布支持
+  231 站；最后一帧 worker 825 站，本轮搜索分值 `429.59`，点 RMSE `3.741 s`；
+- 最终误差改善来自输入语义修正，没有修改 JMA2001、P/S 判定、搜索步长、距离
+  权重、未着惩罚或 `1.7` 写回门；默认福島、岩手、噪声回放仍为
+  `82.3 km`、`25.5 km`、0 次估算；
+- 后期 worker 仍会累计 KA 真正发出的 new-active 站，这是 KA 簇生命周期本身；
+  其本轮搜索分值继续上升的剩余原因位于“累计成员如何贡献评分”，不再是
+  active/new-active 传递错误。若继续处理，必须明确选择是否在输入贡献层引入 KA
+  的 `maxAscend`/密度/触发顺序规则，不能把它伪装成文章/Scratch 原公式修复。
+
+验证：静态分析通过；`source_estimator_test.dart` 13/13、
+`nied_source_estimation_driver_test.dart` 12/12、山梨定向回放和默认回放全部通过。
+最新山梨报告位于 `.dart_tool/yamanashi_m56_ka_input_lifecycle/report.md` 和
+`report.json`。
+
+#### KA 零贡献测站门
+
+继续核对 `NiedHypoInf.js#getStationWeight` 后确认，KA 簇成员不等于 KA 实际拟合
+成员：历史 `maxAscend < 2` 时测站权重严格为 0。为保持“KA 输入、文章/Scratch
+核心”的边界，本轮只实现这个零权重资格门，没有移植 KA 的非零权重倍率、密度
+权重、触发顺序权重或异常值过滤：
+
+- detection ID 和簇生命周期继续保存全部 KA new-active 成员；
+- 临时震央、首站时刻和 detection ID 首站仍取真实簇首站；
+- 进入 HYP 评分、P/S 曲线和站数缩放的有效输入要求历史 `maxAscend >= 2`；
+- 通过资格门的站仍完全使用原有 Scratch 距离权重，JMA2001、P/S、搜索和评分
+  常数均未改变；
+- diagnostics 新增 `cluster_station_count`、`effective_input_station_count`、
+  `zero_contribution_station_count`、`station_contribution_model`，曲线只绘制本轮
+  实际参与评分的有效站，避免把零贡献站伪装成拟合点。
+
+山梨最后一帧由 825 个真实簇成员分成 767 个有效拟合站和 58 个零贡献站；本轮
+搜索分值从 `429.59` 降到 `316.01`，点 RMSE 从 `3.741 s` 降到 `3.096 s`。
+最终发布震源保持 `35.517, 139.133 / 10 km`，误差仍为 `15.21 km`，发布支持由
+231 变为 229，说明资格门改善的是后期真实拟合而不是用真值调坐标。
+
+默认回放也发生输入集合变化：福島由 `82.3 km` 变为 `78.8 km`，岩手由
+`25.5 km` 变为 `27.1 km`，噪声仍为 0 次估算。岩手的 `1.6 km` 变差被保留，
+不能因为单个事件指标方向不利而恢复 KA 中本来为零的测站贡献。
+
+验证：`source_estimator_test.dart` 14/14 通过，山梨定向回放和默认回放通过。
+山梨报告位于 `.dart_tool/yamanashi_m56_ka_zero_weight_gate/report.md` 和
+`report.json`。
+
+### 2026-07-18 发布震源、地图标记与走时曲线快照统一
+
+检查主界面后确认，地图与曲线此前读取了两个不同结果：地图当前标记使用通过
+Scratch `1.7` 写回门后真正发布的 `result`，而 `travel_time_curve_panels` 使用
+本轮 `searchedResult`。当后期搜索被拒绝时，地图标记保持不动，曲线却继续按
+未采用候选的位置、深度、时间和当前站点集合重算，导致面板分值、距离与地图
+当前标记不一致。
+
+本轮只修正发布与诊断边界，没有改变搜索核心：
+
+- 地图算法层只显示当前已发布震源，移除临时震源、未采用结果、最终搜索方向和
+  深度候选标记；P/S 波圈仍使用同一个已发布 `SourceEstimate`；
+- 曲线只保留一个 `current` 面板；面板经纬度、深度和 `origin_time` 必须分别等于
+  当前已发布估计，不再生成邻近候选曲线；
+- 新结果通过写回门时，按该次评分实际收到的有效站列表和当次 P/S 标志生成完整
+  曲线快照。`maxAscend < 2` 的零贡献站、未分配进 detection ID 的站和未着惩罚站
+  均不进入拟合点；
+- 新结果未通过写回门时，直接复用上一次已发布曲线的同一个快照对象，不使用被
+  拒绝的 `searchedResult`，也不按后续变化的测站重新计算距离、发生时刻、权重、
+  P/S 或残差；
+- 曲线覆盖层以快照对象身份作为刷新签名。后台继续搜索但发布快照未改变时，不再
+  重复启动 isolate 解析和主线程重绘；
+- diagnostics 改为
+  `travel_time_curve_source=published_result_accepted_scoring_snapshot`，并新增
+  `travel_time_curve_frozen` 与 `travel_time_curve_sample_count`；地图模型改为
+  `map_candidate_model=published_result_only`。
+
+验证：
+
+- `flutter analyze` 对 5 个相关源码和测试文件检查通过；
+- `source_estimator_test.dart` 与曲线生命周期测试共 17 项通过；新增定向测试明确
+  制造后续高未着惩罚并命中 `search_result_accepted=false`，确认发布位置、时间、
+  分值、曲线列表对象和样本列表对象全部保持不变；
+- 默认真实回放通过，结果仍为福島 `78.8 km`、岩手 `27.1 km`、噪声 0 次估算；
+- 最终福島和岩手报告都只有一个曲线面板，分别保留 8 站和 20 站；最后一帧均为
+  `travel_time_curve_frozen=true`，面板位置、深度和发生时间与最终发布估计完全
+  一致。报告位于 `.dart_tool/current_capture_replay_analysis/report.md` 和
+  `report.json`。
+
+### 2026-07-18 千葉県東方沖深度与 P/S 圈核查
+
+用户提供的下载定位时间为 `2026-07-18 04:45:22 JST`；截图中的 JMA 事件卡
+发震时刻为 `04:45:15 JST`，震源参数为 `35.7, 141.1 / 40 km / M4.3`。使用
+`04:44:52--04:47:22 JST` 的 151 张 `jma_s` 回放后，算法最终发布震源为
+`35.783333, 141.316667 / 10 km`，发生时刻 `04:45:14.681`，支持 209 站，到
+JMA 震中的水平距离为 `21.64 km`。
+
+深度核查结论：
+
+- 最终候选域允许深度达到 `700 km`，深度阶段实际评估了 `20 km` 和 `60 km`；
+  `10 km` 不是默认值未被更新，也不是动态深度上限误拒绝；
+- 最终搜索中心的评分为 `10 km: 514.289`、`20 km: 520.310`、
+  `60 km: 591.054`，因此当前错误经纬度附近确实以 10 km 为局部最低；
+- 将经纬度固定在 JMA 震中、保持同一批 209 个算法实际 P/S 样本和权重，只读扫描
+  深度时最佳为 `30 km`，点 RMSE `2.548 s`。这说明经纬度与深度的联合误差面陷入
+  局部谷底；不得把 JMA 的 40 km 真值直接写回生产算法伪装修复；
+- 地图当前震源标记保留最有用的“误差”显示，但数值改为读取算法真实
+  `error_level`，不再把乘过 S 站数系数的 `score` 当成误差。截图对应值应为
+  `误差 322.99`，而不是原来的 `score 285.72`；公里误差仍只在有目录真值的
+  回放报告中计算。
+
+P/S 圈核查与修正：
+
+- 算法帧使用真实已发布震源、发生时刻、深度、JMA2001 逆算和
+  `100 + 最大检出距离 * 3` 半径上限，公式本身未使用固定波速；
+- 原地图虽然以 2 fps 重绘，却每次读取最后算法帧中冻结的
+  `best_source_p_radius_km/best_source_s_radius_km`。NIED 帧停止后，JMA 正式事件
+  继续按当前时钟传播，而推算圈停在最后一帧，视觉差距会持续扩大；
+- diagnostics 现在显式保存本轮真实 `wave_radius_cap_km`。地图以最后真实
+  `wave_elapsed_s` 为锚点，通过单调时钟继续使用同一 JMA2001 和同一半径上限反算，
+  到 300 秒仍按 Scratch 生命周期隐藏；历史回放或缺少锚点时仍保留原算法帧半径；
+- 在经过时间 141 秒时，JMA2001 的 10 km 深度 P/S 半径约为
+  `1066.15/582.06 km`，40 km 深度约为 `1086.13/598.56 km`。剩余约
+  `20/17 km` 差距来自真实推算深度不同，不在显示层伪造补齐。
+
+验证：`nied_wave_radius_display_test.dart` 与 `source_estimator_test.dart` 共 19 项
+全部通过；三个相关文件 `flutter analyze` 无问题。千葉回放报告位于
+`.dart_tool/current_capture_replay_analysis_chiba_20260718/report.md` 和
+`report.json`。
+
+### 2026-07-18 主界面 HYP 曲线方形面板与 Debug 开关
+
+本轮只修改算法诊断 UI，不改变已发布震源、测站样本、P/S 分类、JMA2001 曲线、
+误差水平或搜索分值：
+
+- 主界面右下角曲线由桌面 `560 x 268` 长方形改为响应式正方形；宽屏首选
+  `300 x 300`，较窄桌面随 `UiScale.compact` 缩到约 `255 x 255`，手机首选
+  `240 x 240`，并继续受实际视口可用宽高约束；
+- 方形紧凑标题重新排成四行，保留当前震源坐标、深度、`error_level`、点 RMSE、
+  发生时刻、搜索分值、含未着 RMSE、未着惩罚和实际使用站数；曲线坐标轴及真实
+  测站点的数据范围没有变化；
+- Debug 页 `NIED Source Estimation` 卡片新增“主界面曲线面板”开关。开关通过
+  `UiRuntimeFlags.niedHypCurvePanelVisibleNotifier` 立即控制主界面，并持久化到
+  `debug_nied_hyp_curve_panel_visible`；启动时加载，默认开启；
+- 面板关闭时，overlay 不再为后续震源帧启动曲线 payload isolate 解析；重新开启后
+  从当前已发布曲线快照重新准备一次，避免隐藏状态继续消耗 CPU；
+- 测试构建入口使用同步 payload 准备，以便准确定位真实曲线画布；生产路径仍使用
+  `compute` isolate，没有把曲线解析移回主线程。
+
+验证：曲线 overlay 的方形尺寸、清空/缩放/卸载、deactivate/activate 和 Debug
+开关关闭/恢复共 3 项组件测试全部通过；原 `source_estimator_test.dart` 15 项算法
+测试通过；5 个相关文件 `flutter analyze` 无问题。
+
+### 2026-07-18 千葉県東方沖后期误差增长与文章未着门修正
+
+重新读取文章“③ 仮の震源が実際の震源にどのくらい近いかの値を計算する”和
+“④ 誤差レベルの計算を繰り返して震源位置を特定する”后，确认文章对未着惩罚有
+明确的启用范围：检出后 `3 s` 内，或者检出后 `10 s` 内且检出站少于 `30` 时，
+才把理论上已经到达但尚未检出的站加入误差。当前 direct worker 原来采用新版
+Scratch `project.json` 的长期未着分支，超过该范围后仍持续计数；这违反了“评分
+核心按文章、project.json 只补充文章未展开部分”的边界。
+
+修正内容：
+
+- 每帧统一计算
+  `elapsed <= 3 || (elapsed <= 10 && effectiveActiveCount < 30)`；本帧起始中心和
+  所有经纬度/深度候选使用同一个门，门关闭时未着惩罚、未着 P 半径和参考距离
+  均为 `0`；
+- `elapsed` 锚定到 detection ID 创建时写入后不再变化的时刻，和 Scratch
+  `4-3 +3` 一致；不再使用“当前成员最早 triggerStamp”，避免后加入一个更早时刻
+  的成员后，ID 年龄从 `6 s` 倒跳到 `12 s`。diagnostics 分开记录
+  `elapsed_since_detection_id_created_s` 和首站真实
+  `elapsed_since_first_trigger_s`；
+- diagnostics 新增
+  `inactive_penalty_gate_model=kotoho7_article_elapsed_le_3_or_elapsed_le_10_and_active_lt_30`
+  与 `inactive_penalty_gate_open`，不再根据误差值猜测门状态；
+- 门关闭后不再为每个候选遍历全网未着站，减少后期搜索的无效距离和 JMA2001
+  计算；Scratch 的 detection ID、P/S 缓存、五阶段搜索、`1.7` 写回门和生命周期
+  没有改变。
+
+同一 `2026-07-18 千葉県東方沖 M4.3` 回放对比：
+
+- 修正前真值水平误差最小为 `7.56 km`（`04:45:37`），基础 `error_level` 最小为
+  `189.47`（`04:45:47`）；之后未着惩罚增至 `370`，`04:46:17` 仍因
+  `score=291.65 < 175.93 * 1.7` 被写回，最终为
+  `35.783333, 141.316667 / 10 km / 21.64 km`；
+- 修正后真值水平误差最小为 `8.68 km`（`04:45:32`，深度 `30 km`），基础
+  `error_level` 最小为 `222.28`（`04:45:57`）；最终为
+  `35.866667, 141.033333 / 10 km / 19.48 km`，基础 `error_level=321.07`、
+  `score=239.37`，未着惩罚为 `0`；
+- ID 建立后 `<10 s` 的 Scratch 写回规则会无条件接受本轮搜索；因此
+  `04:45:30` 曾真实发布 `error_level=4955.73` 的早期结果，之后再逐步下降。这不是
+  单轮邻域搜索接受更差候选，而是每个新帧的测站集合改变后重新搜索并写回；
+- 深度仍会从早期 `30/40/90 km` 逐步降到 `10 km`。在 JMA 震中固定经纬度下，
+  后段同一算法样本的最佳深度为 `20 km`；因此剩余深度偏差仍是经纬度/深度的
+  联合局部谷底，不能把目录 `40 km` 直接写入算法。
+
+修正后的剩余后期增长不是旧站数据被改写。`04:45:47` 的 126 个发布曲线站到
+`04:47:22` 全部保留，公共站的 `triggerStamp`、P/S 标志和 `observed_s` 变化数
+全部为 `0`；后续新增 98 个真实 detection ID 成员，使加权平方残差从 `339.15`
+增至 `717.21`。最大单帧增长发生在 `04:47:15`：KA 输入站 `YMT016` 以
+`scratch_id4_1_nearest7_existing_id` 加入，输入为 `level=3, ascend=3`，缓存波型为
+S，曲线残差 `30.00 s`，单站加权平方残差贡献 `133.46`。因此文章所说的“越接近
+实际震源，误差水平越低”适用于同一测站集合中的候选比较；跨帧加入新站后目标
+函数已改变，两个原始误差水平不能直接解释为震中距离单调变化。
+
+Scratch JS 的跨帧 `1.7 * 历史最低发布分数` 门已从原始块再次核实：它允许比历史
+最低值高、但仍低于 1.7 倍阈值的结果写回。修正后历史最低 `score=185.84`，末帧
+`239.37 < 315.93`，所以后期解仍会发布；这是当前按 JS 保留的稳定/写回语义，
+不是文章单轮邻域下降遗漏。若要禁止发布误差回升，必须单独改变已确认的 JS 写回
+规则，不能把它混作本次文章未着门修复。
+
+验证：`source_estimator_test.dart` 16 项全部通过；新增测试覆盖 `3 s`、
+`10 s + 少于30站`、`11 s` 和 `5 s + 30站` 四个门边界；千葉 151 帧回放通过。
+修正前后报告分别位于
+`.dart_tool/current_capture_replay_analysis_chiba_late_error/report.json` 和
+`.dart_tool/current_capture_replay_analysis_chiba_article_inactive_gate/report.json`。
+
+### 2026-07-18 HYP 跨帧写回门多事件对照实验
+
+为判断 Scratch JS 的 `历史最低 score * 1.7` 是否普遍有利，使用完全相同的 KA
+输入、文章未着门、P/S 缓存、JMA2001、候选域和五阶段搜索，只替换 10 秒后的
+跨帧写回条件。不能从已有报告事后筛选：拒绝一帧会改变下一帧搜索起点和 P/S
+缓存路径，因此每个组合均从空 detection ID 状态完整重跑。
+
+实验实现：
+
+- `NiedDartHypSourceEstimator` 构造器增加可重复测试用
+  `writebackPolicy` 和 `historicalMinimumMultiplier`；生产默认仍为 Scratch
+  `historicalMinimumMultiplier / 1.7`，主程序没有改成实验值；
+- 回放测试支持紧凑报告及一次进程内的事件/策略矩阵。每轮先 `resetNied()`，再安装
+  全新的策略 estimator；首帧强制断言 diagnostics 中的实际策略和倍率，避免 reset
+  把实验静默恢复为默认值；
+- 五个真实事件覆盖山梨内陆 M5.6、岩手近海 M4.1、福岛会津深发 M4.6、静冈
+  内陆 M3.6、千叶远海 M4.3；目录真值只用于回放后统计，不参与搜索或写回判断。
+
+极端策略结果：
+
+| 策略 | 5 事件最终水平误差均值 | 最优到最终漂移均值 | 接受/拒绝帧 | 结论 |
+|---|---:|---:|---:|---|
+| 历史最低 `*1.7` | `8.647 km` | `3.511 km` | `218 / 260` | Scratch 基线 |
+| 历史最低 `*1.0` | `8.801 km` | `3.665 km` | `90 / 388` | 过严，千叶变差 |
+| 不高于当前发布 score | `12.319 km` | `7.585 km` | `132 / 346` | 岩手由 `3.39` 恶化到 `22.99 km` |
+
+“不高于当前分数”失败的原因不是实现错误：它允许从一个高于历史最低的当前分数
+开始，沿一串逐步下降的分数持续移动，最终进入错误谷底。岩手在 `14:39:53`
+首次与基线分歧，基线按历史门拒绝，而当前分数门接受，最后水平误差增加
+`19.60 km`。因此不能用它替代历史最低门。
+
+中间倍率结果：
+
+| 倍率 | 最终水平误差均值 | 漂移均值 | 平均深度绝对误差 | 接受/拒绝帧 |
+|---:|---:|---:|---:|---:|
+| `1.05` | `8.801 km` | `3.665 km` | `12 km` | `124 / 354` |
+| `1.1` | `8.576 km` | `3.440 km` | `12 km` | `171 / 307` |
+| `1.2` | `8.576 km` | `3.440 km` | `12 km` | `196 / 282` |
+| `1.4` | `8.647 km` | `3.511 km` | `14 km` | `210 / 268` |
+| `1.7` | `8.647 km` | `3.511 km` | `14 km` | `218 / 260` |
+
+逐事件比较 `1.2` 与 `1.7`：
+
+- 山梨最终水平误差 `9.74 -> 9.39 km`，最终深度同为 `10 km`；
+- 千叶最终水平误差同为 `19.48 km`，深度 `10 -> 20 km`，基础
+  `error_level 321.07 -> 259.40`；
+- 岩手 `3.39 km / 20 km`、福岛 `3.49 km / 160 km`、静冈
+  `7.13 km / 30 km` 完全不变；
+- `1.1` 与 `1.2` 在五个事件上的最终位置和深度相同；`1.2` 多保留 25 个中间写回
+  帧，因此在当前样本下是比 `1.1` 更保守的折中；
+- `1.05` 会把千叶最终水平误差增至 `20.61 km`，过严；`1.4` 已回到 `1.7` 的
+  最终结果，无法保留千叶的 20 km 深度。
+
+当前证据支持把 `1.2` 作为后续生产候选：五个事件没有水平退化，山梨略有改善，
+千叶深度和算法自身误差改善，总体漂移也下降。但它明确偏离 Scratch JS 的 `1.7`
+常数，本轮只保留为可重复实验参数，没有静默修改生产默认值。
+
+报告：
+
+- `.dart_tool/nied_hyp_writeback_policy_matrix/report.md`：`1.7 / 1.0 / 当前分数`；
+- `.dart_tool/nied_hyp_writeback_policy_matrix_intermediate/report.md`：
+  `1.05 / 1.1 / 1.2 / 1.4`；
+- 两轮共 35 个完整事件-策略组合，测试分别用时 `7:11` 和 `8:31`，全部通过。
+
+### 2026-07-18 HYP 深度发布链路与曲线面板刷新
+
+针对“回放时右下角曲线面板一直显示 10 km”，把生产链路拆成算法搜索结果、已发布
+`SourceEstimate`、曲线诊断快照和主界面后台解析四层逐项核对。结论不能概括为
+“算法深度写死为 10 km”：
+
+- 五事件生产 `1.7` 回放的最终深度分别为山梨 `10 km`、岩手 `20 km`、福岛会津
+  `160 km`、静冈 `30 km`、千叶 `10 km`；
+- 重新运行福岛会津 15 帧完整诊断，算法逐帧发布
+  `20 -> 60 -> 110 -> 130 -> 150 -> 160 km`。13 个估算帧中
+  `SourceEstimate.depthKm`、选中曲线面板 `depth_km` 和面板经纬度逐帧完全一致；
+- 千叶也不是全程 10 km。其发布深度实际经历
+  `10 -> 30 -> 40 -> 50 -> 90 -> ... -> 20 -> 10 km`。最后一轮同一位置和站集下，
+  `10 km` 分值为 `239.369`，`20 km` 为 `241.689`，`60 km` 为 `363.126`，所以
+  文章/Scratch 邻域下降真实选择 10 km；这属于经纬度与深度联合误差面的局部谷底，
+  不是显示层把 JMA 40 km 改成 10 km。
+
+显示层发现的独立风险是刷新签名只包含曲线列表的 `identityHashCode`，没有事件、
+深度、坐标、发生时刻或发布序号。为保证主界面一定跟随算法真实发布快照：
+
+- 每个 detection ID 的 worker 增加 `publishedCurveRevision`。只有本轮搜索通过写回门
+  并生成新曲线快照时递增；写回被拒绝、曲线冻结时保持不变；时间倒退重置 worker
+  时归零；
+- diagnostics 发布 `travel_time_curve_revision`。主界面签名改为组合事件 ID、版本、
+  `SourceEstimate` 经纬度/深度/发生时刻、选中面板对应字段、误差和样本数；列表对象
+  身份只保留为最后一层区分，不再是唯一依据；
+- 新增实际后台 `compute` 路径回归测试，在复用同一个原始面板列表对象的情况下依次
+  发布 `10 -> 160 -> 30 km`，断言 painter 每次都显示对应深度；现有清空事件、窗口
+  缩放、组件移动和 Debug 开关测试继续通过；
+- `source_estimator_test.dart` 新增版本冻结断言。算法测试 16 项、曲线生命周期测试
+  4 项全部通过，四个相关文件静态分析无问题。
+
+本轮没有修改临时震源 10 km 初值、五阶段搜索、JMA2001、P/S 选择、误差公式、动态
+候选域或 `1.7` 写回门。修复的是“算法已发布非 10 km 时主界面必须可靠刷新”的显示
+契约；千叶最终为何回到 10 km 仍按上面的真实候选分值解释，不能用 JMA 目录深度
+直接覆盖。
+
+复核报告：
+
+- `.dart_tool/current_capture_depth_trace_fukushima/report.json`；
+- `.dart_tool/current_capture_replay_analysis_chiba_article_inactive_gate/report.json`。
+
+### 2026-07-18 JMA2001 入参、文章权重与发布面板数值审计
+
+继续针对千叶最终回到 `10 km` 检查联合经纬度/深度谷底，并把算法发布值与右下角
+曲线面板逐字段核对。本轮不使用 JMA 目录真值参与运行时搜索或写回。
+
+JMA2001 距离语义：
+
+- KA `TravelTimes.js` 的表格插值横轴是地表震中距；Scratch 六项式为同一张表的
+  正向近似时，输入必须是 `sqrt(震中距^2 + 深度^2)` 的震源距；
+- 深度 `150 km`、震中距 `20 km` 时，KA 表值为 P `20.327 s`、S `35.797 s`；
+  当前震源距入参得到 P `20.299 s`、S `35.745 s`。若误传地表震中距，只得到
+  P `2.747 s`、S `4.818 s`；
+- 因此生产评分、P/S 曲线和波圈继续使用震源距输入。新增固定 KA 表值测试，防止
+  后续因变量命名或面板横轴是震中距而错误修改多项式入参。
+
+文章距离权重核对：
+
+- Scratch 实际公式是
+  `max(50, 首检站震中距) / max(50, 当前站震中距)`；旧 Dart 对 50 km 内当前站
+  直接返回 `1.0`，当首检站震中距大于 50 km 时会错误降权近站；
+- 已改为文章原式，面板点权重调用同一函数，单元测试对每个发布点独立复算；
+- 五事件生产矩阵结果未变化：山梨 `9.74 km / 10 km`、岩手
+  `3.39 km / 20 km`、福岛会津 `3.49 km / 160 km`、静冈
+  `7.13 km / 30 km`、千叶 `19.48 km / 10 km`。这表示该修复在当前五个最终帧
+  没有改变最优候选，但仍删除了真实的文章实现偏差。
+
+联合谷底实验与深度剖面：
+
+- 仅回放实验在原五阶段的两个深度阶段增加纬度、经度、深度同时移动的组合邻点；
+  KA 输入、文章误差公式、P/S 缓存和 `1.7` 写回门均不变；
+- 千叶结果与生产逐项相同：`35.866667, 141.033333 / 10 km`，水平误差
+  `19.48 km`，误差水平 `321.070`，分值 `239.369`，因此没有启用该实验；
+- 使用当前最终发布快照的 224 个真实有效站、真实触发时刻和发布 P/S 分配，分别
+  固定深度并重新优化水平位置。最低分值为：`10 km = 239.369`、
+  `20 km = 240.854`、`30 km = 252.317`、`40 km = 275.638`；
+- 当前完整报告中 `SourceEstimate` 与选中面板的经纬度、深度、发生时刻、误差、
+  分值和站数完全相同。由此可确定，千叶最终浅源不是相邻联合候选漏搜或面板替换，
+  而是文章评分在这批 KA 触发时刻/P-S 分配下真实偏好 10 km；20 km 与 10 km
+  只差约 `0.62%`，说明该事件的深度约束较弱。
+- 相位对照把同一 224 站全部按 P 计算，最优深度仅移动到 `20 km`，并且最低分值
+  恶化到约 `1039`；浅源偏好不是 19 个 S 标记单独造成的，不能通过删除 S 点修复；
+- 当前 JS 使用的加权发生时刻也做了只读对照：`10 km = 239.32`、
+  `20 km = 240.22`、`40 km = 270.59`，仍然选择 10 km。因此文章普通平均与
+  JS 加权平均的差异也不能解释 JMA 40 km 与当前结果的差距。
+
+面板契约：
+
+- 算法样本显式携带 `epicentral_distance_km` 与
+  `hypocentral_distance_km`；横轴模型固定为 6371 km Haversine 地表震中距，
+  JMA2001 走时模型显式记录震源距入参；
+- 时间零点固定为当前发布结果中最早的有效评分站，不再被已排除的 KA
+  `ascend < 2` 成员提前；该平移不改变绝对发生时刻、残差、误差或分值；
+- UI 后台预处理不再自行按 `weight > 0` 重算有效站数，直接使用算法 panel 内的
+  `effective_station_count`；距离模型和每个点的震中距/震源距跨 isolate 保留；
+- 面板中的位置、深度、绝对发生时刻、`t0`、误差水平、点 RMSE、含未着 RMSE、
+  分值、未着数、P/S 数、S 系数、权重和、站数尺度及所有残差线均来自同一个已发布
+  worker result；`1.7` 门拒绝新搜索时整张快照冻结，不混入后续站点。
+
+报告与验证：
+
+- `.dart_tool/nied_hyp_article_weight_matrix/report.md`；
+- `.dart_tool/nied_hyp_chiba_current_full/report.json`；
+- `.dart_tool/nied_hyp_joint_neighborhood_chiba/report.md`；
+- JMA2001 4 项测试、震源估算器 16 项测试、面板生命周期 4 项测试均通过。

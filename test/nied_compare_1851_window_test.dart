@@ -35,7 +35,7 @@ double _maxStationShindo(List<NiedStation> stations) {
   var max = -3.0;
   for (final s in stations) {
     if (s.level < 0) continue;
-    final shindo = JpShindoScale.rawShindoFromLevel(s.level);
+    final shindo = JpShindoScale.rawShindoFromKanameishiLevel(s.level);
     if (shindo > max) max = shindo;
   }
   return max;
@@ -45,7 +45,7 @@ List<String> _topStationSummaries(List<NiedStation> stations) {
   final active = stations.where((s) => s.level >= 0).toList()
     ..sort((a, b) => b.level.compareTo(a.level));
   return active.take(8).map((s) {
-    final shindo = JpShindoScale.rawShindoFromLevel(s.level);
+    final shindo = JpShindoScale.rawShindoFromKanameishiLevel(s.level);
     return '${s.code}:${shindo.toStringAsFixed(2)}';
   }).toList();
 }

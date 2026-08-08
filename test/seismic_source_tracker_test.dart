@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
 
+import 'package:flutterrhythmquake/core/event_detection/event_detection_models.dart';
 import 'package:flutterrhythmquake/core/source_estimation/seismic_source_tracker.dart';
 import 'package:flutterrhythmquake/core/source_estimation/source_estimation_models.dart';
 import 'package:flutterrhythmquake/core/source_estimation/source_estimator.dart';
@@ -150,7 +151,15 @@ void main() {
 
     expect(tracker.currentEvent('global-demo'), isNull);
     expect(tracker.history('global-demo'), isNotEmpty);
-    expect(tracker.history('global-demo').first.isClosed, isTrue);
+    final archived = tracker.history('global-demo').first;
+    expect(archived.isClosed, isTrue);
+    expect(archived.estimate, isNotNull);
+    expect(archived.metadata['network_group'], 'demo');
+    expect(
+      archived.records,
+      isEmpty,
+      reason: 'closed events must not retain per-station frame histories',
+    );
   });
 
   test('missing station frame is retained without deleting event evidence', () {
@@ -251,6 +260,97 @@ void main() {
     );
 
     expect(tracker.currentEvent('global-demo')!.records.single.lastPga, 12);
+  });
+
+  test('keeps raw event-window PGV peaks only from the trigger onward', () {
+    final start = DateTime(2026, 6, 10, 16);
+    final base = buildSample(code: 'G01', lat: 10, lng: 120);
+    const pgvProvenance = ObservationProvenance(
+      origin: ObservationOrigin.niedGifLayer,
+      quantity: StationValueType.pgv,
+      layerId: 'vcmap',
+      isIndependentPhysicalMeasurement: true,
+    );
+
+    SeismicStationSample frame({
+      required DateTime at,
+      required double pgv,
+      required double colorPosition,
+      required bool triggered,
+    }) {
+      return SeismicStationSample(
+        descriptor: base.descriptor,
+        observedAt: at,
+        receivedAt: at.add(const Duration(milliseconds: 250)),
+        valueType: StationValueType.jmaShindo,
+        value: 1.2,
+        rawLevel: 10,
+        detectLevel: 10,
+        activity: 1,
+        isTriggered: triggered,
+        firstTriggerInterval: triggered
+            ? ObservationTimeInterval(start: at, end: at)
+            : null,
+        observedPgv: pgv,
+        physicalObservations: {
+          StationValueType.pgv: SeismicPhysicalObservation(
+            quantity: StationValueType.pgv,
+            layerId: 'vcmap',
+            value: pgv,
+            colorPosition: colorPosition,
+            dataTime: at,
+            receivedAt: at.add(const Duration(milliseconds: 250)),
+          ),
+        },
+        provenance: const {StationValueType.pgv: pgvProvenance},
+      );
+    }
+
+    tracker.ingestFrame(
+      sourceId: 'global-demo',
+      observedAt: start,
+      stageName: 'detected',
+      maxShindo: 1,
+      samples: [
+        frame(at: start, pgv: 30, colorPosition: 0.70, triggered: false),
+      ],
+    );
+    tracker.ingestFrame(
+      sourceId: 'global-demo',
+      observedAt: start.add(const Duration(seconds: 1)),
+      stageName: 'detected',
+      maxShindo: 1,
+      samples: [
+        frame(
+          at: start.add(const Duration(seconds: 1)),
+          pgv: 5,
+          colorPosition: 0.44,
+          triggered: true,
+        ),
+      ],
+    );
+
+    final record = tracker.currentEvent('global-demo')!.records.single;
+    final peak = record.eventPhysicalPeaks[StationValueType.pgv];
+    expect(peak, isNotNull);
+    expect(peak!.value, 5);
+    expect(peak.colorPosition, 0.44);
+    expect(peak.dataTime, start.add(const Duration(seconds: 1)));
+    expect(
+      peak.receivedAt,
+      start.add(const Duration(seconds: 1, milliseconds: 250)),
+    );
+    expect(
+      record
+          .observationHistory
+          .frames
+          .first
+          .physicalObservations
+          .values
+          .single
+          .value,
+      30,
+    );
   });
 
   test('stability policy holds a late drifting estimate', () {
@@ -582,6 +682,76 @@ void main() {
     expect(current.estimate, same(stable));
     expect(current.metadata['estimate_held_due_to_low_support'], isTrue);
   });
+
+  test(
+    'estimator-owned JS lifecycle bypasses tracker hold and clears output',
+    () {
+      final start = DateTime(2026, 7, 17, 16);
+      final estimator = _LifecycleOwnerEstimator([
+        const SourceEstimate(
+          latitude: 35,
+          longitude: 140,
+          confidence: 0.5,
+          method: 'owned-lifecycle',
+          supportingStationCount: 5,
+        ),
+        const SourceEstimate(
+          latitude: 38,
+          longitude: 144,
+          confidence: 0.5,
+          method: 'owned-lifecycle',
+          supportingStationCount: 5,
+        ),
+        null,
+      ]);
+      tracker
+        ..setEstimator('global-demo', estimator)
+        ..setStabilityConfig(
+          'global-demo',
+          const SourceEstimateStabilityConfig(
+            warmupDuration: Duration.zero,
+            maxJumpKm: 1,
+            maxAnchorDistanceKm: 1,
+          ),
+        );
+
+      void ingest(Duration offset) {
+        final observedAt = start.add(offset);
+        tracker.ingestFrame(
+          sourceId: 'global-demo',
+          observedAt: observedAt,
+          stageName: 'detected',
+          maxShindo: 2,
+          samples: [
+            buildSample(code: 'G01', lat: 35, lng: 140, observedAt: observedAt),
+            buildSample(
+              code: 'G02',
+              lat: 35.1,
+              lng: 140.1,
+              observedAt: observedAt,
+            ),
+          ],
+        );
+      }
+
+      ingest(Duration.zero);
+      expect(tracker.currentEvent('global-demo')!.estimate!.latitude, 35);
+      ingest(Duration.zero);
+      expect(estimator.callCount, 1);
+      expect(tracker.currentEvent('global-demo')!.estimate!.latitude, 35);
+
+      ingest(const Duration(seconds: 2));
+      final moved = tracker.currentEvent('global-demo')!;
+      expect(moved.estimate!.latitude, 38);
+      expect(moved.metadata['estimate_held_due_to_stability'], isNull);
+
+      ingest(const Duration(seconds: 3));
+      final cleared = tracker.currentEvent('global-demo')!;
+      expect(cleared.estimate, isNull);
+      expect(cleared.metadata['nied_dart_hyp_clear_published_source'], isTrue);
+      expect(cleared.metadata['estimate_held_due_to_low_support'], isNull);
+    },
+  );
 }
 
 class _SequenceSourceEstimator implements SourceEstimator {
@@ -603,6 +773,45 @@ class _SequenceSourceEstimator implements SourceEstimator {
       return estimates.last;
     }
     return estimates[_index++];
+  }
+}
+
+class _LifecycleOwnerEstimator
+    implements SourceEstimator, SourceEstimatorLifecycleOwner {
+  _LifecycleOwnerEstimator(this.estimates);
+
+  final List<SourceEstimate?> estimates;
+  var _index = 0;
+
+  int get callCount => _index;
+
+  @override
+  String get methodId => 'owned-lifecycle';
+
+  @override
+  bool get ownsOutputLifecycle => true;
+
+  @override
+  bool get requiresEveryFrame => true;
+
+  @override
+  bool supports(SourceEstimationRequest request) => true;
+
+  @override
+  SourceEstimate? estimate(SourceEstimationRequest request) {
+    final index = _index < estimates.length ? _index : estimates.length - 1;
+    final estimate = estimates[index];
+    _index += 1;
+    if (estimate == null) {
+      request.metadata
+        ..['nied_dart_hyp_clear_published_source'] = true
+        ..['nied_dart_hyp_source_clear_reason'] = 'test_js_lifecycle_end';
+    } else {
+      request.metadata
+        ..remove('nied_dart_hyp_clear_published_source')
+        ..remove('nied_dart_hyp_source_clear_reason');
+    }
+    return estimate;
   }
 }
 

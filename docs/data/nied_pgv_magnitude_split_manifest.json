@@ -1,0 +1,61 @@
+{
+  "schemaVersion": "nied_pgv_magnitude_split_v1",
+  "frozenAt": "2026-08-02",
+  "status": "pending_insufficient_independent_event_groups",
+  "productionMagnitudeEnabled": false,
+  "measurementPolicy": {
+    "physicalLayers": [
+      "acmap_s",
+      "vcmap_s",
+      "dcmap_s"
+    ],
+    "primaryLayer": "vcmap_s",
+    "stationPolicy": "surface_event_participant_only",
+    "sourceLocationPolicy": "default_dart_hyp_diagnostics_only",
+    "truthPolicy": "p2pquake_jma_detail_scale_is_not_final_calibration_truth"
+  },
+  "groups": [
+    {
+      "groupId": "kumamoto_20260801_sequence",
+      "region": "熊本県熊本地方 / 熊本県天草・芦北地方",
+      "assignment": "unassigned",
+      "reason": "Eight closely timed events form one dependent sequence and must remain in one split if later used.",
+      "captureCaseIds": [
+        "p2p_20260801_223900_m23_6bf0a4",
+        "p2p_20260801_225600_m24_6bf0a5",
+        "p2p_20260801_225900_m25_6bf0a6",
+        "p2p_20260801_235000_m27_6bf0a7",
+        "p2p_20260802_004000_m31_6bf0a9",
+        "p2p_20260802_005400_m27_6bf0aa",
+        "p2p_20260802_010700_m45_6bf0ad",
+        "p2p_20260802_011900_m28_6bf0ae"
+      ]
+    },
+    {
+      "groupId": "iriomote_20260801_singleton",
+      "region": "西表島付近",
+      "assignment": "unassigned",
+      "reason": "Only one independent event group is available, so it cannot establish validation or holdout performance.",
+      "captureCaseIds": [
+        "p2p_20260802_002200_m34_6bf0a8"
+      ]
+    }
+  ],
+  "assignmentRules": [
+    "Do not split any group across calibration, validation, or holdout.",
+    "Do not tune the PGV inversion, IQR gate, or station filters on a group before its assignment is frozen.",
+    "Require independently sourced final earthquake parameters before using a group for calibration error metrics.",
+    "Do not expose the diagnostic value as SourceEstimate.magnitude or UI data until calibration, validation, and holdout groups all pass their predeclared checks."
+  ],
+  "nextDataRequirement": {
+    "minimumAdditionalIndependentGroups": 3,
+    "minimumAdditionalEvents": 6,
+    "requiredMetadata": [
+      "independent final source latitude",
+      "independent final source longitude",
+      "independent final depth",
+      "independent final magnitude scale",
+      "complete jma_s/acmap_s/vcmap_s/dcmap_s capture manifest"
+    ]
+  }
+}

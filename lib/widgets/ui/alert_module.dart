@@ -4,10 +4,10 @@ import 'dart:ui';
 import 'package:provider/provider.dart';
 import '../../providers/quake_provider.dart';
 import '../../providers/map_state_provider.dart';
-import '../../services/ntp_service.dart';
 import '../../models/intensity_theme.dart';
 import '../../models/quake_message.dart';
 import '../../models/unified_quake_data.dart';
+import '../../models/unified_event_presentation.dart';
 import '../../models/weather_alarm.dart';
 import '../../core/intensity_calculator.dart';
 import '../../core/source_estimation/source_estimate_quality.dart';
@@ -26,14 +26,23 @@ class AlertModule extends StatefulWidget {
 
 class _AlertModuleState extends State<AlertModule> {
   Timer? _unifiedPageTimer;
+  Timer? _ashfallWindowTimer;
   final ValueNotifier<double> _flashLevel = ValueNotifier<double>(0);
   int _unifiedPageIndex = 0;
   String _unifiedPageSignature = '';
-  final Map<String, DateTime> _sourceUnifiedFirstSeenAtByEvent =
-      <String, DateTime>{};
-  Timer? _sourceUnifiedDismissTimer;
-
   static const String _sourceEstimationUnifiedSource = 'nied_source_estimation';
+  static const List<String> _jmaShindoLabels = [
+    '0',
+    '1',
+    '2',
+    '3',
+    '4',
+    '5-',
+    '5+',
+    '6-',
+    '6+',
+    '7',
+  ];
   static const SourceEstimateQualityCalculator _sourceQualityCalculator =
       SourceEstimateQualityCalculator();
   static const SourceStationPhaseClassifier _sourcePhaseClassifier =
@@ -72,7 +81,7 @@ class _AlertModuleState extends State<AlertModule> {
   @override
   void dispose() {
     _stopUnifiedPageTimer();
-    _sourceUnifiedDismissTimer?.cancel();
+    _stopAshfallWindowTimer();
     _flashLevel.dispose();
     super.dispose();
   }
@@ -86,6 +95,7 @@ class _AlertModuleState extends State<AlertModule> {
           valueListenable: StationEventTracker.instance.currentNiedEvent,
           builder: (context, sourceEvent, child) {
             final provider = context.read<QuakeProvider>();
+            _syncAshfallWindowTimer(provider.unifiedEvents);
             final showSourceEstimationUi = context
                 .watch<MapStateProvider>()
                 .showEstimatedEpicenter;
@@ -123,16 +133,13 @@ class _AlertModuleState extends State<AlertModule> {
 
   int _alertUiSignature(QuakeProvider provider) {
     final unifiedEvents = provider.unifiedEvents;
-    final currentEvent = provider.currentEvent;
-    final countdownTick = currentEvent != null && unifiedEvents.isEmpty
-        ? NtpService().now.millisecondsSinceEpoch ~/ 1000
-        : 0;
     return Object.hash(
       Object.hashAll(unifiedEvents.map((event) => event.hashCode)),
       provider.currentUnifiedIndex,
-      currentEvent?.hashCode,
+      provider.currentEvent?.hashCode,
       provider.currentDistance,
       provider.estimatedIntensity,
+      provider.sCountdown,
       provider.activeWarningCount,
       provider.activeInfoEventCount,
       provider.currentWarningIndex,
@@ -140,7 +147,6 @@ class _AlertModuleState extends State<AlertModule> {
       provider.isShowingInfoEvent,
       provider.weatherAlarm?.hashCode,
       provider.shouldShowWeatherAlarm,
-      countdownTick,
     );
   }
 
@@ -238,12 +244,8 @@ class _AlertModuleState extends State<AlertModule> {
       );
     }
 
+    final int countdown = provider.sCountdown;
     final double distance = provider.currentDistance;
-    final normalizedOrigin = QuakeTime.normalizedOriginLocal(event);
-    final double elapsed =
-        NtpService().now.difference(normalizedOrigin).inMilliseconds / 1000.0;
-    final double sArrival = distance / 3.5;
-    final int countdown = (sArrival - elapsed).floor();
 
     if (countdown < -60 && warningCount == 0) {
       _syncFlashController(false);
@@ -333,13 +335,8 @@ class _AlertModuleState extends State<AlertModule> {
   ) {
     final estimate = sourceEvent?.estimate;
     if (sourceEvent == null || estimate == null) return null;
-    if (!_shouldShowSourceUnifiedEvent(sourceEvent, estimate)) return null;
 
     final isKotoho7Js = estimate.method == 'nied_gif_kotoho7_js_receiver_v1';
-    final quality = isKotoho7Js
-        ? null
-        : _sourceQualityCalculator.calculate(sourceEvent);
-    final phases = _sourcePhaseClassifier.classify(sourceEvent);
     final originTime = estimate.originTime ?? sourceEvent.startedAt;
     final estimatedShindo = isKotoho7Js
         ? (_sourceDiagnosticDouble(
@@ -348,28 +345,27 @@ class _AlertModuleState extends State<AlertModule> {
               )?.floor() ??
               -1)
         : sourceEvent.maxShindo;
+    final estimatedShindoIndex = _sourceEstimatedJmaIndex(
+      sourceEvent,
+      estimate,
+      isKotoho7Js: isKotoho7Js,
+    );
     final supportCount = _sourceDisplaySupportCount(estimate);
-    final shindoText = estimatedShindo >= 0 ? '$estimatedShindo' : '?';
+    final shindoText = estimatedShindoIndex == null
+        ? (estimatedShindo >= 0 ? '$estimatedShindo' : '?')
+        : _jmaShindoLabels[estimatedShindoIndex];
     final qualityText =
+        _sourceDartHypResultText(estimate) ??
         _sourceJsQualityText(estimate) ??
-        (quality == null
-            ? '\u8d28\u91cf --'
-            : '\u8d28\u91cf ${quality.grade} - '
-                  '${(quality.confidence * 100).toStringAsFixed(1)}% / '
-                  '${_formatSourceResidualV2(quality.rmsResidualSeconds)} / '
-                  '${_formatSourceGapV2(quality.azimuthalGapDegrees)} / '
-                  '${_formatSourceUncertaintyV2(quality.horizontalUncertaintyP90Km)}');
+        '';
     final candidateRegionText = isKotoho7Js
         ? null
         : _sourceCandidateRegionText(sourceEvent.metadata);
-    final apiTypeLabel = candidateRegionText == null
-        ? qualityText
-        : '$qualityText \u00b7 $candidateRegionText';
-    final triggerText =
-        '\u89e6\u53d1 ${phases.stations.length}\u7ad9 '
-        '(P: ${phases.count(EstimatedStationPhase.p)} | '
-        'S: ${phases.count(EstimatedStationPhase.s)} | '
-        'O: ${phases.count(EstimatedStationPhase.other)})';
+    final apiTypeLabel = [
+      if (qualityText.isNotEmpty) qualityText,
+      ?candidateRegionText,
+    ].join(' \u00b7 ');
+    final triggerText = _sourceTriggerText(sourceEvent, estimate);
 
     return UnifiedQuakeData(
       source: _sourceEstimationUnifiedSource,
@@ -381,7 +377,9 @@ class _AlertModuleState extends State<AlertModule> {
       reportNumText: '',
       useShindo: true,
       maxIntensity: shindoText,
-      className: _sourceShindoClassName(estimatedShindo),
+      className: estimatedShindoIndex == null
+          ? _sourceShindoClassName(estimatedShindo)
+          : _sourceJmaIndexClassName(estimatedShindoIndex),
       hypocenter:
           '${estimate.latitude.toStringAsFixed(3)}\u00b0N, '
           '${estimate.longitude.toStringAsFixed(3)}\u00b0E',
@@ -403,60 +401,6 @@ class _AlertModuleState extends State<AlertModule> {
       warnArea: triggerText,
       arrivedAt: sourceEvent.updatedAt,
     );
-  }
-
-  bool _shouldShowSourceUnifiedEvent(
-    SeismicActiveEvent sourceEvent,
-    SourceEstimate estimate,
-  ) {
-    final key = '${sourceEvent.sourceId}:${sourceEvent.eventId}';
-    final now = DateTime.now();
-    final firstSeen = _sourceUnifiedFirstSeenAtByEvent.putIfAbsent(
-      key,
-      () => now,
-    );
-    _sourceUnifiedFirstSeenAtByEvent.removeWhere(
-      (eventKey, seenAt) =>
-          eventKey != key &&
-          now.difference(seenAt) > const Duration(minutes: 30),
-    );
-    final ttl = _sourceUnifiedDismissDuration(sourceEvent, estimate);
-    final expiresAt = firstSeen.add(ttl);
-    if (!now.isBefore(expiresAt)) {
-      return false;
-    }
-    _scheduleSourceUnifiedDismiss(expiresAt);
-    return true;
-  }
-
-  Duration _sourceUnifiedDismissDuration(
-    SeismicActiveEvent sourceEvent,
-    SourceEstimate estimate,
-  ) {
-    final jsMaxShindo = estimate.method == 'nied_gif_kotoho7_js_receiver_v1'
-        ? _sourceDiagnosticDouble(estimate, 'js_map_max_shindo_class')?.floor()
-        : null;
-    final maxShindo = estimate.method == 'nied_gif_kotoho7_js_receiver_v1'
-        ? (jsMaxShindo ?? -1)
-        : sourceEvent.maxShindo;
-    final isWarnLike = maxShindo >= 5;
-    // Match QuakeProvider's EEW dismiss duration shape:
-    // normal EEW = max(M, 3) minutes; warning EEW = max(M, 6) minutes.
-    // Source estimation has no JS magnitude yet, so use the EEW minimums.
-    return Duration(minutes: isWarnLike ? 6 : 3);
-  }
-
-  void _scheduleSourceUnifiedDismiss(DateTime expiresAt) {
-    final now = DateTime.now();
-    final remaining = expiresAt.difference(now);
-    final nextDelay = remaining.isNegative ? Duration.zero : remaining;
-    final currentTimer = _sourceUnifiedDismissTimer;
-    if (currentTimer?.isActive == true) return;
-    _sourceUnifiedDismissTimer = Timer(nextDelay, () {
-      _sourceUnifiedDismissTimer = null;
-      if (!mounted) return;
-      setState(() {});
-    });
   }
 
   String? _sourceCandidateRegionText(Map<String, Object?> metadata) {
@@ -505,6 +449,51 @@ class _AlertModuleState extends State<AlertModule> {
       if (elapsedMs != null) '${elapsedMs}ms',
     ];
     return parts.join(' / ');
+  }
+
+  String? _sourceDartHypResultText(SourceEstimate estimate) {
+    if (estimate.method != 'nied_dart_hyp_v1') return null;
+    final errorLevel = _sourceDiagnosticDouble(estimate, 'error_level');
+    final qualityRank = estimate.diagnostics['quality_rank']?.toString();
+    final parts = <String>[
+      if (errorLevel != null) '误差 ${errorLevel.toStringAsFixed(2)}',
+      if (qualityRank != null && qualityRank.isNotEmpty) '质量 $qualityRank',
+    ];
+    return parts.join(' · ');
+  }
+
+  String _sourceTriggerText(
+    SeismicActiveEvent sourceEvent,
+    SourceEstimate estimate,
+  ) {
+    if (estimate.method == 'nied_dart_hyp_v1') {
+      final waveCounts = estimate.diagnostics['wave_counts'];
+      if (waveCounts is Map) {
+        final p = _nonNegativeSourceCount(waveCounts['P']);
+        final s = _nonNegativeSourceCount(waveCounts['S']);
+        final other = _nonNegativeSourceCount(waveCounts['O']);
+        if (p != null && s != null && other != null) {
+          return '触发 ${p + s + other}站 (P: $p | S: $s | O: $other)';
+        }
+      }
+      return '触发数据不可用';
+    }
+
+    final phases = _sourcePhaseClassifier.classify(sourceEvent);
+    return '触发 ${phases.stations.length}站 '
+        '(P: ${phases.count(EstimatedStationPhase.p)} | '
+        'S: ${phases.count(EstimatedStationPhase.s)} | '
+        'O: ${phases.count(EstimatedStationPhase.other)})';
+  }
+
+  int? _nonNegativeSourceCount(Object? value) {
+    final parsed = switch (value) {
+      int value => value,
+      num value when value.isFinite => value.round(),
+      String value => int.tryParse(value),
+      _ => null,
+    };
+    return parsed != null && parsed >= 0 ? parsed : null;
   }
 
   double? _sourceDiagnosticDouble(SourceEstimate estimate, String key) {
@@ -571,14 +560,37 @@ class _AlertModuleState extends State<AlertModule> {
     return 'gray';
   }
 
-  String _formatSourceResidualV2(double? value) =>
-      value == null ? '--s' : '${value.toStringAsFixed(2)}s';
+  int? _sourceEstimatedJmaIndex(
+    SeismicActiveEvent sourceEvent,
+    SourceEstimate estimate, {
+    required bool isKotoho7Js,
+  }) {
+    final raw = isKotoho7Js
+        ? estimate.diagnostics['js_map_max_shindo_index']
+        : sourceEvent.metadata['nied_max_jma_shindo_index'];
+    final index = switch (raw) {
+      int value => value,
+      num value => value.round(),
+      String value => int.tryParse(value),
+      _ => null,
+    };
+    return index != null && index >= 0 && index < _jmaShindoLabels.length
+        ? index
+        : null;
+  }
 
-  String _formatSourceGapV2(double? value) =>
-      value == null ? '--\u00b0' : '${value.round()}\u00b0';
-
-  String _formatSourceUncertaintyV2(double? value) =>
-      value == null ? 'P90 --km' : 'P90 ${value.round()}km';
+  String _sourceJmaIndexClassName(int index) {
+    if (index >= 9) return 'purple';
+    if (index >= 8) return 'dark-red';
+    if (index >= 7) return 'red';
+    if (index >= 6) return 'dark-orange';
+    if (index >= 5) return 'orange';
+    if (index >= 4) return 'yellow';
+    if (index >= 3) return 'green';
+    if (index >= 2) return 'blue';
+    if (index >= 1) return 'gray';
+    return 'dark-gray';
+  }
 
   String _sourceMethodLabelV2(String method) => switch (method) {
     'nied_gif_kotoho7_js_receiver_v1' => 'kotoho7 JS',
@@ -816,6 +828,24 @@ class _AlertModuleState extends State<AlertModule> {
     _unifiedPageTimer = null;
   }
 
+  void _syncAshfallWindowTimer(List<UnifiedQuakeData> events) {
+    final needsRefresh = events.any(
+      (event) => event.volcanoEvent?.hasAshfallForecast ?? false,
+    );
+    if (!needsRefresh) {
+      _stopAshfallWindowTimer();
+      return;
+    }
+    _ashfallWindowTimer ??= Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  void _stopAshfallWindowTimer() {
+    _ashfallWindowTimer?.cancel();
+    _ashfallWindowTimer = null;
+  }
+
   double _compactUnifiedSlotHeight(BuildContext context) {
     return _s(148, context);
   }
@@ -887,8 +917,9 @@ class _AlertModuleState extends State<AlertModule> {
 
   Widget _buildCompactTopBar(UnifiedQuakeData event) {
     final color = _uicColorFromClass(event.className);
+    final presentation = UnifiedEventPresentation.fromEvent(event);
     return Container(
-      height: _s(28, context),
+      height: _s(32, context),
       decoration: BoxDecoration(
         color: color.withAlpha(200),
         borderRadius: BorderRadius.vertical(
@@ -906,13 +937,11 @@ class _AlertModuleState extends State<AlertModule> {
           SizedBox(width: _s(8, context)),
           Expanded(
             child: Text(
-              event.reportNumText.isNotEmpty
-                  ? '${event.titleText} ${event.reportNumText}'
-                  : event.titleText,
+              presentation.title,
               style: TextStyle(
                 color: Colors.white,
-                fontSize: _s(11, context),
-                fontWeight: FontWeight.w500,
+                fontSize: _s(12.5, context),
+                fontWeight: FontWeight.w700,
               ),
               overflow: TextOverflow.ellipsis,
             ),
@@ -925,7 +954,10 @@ class _AlertModuleState extends State<AlertModule> {
 
   Widget _buildCompactBottomSection(UnifiedQuakeData event) {
     return Padding(
-      padding: EdgeInsets.all(_s(10, context)),
+      padding: EdgeInsets.symmetric(
+        horizontal: _s(10, context),
+        vertical: _s(6, context),
+      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
@@ -938,42 +970,11 @@ class _AlertModuleState extends State<AlertModule> {
   }
 
   Widget _buildSourceEstimationBadge(UnifiedQuakeData event, Color color) {
-    return Container(
-      width: _s(44, context),
-      height: _s(44, context),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(_s(8, context)),
-        border: Border.all(
-          color: color.withValues(alpha: 0.4),
-          width: _s(1.2, context),
-        ),
-      ),
-      alignment: Alignment.center,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            event.maxIntensity,
-            style: TextStyle(
-              fontSize: _s(18, context),
-              fontWeight: FontWeight.w900,
-              color: color,
-              height: 1,
-            ),
-          ),
-          SizedBox(height: _s(1, context)),
-          Text(
-            '\u9707\u5ea6',
-            style: TextStyle(
-              fontSize: _s(6, context),
-              fontWeight: FontWeight.w500,
-              color: color,
-              height: 1,
-            ),
-          ),
-        ],
-      ),
+    return _buildUnifiedListStyleBadge(
+      color: color,
+      value: event.maxIntensity,
+      label: '检出震度',
+      useShindo: true,
     );
   }
 
@@ -982,164 +983,121 @@ class _AlertModuleState extends State<AlertModule> {
     if (_isSourceEstimationUnified(event)) {
       return _buildSourceEstimationBadge(event, color);
     }
-
-    if (_isSourceEstimationUnified(event)) {
-      return Container(
-        width: _s(44, context),
-        height: _s(44, context),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(_s(8, context)),
-          border: Border.all(
-            color: color.withValues(alpha: 0.4),
-            width: _s(1.2, context),
-          ),
-        ),
-        alignment: Alignment.center,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              event.maxIntensity,
-              style: TextStyle(
-                fontSize: _s(18, context),
-                fontWeight: FontWeight.w900,
-                color: color,
-                height: 1,
-              ),
-            ),
-            SizedBox(height: _s(1, context)),
-            Text(
-              '质量',
-              style: TextStyle(
-                fontSize: _s(6, context),
-                fontWeight: FontWeight.w500,
-                color: color,
-                height: 1,
-              ),
-            ),
-          ],
-        ),
-      );
+    if (event.isVolcanoEvent) {
+      return _buildVolcanoBadge(color);
     }
 
-    final label = event.useShindo ? '震度' : '烈度';
+    final presentation = UnifiedEventPresentation.fromEvent(event);
+    return _buildUnifiedListStyleBadge(
+      color: color,
+      value: presentation.intensityValue,
+      label: presentation.intensityLabel,
+      useShindo: event.useShindo,
+    );
+  }
 
-    if (event.useShindo) {
-      final text = event.maxIntensity;
-      final hasSubscript =
-          text.length > 1 &&
-          (text.contains('-') ||
-              text.contains('+') ||
-              text.contains('弱') ||
-              text.contains('強'));
-      final mainChar = hasSubscript ? text.substring(0, 1) : text;
-      final subChar = hasSubscript ? text.substring(1) : '';
-
-      return Container(
-        width: _s(44, context),
-        height: _s(44, context),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(_s(8, context)),
-          border: Border.all(
-            color: color.withValues(alpha: 0.4),
-            width: _s(1.2, context),
+  Widget _buildVolcanoBadge(Color color) {
+    return Container(
+      width: _s(72, context),
+      height: _s(72, context),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(_s(10, context)),
+        border: Border.all(color: color.withValues(alpha: 0.3), width: 0.5),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.local_fire_department,
+            size: _s(34, context),
+            color: color,
           ),
-        ),
-        alignment: Alignment.center,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (subChar.isEmpty)
-              Text(
-                mainChar,
-                style: TextStyle(
-                  fontSize: _s(18, context),
-                  fontWeight: FontWeight.w900,
-                  color: color,
-                  height: 1,
+          Text(
+            '火山',
+            style: TextStyle(
+              fontSize: _s(10.5, context),
+              color: color.withValues(alpha: 0.7),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUnifiedListStyleBadge({
+    required Color color,
+    required String value,
+    required String label,
+    required bool useShindo,
+  }) {
+    final hasShindoSuffix =
+        useShindo &&
+        value.length > 1 &&
+        (value.contains('+') ||
+            value.contains('-') ||
+            value.contains('弱') ||
+            value.contains('強'));
+    final mainLabel = hasShindoSuffix ? value.substring(0, 1) : value;
+    final suffixLabel = hasShindoSuffix ? value.substring(1) : '';
+
+    return Container(
+      width: _s(72, context),
+      height: _s(72, context),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(_s(10, context)),
+        border: Border.all(color: color.withValues(alpha: 0.3), width: 0.5),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          if (hasShindoSuffix)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  mainLabel,
+                  style: TextStyle(
+                    fontSize: _s(34, context),
+                    fontWeight: FontWeight.w900,
+                    color: color,
+                    height: 1.0,
+                  ),
                 ),
-              )
-            else
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    mainChar,
+                Padding(
+                  padding: EdgeInsets.only(top: _s(1, context)),
+                  child: Text(
+                    suffixLabel,
                     style: TextStyle(
-                      fontSize: _s(18, context),
+                      fontSize: _s(24, context),
                       fontWeight: FontWeight.w900,
                       color: color,
-                      height: 1,
+                      height: 1.0,
                     ),
                   ),
-                  Padding(
-                    padding: EdgeInsets.only(top: _s(0.5, context)),
-                    child: Text(
-                      subChar,
-                      style: TextStyle(
-                        fontSize: _s(13, context),
-                        fontWeight: FontWeight.w900,
-                        color: color,
-                        height: 1,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            SizedBox(height: _s(1, context)),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: _s(6, context),
-                fontWeight: FontWeight.w500,
-                color: color,
-                height: 1,
+                ),
+              ],
+            )
+          else
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                mainLabel,
+                style: TextStyle(
+                  fontSize: useShindo ? _s(29, context) : _s(34, context),
+                  fontWeight: FontWeight.w900,
+                  color: color,
+                  height: 1.0,
+                ),
               ),
             ),
-          ],
-        ),
-      );
-    }
-
-    final value = double.tryParse(event.maxIntensity);
-    final display = value != null
-        ? value.toInt().toString()
-        : event.maxIntensity;
-    return Container(
-      width: _s(44, context),
-      height: _s(44, context),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(_s(8, context)),
-        border: Border.all(
-          color: color.withValues(alpha: 0.4),
-          width: _s(1.2, context),
-        ),
-      ),
-      alignment: Alignment.center,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            display,
-            style: TextStyle(
-              fontSize: _s(16, context),
-              fontWeight: FontWeight.w900,
-              color: color,
-              height: 1,
-            ),
-          ),
-          SizedBox(height: _s(1, context)),
           Text(
             label,
             style: TextStyle(
-              fontSize: _s(6, context),
-              fontWeight: FontWeight.w500,
-              color: color,
-              height: 1,
+              fontSize: _s(10.5, context),
+              color: color.withValues(alpha: 0.6),
             ),
           ),
         ],
@@ -1149,9 +1107,7 @@ class _AlertModuleState extends State<AlertModule> {
 
   Widget _buildCompactInfoColumn(UnifiedQuakeData event) {
     if (_isSourceEstimationUnified(event)) {
-      final timeStr = event.originTime != null
-          ? event.originTime!.toLocal().toString().substring(5, 19)
-          : '--:--:--';
+      final timeStr = _formatUnifiedEventClock(event);
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -1160,8 +1116,8 @@ class _AlertModuleState extends State<AlertModule> {
             event.hypocenter,
             style: TextStyle(
               color: Colors.white,
-              fontSize: _s(13, context),
-              fontWeight: FontWeight.w600,
+              fontSize: _s(14.5, context),
+              fontWeight: FontWeight.w700,
             ),
             overflow: TextOverflow.ellipsis,
           ),
@@ -1170,8 +1126,8 @@ class _AlertModuleState extends State<AlertModule> {
             event.depthText,
             style: TextStyle(
               color: Colors.white70,
-              fontSize: _s(11, context),
-              fontWeight: FontWeight.w500,
+              fontSize: _s(12, context),
+              fontWeight: FontWeight.w600,
             ),
             overflow: TextOverflow.ellipsis,
           ),
@@ -1180,8 +1136,8 @@ class _AlertModuleState extends State<AlertModule> {
             '$timeStr  ${event.apiTypeLabel}',
             style: TextStyle(
               color: Colors.white54,
-              fontSize: _s(10, context),
-              fontWeight: FontWeight.w600,
+              fontSize: _s(11, context),
+              fontWeight: FontWeight.w700,
             ),
             overflow: TextOverflow.ellipsis,
           ),
@@ -1190,8 +1146,8 @@ class _AlertModuleState extends State<AlertModule> {
             event.warnArea,
             style: TextStyle(
               color: const Color(0xFF72F5B2),
-              fontSize: _s(9, context),
-              fontWeight: FontWeight.w700,
+              fontSize: _s(10, context),
+              fontWeight: FontWeight.w800,
             ),
             overflow: TextOverflow.ellipsis,
           ),
@@ -1199,64 +1155,64 @@ class _AlertModuleState extends State<AlertModule> {
       );
     }
 
-    final isScalePrompt = event.magnitude < 0 && event.hypocenter.isEmpty;
-    final isAssumption = event.isAssumption;
-    final magStr = isScalePrompt
-        ? '規模 調査中'
-        : isAssumption
-        ? '仮定震源要素'
-        : (event.magnitude >= 0
-              ? 'M${event.magnitude.toStringAsFixed(1)}'
-              : 'M--');
-    final depthStr = isScalePrompt || isAssumption
-        ? ''
-        : (event.depthText.isNotEmpty
-              ? event.depthText
-              : (event.depth >= 0 ? '深度 ${event.depth.toInt()}km' : '深度 --'));
-    final timeStr = event.originTime != null
-        ? event.originTime!.toLocal().toString().substring(5, 19)
-        : '--:--:--';
+    final presentation = UnifiedEventPresentation.fromEvent(event);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          isScalePrompt ? '震源 調査中' : event.hypocenter,
+          presentation.primaryText,
           style: TextStyle(
             color: Colors.white,
-            fontSize: _s(13, context),
-            fontWeight: FontWeight.w500,
+            fontSize: _s(14.5, context),
+            fontWeight: FontWeight.w700,
           ),
           overflow: TextOverflow.ellipsis,
         ),
         SizedBox(height: _s(3, context)),
         Text(
-          depthStr.isNotEmpty ? '$magStr  ·  $depthStr' : magStr,
+          presentation.secondaryText,
           style: TextStyle(
             color: Colors.white70,
-            fontSize: _s(11, context),
-            fontWeight: FontWeight.w500,
+            fontSize: _s(12, context),
+            fontWeight: FontWeight.w600,
           ),
+          maxLines: event.isVolcanoEvent ? 2 : 1,
+          overflow: TextOverflow.ellipsis,
         ),
         SizedBox(height: _s(3, context)),
         Text(
-          timeStr,
-          style: TextStyle(color: Colors.white54, fontSize: _s(10, context)),
+          presentation.timeText,
+          style: TextStyle(
+            color: Colors.white54,
+            fontSize: _s(11, context),
+            fontWeight: FontWeight.w600,
+          ),
         ),
-        if (event.apiTypeLabel.isNotEmpty) ...[
+        if (presentation.apiTypeLabel.isNotEmpty) ...[
           SizedBox(height: _s(2, context)),
           Text(
-            event.apiTypeLabel,
+            presentation.apiTypeLabel,
             style: TextStyle(
               color: Colors.white38,
-              fontSize: _s(8, context),
-              fontWeight: FontWeight.w600,
+              fontSize: _s(9, context),
+              fontWeight: FontWeight.w700,
             ),
           ),
         ],
       ],
     );
+  }
+
+  String _formatUnifiedEventClock(UnifiedQuakeData event) {
+    final originTime = event.originTime;
+    if (originTime == null) return '--:--:--';
+    final sourceClock = originTime.toUtc().add(Duration(hours: event.timeZone));
+    return sourceClock
+        .toIso8601String()
+        .substring(5, 19)
+        .replaceFirst('T', ' ');
   }
 
   Color _uicColorFromClass(String className) {
@@ -1848,6 +1804,8 @@ class _AlertModuleState extends State<AlertModule> {
     switch (event.source) {
       case QuakeSourceType.cenc:
         return '中国地震台网地震信息';
+      case QuakeSourceType.cencIr:
+        return '中国地震台网烈度速报';
       case QuakeSourceType.usgs:
         final rt = event.reviewType;
         if (rt == 'reviewed' || rt == '正式测定') return 'USGS正式测定';
@@ -1860,6 +1818,16 @@ class _AlertModuleState extends State<AlertModule> {
         return 'FSSN地震报告';
       case QuakeSourceType.fssnCmt:
         return 'FSSN 地震矩心矩张量解';
+      case QuakeSourceType.cencCmt:
+        return 'CENC 地震矩心矩张量解';
+      case QuakeSourceType.usgsCmt:
+        return 'USGS 地震矩心矩张量解';
+      case QuakeSourceType.jmaCmt:
+        return 'JMA 地震矩心矩张量解';
+      case QuakeSourceType.fnetCmt:
+        return 'F-net 地震矩心矩张量解';
+      case QuakeSourceType.hinetAquaCmt:
+        return 'Hi-net AQUA 地震矩心矩张量解';
       case QuakeSourceType.hko:
         final verify = event.verify;
         if (verify == 'Y') return '香港天文台已核实';
@@ -1885,6 +1853,20 @@ class _AlertModuleState extends State<AlertModule> {
         return '北京地震局';
       case QuakeSourceType.yunnan:
         return '云南地震局';
+      case QuakeSourceType.bmkg:
+        return '印度尼西亚气象气候与地球物理局';
+      case QuakeSourceType.geonet:
+        return '新西兰 GeoNet';
+      case QuakeSourceType.tmd:
+        return '泰国气象局';
+      case QuakeSourceType.ingv:
+        return '意大利国家地球物理与火山学研究所';
+      case QuakeSourceType.nrcan:
+        return '加拿大自然资源部';
+      case QuakeSourceType.mmd:
+        return '马来西亚气象局';
+      case QuakeSourceType.phivolcs:
+        return '菲律宾火山与地震研究所';
       case QuakeSourceType.cwa:
       case QuakeSourceType.cwa_eew:
         return '中央氣象署地震報告';
@@ -1909,16 +1891,27 @@ class _AlertModuleState extends State<AlertModule> {
       return 'FAN';
     }
     if (event.source == QuakeSourceType.cenc) return 'FAN';
+    if (event.source == QuakeSourceType.cencIr) return 'NowQuake';
     if (event.source == QuakeSourceType.fssn ||
         event.source == QuakeSourceType.fssnCmt) {
       return 'FAN';
     }
     if (event.source == QuakeSourceType.usgs) return 'FAN';
+    if (event.source == QuakeSourceType.hinetAquaCmt) return 'Hi-net';
     if (event.source == QuakeSourceType.hko) return 'FAN';
     if (event.source == QuakeSourceType.emsc) return 'FAN';
     if (event.source == QuakeSourceType.bcsf) return 'FAN';
     if (event.source == QuakeSourceType.gfz) return 'FAN';
     if (event.source == QuakeSourceType.usp) return 'FAN';
+    if (event.source == QuakeSourceType.bmkg ||
+        event.source == QuakeSourceType.geonet ||
+        event.source == QuakeSourceType.tmd ||
+        event.source == QuakeSourceType.ingv ||
+        event.source == QuakeSourceType.nrcan ||
+        event.source == QuakeSourceType.mmd ||
+        event.source == QuakeSourceType.phivolcs) {
+      return 'WHEWS';
+    }
     if (event.source == QuakeSourceType.kma_eq ||
         event.source == QuakeSourceType.kma_eew_fan) {
       return 'KMA';
@@ -1939,6 +1932,7 @@ class _AlertModuleState extends State<AlertModule> {
     // 无 API 值：按当地标准计算震中(距离=0)烈度
     switch (event.source) {
       case QuakeSourceType.cenc:
+      case QuakeSourceType.cencIr:
       case QuakeSourceType.cea:
       case QuakeSourceType.cea_pr:
       case QuakeSourceType.sc_eew:

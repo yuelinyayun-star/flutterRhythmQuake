@@ -10,6 +10,7 @@ import '../../models/typhoon_data.dart';
 const Color _wind7Color = Color(0xFF00E060);
 const Color _wind10Color = Color(0xFFFFC845);
 const Color _wind12Color = Color(0xFFFF5A52);
+const Color _typhoonWarningLineColor = Color(0xFFF9D805);
 
 class TyphoonLayer extends StatelessWidget {
   final List<TyphoonData> typhoons;
@@ -18,8 +19,6 @@ class TyphoonLayer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (typhoons.isEmpty) return const SizedBox.shrink();
-
     final camera = MapCamera.of(context);
     final zoom = camera.zoom;
     final scale = _scaleForZoom(zoom);
@@ -27,6 +26,9 @@ class TyphoonLayer extends StatelessWidget {
     final polylines = <Polyline>[];
     final historyMarkers = <Marker>[];
     final visibleTyphoons = <TyphoonData>[];
+
+    _addWarningLines(polylines);
+    historyMarkers.addAll(_warningLineLabels(scale));
 
     for (final typhoon in typhoons) {
       final latest = typhoon.latestPoint;
@@ -84,6 +86,83 @@ class TyphoonLayer extends StatelessWidget {
     if (zoom <= 6.0) return 0.82;
     if (zoom <= 7.0) return 0.94;
     return 1.0;
+  }
+
+  static const List<LatLng> _warning48Line = [
+    LatLng(0, 105),
+    LatLng(0, 120),
+    LatLng(15, 132),
+    LatLng(34, 132),
+  ];
+
+  static const List<LatLng> _warning24Line = [
+    LatLng(0, 105),
+    LatLng(4.5, 113),
+    LatLng(11, 119),
+    LatLng(18, 119),
+    LatLng(22, 127),
+    LatLng(34, 127),
+  ];
+
+  static void _addWarningLines(List<Polyline> polylines) {
+    polylines
+      ..add(
+        Polyline(
+          points: _warning48Line,
+          color: _typhoonWarningLineColor,
+          strokeWidth: 1.0,
+          pattern: StrokePattern.dashed(segments: const [8, 6]),
+        ),
+      )
+      ..add(
+        Polyline(
+          points: _warning24Line,
+          color: _typhoonWarningLineColor,
+          strokeWidth: 1.0,
+        ),
+      );
+  }
+
+  static List<Marker> _warningLineLabels(double scale) {
+    final labelScale = scale.clamp(0.78, 1.0).toDouble();
+    return [
+      _warningLabel(
+        point: const LatLng(30, 132),
+        text: '48\n小\n时\n警\n戒\n线',
+        scale: labelScale,
+      ),
+      _warningLabel(
+        point: const LatLng(30, 127),
+        text: '24\n小\n时\n警\n戒\n线',
+        scale: labelScale,
+      ),
+    ];
+  }
+
+  static Marker _warningLabel({
+    required LatLng point,
+    required String text,
+    required double scale,
+  }) {
+    return Marker(
+      point: point,
+      width: 24 * scale,
+      height: 104 * scale,
+      alignment: Alignment.center,
+      child: IgnorePointer(
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          overflow: TextOverflow.visible,
+          style: TextStyle(
+            color: _typhoonWarningLineColor,
+            fontSize: 12 * scale,
+            height: 1.0,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ),
+    );
   }
 
   static void _addForecastPolyline(
@@ -318,8 +397,8 @@ class TyphoonLayer extends StatelessWidget {
 }
 
 class _TyphoonAnnotationPainter extends CustomPainter {
-  static const double _baseLabelWidth = 164;
-  static const double _baseFontSize = 10.5;
+  static const double _baseLabelWidth = 230;
+  static const double _baseFontSize = 10.2;
 
   final List<TyphoonData> typhoons;
   final MapCamera camera;
@@ -611,62 +690,137 @@ class _TyphoonAnnotationPainter extends CustomPainter {
               : null,
         ),
       ),
-      maxLines: 6,
+      maxLines: 16,
       ellipsis: '',
       textDirection: TextDirection.ltr,
     );
   }
 
   static String _labelText(TyphoonData typhoon, TyphoonPoint point) {
-    final level = point.strong.trim();
     final lines = <String>[
-      '${typhoon.displayName} ${typhoon.tfid}',
-      [
-        if (level.isNotEmpty) level,
-        '\u4e2d\u5fc3 ${_fmt(point.lat)} / ${_fmt(point.lng)}',
-      ].join('  '),
+      _agencyLine(point.forecast),
+      '${_nameLine(typhoon)} ${_shortCmaTime(point.time)}',
+      '',
+      '编号：${_displayTfid(typhoon.tfid)}',
+      '等级：${point.strong.trim().isEmpty ? '--' : point.strong.trim()}',
+      '中心位置：(${_coord(point.lat, isLat: true)}, ${_coord(point.lng, isLat: false)})',
+      '最大风速：${_windSpeedText(point)}',
+      '中心气压：${point.pressure == null ? '--' : '${point.pressure} hPa'}',
+      '移动速度：${_movementText(point)}',
     ];
-    final wind = <String>[];
-    if (point.speed != null) wind.add('${_fmt(point.speed)}m/s');
-    if (point.power != null) wind.add('${point.power}\u7ea7');
-    final windPressure = [
-      if (wind.isNotEmpty) '\u98ce ${wind.join(' ')}',
-      if (point.pressure != null) '\u538b ${point.pressure}hPa',
-    ].join('  ');
-    if (windPressure.isNotEmpty) lines.add(windPressure);
 
-    final moving = [
-      if (point.movedirection.isNotEmpty) point.movedirection,
-      if (point.movespeed != null) '${_fmt(point.movespeed)}km/h',
-    ].join(' ');
-    if (moving.isNotEmpty) lines.add('\u79fb $moving');
-
-    final radii = _radiusText(point);
-    if (radii.isNotEmpty) lines.add(radii);
-    if (point.time.isNotEmpty) lines.add(_shortTime(point.time));
+    final radiusLines = _radiusLines(point);
+    if (radiusLines.isNotEmpty) {
+      lines
+        ..add('')
+        ..add('风圈半径 (NE, SE, SW, NW)')
+        ..addAll(radiusLines);
+    }
     return lines.join('\n');
   }
 
-  static String _radiusText(TyphoonPoint point) {
-    if (point.radius7.isNotEmpty) {
-      return '7\u7ea7 ${_radiusList(TyphoonLayer._displayRadii(point.radius7))}km';
-    }
-    if (point.radius10.isNotEmpty) {
-      return '10\u7ea7 ${_radiusList(TyphoonLayer._displayRadii(point.radius10))}km';
-    }
-    if (point.radius12.isNotEmpty) {
-      return '12\u7ea7 ${_radiusList(TyphoonLayer._displayRadii(point.radius12))}km';
+  static String _agencyLine(List<TyphoonForecast> forecasts) {
+    final preferred = TyphoonLayer._preferredForecast(forecasts);
+    final agency = preferred?.agency.trim().isNotEmpty == true
+        ? preferred!.agency.trim()
+        : _firstAgency(forecasts);
+    return _agencyDisplayName(agency);
+  }
+
+  static String _firstAgency(List<TyphoonForecast> forecasts) {
+    for (final forecast in forecasts) {
+      final agency = forecast.agency.trim();
+      if (agency.isNotEmpty) return agency;
     }
     return '';
   }
 
-  static String _radiusList(List<double> values) {
-    return values.map(_fmt).join('/');
+  static String _agencyDisplayName(String agency) {
+    final text = agency.trim();
+    if (text.isEmpty) return '--';
+    switch (text) {
+      case '中国':
+        return '中国气象局';
+      case '中国台湾':
+      case '台湾':
+        return '台湾中央气象署';
+      case '中国香港':
+      case '香港':
+        return '香港天文台';
+      case '日本':
+        return '日本气象厅';
+      case '美国':
+        return '美国';
+      default:
+        return text;
+    }
   }
 
-  static String _shortTime(String time) {
-    if (time.length >= 16) return time.substring(0, 16);
-    return time;
+  static String _nameLine(TyphoonData typhoon) {
+    final cn = typhoon.name.trim();
+    final en = typhoon.enname.trim();
+    if (cn.isEmpty) return en.isEmpty ? '--' : en;
+    if (en.isEmpty) return cn;
+    return '$cn（$en）';
+  }
+
+  static String _displayTfid(String tfid) {
+    final text = tfid.trim();
+    if (text.length <= 4) return text.isEmpty ? '--' : text;
+    return text.substring(text.length - 4);
+  }
+
+  static String _shortCmaTime(String time) {
+    final text = time.trim();
+    if (text.isEmpty) return '--';
+    final parsed = DateTime.tryParse(text.replaceFirst(' ', 'T'));
+    if (parsed != null) return '${parsed.day}日${parsed.hour}时';
+    final match = RegExp(r'(\d{1,2})[^\d]+(\d{1,2})(?::\d{1,2})?').firstMatch(
+      text.length >= 5 ? text.substring(math.max(0, text.length - 8)) : text,
+    );
+    if (match != null) return '${match.group(1)}日${match.group(2)}时';
+    return text.length >= 16 ? text.substring(5, 16) : text;
+  }
+
+  static String _coord(num? value, {required bool isLat}) {
+    if (value == null) return '--';
+    final hemi = isLat ? (value >= 0 ? 'N' : 'S') : (value >= 0 ? 'E' : 'W');
+    return '${value.abs().toStringAsFixed(1)}°$hemi';
+  }
+
+  static String _windSpeedText(TyphoonPoint point) {
+    final speed = point.speed == null ? '--' : '${_fmt(point.speed)} m/s';
+    final power = point.power == null ? '' : ' (${point.power}级)';
+    return '$speed$power';
+  }
+
+  static String _movementText(TyphoonPoint point) {
+    final direction = point.movedirection.trim().isEmpty
+        ? '--'
+        : point.movedirection.trim();
+    final speed = point.movespeed == null
+        ? ''
+        : ' (${_fmt(point.movespeed)} KM/H)';
+    return '$direction$speed';
+  }
+
+  static List<String> _radiusLines(TyphoonPoint point) {
+    final lines = <String>[];
+    void addLine(String label, List<double> radii) {
+      if (radii.isEmpty) return;
+      lines.add(
+        '$label：${_radiusList(TyphoonLayer._displayRadii(radii))} (KM)',
+      );
+    }
+
+    addLine('7  级', point.radius7);
+    addLine('10级', point.radius10);
+    addLine('12级', point.radius12);
+    return lines;
+  }
+
+  static String _radiusList(List<double> values) {
+    return values.map(_fmt).join(', ');
   }
 
   static String _fmt(num? value) {

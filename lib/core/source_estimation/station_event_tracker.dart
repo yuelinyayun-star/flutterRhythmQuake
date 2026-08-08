@@ -32,8 +32,14 @@ class StationEventTracker {
 
   void useDefaultNiedEstimator() {
     _tracker
-      ..setEstimator(niedSourceId, NiedDartHypSourceEstimator())
-      ..setStabilityConfig(niedSourceId, niedStabilityConfig);
+      ..setEstimator(
+        niedSourceId,
+        NiedDartHypSourceEstimator(
+          searchSchedule: NiedHypSearchSchedule.referenceBroadFourStage,
+          writebackPolicy: NiedHypWritebackPolicy.nonIncreasingCurrent,
+        ),
+      )
+      ..setStabilityConfig(niedSourceId, null);
   }
 
   void useDepthSearchNiedEstimator() {
@@ -107,8 +113,8 @@ class StationEventTracker {
             observedPga: station.pgaObservation?.pga,
             observedPgv: station.pgvObservation?.pgv,
             observedPgd: station.pgdObservation?.pgd,
-            rawLevel: station.level >= 0 ? station.level : null,
-            detectLevel: station.detectLevel >= 0 ? station.detectLevel : null,
+            rawLevel: station.kaLevel >= 0 ? station.kaLevel : null,
+            detectLevel: station.kaLevel >= 0 ? station.kaLevel : null,
             activity: station.activity,
             ascend: station.ascend,
             isTriggered: station.isActive,
@@ -240,8 +246,8 @@ class StationEventTracker {
     if (gifShindo != null && gifShindo.isFinite) {
       return gifShindo;
     }
-    if (station.detectLevel >= 0) {
-      return JpShindoScale.rawShindoFromKanameishiLevel(station.detectLevel);
+    if (station.level >= 0) {
+      return JpShindoScale.rawShindoFromKanameishiLevel(station.level);
     }
     return null;
   }

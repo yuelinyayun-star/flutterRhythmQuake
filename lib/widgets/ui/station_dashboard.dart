@@ -6,7 +6,65 @@ import '../../services/sources/shake_detection_service.dart';
 import '../../services/sources/jp_shindo_scale.dart';
 import '../../services/sources/cwa_station_service.dart';
 import '../../services/sources/kma_monitor.dart';
+import '../../services/sources/palert_service.dart';
+import '../../models/snet_station.dart';
+import '../../core/intensity_calculator.dart';
 import 'ui_scale.dart';
+
+@visibleForTesting
+String tremDashboardShindoLabel(num instShindo) {
+  final level = CwaStationService.gridLevelFromInstShindo(instShindo);
+  if (level < 0) return '--';
+  const labels = ['0', '1', '2', '3', '4', '5-', '5+', '6-', '6+', '7'];
+  final index = JpShindoScale.jmaIndexFromKanameishiLevel(level);
+  return labels[index.clamp(0, labels.length - 1)];
+}
+
+SeisJsStation? selectSeisJsCurrentMaxStation(Iterable<SeisJsStation> stations) {
+  SeisJsStation? selected;
+  var maxIntensity = double.negativeInfinity;
+  for (final station in stations) {
+    final intensity = station.intensity;
+    if (!intensity.isFinite || intensity <= maxIntensity) continue;
+    maxIntensity = intensity;
+    selected = station;
+  }
+  return selected;
+}
+
+List<SnetTopStation> selectSnetSidebarTopStations(
+  Iterable<SnetStation> stations,
+) {
+  final active =
+      stations
+          .where(
+            (station) =>
+                station.isActive &&
+                station.level >= 0 &&
+                station.shindo.isFinite,
+          )
+          .toList(growable: false)
+        ..sort((a, b) {
+          final shindoCompare = b.shindo.compareTo(a.shindo);
+          if (shindoCompare != 0) return shindoCompare;
+          return a.code.compareTo(b.code);
+        });
+  if (active.isEmpty ||
+      JpShindoScale.jmaIndexFromShindo(active.first.shindo) <= 0) {
+    return const <SnetTopStation>[];
+  }
+
+  return active
+      .take(5)
+      .map(
+        (station) => SnetTopStation(
+          code: station.code,
+          shindo: station.shindo,
+          jmaIndex: JpShindoScale.jmaIndexFromShindo(station.shindo),
+        ),
+      )
+      .toList(growable: false);
+}
 
 class SnetTopStation {
   final String code;
@@ -64,6 +122,7 @@ class StationSummaryData {
   NiedStation? niedMaxStation;
   CwaStation? treaMaxStation;
   KmaStation? kmaMaxStation;
+  PAlertStation? pAlertMaxStation;
   DateTime? snetWindowStart;
   DateTime? snetWindowEnd;
   List<SnetTopStation> snetTopStations = const [];
@@ -117,9 +176,8 @@ class StationDashboard extends StatelessWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  _buildSeisJsSection(context),
-                  _buildDivider(context),
-                  _buildMaxSection(context),
+                  _buildTopMaxSection(context),
+                  _buildBottomMaxSection(context),
                 ],
               ),
             ),
@@ -129,120 +187,7 @@ class StationDashboard extends StatelessWidget {
     );
   }
 
-  Widget _buildDivider(BuildContext context) {
-    return Container(
-      height: _s(1, context),
-      margin: EdgeInsets.symmetric(horizontal: _s(6, context)),
-      decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.35)),
-    );
-  }
-
-  Widget _buildSeisJsSection(BuildContext context) {
-    final s = data.seisJsStation;
-    final shindo = s?.shindo ?? 0;
-    final maxInt = s?.maxIntensity ?? 0;
-    final pga = s?.pga ?? 0;
-
-    return Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: _s(8, context),
-        vertical: _s(6, context),
-      ),
-      child: Row(
-        children: [
-          SizedBox(
-            width: _s(48, context),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '计测震度',
-                  style: TextStyle(
-                    color: Colors.white54,
-                    fontSize: _s(7, context),
-                    fontWeight: FontWeight.w500,
-                    letterSpacing: 0,
-                  ),
-                ),
-                SizedBox(height: _s(1, context)),
-                Text(
-                  shindo >= 0 ? shindo.toString() : '--',
-                  style: TextStyle(
-                    color: _shindoColor(shindo),
-                    fontSize: _s(22, context),
-                    fontWeight: FontWeight.w800,
-                    height: 1.0,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Container(
-            width: _s(1, context),
-            height: _s(34, context),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.35),
-            ),
-          ),
-          SizedBox(width: _s(6, context)),
-          Expanded(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: _s(2.5, context),
-                      height: _s(10, context),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFF9142),
-                        borderRadius: BorderRadius.circular(_s(2, context)),
-                      ),
-                    ),
-                    SizedBox(width: _s(5, context)),
-                    Flexible(
-                      child: Text(
-                        '新艾利都六分街',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: _s(9, context),
-                          fontWeight: FontWeight.w600,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-                SizedBox(height: _s(4, context)),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _barText(
-                      context,
-                      '最大烈度',
-                      maxInt.toStringAsFixed(2),
-                      const Color(0xFFFF9142),
-                    ),
-                    SizedBox(height: _s(2, context)),
-                    _barText(
-                      context,
-                      'PGA',
-                      '${pga.toStringAsFixed(1)} gal',
-                      const Color(0xFF4FC3F7),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMaxSection(BuildContext context) {
+  Widget _buildTopMaxSection(BuildContext context) {
     return Padding(
       padding: EdgeInsets.symmetric(
         horizontal: _s(3, context),
@@ -253,9 +198,10 @@ class StationDashboard extends StatelessWidget {
           _maxCard(
             context,
             'NIED',
-            '最大震度',
+            '当前最大震度',
             _niedMaxLabel(data.niedMaxStation),
             const Color(0xFF00DC8C),
+            valueColor: _niedMaxColor(),
           ),
           Container(
             width: _s(1, context),
@@ -266,15 +212,11 @@ class StationDashboard extends StatelessWidget {
           ),
           _maxCard(
             context,
-            'TREM',
-            '最大震度',
-            data.treaMaxStation?.currentIntensity != null &&
-                    data.treaMaxStation!.currentIntensity >= 0
-                ? CwaStationService.shindoFromInstShindo(
-                    data.treaMaxStation!.currentIntensity,
-                  ).toString()
-                : '--',
-            const Color(0xFF1ABC9C),
+            'S-net',
+            '当前最大震度',
+            _snetMaxLabel(),
+            const Color(0xFF00E5FF),
+            valueColor: _snetMaxColor(),
           ),
           Container(
             width: _s(1, context),
@@ -286,12 +228,73 @@ class StationDashboard extends StatelessWidget {
           _maxCard(
             context,
             'KMA',
-            '最大烈度',
-            data.kmaMaxStation?.intensity != null &&
-                    data.kmaMaxStation!.intensity >= 0
-                ? data.kmaMaxStation!.intensity.toString()
+            '当前最大烈度',
+            data.kmaMaxStation?.heldIntensity != null &&
+                    data.kmaMaxStation!.heldIntensity >= 0
+                ? data.kmaMaxStation!.heldIntensity.toString()
                 : '--',
             const Color(0xFFE67E22),
+            valueColor: _csisValueColor(data.kmaMaxStation?.heldIntensity),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBottomMaxSection(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: _s(3, context),
+        vertical: _s(5, context),
+      ),
+      child: Row(
+        children: [
+          _maxCard(
+            context,
+            'SeisJS',
+            '当前最大烈度',
+            data.seisJsMaxStation != null
+                ? data.seisJsMaxStation!.intensity.round().toString()
+                : '--',
+            const Color(0xFFFF9142),
+            valueColor: _csisValueColor(
+              data.seisJsMaxStation?.intensity.round(),
+            ),
+          ),
+          Container(
+            width: _s(1, context),
+            height: _s(30, context),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.35),
+            ),
+          ),
+          _maxCard(
+            context,
+            'TREM',
+            '当前最大震度',
+            data.treaMaxStation?.currentIntensity != null &&
+                    data.treaMaxStation!.currentIntensity >= 0
+                ? tremDashboardShindoLabel(
+                    data.treaMaxStation!.currentIntensity,
+                  )
+                : '--',
+            const Color(0xFF1ABC9C),
+            valueColor: _tremMaxColor(),
+          ),
+          Container(
+            width: _s(1, context),
+            height: _s(30, context),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.35),
+            ),
+          ),
+          _maxCard(
+            context,
+            'P-Alert',
+            '当前最大震度',
+            data.pAlertMaxStation?.shindoLabel ?? '--',
+            const Color(0xFFE74C3C),
+            valueColor: _pAlertMaxColor(),
           ),
         ],
       ),
@@ -303,8 +306,9 @@ class StationDashboard extends StatelessWidget {
     String source,
     String label,
     String value,
-    Color accent,
-  ) {
+    Color accent, {
+    Color? valueColor,
+  }) {
     return Container(
       width: _s(75, context),
       padding: EdgeInsets.symmetric(
@@ -323,7 +327,16 @@ class StationDashboard extends StatelessWidget {
               letterSpacing: 0,
             ),
           ),
-          SizedBox(height: _s(1, context)),
+          SizedBox(height: _s(2, context)),
+          Container(
+            width: _s(12, context),
+            height: _s(1, context),
+            decoration: BoxDecoration(
+              color: accent.withValues(alpha: 0.75),
+              borderRadius: BorderRadius.circular(_s(1, context)),
+            ),
+          ),
+          SizedBox(height: _s(2, context)),
           Text(
             label,
             style: TextStyle(color: Colors.white38, fontSize: _s(6, context)),
@@ -332,7 +345,7 @@ class StationDashboard extends StatelessWidget {
           Text(
             value,
             style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.9),
+              color: valueColor ?? Colors.white.withValues(alpha: 0.9),
               fontSize: _s(14, context),
               fontWeight: FontWeight.w800,
               height: 1.0,
@@ -343,58 +356,70 @@ class StationDashboard extends StatelessWidget {
     );
   }
 
-  Widget _barText(
-    BuildContext context,
-    String label,
-    String value,
-    Color accent,
-  ) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: _s(2.5, context),
-          height: _s(9, context),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.85),
-            borderRadius: BorderRadius.circular(_s(1.5, context)),
-          ),
-        ),
-        SizedBox(width: _s(4, context)),
-        Text(
-          '$label ',
-          style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.5),
-            fontSize: _s(8, context),
-          ),
-        ),
-        Text(
-          value,
-          style: TextStyle(
-            color: accent,
-            fontSize: _s(9, context),
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ],
-    );
-  }
-
   String _niedMaxLabel(NiedStation? station) {
     if (station == null || station.level < 0) return '--';
     const labels = ['0', '1', '2', '3', '4', '5-', '5+', '6-', '6+', '7'];
-    final idx = JpShindoScale.jmaIndexFromLevel(station.level);
+    final idx = JpShindoScale.jmaIndexFromKanameishiLevel(station.level);
     return labels[idx.clamp(0, labels.length - 1).toInt()];
   }
 
-  Color _shindoColor(int shindo) {
-    if (shindo >= 7) return const Color(0xFFB40000);
-    if (shindo >= 6) return const Color(0xFFFF0000);
-    if (shindo >= 5) return const Color(0xFFFFB400);
-    if (shindo >= 4) return const Color(0xFFFFFF00);
-    if (shindo >= 3) return const Color(0xFF00DC8C);
-    if (shindo >= 2) return const Color(0xFF46B4FF);
-    if (shindo >= 1) return const Color(0xFF8282FF);
-    return Colors.white38;
+  String _snetMaxLabel() {
+    if (data.snetTopStations.isEmpty) return '--';
+    const labels = ['0', '1', '2', '3', '4', '5-', '5+', '6-', '6+', '7'];
+    final idx = data.snetTopStations.first.jmaIndex;
+    return labels[idx.clamp(0, labels.length - 1)];
+  }
+
+  Color? _niedMaxColor() {
+    final station = data.niedMaxStation;
+    if (station == null || station.level < 0) return null;
+    final shindo = JpShindoScale.rawShindoFromKanameishiLevel(station.level);
+    return Color(IntensityCalculator.getJmaShindoColor(shindo));
+  }
+
+  Color? _snetMaxColor() {
+    if (data.snetTopStations.isEmpty) return null;
+    final idx = data.snetTopStations.first.jmaIndex;
+    return _jmaIndexValueColor(idx);
+  }
+
+  Color? _tremMaxColor() {
+    final station = data.treaMaxStation;
+    if (station == null || station.currentIntensity < 0) return null;
+    final level = CwaStationService.gridLevelFromInstShindo(
+      station.currentIntensity,
+    );
+    final shindo = JpShindoScale.rawShindoFromKanameishiLevel(level);
+    return _jmaNumberValueColor(shindo);
+  }
+
+  Color? _pAlertMaxColor() {
+    final station = data.pAlertMaxStation;
+    if (station == null || station.gridLevel < 0) return null;
+    final shindo = JpShindoScale.rawShindoFromKanameishiLevel(
+      station.gridLevel,
+    );
+    return Color(IntensityCalculator.getJmaShindoColor(shindo));
+  }
+
+  Color? _jmaNumberValueColor(num? value) {
+    if (value == null || value < 0) return null;
+    final shindo = value.toDouble();
+    return Color(IntensityCalculator.getJmaShindoColor(shindo));
+  }
+
+  Color? _jmaIndexValueColor(int idx) {
+    if (idx < 0) return null;
+    const shindoByIndex = [0.0, 1.0, 2.0, 3.0, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5];
+    return Color(
+      IntensityCalculator.getJmaShindoColor(
+        shindoByIndex[idx.clamp(0, shindoByIndex.length - 1)],
+      ),
+    );
+  }
+
+  Color? _csisValueColor(num? value) {
+    if (value == null || value < 0) return null;
+    return Color(IntensityCalculator.getCsisColor(value.round()));
   }
 }

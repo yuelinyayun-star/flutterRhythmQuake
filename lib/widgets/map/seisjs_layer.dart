@@ -1,38 +1,26 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import '../../core/intensity_calculator.dart';
 import '../../services/sources/seisjs_service.dart';
 import 'station_dot_painter_layer.dart';
+
+@visibleForTesting
+int seisJsMapIntensityLevel(double intensity) {
+  if (!intensity.isFinite) return 0;
+  return intensity.round().clamp(0, 12);
+}
+
+@visibleForTesting
+Color seisJsMapIntensityColor(double intensity) {
+  return Color(
+    IntensityCalculator.getCsisColor(seisJsMapIntensityLevel(intensity)),
+  );
+}
 
 class SeisJsLayer extends StatelessWidget {
   final List<SeisJsStation>? stations;
 
   const SeisJsLayer({super.key, this.stations});
-
-  static const List<Color> _shindoColors = [
-    Color(0xFF888888),
-    Color(0xFF8282FF),
-    Color(0xFF46B4FF),
-    Color(0xFF00DC8C),
-    Color(0xFFFFFF00),
-    Color(0xFFFFB400),
-    Color(0xFFFF6400),
-    Color(0xFFFF0000),
-    Color(0xFFB40000),
-    Color(0xFF640096),
-  ];
-
-  static const List<String> _shindoLabels = [
-    '0',
-    '1',
-    '2',
-    '3',
-    '4',
-    '5弱',
-    '5強',
-    '6弱',
-    '6強',
-    '7',
-  ];
 
   static const Color _idleColor = Color(0x804466AA);
 
@@ -45,20 +33,19 @@ class SeisJsLayer extends StatelessWidget {
     final iconMarkers = <Marker>[];
 
     for (var station in data) {
-      final shindo = station.shindo;
-      final active = shindo >= 0;
+      final intensity = seisJsMapIntensityLevel(station.intensity);
+      final active = station.intensity.isFinite && station.intensity >= 0;
 
       if (active) {
         iconMarkers.add(
           Marker(
-            width: _getSize(shindo) * 0.75,
-            height: _getSize(shindo) * 0.75,
+            width: _getSize(intensity) * 0.75,
+            height: _getSize(intensity) * 0.75,
             point: station.coordinate,
-            child: _ShindoMarker(
-              color: _getColor(shindo),
-              label: _getLabel(shindo),
-              intensity: shindo,
-              isSeisJs: true,
+            child: _IntensityMarker(
+              color: _getColor(intensity),
+              label: intensity.toString(),
+              intensity: intensity,
             ),
           ),
         );
@@ -84,32 +71,24 @@ class SeisJsLayer extends StatelessWidget {
     );
   }
 
-  Color _getColor(int shindo) {
-    final idx = shindo.clamp(0, _shindoColors.length - 1);
-    return _shindoColors[idx];
+  Color _getColor(int intensity) {
+    return seisJsMapIntensityColor(intensity.toDouble());
   }
 
-  String _getLabel(int shindo) {
-    final idx = shindo.clamp(0, _shindoLabels.length - 1);
-    return _shindoLabels[idx];
-  }
-
-  double _getSize(int shindo) {
+  double _getSize(int intensity) {
     return 14.0;
   }
 }
 
-class _ShindoMarker extends StatelessWidget {
+class _IntensityMarker extends StatelessWidget {
   final Color color;
   final String label;
   final int intensity;
-  final bool isSeisJs;
 
-  const _ShindoMarker({
+  const _IntensityMarker({
     required this.color,
     required this.label,
     required this.intensity,
-    this.isSeisJs = false,
   });
 
   @override
@@ -118,9 +97,9 @@ class _ShindoMarker extends StatelessWidget {
 
     return Container(
       decoration: BoxDecoration(
-        color: isSeisJs ? color.withValues(alpha: 0.75) : color,
-        shape: isSeisJs ? BoxShape.rectangle : BoxShape.circle,
-        borderRadius: isSeisJs ? BorderRadius.circular(3) : null,
+        color: color.withValues(alpha: 0.75),
+        shape: BoxShape.rectangle,
+        borderRadius: BorderRadius.circular(3),
         border: Border.all(
           color: isHigh ? Colors.white : Colors.white.withValues(alpha: 0.4),
           width: isHigh ? 1.5 : 0.8,
@@ -130,7 +109,9 @@ class _ShindoMarker extends StatelessWidget {
         child: Text(
           label,
           style: TextStyle(
-            color: intensity >= 4 && !isSeisJs ? Colors.black : Colors.white,
+            color: color.computeLuminance() > 0.42
+                ? Colors.black
+                : Colors.white,
             fontSize: intensity >= 5 ? 8 : 6.5,
             fontWeight: FontWeight.bold,
             height: 1.0,

@@ -7,11 +7,18 @@
 ///
 /// 参考: https://wolfx.jp/seisjs
 
+library;
+
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+
+@visibleForTesting
+double seisJsRealtimeIntensityFromJson(Map<dynamic, dynamic> json) {
+  return double.tryParse(json['Intensity']?.toString() ?? '') ?? 0;
+}
 
 class SeisJsStation {
   final String id;
@@ -19,6 +26,7 @@ class SeisJsStation {
   final LatLng coordinate;
   int shindo;
   double calcShindo;
+  double intensity;
   double pga;
   double pgv;
   double maxPga;
@@ -33,6 +41,7 @@ class SeisJsStation {
     required this.coordinate,
     this.shindo = 0,
     this.calcShindo = -3.0,
+    this.intensity = 0,
     this.pga = 0,
     this.pgv = 0,
     this.maxPga = 0,
@@ -54,9 +63,11 @@ class SeisJsService {
   Timer? _heartbeatTimer;
   Timer? _expireTimer;
   bool _running = false;
+  bool _hasRealtimeData = false;
 
   final _controller = StreamController<List<SeisJsStation>>.broadcast();
   Stream<List<SeisJsStation>> get stationStream => _controller.stream;
+  final ValueNotifier<DateTime?> dataTimeNotifier = ValueNotifier(null);
 
   final Map<String, SeisJsStation> _stations = {};
   List<SeisJsStation> get stations => List.unmodifiable(_stations.values);
@@ -75,13 +86,14 @@ class SeisJsService {
     _expireTimer?.cancel();
     _channel?.sink.close();
     _channel = null;
+    _hasRealtimeData = false;
+    dataTimeNotifier.value = null;
     onStatusChanged?.call(false);
   }
 
   void _doConnect() {
     try {
       _channel = WebSocketChannel.connect(Uri.parse(_wsUrl));
-      onStatusChanged?.call(true);
       debugPrint('SeisJS: 已连接');
 
       _channel!.stream.listen(
@@ -91,6 +103,7 @@ class SeisJsService {
         onDone: () {
           debugPrint('SeisJS: 连接关闭');
           if (_running) {
+            _hasRealtimeData = false;
             onStatusChanged?.call(false);
             Future.delayed(const Duration(seconds: 5), () {
               if (_running) _doConnect();
@@ -100,6 +113,7 @@ class SeisJsService {
         onError: (err) {
           debugPrint('SeisJS: 错误 $err');
           if (_running) {
+            _hasRealtimeData = false;
             onStatusChanged?.call(false);
           }
         },
@@ -140,26 +154,31 @@ class SeisJsService {
       if (lat == 0 && lon == 0) return;
 
       final shindo = int.tryParse(json['Shindo']?.toString() ?? '') ?? 0;
-      final calcShindo = double.tryParse(json['CalcShindo']?.toString() ?? '') ?? -3.0;
+      final calcShindo =
+          double.tryParse(json['CalcShindo']?.toString() ?? '') ?? -3.0;
+      final intensity = seisJsRealtimeIntensityFromJson(json);
       final pga = double.tryParse(json['PGA']?.toString() ?? '') ?? 0;
       final pgv = double.tryParse(json['PGV']?.toString() ?? '') ?? 0;
       final maxPga = double.tryParse(json['Max_PGA']?.toString() ?? '') ?? 0;
       final maxPgv = double.tryParse(json['Max_PGV']?.toString() ?? '') ?? 0;
-      final maxIntensity = double.tryParse(json['Max_Intensity']?.toString() ?? '') ?? 0;
+      final maxIntensity =
+          double.tryParse(json['Max_Intensity']?.toString() ?? '') ?? 0;
       final region = json['region']?.toString() ?? '';
       final isDesktop = json['is_desktop'] == true;
       final updateAt = json['update_at']?.toString();
 
+      final dataTime = updateAt != null ? DateTime.tryParse(updateAt) : null;
       final existing = _stations[id];
       if (existing != null) {
         existing.shindo = shindo;
         existing.calcShindo = calcShindo;
+        existing.intensity = intensity;
         existing.pga = pga;
         existing.pgv = pgv;
         existing.maxPga = maxPga;
         existing.maxPgv = maxPgv;
         existing.maxIntensity = maxIntensity;
-        existing.lastUpdate = updateAt != null ? DateTime.tryParse(updateAt) : DateTime.now();
+        existing.lastUpdate = dataTime ?? DateTime.now();
       } else {
         _stations[id] = SeisJsStation(
           id: id,
@@ -167,14 +186,20 @@ class SeisJsService {
           coordinate: LatLng(lat, lon),
           shindo: shindo,
           calcShindo: calcShindo,
+          intensity: intensity,
           pga: pga,
           pgv: pgv,
           maxPga: maxPga,
           maxPgv: maxPgv,
           maxIntensity: maxIntensity,
           isDesktop: isDesktop,
-          lastUpdate: updateAt != null ? DateTime.tryParse(updateAt) : DateTime.now(),
+          lastUpdate: dataTime ?? DateTime.now(),
         );
+      }
+      dataTimeNotifier.value = dataTime ?? _stations[id]?.lastUpdate;
+      if (!_hasRealtimeData) {
+        _hasRealtimeData = true;
+        onStatusChanged?.call(true);
       }
 
       _controller.add(List.of(_stations.values));

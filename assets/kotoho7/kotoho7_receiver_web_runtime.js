@@ -94,6 +94,24 @@
     return 7;
   }
 
+  function scratchLevelIndexToJmaIndex(thread, value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric < 1) return null;
+    const table = listValue(thread, 'd #震度換算30段階').map(Number);
+    const instrumental = table[Math.round(numeric) - 1];
+    if (!Number.isFinite(instrumental)) return null;
+    if (instrumental < 0.5) return 0;
+    if (instrumental < 1.5) return 1;
+    if (instrumental < 2.5) return 2;
+    if (instrumental < 3.5) return 3;
+    if (instrumental < 4.5) return 4;
+    if (instrumental < 5.0) return 5;
+    if (instrumental < 5.5) return 6;
+    if (instrumental < 6.0) return 7;
+    if (instrumental < 6.5) return 8;
+    return 9;
+  }
+
   function parseMapDisplayMax(thread, raw) {
     if (raw == null || raw === '' || raw === -3 || raw === '-3') {
       return {
@@ -101,6 +119,7 @@
         mode: null,
         scratchLevel: null,
         jmaClass: null,
+        jmaIndex: null,
       };
     }
     const text = String(raw);
@@ -115,6 +134,9 @@
       jmaClass: finiteScratchLevel == null
         ? null
         : scratchLevelIndexToJmaClass(thread, finiteScratchLevel),
+      jmaIndex: finiteScratchLevel == null
+        ? null
+        : scratchLevelIndexToJmaIndex(thread, finiteScratchLevel),
     };
   }
 
@@ -214,6 +236,7 @@
       mapDisplayedMaxShindoMode: mapDisplayedMax.mode,
       mapDisplayedMaxScratchLevel: mapDisplayedMax.scratchLevel,
       mapDisplayedMaxShindoClass: mapDisplayedMax.jmaClass,
+      mapDisplayedMaxShindoIndex: mapDisplayedMax.jmaIndex,
     };
   }
 
@@ -233,6 +256,7 @@
       mapDisplayedMaxShindoMode: frameResult.mapDisplayedMaxShindoMode,
       mapDisplayedMaxScratchLevel: frameResult.mapDisplayedMaxScratchLevel,
       mapDisplayedMaxShindoClass: frameResult.mapDisplayedMaxShindoClass,
+      mapDisplayedMaxShindoIndex: frameResult.mapDisplayedMaxShindoIndex,
     };
   }
 

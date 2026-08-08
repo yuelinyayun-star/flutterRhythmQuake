@@ -328,6 +328,8 @@ class MockInputService extends BaseSourceService {
         return 'fssnEqlist';
       case QuakeSourceType.fssnCmt:
         return 'fssnCmt';
+      case QuakeSourceType.cencCmt:
+        return 'cencCmt';
       case QuakeSourceType.hko:
         return 'hko';
       case QuakeSourceType.emsc:
@@ -863,7 +865,7 @@ class MockInputService extends BaseSourceService {
       } else {
         shindo = -3.0;
       }
-      final level = JpShindoScale.levelFromShindo(shindo);
+      final level = JpShindoScale.kanameishiLevelFromShindo(shindo);
       if (level < 0) continue;
 
       final ns = NiedStation(

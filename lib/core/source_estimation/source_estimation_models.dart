@@ -89,6 +89,7 @@ class SeismicStationSample {
   final double? observedPga;
   final double? observedPgv;
   final double? observedPgd;
+  final Map<StationValueType, SeismicPhysicalObservation> physicalObservations;
   final int? rawLevel;
   final int? detectLevel;
   final double activity;
@@ -108,6 +109,7 @@ class SeismicStationSample {
     this.observedPga,
     this.observedPgv,
     this.observedPgd,
+    this.physicalObservations = const {},
     this.rawLevel,
     this.detectLevel,
     this.activity = 0,
@@ -118,6 +120,36 @@ class SeismicStationSample {
     this.qualityFlags = const {},
     this.provenance = const {},
   });
+}
+
+/// Original decoded physical evidence from a source-specific data layer.
+///
+/// This deliberately retains the source color position alongside the decoded
+/// value, so later diagnostics can remain traceable to the unmodified layer.
+class SeismicPhysicalObservation {
+  final StationValueType quantity;
+  final String layerId;
+  final double value;
+  final double? colorPosition;
+  final DateTime dataTime;
+  final DateTime receivedAt;
+  final Set<String> qualityFlags;
+
+  const SeismicPhysicalObservation({
+    required this.quantity,
+    required this.layerId,
+    required this.value,
+    required this.dataTime,
+    required this.receivedAt,
+    this.colorPosition,
+    this.qualityFlags = const {},
+  });
+
+  bool get isUsable =>
+      value.isFinite &&
+      !qualityFlags.contains('layer_missing') &&
+      !qualityFlags.contains('pixel_undecodable') &&
+      !qualityFlags.contains('stale_observation');
 }
 
 class SeismicStationEventRecord {
@@ -133,6 +165,7 @@ class SeismicStationEventRecord {
   double? lastPga;
   double? lastPgv;
   double? lastPgd;
+  final Map<StationValueType, SeismicPhysicalObservation> eventPhysicalPeaks;
   int? lastRawLevel;
   int? lastDetectLevel;
   double lastActivity;
@@ -158,6 +191,7 @@ class SeismicStationEventRecord {
     this.lastPga,
     this.lastPgv,
     this.lastPgd,
+    Map<StationValueType, SeismicPhysicalObservation>? eventPhysicalPeaks,
     this.lastRawLevel,
     this.lastDetectLevel,
     this.lastActivity = 0,
@@ -171,6 +205,9 @@ class SeismicStationEventRecord {
        firstTriggerInterval =
            firstTriggerInterval ?? _pointInterval(firstTriggerAt),
        qualityFlags = qualityFlags ?? <String>{},
+       eventPhysicalPeaks =
+           eventPhysicalPeaks ??
+           <StationValueType, SeismicPhysicalObservation>{},
        observationHistory = observationHistory ?? StationObservationHistory(),
        provenance = provenance ?? <StationValueType, ObservationProvenance>{};
 

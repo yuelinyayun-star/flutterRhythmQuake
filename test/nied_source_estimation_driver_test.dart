@@ -41,7 +41,6 @@ void main() {
     for (final station in stations) {
       station
         ..level = level
-        ..detectLevel = level
         ..lastUpdate = observedAt
         ..lastDataTime = observedAt;
       if (withGif) {
@@ -50,7 +49,42 @@ void main() {
     }
   }
 
-  test('source driver starts tracker from independent source trigger', () {
+  void markKaActive(List<NiedStation> stations, DateTime observedAt) {
+    for (final station in stations) {
+      station
+        ..activity = 8
+        ..ascend = 3
+        ..triggerStamp = observedAt.millisecondsSinceEpoch
+        ..isActive = true;
+    }
+  }
+
+  test('preserves the ten-step JMA maximum index from raw KA levels', () {
+    const cases = [(16, 5), (17, 6), (18, 7), (19, 8)];
+    final observedAt = DateTime(2026, 7, 28, 12);
+
+    for (final (kaLevel, expectedJmaIndex) in cases) {
+      StationEventTracker.instance.resetNied();
+      final stations = buildStations();
+      applyFrame(stations, observedAt, kaLevel, withGif: true);
+      markKaActive(stations, observedAt);
+
+      NiedSourceEstimationDriver().processStations(
+        stations,
+        observedAt: observedAt,
+      );
+
+      final event = StationEventTracker.instance.currentNiedEvent.value;
+      expect(event, isNotNull, reason: 'KA level $kaLevel');
+      expect(
+        event!.metadata['nied_max_jma_shindo_index'],
+        expectedJmaIndex,
+        reason: 'KA level $kaLevel',
+      );
+    }
+  });
+
+  test('generic source trigger cannot bypass KA active-station inference', () {
     final stations = buildStations();
     final driver = NiedSourceEstimationDriver();
     final start = DateTime(2026, 6, 20, 12, 0, 0);
@@ -69,30 +103,11 @@ void main() {
     }
 
     expect(detection!.state, EventDetectionState.confirmed);
-    final event = StationEventTracker.instance.currentNiedEvent.value;
-    expect(event, isNotNull);
-    expect(
-      event!.metadata['source_trigger_detector_id'],
-      'spatiotemporal_event_detector_v1_source_trigger',
-    );
-    expect(
-      event.records.every((record) => record.firstTriggerAt != null),
-      isTrue,
-    );
-    expect(
-      event.records.every(
-        (record) =>
-            record.firstTriggerInterval != null &&
-            !record.firstTriggerInterval!.end.isBefore(
-              record.firstTriggerInterval!.start,
-            ),
-      ),
-      isTrue,
-    );
+    expect(StationEventTracker.instance.currentNiedEvent.value, isNull);
   });
 
   test(
-    'source trigger auto-starts replay logger when debug switch is enabled',
+    'generic source trigger does not start replay logging without KA active stations',
     () {
       NiedReplayLogger.instance.resetForTest(autoSaveOnSourceTrigger: true);
       final stations = buildStations();
@@ -112,17 +127,12 @@ void main() {
         driver.processStations(stations, observedAt: observedAt);
       }
 
-      final records = NiedReplayLogger.instance.debugRecords;
-      expect(NiedReplayLogger.instance.isEnabled, isTrue);
-      expect(
-        records.any((record) => record['type'] == 'source_trigger'),
-        isTrue,
-      );
-      expect(records.any((record) => record['type'] == 'epicenter'), isFalse);
+      expect(NiedReplayLogger.instance.isEnabled, isFalse);
+      expect(NiedReplayLogger.instance.debugRecords, isEmpty);
     },
   );
 
-  test('GIF direct input uses Dart hypocenter snapshot metadata', () {
+  test('GIF frames without KA active stations do not open inference', () {
     final stations = buildStations();
     final driver = NiedSourceEstimationDriver();
     final start = DateTime(2026, 6, 20, 12, 0, 0);
@@ -140,26 +150,290 @@ void main() {
       );
     }
 
+    expect(StationEventTracker.instance.currentNiedEvent.value, isNull);
+  });
+
+  test('KA inference closes on the first frame without active stations', () {
+    final stations = buildStations();
+    final driver = NiedSourceEstimationDriver();
+    final start = DateTime(2026, 6, 20, 12, 0, 0);
+    applyFrame(stations, start, 12, withGif: true);
+    markKaActive(stations, start);
+
+    driver.processStations(stations, observedAt: start);
+    expect(StationEventTracker.instance.currentNiedEvent.value, isNotNull);
+
+    final endedAt = start.add(const Duration(seconds: 11));
+    for (final station in stations) {
+      station
+        ..level = -1
+        ..activity = 0
+        ..ascend = 0
+        ..triggerStamp = 0
+        ..isActive = false
+        ..lastUpdate = endedAt
+        ..lastDataTime = endedAt;
+    }
+    driver.processStations(stations, observedAt: endedAt);
+
+    expect(StationEventTracker.instance.currentNiedEvent.value, isNull);
+    expect(StationEventTracker.instance.niedEventHistory.value, hasLength(1));
+    expect(
+      StationEventTracker.instance.niedEventHistory.value.single.endedAt,
+      endedAt,
+    );
+  });
+
+  test('GIF hypocenter input keeps Ka active-window stations', () {
+    final stations = buildStations();
+    final driver = NiedSourceEstimationDriver();
+    final start = DateTime(2026, 6, 20, 12, 0, 0);
+
+    void setStationState(
+      NiedStation station, {
+      required DateTime observedAt,
+      required int level,
+      required int ascend,
+      required double activity,
+      bool clearActive = false,
+    }) {
+      station
+        ..level = level
+        ..ascend = ascend
+        ..activity = activity
+        ..triggerStamp = ascend > 0 ? observedAt.millisecondsSinceEpoch : 0
+        ..lastUpdate = observedAt
+        ..lastDataTime = observedAt
+        ..continuousShindo = level >= 0 ? (level + 0.5 - 7) / 2 : -3.0;
+      if (clearActive) {
+        station.isActive = false;
+      }
+    }
+
+    final next = start.add(const Duration(seconds: 1));
+    for (var index = 0; index < stations.length; index++) {
+      setStationState(
+        stations[index],
+        observedAt: next,
+        level: index == 5 ? 12 : 7,
+        ascend: index == 5 ? 4 : 0,
+        activity: index == 5 ? 8 : 1,
+      );
+      if (index < 5) {
+        stations[index]
+          ..isActive = true
+          ..triggerStamp = start.millisecondsSinceEpoch;
+      }
+    }
+    driver.processStations(stations, observedAt: next);
+
     final event = StationEventTracker.instance.currentNiedEvent.value;
     expect(event, isNotNull);
-    expect(event!.eventId, startsWith('nied-gif-dart-'));
+    final activeSnapshots =
+        event!.metadata['nied_hypocenter_active_stations'] as List;
+    final activeSnapshotMaps = activeSnapshots.cast<Map<String, Object?>>();
+    final activeCodes = activeSnapshotMaps
+        .map((snapshot) => snapshot['code'])
+        .toSet();
+    expect(
+      activeCodes,
+      containsAll(stations.take(5).map((station) => station.code)),
+    );
+    for (final snapshot in activeSnapshotMaps) {
+      if (stations.take(5).any((station) => station.code == snapshot['code'])) {
+        expect(snapshot['triggerStamp'], start.millisecondsSinceEpoch);
+      }
+    }
+  });
+
+  test('Yahoo input sends KA stations and their real trigger stamps', () {
+    final stations = buildStations();
+    final driver = NiedSourceEstimationDriver();
+    final start = DateTime(2026, 6, 20, 12, 0, 0);
+
+    for (var index = 0; index < stations.length; index++) {
+      final triggerAt = start.add(Duration(milliseconds: index * 100));
+      stations[index]
+        ..level = 12
+        ..ascend = 4
+        ..activity = 12
+        ..triggerStamp = triggerAt.millisecondsSinceEpoch
+        ..lastUpdate = triggerAt
+        ..lastDataTime = triggerAt;
+    }
+
+    driver.processStations(
+      stations,
+      observedAt: start.add(const Duration(seconds: 1)),
+    );
+
+    final event = StationEventTracker.instance.currentNiedEvent.value;
+    expect(event, isNotNull);
+    expect(event!.eventId, startsWith('nied-yahoo-dart-'));
+    expect(event.metadata['nied_input_kind'], 'yahoo');
     expect(
       event.metadata['source_estimation_entry'],
-      'dart_nied_hypocenter_direct',
+      'ka_nied_hypocenter_direct',
     );
+    final snapshots =
+        (event.metadata['nied_hypocenter_active_stations'] as List)
+            .cast<Map<String, Object?>>();
+    expect(snapshots, hasLength(stations.length));
+    for (var index = 0; index < stations.length; index++) {
+      final snapshot = snapshots.singleWhere(
+        (item) => item['code'] == stations[index].code,
+      );
+      expect(snapshot['level'], 12);
+      expect(snapshot.containsKey('detectLevel'), isFalse);
+      expect(snapshot.containsKey('activity'), isFalse);
+      expect(snapshot['triggerStamp'], stations[index].triggerStamp);
+    }
+  });
+
+  test('Scratch inactive input keeps all KA level-present stations', () {
+    final observedAt = DateTime(2026, 6, 20, 12);
+    final stations = <NiedStation>[
+      for (var index = 0; index < 5; index++)
+        NiedStation(
+            id: index,
+            code: 'ACTIVE$index',
+            name: 'ACTIVE$index',
+            coordinate: index == 4
+                ? const LatLng(37.2, 142.2)
+                : LatLng(35.2 + index * 0.01, 140.2 + index * 0.01),
+            network: 'K-NET',
+            prefecture: 'Test',
+            expireSeconds: 10,
+          )
+          ..level = 10
+          ..ascend = 3
+          ..activity = 10
+          ..triggerStamp = observedAt.millisecondsSinceEpoch
+          ..lastUpdate = observedAt
+          ..lastDataTime = observedAt
+          ..isActive = true,
+      NiedStation(
+          id: 5,
+          code: 'INACTIVE_NEAR',
+          name: 'INACTIVE_NEAR',
+          coordinate: const LatLng(36.2, 141.2),
+          network: 'K-NET',
+          prefecture: 'Test',
+          expireSeconds: 10,
+        )
+        ..level = 0
+        ..lastUpdate = observedAt
+        ..lastDataTime = observedAt,
+      NiedStation(
+          id: 6,
+          code: 'INACTIVE_FAR',
+          name: 'INACTIVE_FAR',
+          coordinate: const LatLng(38.2, 143.2),
+          network: 'K-NET',
+          prefecture: 'Test',
+          expireSeconds: 10,
+        )
+        ..level = 0
+        ..lastUpdate = observedAt
+        ..lastDataTime = observedAt,
+      NiedStation(
+          id: 7,
+          code: 'INACTIVE_OUTSIDE',
+          name: 'INACTIVE_OUTSIDE',
+          coordinate: const LatLng(41.2, 146.2),
+          network: 'K-NET',
+          prefecture: 'Test',
+          expireSeconds: 10,
+        )
+        ..level = 0
+        ..lastUpdate = observedAt
+        ..lastDataTime = observedAt,
+    ];
+
+    final driver = NiedSourceEstimationDriver();
+    driver.processStations(stations, observedAt: observedAt);
+
+    final event = StationEventTracker.instance.currentNiedEvent.value;
+    expect(event, isNotNull);
     expect(
-      event.metadata['nied_hypocenter_input_format'],
-      'nied_station_hypocenter_snapshot_v1',
+      event!.metadata['nied_hypocenter_inactive_scope'],
+      'ka_level_present_all_network_scratch_dynamic_radius',
     );
-    expect(event.metadata.containsKey('kotoho7_receiver_frame_key'), isFalse);
+    final inactive =
+        (event.metadata['nied_hypocenter_inactive_stations'] as List)
+            .cast<Map<String, Object?>>();
+    expect(inactive.map((station) => station['code']), [
+      'INACTIVE_NEAR',
+      'INACTIVE_FAR',
+      'INACTIVE_OUTSIDE',
+    ]);
+    final grid =
+        event.metadata['nied_hypocenter_detection_grid']
+            as Map<String, Object?>;
+    expect(grid['model'], 'ka_detection_1deg_event_offset_surrounding_9_grid');
+    expect(grid['activeCells'], hasLength(2));
+    expect(grid['surroundingCellCount'], 17);
+
+    for (final station in stations.skip(1).take(4)) {
+      station
+        ..level = -1
+        ..ascend = 0
+        ..activity = 0
+        ..isActive = false
+        ..lastUpdate = observedAt.add(const Duration(seconds: 11))
+        ..lastDataTime = observedAt.add(const Duration(seconds: 11));
+    }
+    driver.processStations(
+      stations,
+      observedAt: observedAt.add(const Duration(seconds: 11)),
+    );
+
+    final continuedEvent = StationEventTracker.instance.currentNiedEvent.value!;
+    final continuedGrid =
+        continuedEvent.metadata['nied_hypocenter_detection_grid']
+            as Map<String, Object?>;
+    final continuedInactive =
+        (continuedEvent.metadata['nied_hypocenter_inactive_stations'] as List)
+            .cast<Map<String, Object?>>();
+    expect(continuedGrid['activeCells'], hasLength(1));
+    expect(continuedGrid['surroundingCellCount'], 9);
+    expect(continuedInactive.map((station) => station['code']), [
+      'INACTIVE_NEAR',
+      'INACTIVE_FAR',
+      'INACTIVE_OUTSIDE',
+    ]);
+  });
+
+  test('KA snapshot never invents a trigger stamp for an active station', () {
+    final stations = buildStations();
+    final driver = NiedSourceEstimationDriver();
+    final observedAt = DateTime(2026, 6, 20, 12, 0, 0);
+
+    for (final station in stations) {
+      station
+        ..level = 12
+        ..ascend = 0
+        ..activity = 0
+        ..triggerStamp = 0
+        ..isActive = true
+        ..lastUpdate = observedAt
+        ..lastDataTime = observedAt
+        ..continuousShindo = 2.75;
+    }
+
+    driver.processStations(stations, observedAt: observedAt);
+
+    final event = StationEventTracker.instance.currentNiedEvent.value;
+    expect(event, isNotNull);
+    final snapshots =
+        (event!.metadata['nied_hypocenter_active_stations'] as List)
+            .cast<Map<String, Object?>>();
+    expect(snapshots, hasLength(stations.length));
     expect(
-      event.metadata.containsKey('kotoho7_receiver_current_frame_observations'),
-      isFalse,
+      snapshots.every((snapshot) => snapshot['triggerStamp'] == null),
+      isTrue,
     );
-    expect(event.metadata['nied_hypocenter_new_active_stations'], isA<List>());
-    expect(event.metadata['nied_hypocenter_active_stations'], isA<List>());
-    expect(event.metadata['nied_hypocenter_inactive_stations'], isA<List>());
-    expect(event.metadata['nied_hypocenter_adj_station_ids'], isA<Map>());
+    expect(event.estimate, isNull);
   });
 
   test('legacy detection service does not ingest source tracker directly', () {
@@ -190,6 +464,7 @@ void main() {
     for (var i = 0; i < 5; i++) {
       final frameTime = start.add(Duration(seconds: i));
       applyFrame(stations, frameTime, 7);
+      markKaActive(stations, frameTime);
       for (final station in stations) {
         station.lastReceivedAt = frameTime.add(
           const Duration(milliseconds: 250),
@@ -200,6 +475,7 @@ void main() {
     for (var i = 5; i < 9; i++) {
       final frameTime = start.add(Duration(seconds: i));
       applyFrame(stations, frameTime, 12);
+      markKaActive(stations, frameTime);
       for (final station in stations) {
         station.lastReceivedAt = frameTime.add(
           const Duration(milliseconds: 250),
@@ -369,6 +645,8 @@ void main() {
       eventDetector: detector,
     );
 
+    markKaActive(stations, start);
+
     driver.processStations(stations, observedAt: start);
     driver.processStations(
       stations,
@@ -434,6 +712,9 @@ void main() {
       stationTriggerDetector: const _PassThroughStationTriggerDetector(),
       eventDetector: detector,
     );
+
+    markKaActive(oldStations, start);
+    markKaActive(newStations, start.add(const Duration(seconds: 20)));
 
     driver.processStations(oldStations, observedAt: start);
     final held = driver.processStations(

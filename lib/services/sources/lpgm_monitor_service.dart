@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -58,22 +59,17 @@ class LpgmMonitorService {
 
   static const int _imgW = 352;
   static const int _imgH = 400;
+  // ISKH08 (Tsubata) is a persistent LPGM-layer outlier. Keep the source GIF
+  // untouched and exclude this station only from derived readings.
+  static const Set<String> blockedStationCodes = {'ISKH08'};
   static const String _latestUrl =
       'https://smi.lmoniexp.bosai.go.jp/webservice/server/pros/latest.json';
   static const String legendImageUrl =
       'https://www.lmoni.bosai.go.jp/monitor/data/data/map_img/ScaleImg2/nied_abrspmx_s_w_scale.png';
 
-  static const List<(int, int)> _sampleOffsets = [
-    (0, 0),
-    (-1, -1),
-    (0, -1),
-    (1, -1),
-    (-1, 0),
-    (1, 0),
-    (-1, 1),
-    (0, 1),
-    (1, 1),
-  ];
+  static const double _isolatedHighSva = 5.0;
+  static const double _supportingRiseMinSva = 0.1;
+  static const double _supportingRiseMultiplier = 2.0;
 
   bool _running = false;
   bool get isRunning => _running;
@@ -84,6 +80,10 @@ class LpgmMonitorService {
   LpgmSnapshot? _latestSnapshot;
   LpgmInputFrame? _latestInputFrame;
   List<_LpgmPoint> _points = const [];
+  Map<String, _LpgmPoint> _pointByCode = const {};
+  Map<String, double> _previousSvaByCode = {};
+  Map<String, double> _currentSvaByCode = {};
+  final Set<String> _confirmedSupportingRiseCodes = {};
   final HttpClient _client = HttpClient()
     ..badCertificateCallback = ((X509Certificate cert, String host, int port) =>
         true)
@@ -167,6 +167,9 @@ class LpgmMonitorService {
     _running = false;
     _isTicking = false;
     _lastStamp = null;
+    _previousSvaByCode.clear();
+    _currentSvaByCode.clear();
+    _confirmedSupportingRiseCodes.clear();
   }
 
   void dispose() {
@@ -244,12 +247,13 @@ class LpgmMonitorService {
     if (_points.isEmpty) return;
 
     final readings = <LpgmStationReading>[];
-    double maxSva = 0.0;
-    int? maxRawRgb;
+    _currentSvaByCode.clear();
 
     for (final p in _points) {
+      if (_isBlockedStation(p.code)) continue;
       final sva = _sampleSvaAt(packedRgb, p.x, p.y);
       if (sva == null || sva <= 0) continue;
+      _currentSvaByCode[p.code] = sva;
       final lpClass = lpgmClassFromSva(sva);
       readings.add(
         LpgmStationReading(
@@ -260,19 +264,36 @@ class LpgmMonitorService {
           lpgmClass: lpClass,
         ),
       );
-      if (sva > maxSva) {
-        maxSva = sva;
-        // Record the raw RGB at the center pixel of the max-SVA station
-        if (p.x >= 0 && p.x < _imgW && p.y >= 0 && p.y < _imgH) {
-          maxRawRgb = packedRgb[p.y * _imgW + p.x];
-        }
-      }
     }
 
-    if (readings.isEmpty) return;
+    if (readings.isEmpty) {
+      _confirmedSupportingRiseCodes.clear();
+      _commitCurrentSvaFrame();
+      return;
+    }
     readings.sort((a, b) => b.sva.compareTo(a.sva));
+
+    final isolatedHigh = readings.first;
+    _updateSupportingRiseConfirmation(isolatedHigh, readings);
+    if (_shouldSuppressIsolatedHigh(
+      candidate: isolatedHigh,
+      readings: readings,
+      previousSvaByCode: _previousSvaByCode,
+      confirmedSupportingRiseCodes: _confirmedSupportingRiseCodes,
+    )) {
+      readings.removeAt(0);
+    }
+    _commitCurrentSvaFrame();
+    if (readings.isEmpty) return;
+
+    final maxReading = readings.first;
+    final maxSva = maxReading.sva;
     final maxClass = lpgmClassFromSva(maxSva);
     final top = readings.take(5).toList(growable: false);
+    final maxPoint = _pointByCode[maxReading.code];
+    final maxRawRgb = maxPoint == null
+        ? null
+        : packedRgb[maxPoint.y * _imgW + maxPoint.x];
     _snapshotController.add(
       _latestSnapshot = LpgmSnapshot(
         dataTime: dataTime,
@@ -284,30 +305,99 @@ class LpgmMonitorService {
     );
   }
 
+  void _commitCurrentSvaFrame() {
+    final recyclable = _previousSvaByCode;
+    _previousSvaByCode = _currentSvaByCode;
+    _currentSvaByCode = recyclable..clear();
+  }
+
+  void _updateSupportingRiseConfirmation(
+    LpgmStationReading candidate,
+    List<LpgmStationReading> readings,
+  ) {
+    if (candidate.sva < _isolatedHighSva) {
+      _confirmedSupportingRiseCodes.clear();
+      return;
+    }
+
+    _confirmedSupportingRiseCodes.removeWhere((code) {
+      if (code == candidate.code) return true;
+      final current = _currentSvaByCode[code];
+      return current == null || current < _supportingRiseMinSva;
+    });
+    for (final reading in readings) {
+      if (reading.code == candidate.code) continue;
+      final previous = _previousSvaByCode[reading.code];
+      if (_isMeaningfulSupportingRise(reading.sva, previous)) {
+        _confirmedSupportingRiseCodes.add(reading.code);
+      }
+    }
+  }
+
   double? _sampleSvaAt(List<int> packedRgb, int x, int y) {
     if (x < 0 || x >= _imgW || y < 0 || y >= _imgH) return null;
+    final rgb = packedRgb[y * _imgW + x];
+    return _rgbToSva((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
+  }
 
-    // 先对 3x3 区域取平均 RGB（GIF 也是调色板量化+抖动的）
-    int sumR = 0, sumG = 0, sumB = 0, count = 0;
-    for (final (dx, dy) in _sampleOffsets) {
-      final px = x + dx;
-      final py = y + dy;
-      if (px < 0 || px >= _imgW || py < 0 || py >= _imgH) continue;
-      final rgb = packedRgb[py * _imgW + px];
-      final r = (rgb >> 16) & 0xFF;
-      final g = (rgb >> 8) & 0xFF;
-      final b = rgb & 0xFF;
-      sumR += r;
-      sumG += g;
-      sumB += b;
-      count++;
+  static bool _shouldSuppressIsolatedHigh({
+    required LpgmStationReading candidate,
+    required List<LpgmStationReading> readings,
+    required Map<String, double> previousSvaByCode,
+    Set<String> confirmedSupportingRiseCodes = const {},
+  }) {
+    if (candidate.sva < _isolatedHighSva) return false;
+
+    for (final reading in readings) {
+      if (reading.code == candidate.code) continue;
+      if (reading.sva >= _isolatedHighSva) return false;
+      if (confirmedSupportingRiseCodes.contains(reading.code) &&
+          reading.sva >= _supportingRiseMinSva) {
+        return false;
+      }
+
+      final previous = previousSvaByCode[reading.code];
+      if (_isMeaningfulSupportingRise(reading.sva, previous)) {
+        return false;
+      }
     }
-    if (count == 0) return null;
-    final avgR = sumR ~/ count;
-    final avgG = sumG ~/ count;
-    final avgB = sumB ~/ count;
+    return true;
+  }
 
-    return _rgbToSva(avgR, avgG, avgB);
+  static bool _isMeaningfulSupportingRise(double current, double? previous) {
+    return previous != null &&
+        previous > 0 &&
+        current >= _supportingRiseMinSva &&
+        current >= previous * _supportingRiseMultiplier;
+  }
+
+  static bool _isBlockedStation(String code) {
+    return blockedStationCodes.contains(code);
+  }
+
+  @visibleForTesting
+  static bool isBlockedStationForTesting(String code) {
+    return _isBlockedStation(code);
+  }
+
+  @visibleForTesting
+  double? sampleCenterSvaForTesting(List<int> packedRgb, int x, int y) {
+    return _sampleSvaAt(packedRgb, x, y);
+  }
+
+  @visibleForTesting
+  static bool shouldSuppressIsolatedHighForTesting({
+    required LpgmStationReading candidate,
+    required List<LpgmStationReading> readings,
+    required Map<String, double> previousSvaByCode,
+    Set<String> confirmedSupportingRiseCodes = const {},
+  }) {
+    return _shouldSuppressIsolatedHigh(
+      candidate: candidate,
+      readings: readings,
+      previousSvaByCode: previousSvaByCode,
+      confirmedSupportingRiseCodes: confirmedSupportingRiseCodes,
+    );
   }
 
   double? _rgbToSva(int r, int g, int b) {
@@ -515,19 +605,23 @@ class LpgmMonitorService {
         codec.dispose();
         return null;
       }
-      final out = List<int>.filled(img.width * img.height, 0);
+      final rgba = byteData.buffer.asUint8List(
+        byteData.offsetInBytes,
+        byteData.lengthInBytes,
+      );
+      final out = Uint32List(img.width * img.height);
       for (int i = 0; i < out.length; i++) {
         final off = i * 4;
-        final r = byteData.getUint8(off);
-        final g = byteData.getUint8(off + 1);
-        final b = byteData.getUint8(off + 2);
+        final r = rgba[off];
+        final g = rgba[off + 1];
+        final b = rgba[off + 2];
         out[i] = (r << 16) | (g << 8) | b;
       }
       final w = img.width;
       final h = img.height;
       img.dispose();
       codec.dispose();
-      return (out, w, h, Uint8List.fromList(bytes));
+      return (out, w, h, bytes);
     } catch (_) {
       return null;
     }
@@ -538,7 +632,7 @@ class LpgmMonitorService {
     final out = <_LpgmPoint>[];
     for (final s in db) {
       final code = (s['code'] as String?) ?? '';
-      if (code.isEmpty) continue;
+      if (code.isEmpty || _isBlockedStation(code)) continue;
       final pos = NiedScanPositions.positions[code];
       if (pos == null) continue;
       final lat = (s['lat'] as num).toDouble();
@@ -554,6 +648,7 @@ class LpgmMonitorService {
       );
     }
     _points = out;
+    _pointByCode = {for (final point in out) point.code: point};
   }
 
   static int lpgmClassFromSva(double sva) {

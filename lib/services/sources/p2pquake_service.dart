@@ -41,7 +41,7 @@
 /// ## 连接机制
 ///
 /// - 自动重连：连接断开后自动尝试重连，采用递增延迟策略
-/// - 心跳检测：每30秒发送 ping 消息保持连接活跃
+/// - 心跳检测：每10秒发送 ping 消息保持连接活跃
 /// - 故障恢复：重连成功后自动重置重试计数
 
 import 'dart:async';
@@ -84,9 +84,9 @@ class P2PQuakeService extends BaseSourceService {
 
   /// 心跳间隔
   ///
-  /// 每30秒发送一次 ping 消息以保持连接活跃。
+  /// 每10秒发送一次 ping 消息以保持连接活跃。
   /// 这是 P2PQuake 服务器的推荐心跳间隔。
-  static const Duration _pingInterval = Duration(seconds: 30);
+  static const Duration _pingInterval = Duration(seconds: 10);
 
   /// WebSocket 通道实例
   WebSocketChannel? _channel;
@@ -129,7 +129,7 @@ class P2PQuakeService extends BaseSourceService {
   /// 连接失败或断开后，会自动触发重连机制。
   /// 重连延迟随失败次数递增，最长30秒。
   @override
-  void connect() {
+  void connect() async {
     _isManualClose = false;
     _reconnectTimer?.cancel();
     _pingTimer?.cancel();
@@ -138,20 +138,23 @@ class P2PQuakeService extends BaseSourceService {
     debugPrint('正在建立 P2PQuake 链路: $_wsUrl (尝试次数: ${_retryCount + 1})');
 
     try {
-      _channel = WebSocketChannel.connect(Uri.parse(_wsUrl));
+      final channel = WebSocketChannel.connect(Uri.parse(_wsUrl));
+      _channel = channel;
+      await channel.ready.timeout(const Duration(seconds: 10));
+      if (_channel != channel) return;
+      final recovered = _retryCount > 0;
+      _retryCount = 0;
+      onStatusChanged?.call(SourceStatus.connected);
+      if (recovered) {
+        debugPrint('P2PQuake 链路已恢复正常');
+      }
+      debugPrint('P2PQuake WebSocket 已连接，等待 JMA 地震/津波报文...');
+      _startPing();
 
-      _channel!.stream.listen(
+      channel.stream.listen(
         (data) {
           debugPrint('RAW >> P2PQuake: $data');
-          if (_retryCount > 0) {
-            debugPrint('P2PQuake 链路已恢复正常');
-          }
-          if (_retryCount == 0) {
-            debugPrint('P2PQuake WebSocket 已连接，等待 JMA 地震/津波报文...');
-          }
-          _retryCount = 0;
           onStatusChanged?.call(SourceStatus.connected);
-          _startPing();
           _handleData(data);
         },
         onDone: () {
@@ -177,6 +180,7 @@ class P2PQuakeService extends BaseSourceService {
   /// 连接成功后调用，定期发送 ping 消息保持连接活跃。
   void _startPing() {
     _pingTimer?.cancel();
+    _sendPing();
     _pingTimer = Timer.periodic(_pingInterval, (_) {
       _sendPing();
     });
@@ -329,7 +333,7 @@ class P2PQuakeService extends BaseSourceService {
     if (_reconnectTimer?.isActive ?? false) return;
 
     _retryCount++;
-    int delay = (_retryCount * 5).clamp(3, 30);
+    final delay = (_retryCount + 2).clamp(3, 10);
 
     _reconnectTimer = Timer(Duration(seconds: delay), () {
       connect();

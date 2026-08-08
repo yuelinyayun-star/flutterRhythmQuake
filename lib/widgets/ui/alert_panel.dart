@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/quake_provider.dart';
-import '../../services/ntp_service.dart';
 import '../../models/intensity_theme.dart';
 import '../../models/quake_message.dart';
 
@@ -54,12 +53,7 @@ class _AlertPanelState extends State<AlertPanel> {
           return const SizedBox.shrink();
         }
 
-        final double distance = provider.currentDistance;
-        final double elapsed =
-            NtpService().now.difference(event.originTime).inMilliseconds /
-            1000.0;
-        final double sArrival = distance / 3.5;
-        final int countdown = (sArrival - elapsed).floor();
+        final int countdown = provider.sCountdown;
 
         if (countdown < -60) {
           _syncFlashController(false);

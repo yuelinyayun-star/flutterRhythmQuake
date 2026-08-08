@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui' as ui;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -23,12 +22,19 @@ class VolcanoLayer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (sites.isEmpty) return const SizedBox.shrink();
-    return MarkerLayer(markers: _buildMarkers());
+    final zoom = MapCamera.maybeOf(context)?.zoom ?? 4.0;
+    return MarkerLayer(markers: _buildMarkers(_markerScaleForZoom(zoom)));
   }
 
-  List<Marker> _buildMarkers() {
-    return sites.map((site) {
-      final size = _markerSize(site);
+  List<Marker> _buildMarkers(double markerScale) {
+    final orderedSites = [...sites]
+      ..sort((a, b) {
+        final levelComparison = a.alertLevel.compareTo(b.alertLevel);
+        if (levelComparison != 0) return levelComparison;
+        return a.code.compareTo(b.code);
+      });
+    return orderedSites.map((site) {
+      final size = _markerSize(site) * markerScale;
       return Marker(
         point: LatLng(site.latitude, site.longitude),
         width: size,
@@ -37,15 +43,20 @@ class VolcanoLayer extends StatelessWidget {
           site: site,
           showMarker: showMarkers,
           enableHover: showHoverTargets,
+          markerScale: markerScale,
         ),
       );
     }).toList();
   }
 
+  double _markerScaleForZoom(double zoom) {
+    return (1 + (zoom - 4) * 0.35).clamp(0.6, 1.25).toDouble();
+  }
+
   double _markerSize(JmaVolcanoSite site) {
-    if (site.alertLevel >= 3 || site.hasRecentEruption) return 32;
-    if (site.alertLevel >= 1 || site.hasFreshInfoOverlay) return 28;
-    return 24;
+    if (site.alertLevel >= 3 || site.hasRecentEruption) return 26;
+    if (site.alertLevel >= 1 || site.hasFreshInfoOverlay) return 22;
+    return 18;
   }
 }
 
@@ -53,11 +64,13 @@ class _VolcanoMarkerTile extends StatefulWidget {
   final JmaVolcanoSite site;
   final bool showMarker;
   final bool enableHover;
+  final double markerScale;
 
   const _VolcanoMarkerTile({
     required this.site,
     required this.showMarker,
     required this.enableHover,
+    required this.markerScale,
   });
 
   @override
@@ -127,8 +140,6 @@ class _VolcanoMarkerTileState extends State<_VolcanoMarkerTile> {
 
   @override
   Widget build(BuildContext context) {
-    final fillColor = _markerFillColorForSite(widget.site);
-    final ringColor = _markerRingColorForSite(widget.site);
     final isEmphasized =
         widget.site.alertLevel >= 2 ||
         widget.site.hasFreshInfoOverlay ||
@@ -139,14 +150,9 @@ class _VolcanoMarkerTileState extends State<_VolcanoMarkerTile> {
         link: _link,
         child: Center(
           child: widget.showMarker
-              ? CustomPaint(
-                  size: Size.square(isEmphasized ? 24 : 18),
-                  painter: _VolcanoTrianglePainter(
-                    fillColor: fillColor,
-                    borderColor: Colors.black.withValues(alpha: 0.72),
-                    ringColor: ringColor,
-                    drawRing: widget.site.hasFreshInfoOverlay,
-                  ),
+              ? _VolcanoIcon(
+                  site: widget.site,
+                  layoutSize: (isEmphasized ? 19 : 15) * widget.markerScale,
                 )
               : const SizedBox.expand(),
         ),
@@ -171,60 +177,37 @@ class _VolcanoMarkerTileState extends State<_VolcanoMarkerTile> {
   }
 }
 
-class _VolcanoTrianglePainter extends CustomPainter {
-  final Color fillColor;
-  final Color borderColor;
-  final Color ringColor;
-  final bool drawRing;
+class _VolcanoIcon extends StatelessWidget {
+  const _VolcanoIcon({required this.site, required this.layoutSize});
 
-  _VolcanoTrianglePainter({
-    required this.fillColor,
-    required this.borderColor,
-    required this.ringColor,
-    required this.drawRing,
-  });
+  // The supplied PNGs share a large transparent border. This keeps the visible
+  // volcano outline at the same scale as the old 18/24 px marker artwork.
+  static const double _assetScale = 3.0;
+
+  final JmaVolcanoSite site;
+  final double layoutSize;
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final outerPath = ui.Path()
-      ..moveTo(size.width / 2, 1.2)
-      ..lineTo(size.width - 1.2, size.height - 1.5)
-      ..lineTo(1.2, size.height - 1.5)
-      ..close();
-
-    if (drawRing) {
-      final ringPaint = Paint()
-        ..color = ringColor
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.4;
-      canvas.drawPath(outerPath, ringPaint);
-    }
-
-    final innerInset = drawRing ? 2.2 : 0.8;
-    final innerPath = ui.Path()
-      ..moveTo(size.width / 2, 1.2 + innerInset)
-      ..lineTo(size.width - 1.2 - innerInset, size.height - 1.5 - innerInset)
-      ..lineTo(1.2 + innerInset, size.height - 1.5 - innerInset)
-      ..close();
-
-    final fillPaint = Paint()
-      ..color = fillColor
-      ..style = PaintingStyle.fill;
-    final borderPaint = Paint()
-      ..color = borderColor
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.8;
-
-    canvas.drawPath(innerPath, fillPaint);
-    canvas.drawPath(innerPath, borderPaint);
+  Widget build(BuildContext context) {
+    return Transform.scale(
+      scale: _assetScale,
+      child: SizedBox.square(
+        dimension: layoutSize,
+        child: Image.asset(
+          _assetForSite(site),
+          filterQuality: FilterQuality.high,
+          fit: BoxFit.contain,
+        ),
+      ),
+    );
   }
 
-  @override
-  bool shouldRepaint(covariant _VolcanoTrianglePainter oldDelegate) {
-    return oldDelegate.fillColor != fillColor ||
-        oldDelegate.borderColor != borderColor ||
-        oldDelegate.ringColor != ringColor ||
-        oldDelegate.drawRing != drawRing;
+  String _assetForSite(JmaVolcanoSite site) {
+    final level = site.alertLevel;
+    if (level < 1 || level > 5) {
+      return 'assets/images/volcano/vol.png';
+    }
+    return 'assets/images/volcano/Lv$level.png';
   }
 }
 
@@ -248,10 +231,7 @@ class _VolcanoHoverCard extends StatelessWidget {
         decoration: BoxDecoration(
           color: const Color(0xFF121827).withValues(alpha: 0.96),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: color.withValues(alpha: 0.58),
-            width: 1.2,
-          ),
+          border: Border.all(color: color.withValues(alpha: 0.58), width: 1.2),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.32),
@@ -282,15 +262,7 @@ class _VolcanoHoverCard extends StatelessWidget {
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      CustomPaint(
-                        size: const Size(14, 14),
-                        painter: _VolcanoTrianglePainter(
-                          fillColor: _markerFillColorForSite(site),
-                          borderColor: Colors.black.withValues(alpha: 0.72),
-                          ringColor: _markerRingColorForSite(site),
-                          drawRing: site.hasFreshInfoOverlay,
-                        ),
-                      ),
+                      _VolcanoIcon(site: site, layoutSize: 14),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
@@ -397,17 +369,4 @@ Color _statusColorForSite(JmaVolcanoSite site) {
     default:
       return const Color(0xFFF2F2FF);
   }
-}
-
-Color _markerFillColorForSite(JmaVolcanoSite site) {
-  final base = _statusColorForSite(site);
-  final alpha = site.alertLevel >= 3 || site.hasRecentEruption ? 0.78 : 0.64;
-  return base.withValues(alpha: alpha);
-}
-
-Color _markerRingColorForSite(JmaVolcanoSite site) {
-  if (site.hasFreshInfoOverlay) {
-    return const Color(0xFFD83A7C).withValues(alpha: 0.72);
-  }
-  return Colors.transparent;
 }

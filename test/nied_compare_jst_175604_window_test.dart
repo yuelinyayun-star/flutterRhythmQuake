@@ -33,7 +33,7 @@ double _maxStationShindo(List<NiedStation> stations) {
   var max = -3.0;
   for (final s in stations) {
     if (s.level < 0) continue;
-    final shindo = JpShindoScale.rawShindoFromLevel(s.level);
+    final shindo = JpShindoScale.rawShindoFromKanameishiLevel(s.level);
     if (shindo > max) max = shindo;
   }
   return max;
@@ -82,9 +82,6 @@ Future<List<_FrameReport>> _runGifWindow(
       );
       continue;
     }
-    final borehole = await decodeNiedGifFile(
-      File('${dir.path}\\$stamp.jma_b.gif'),
-    );
     service.processPixels(
       surface.packedRgb,
       surfaceGifBytes: surface.gifBytes,
