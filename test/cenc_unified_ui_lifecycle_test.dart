@@ -81,16 +81,20 @@ void main() {
     final event = _nowQuakeCencIrEvent('20260728111607');
 
     provider.updateRealtimeCencIrDataForTest(_cencIrData('20260728111607'));
+    final initialRevision = provider.unifiedMapRevision;
     provider.handleUnifiedEventForTest(event);
 
     expect(provider.cencIrData?.reportId, '20260728111607');
     expect(provider.isManualCencIrActive, isFalse);
     expect(provider.unifiedEvents, hasLength(1));
+    expect(provider.unifiedMapRevision, greaterThan(initialRevision));
 
+    final acceptedRevision = provider.unifiedMapRevision;
     provider.dismissUnifiedEventForTest(event);
 
     expect(provider.unifiedEvents, isEmpty);
     expect(provider.cencIrData, isNull);
+    expect(provider.unifiedMapRevision, greaterThan(acceptedRevision));
   });
 
   test(

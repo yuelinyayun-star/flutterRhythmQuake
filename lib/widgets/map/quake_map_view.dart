@@ -1342,6 +1342,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     final unifiedEvents = provider.unifiedEvents;
     final mapEvents = provider.unifiedMapEvents;
     return Object.hash(
+      provider.unifiedMapRevision,
       Object.hashAll(unifiedEvents.map((event) => event.hashCode)),
       Object.hashAll(mapEvents.map(_quakeMessageVisualSignature)),
     );

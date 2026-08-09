@@ -254,6 +254,12 @@ class QuakeProvider with ChangeNotifier {
   /// 统一事件列表（新统一管道）
   final List<UnifiedQuakeData> _unifiedEvents = [];
 
+  /// 统一地图事件快照的变更序号。
+  ///
+  /// 地图层不能只依赖事件对象的 hashCode 判断快照是否变化；事件被删除
+  /// 后必须明确触发一次图层重建，避免 CustomPaint 保留已经移除的标记。
+  int _unifiedMapRevision = 0;
+
   final List<EewEventGroup> _eewHistory = [];
 
   List<EewEventGroup> get eewHistory => List.unmodifiable(_eewHistory);
@@ -777,6 +783,8 @@ class QuakeProvider with ChangeNotifier {
       : _activeWarnings.length + _activeInfoEvents.length;
 
   List<UnifiedQuakeData> get unifiedEvents => List.unmodifiable(_unifiedEvents);
+
+  int get unifiedMapRevision => _unifiedMapRevision;
   int get currentUnifiedIndex => _currentUnifiedIndex;
   int get unifiedEventCount => _unifiedEvents.length;
   UnifiedQuakeData? get currentUnifiedEvent =>
@@ -2468,6 +2476,7 @@ class QuakeProvider with ChangeNotifier {
           : event;
       final acceptedEvent = nextEvent.copyWith(arrivedAt: arrivedAt);
       _unifiedEvents[existingIndex] = acceptedEvent;
+      _unifiedMapRevision++;
       _rememberBackgroundAcceptedUnifiedEvent(acceptedEvent);
       _sortUnifiedEvents();
       _startUnifiedCarousel();
@@ -2515,6 +2524,7 @@ class QuakeProvider with ChangeNotifier {
       arrivedAt: event.arrivedAt ?? DateTime.now(),
     );
     _unifiedEvents.insert(0, acceptedEvent);
+    _unifiedMapRevision++;
     _rememberBackgroundAcceptedUnifiedEvent(acceptedEvent);
     if (event.isEew) {
       _ignoredEewIds[eventKey] = _extractReportNum(event.reportNumText);
@@ -2944,7 +2954,7 @@ class QuakeProvider with ChangeNotifier {
     if (_disposed) return;
 
     final activeKeys = _unifiedEvents
-        .where((event) => event.isEew && !event.isCanceled)
+        .where((event) => event.isEew)
         .map(_unifiedEventKey)
         .toSet();
     _unifiedCountdownLastSpokenSeconds.removeWhere(
@@ -2965,6 +2975,8 @@ class QuakeProvider with ChangeNotifier {
   }
 
   void _updateUnifiedCountdownVoice() {
+    if (_disposed) return;
+    _removeExpiredUnifiedEewEvents();
     if (_disposed) return;
     final event = currentUnifiedEvent;
     if (event == null || !event.isEew || event.isCanceled) return;
@@ -3143,6 +3155,7 @@ class QuakeProvider with ChangeNotifier {
     _cancelPendingUnifiedUpdateEffects(key);
     _unifiedCountdownLastSpokenSeconds.remove(key);
     _unifiedEvents.removeAt(index);
+    _unifiedMapRevision++;
 
     if (event.isEew) {
       final reportNum = _extractReportNum(event.reportNumText);
@@ -3173,6 +3186,22 @@ class QuakeProvider with ChangeNotifier {
 
     _ensureUnifiedCountdownVoiceTimer();
     notifyListeners();
+  }
+
+  /// 独立定时器失效或被重置时的 EEW 过期安全网。
+  ///
+  /// 每秒倒计时计时器本来就只在有统一 EEW 时运行，因此复用它检查事件
+  /// 的绝对过期时间不会新增常驻计时器，也不会重复请求数据。
+  void _removeExpiredUnifiedEewEvents() {
+    for (var index = _unifiedEvents.length - 1; index >= 0; index--) {
+      final event = _unifiedEvents[index];
+      if (!event.isEew) continue;
+      if (QuakeTime.calcPassedSecondsUnified(event) <
+          QuakeTime.eewTimeoutSecondsUnified(event)) {
+        continue;
+      }
+      _removeUnifiedEvent(index);
+    }
   }
 
   void _clearRealtimeCencIrForUnifiedEvent(UnifiedQuakeData event) {
