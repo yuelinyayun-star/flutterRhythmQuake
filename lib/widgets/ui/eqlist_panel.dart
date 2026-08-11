@@ -70,25 +70,8 @@ class _EqlistPanelState extends State<EqlistPanel> {
             ? panelWidth
             : panelWidth + _s(26, context);
 
-        return Selector<QuakeProvider, int>(
-          selector: (context, provider) {
-            final buckets = provider.historyBySource;
-            final sourceFilter = provider.sourceFilter.toList()..sort();
-            return Object.hash(
-              identityHashCode(provider.historyList),
-              provider.magFilter,
-              Object.hashAll(
-                buckets.entries.map(
-                  (entry) => Object.hash(
-                    entry.key,
-                    identityHashCode(entry.value),
-                    entry.value.length,
-                  ),
-                ),
-              ),
-              Object.hashAll(sourceFilter),
-            );
-          },
+        return ValueListenableBuilder<int>(
+          valueListenable: context.read<QuakeProvider>().historyListenable,
           builder: (context, _, child) {
             final provider = context.read<QuakeProvider>();
             final items = provider.historyList;
@@ -489,6 +472,24 @@ class _EqCardState extends State<_EqCard> {
       eq.source == QuakeSourceType.jma_fan ||
       eq.source == QuakeSourceType.cwa;
 
+  bool get _isJmaHypocenterInvestigating {
+    if (eq.source != QuakeSourceType.wolfx &&
+        eq.source != QuakeSourceType.p2p &&
+        eq.source != QuakeSourceType.jma_fan) {
+      return false;
+    }
+    final location = eq.location.trim().toLowerCase();
+    return location.isEmpty ||
+        location == '調査中' ||
+        location == '调查中' ||
+        location == '不明' ||
+        location == '不詳' ||
+        location == 'unknown';
+  }
+
+  String get _locationText =>
+      _isJmaHypocenterInvestigating ? '震源 調査中' : eq.location;
+
   Color get _borderColor {
     if (_isJma && eq.jmaShindo != null) {
       return _jmaShindoColorStatic(eq.jmaShindo!);
@@ -646,7 +647,7 @@ class _EqCardState extends State<_EqCard> {
     final parts = [
       intLabel,
       magStr,
-      eq.location,
+      _locationText,
       timeStr,
       '($zoneStr)',
       depthStr,
@@ -734,9 +735,9 @@ class _EqCardState extends State<_EqCard> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              eq.location.length > 25
-                                  ? '${eq.location.substring(0, 25)}…'
-                                  : eq.location,
+                              _locationText.length > 25
+                                  ? '${_locationText.substring(0, 25)}…'
+                                  : _locationText,
                               style: TextStyle(
                                 fontSize: _s(15),
                                 fontWeight: FontWeight.w700,

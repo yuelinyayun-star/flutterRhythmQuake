@@ -1,4 +1,6 @@
 import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 class WaveResult {
@@ -28,18 +30,32 @@ class TravelTimeService {
   TravelTimeService._internal();
 
   final Map<String, _TravelTable> _tables = {};
+  final ValueNotifier<bool> loadedListenable = ValueNotifier<bool>(false);
+  Future<void>? _loading;
   bool _isLoaded = false;
 
   bool get isLoaded => _isLoaded;
 
-  Future<void> load() async {
+  /// Loads travel-time tables on first need. Concurrent callers share one load.
+  Future<void> ensureLoaded() {
+    if (_isLoaded) return Future.value();
+    return _loading ??= _load().whenComplete(() {
+      _loading = null;
+    });
+  }
+
+  /// Backward-compatible alias of [ensureLoaded].
+  Future<void> load() => ensureLoaded();
+
+  Future<void> _load() async {
     if (_isLoaded) return;
     final String response =
         await rootBundle.loadString('assets/travel_times.json');
     final Map<String, dynamic> data = json.decode(response);
 
+    final tables = <String, _TravelTable>{};
     data.forEach((key, value) {
-      _tables[key] = _TravelTable(
+      tables[key] = _TravelTable(
         depths: (value['depths'] as List)
             .map((e) => (e as num).toDouble())
             .toList(),
@@ -55,7 +71,19 @@ class TravelTimeService {
       );
     });
 
+    _tables
+      ..clear()
+      ..addAll(tables);
     _isLoaded = true;
+    loadedListenable.value = true;
+  }
+
+  @visibleForTesting
+  void resetForTesting() {
+    _tables.clear();
+    _isLoaded = false;
+    _loading = null;
+    loadedListenable.value = false;
   }
 
   WaveResult calcWaveDistance(

@@ -69,7 +69,6 @@ class TyphoonLayer extends StatelessWidget {
                   painter: _TyphoonAnnotationPainter(
                     typhoons: visibleTyphoons,
                     camera: camera,
-                    scale: scale,
                   ),
                 ),
               ),
@@ -399,15 +398,20 @@ class TyphoonLayer extends StatelessWidget {
 class _TyphoonAnnotationPainter extends CustomPainter {
   static const double _baseLabelWidth = 230;
   static const double _baseFontSize = 10.2;
+  /// Design reference: label looks "normal" around this map scale.
+  static const double _labelReferencePxPerKm = 1.15;
+  /// Keep the leader attached just outside the center marker, in map space.
+  static const double _labelGapKm = 28;
+  /// Text stays readable when zoomed out; capped when zoomed in.
+  static const double _labelScaleMin = 0.78;
+  static const double _labelScaleMax = 1.05;
 
   final List<TyphoonData> typhoons;
   final MapCamera camera;
-  final double scale;
 
   _TyphoonAnnotationPainter({
     required this.typhoons,
     required this.camera,
-    required this.scale,
   });
 
   @override
@@ -422,14 +426,18 @@ class _TyphoonAnnotationPainter extends CustomPainter {
       final point = typhoon.latestPoint;
       if (point == null || !point.hasLocation) continue;
 
-      final projected = camera.projectAtZoom(LatLng(point.lat!, point.lng!));
+      final latLng = LatLng(point.lat!, point.lng!);
+      final projected = camera.projectAtZoom(latLng);
       final center = projected - origin;
-      if (!visible.inflate(700).contains(center)) continue;
+      // Once the eye leaves the viewport, drop the annotation. Keeping it and
+      // clamping onto the screen stretches the leader across the map.
+      if (!visible.inflate(56).contains(center)) continue;
 
       annotations.add(
         _VisibleTyphoonAnnotation(
           typhoon: typhoon,
           point: point,
+          latLng: latLng,
           center: center,
           index: i,
         ),
@@ -440,6 +448,7 @@ class _TyphoonAnnotationPainter extends CustomPainter {
       _drawCenter(
         canvas,
         annotation.center,
+        annotation.latLng,
         _colorForTyphoon(annotation.point),
       );
     }
@@ -449,20 +458,26 @@ class _TyphoonAnnotationPainter extends CustomPainter {
       final labelRect = _drawLabel(
         canvas,
         annotation.center,
+        annotation.latLng,
         annotation.typhoon,
         annotation.point,
         annotation.index,
         size,
-        origin,
         occupiedLabels,
         preferLeft,
       );
-      occupiedLabels.add(labelRect.inflate(4 * scale));
+      occupiedLabels.add(labelRect.inflate(4));
     }
   }
 
-  void _drawCenter(Canvas canvas, Offset center, Color color) {
-    final innerRadius = 7 * scale;
+  void _drawCenter(
+    Canvas canvas,
+    Offset center,
+    LatLng latLng,
+    Color color,
+  ) {
+    // Scale the eye with the map so it shrinks/grows like the track.
+    final innerRadius = _kmToPixels(latLng, 12).clamp(3.5, 10.0).toDouble();
     canvas.drawCircle(
       center,
       innerRadius,
@@ -476,39 +491,44 @@ class _TyphoonAnnotationPainter extends CustomPainter {
       Paint()
         ..color = Colors.black.withValues(alpha: 0.82)
         ..style = PaintingStyle.stroke
-        ..strokeWidth = math.max(0.8, 1.2 * scale),
+        ..strokeWidth = math.max(0.8, innerRadius * 0.18),
     );
   }
 
   Rect _drawLabel(
     Canvas canvas,
     Offset center,
+    LatLng latLng,
     TyphoonData typhoon,
     TyphoonPoint point,
     int index,
     Size size,
-    Offset origin,
     List<Rect> occupiedLabels,
     bool preferredLeft,
   ) {
     final text = _labelText(typhoon, point);
-    final labelScale = (scale * 1.18).clamp(0.68, 1.22).toDouble();
+    final pxPerKm = _pixelsPerKm(latLng);
+    // Gap + column width follow map scale so the block stays near the eye.
+    // Font uses a compressed curve so zoom-out stays readable.
+    final mapFactor = (pxPerKm / _labelReferencePxPerKm).clamp(0.15, 1.3);
+    final labelScale = _compressedLabelScale(mapFactor);
     final fontSize = _baseFontSize * labelScale;
-    final width = _baseLabelWidth * labelScale;
+    final width = (_baseLabelWidth * mapFactor.clamp(0.42, 1.0))
+        .clamp(120.0, _baseLabelWidth)
+        .toDouble();
     final measurePainter = _textPainter(text, fontSize)
       ..layout(maxWidth: width);
-    final windRadius = _windFieldPixelRadius(point, center, origin);
-    final gap = (windRadius + 6 * labelScale).clamp(
-      18 * labelScale,
-      62 * labelScale,
-    );
+    final centerMarkerRadius = _kmToPixels(latLng, 12).clamp(3.5, 10.0);
+    final gap = (_kmToPixels(latLng, _labelGapKm) + centerMarkerRadius * 0.35)
+        .clamp(3.0, 40.0)
+        .toDouble();
 
     final sideOptions = preferredLeft ? [true, false] : [false, true];
     final verticalOptions = [
-      (index.isEven ? -24 : 10) * labelScale,
-      (index.isEven ? 10 : -24) * labelScale,
-      -54 * labelScale,
-      34 * labelScale,
+      (index.isEven ? -16 : 6) * labelScale,
+      (index.isEven ? 6 : -16) * labelScale,
+      -36 * labelScale,
+      22 * labelScale,
     ];
     var best = _LabelPlacement(
       topLeft: Offset.zero,
@@ -553,7 +573,7 @@ class _TyphoonAnnotationPainter extends CustomPainter {
       best.anchor,
       Paint()
         ..color = Colors.white.withValues(alpha: 0.42)
-        ..strokeWidth = math.max(0.9, labelScale),
+        ..strokeWidth = math.max(0.7, labelScale),
     );
 
     final textAlign = best.labelOnLeft ? TextAlign.right : TextAlign.left;
@@ -568,6 +588,22 @@ class _TyphoonAnnotationPainter extends CustomPainter {
     strokePainter.paint(canvas, best.topLeft);
     fillPainter.paint(canvas, best.topLeft);
     return best.rect;
+  }
+
+  double _pixelsPerKm(LatLng at) {
+    final origin = camera.projectAtZoom(at);
+    final east = TyphoonLayer._destinationPoint(at, 90, 1);
+    final distance = (camera.projectAtZoom(east) - origin).distance;
+    return distance <= 0 ? 0.01 : distance;
+  }
+
+  double _kmToPixels(LatLng at, double km) => _pixelsPerKm(at) * km;
+
+  /// Soften map scale for typography only (gap stays geographic).
+  static double _compressedLabelScale(double mapFactor) {
+    // sqrt compresses both ends: tiny mapFactor → still near min, large → near max.
+    final t = math.sqrt(((mapFactor - 0.15) / (1.3 - 0.15)).clamp(0.0, 1.0));
+    return _labelScaleMin + (_labelScaleMax - _labelScaleMin) * t;
   }
 
   static double _labelOverlapScore(Rect rect, List<Rect> occupiedLabels) {
@@ -641,30 +677,6 @@ class _TyphoonAnnotationPainter extends CustomPainter {
       math.min(a.bottom, b.bottom) - math.max(a.top, b.top),
     );
     return width * height;
-  }
-
-  double _windFieldPixelRadius(
-    TyphoonPoint point,
-    Offset center,
-    Offset origin,
-  ) {
-    var radiusKm = 0.0;
-    for (final radii in [point.radius7, point.radius10, point.radius12]) {
-      if (radii.isEmpty) continue;
-      for (final radius in TyphoonLayer._displayRadii(radii)) {
-        radiusKm = math.max(radiusKm, radius);
-      }
-    }
-    if (radiusKm <= 0 || !point.hasLocation) return 0;
-
-    final latLng = LatLng(point.lat!, point.lng!);
-    var radiusPx = 0.0;
-    for (final bearing in const [0.0, 90.0, 180.0, 270.0]) {
-      final edge = TyphoonLayer._destinationPoint(latLng, bearing, radiusKm);
-      final projected = camera.projectAtZoom(edge) - origin;
-      radiusPx = math.max(radiusPx, (projected - center).distance);
-    }
-    return radiusPx;
   }
 
   static TextPainter _textPainter(
@@ -831,9 +843,7 @@ class _TyphoonAnnotationPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _TyphoonAnnotationPainter oldDelegate) {
-    return oldDelegate.typhoons != typhoons ||
-        oldDelegate.camera != camera ||
-        oldDelegate.scale != scale;
+    return oldDelegate.typhoons != typhoons || oldDelegate.camera != camera;
   }
 }
 
@@ -856,12 +866,14 @@ class _LabelPlacement {
 class _VisibleTyphoonAnnotation {
   final TyphoonData typhoon;
   final TyphoonPoint point;
+  final LatLng latLng;
   final Offset center;
   final int index;
 
   const _VisibleTyphoonAnnotation({
     required this.typhoon,
     required this.point,
+    required this.latLng,
     required this.center,
     required this.index,
   });

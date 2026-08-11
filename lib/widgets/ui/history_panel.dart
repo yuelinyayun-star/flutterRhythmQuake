@@ -12,9 +12,11 @@ class HistoryPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<QuakeProvider>(
-      builder: (context, quakeProvider, child) {
-        final groups = quakeProvider.eewHistory;
+    final provider = context.read<QuakeProvider>();
+    return ValueListenableBuilder<int>(
+      valueListenable: provider.historyListenable,
+      builder: (context, _, child) {
+        final groups = provider.eewHistory;
 
         if (groups.isEmpty) {
           return const Center(
@@ -451,7 +453,9 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
                   ),
                   const SizedBox(height: 3),
                   Text(
-                    report.hypocenter.isNotEmpty ? report.hypocenter : '震源 調査中',
+                    _isInvestigatingHypocenter(report.hypocenter)
+                        ? '震源 調査中'
+                        : report.hypocenter,
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 12,
@@ -490,18 +494,39 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
   }
 
   String _formatInfo(UnifiedQuakeData event) {
-    final isScalePrompt = event.magnitude < 0 && event.hypocenter.isEmpty;
-    if (isScalePrompt) return '震源 調査中  規模 調査中';
+    final hypocenterInvestigating = _isInvestigatingHypocenter(
+      event.hypocenter,
+    );
+    final magnitudeInvestigating = event.magnitude < 0;
+    if (hypocenterInvestigating && magnitudeInvestigating) {
+      return '震源 調査中  規模 調査中';
+    }
     if (event.isAssumption) return '${event.hypocenter}  仮定震源要素';
-    final magStr = event.magnitude >= 0
+    final magStr = !magnitudeInvestigating
         ? 'M${event.magnitude.toStringAsFixed(1)}'
-        : 'M--';
+        : '規模 調査中';
     final depthStr = event.depthText.isNotEmpty
         ? event.depthText
         : (event.depth >= 0 ? '深${event.depth.round()}km' : '深度 --');
     final timeStr = event.originTime != null
         ? '${event.originTime!.toLocal().month.toString().padLeft(2, '0')}/${event.originTime!.toLocal().day.toString().padLeft(2, '0')} ${event.originTime!.toLocal().hour.toString().padLeft(2, '0')}:${event.originTime!.toLocal().minute.toString().padLeft(2, '0')}'
         : '--:--';
-    return '$timeStr  $magStr  $depthStr  ${event.hypocenter}';
+    final locationText = hypocenterInvestigating ? '' : event.hypocenter;
+    return [
+      timeStr,
+      magStr,
+      depthStr,
+      locationText,
+    ].where((item) => item.isNotEmpty).join('  ');
+  }
+
+  bool _isInvestigatingHypocenter(String value) {
+    final text = value.trim();
+    return text.isEmpty ||
+        text.contains('調査中') ||
+        text.contains('调查中') ||
+        text == '不明' ||
+        text == '不詳' ||
+        text.toLowerCase() == 'unknown';
   }
 }

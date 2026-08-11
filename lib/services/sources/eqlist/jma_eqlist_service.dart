@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../../../models/quake_message.dart';
+import 'eqlist_http_poll_gate.dart';
 
 /// JMA地震情报服务
 ///
@@ -43,13 +44,18 @@ class JmaEqlistService {
   /// 列表更新回调
   void Function(List<QuakeMessage>)? onListUpdated;
 
+  final EqlistHttpPollGate _pushGate = EqlistHttpPollGate();
+
+  /// Wolfx already refreshed the JMA list — skip HTTP briefly.
+  void noteExternalUpdate() => _pushGate.noteExternalUpdate();
+
   /// 启动轮询
   ///
   /// 每30秒获取一次数据
-  void start() {
+  void start({Duration interval = const Duration(seconds: 30)}) {
     _timer?.cancel();
     fetch();
-    _timer = Timer.periodic(const Duration(seconds: 30), (_) => fetch());
+    _timer = Timer.periodic(interval, (_) => fetch());
   }
 
   /// 停止轮询
@@ -60,6 +66,7 @@ class JmaEqlistService {
 
   /// 获取地震情报数据
   Future<void> fetch() async {
+    if (_pushGate.shouldSkipHttp) return;
     try {
       final resp = await http
           .get(Uri.parse(_url))

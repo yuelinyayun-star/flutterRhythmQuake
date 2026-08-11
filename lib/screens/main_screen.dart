@@ -24,7 +24,6 @@ import '../widgets/ui/cmt_sidebar_panel.dart';
 import '../widgets/ui/volcano_sidebar_panel.dart';
 import '../widgets/ui/ui_runtime_flags.dart';
 import '../widgets/ui/ui_scale.dart';
-import '../widgets/ui/app_page_background.dart';
 import '../core/source_estimation/source_estimation_models.dart';
 import '../core/source_estimation/station_event_tracker.dart';
 import '../services/sources/shake_detection_service.dart';
@@ -138,7 +137,6 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         _activeCmtMapEvent(provider) != null ||
         _activeVolcanoEvent(provider) != null ||
         (provider.jmaTsunami?.isActive == true) ||
-        (provider.jmaTsunami?.areas.isNotEmpty ?? false) ||
         (provider.nmefcTsunami?.isActive == true);
   }
 
@@ -157,7 +155,6 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     // 延迟关联控制器，确保 Provider 已准备好
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<MapStateProvider>().setController(_mapController, this);
-      AppPageBackground.cachedBytes();
       _notificationService ??= NotificationService(
         context.read<QuakeProvider>(),
         context.read<NotificationSettingsProvider>(),
@@ -634,8 +631,10 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildPhoneStatusTab(BuildContext context, double Function(double) s) {
-    return Consumer<QuakeProvider>(
-      builder: (context, provider, child) {
+    final provider = context.read<QuakeProvider>();
+    return ValueListenableBuilder<int>(
+      valueListenable: provider.sourceStatusListenable,
+      builder: (context, _, child) {
         final globalQuakeEnabled = GlobalQuakeService().isEnabled;
         final rows =
             provider.sourceStatuses.entries
@@ -732,16 +731,31 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildRightInfoDrawer() {
-    return Consumer2<MapStateProvider, QuakeProvider>(
-      builder: (context, mapState, provider, _) {
+    return Selector<QuakeProvider, int>(
+      selector: (_, qp) {
+        final jma = qp.jmaTsunami;
+        final nmefc = qp.nmefcTsunami;
+        final cmt = _activeCmtMapEvent(qp);
+        final volcano = _activeVolcanoEvent(qp);
+        return Object.hash(
+          qp.unifiedMapRevision,
+          qp.currentUnifiedIndex,
+          jma?.id,
+          jma?.isActive,
+          nmefc?.id,
+          nmefc?.isActive,
+          _cmtInfoSignature(cmt),
+          _volcanoInfoSignature(volcano),
+        );
+      },
+      builder: (context, _, child) {
+        final provider = context.read<QuakeProvider>();
         final detect = _stationData.niedDetect;
         final hasNied = _hasFormalNiedDetect(_stationData);
         if (!hasNied) _stopNiedDetectPagination();
         final hasSnet = _stationData.snetTopStations.isNotEmpty;
         final jmaTsunami = provider.jmaTsunami;
-        final hasJmaTsunami =
-            jmaTsunami != null &&
-            (jmaTsunami.isActive || jmaTsunami.areas.isNotEmpty);
+        final hasJmaTsunami = jmaTsunami != null && jmaTsunami.isActive;
         final nmefc = provider.nmefcTsunami;
         final hasNmefc = nmefc != null && nmefc.isActive;
         final cmt = _activeCmtMapEvent(provider);
@@ -1965,9 +1979,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     final snetTriggered = data.snetTopStations.isNotEmpty;
     final jmaTsunami = provider.jmaTsunami;
     final nmefcTsunami = provider.nmefcTsunami;
-    final jmaTsunamiTriggered =
-        jmaTsunami != null &&
-        (jmaTsunami.isActive || jmaTsunami.areas.isNotEmpty);
+    final jmaTsunamiTriggered = jmaTsunami != null && jmaTsunami.isActive;
     final nmefcTsunamiTriggered = nmefcTsunami?.isActive == true;
     final cmt = _activeCmtMapEvent(provider);
     final cmtSignature = _cmtInfoSignature(cmt);

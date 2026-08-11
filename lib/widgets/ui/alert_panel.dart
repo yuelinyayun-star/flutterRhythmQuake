@@ -45,8 +45,21 @@ class _AlertPanelState extends State<AlertPanel> {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<QuakeProvider>(
-      builder: (context, provider, child) {
+    return Selector<QuakeProvider, int>(
+      selector: (_, provider) {
+        final event = provider.currentEvent;
+        return Object.hash(
+          event?.eventId,
+          event?.location,
+          event?.magnitude,
+          event?.depth,
+          event?.source,
+          provider.sCountdown,
+          provider.estimatedIntensity,
+        );
+      },
+      builder: (context, _, child) {
+        final provider = context.read<QuakeProvider>();
         final event = provider.currentEvent;
         if (event == null) {
           _syncFlashController(false);

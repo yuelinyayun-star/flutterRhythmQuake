@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import '../services/epicenter_region_service.dart';
@@ -809,6 +810,11 @@ final List<String> _feNames = [
 String getFEName(double lat, double lng) {
   if (!lat.isFinite || !lng.isFinite) return '';
   if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return '';
+
+  // Kick offline detailed regions on first use; FE grid covers the gap.
+  if (!EpicenterRegionService.instance.isLoaded) {
+    unawaited(EpicenterRegionService.instance.load());
+  }
 
   final detailed = EpicenterRegionService.instance.lookup(lat, lng);
   if (detailed != null && detailed.isNotEmpty) return '$detailed附近';

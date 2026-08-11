@@ -22,7 +22,7 @@ class EmscEqlistService {
   /// 最新官方事件更新回调，字段格式与统一事件适配器的 EMSC 输入一致。
   void Function(Map<String, dynamic>)? onCurrentUpdated;
 
-  void start({Duration interval = const Duration(seconds: 10)}) {
+  void start({Duration interval = const Duration(seconds: 30)}) {
     _timer?.cancel();
     _fetch();
     _timer = Timer.periodic(interval, (_) => _fetch());

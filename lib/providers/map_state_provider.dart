@@ -98,8 +98,8 @@ class MapStateProvider with ChangeNotifier {
   bool get showEstimatedEpicenter => _showEstimatedEpicenter;
 
   static const int _cameraAnimationFps = 60;
-  // EEW wave targets arrive once per second. Spreading 25 moves across that
-  // second keeps the old average move budget while removing the idle gap.
+  // EEW wave targets arrive about once per second. Keep continuous follow at
+  // 25fps so average move cost stays the same as before.
   static const int _continuousCameraAnimationFps = 25;
 
   bool _isAutoZoom = true;
@@ -316,11 +316,13 @@ class MapStateProvider with ChangeNotifier {
           )
         : destLocation;
     final currZoom = _mapController!.camera.zoom;
+    final latDelta = (dest.latitude - currCenter.latitude).abs();
+    final lngDelta = (dest.longitude - currCenter.longitude).abs();
     final zoomDiff = (destZoom - currZoom).abs();
 
     _stopMoveAnimation();
 
-    if (!animate || zoomDiff > 4) {
+    if (!animate) {
       _mapController!.move(dest, destZoom);
       return;
     }
@@ -335,22 +337,31 @@ class MapStateProvider with ChangeNotifier {
     );
     final zoomTween = Tween<double>(begin: currZoom, end: destZoom);
 
-    final duration = continuousFollow
-        ? const Duration(milliseconds: 1000)
-        : const Duration(milliseconds: 800);
-    final curve = continuousFollow ? Curves.linear : Curves.fastOutSlowIn;
+    final plan = _planCameraMove(
+      latDelta: latDelta,
+      lngDelta: lngDelta,
+      zoomDelta: zoomDiff,
+      continuousFollow: continuousFollow,
+    );
+    final duration = plan.duration;
     final animationFps = continuousFollow
         ? _continuousCameraAnimationFps
         : _cameraAnimationFps;
+    final frame = Duration(
+      microseconds: Duration.microsecondsPerSecond ~/ animationFps,
+    );
     final stopwatch = Stopwatch()..start();
 
     void tick() {
       final rawT = stopwatch.elapsedMicroseconds / duration.inMicroseconds;
       final t = rawT.clamp(0.0, 1.0);
-      final eased = curve.transform(t);
+      // Pan reaches the target earlier than zoom so the epicenter does not
+      // crawl in after the wave framing already looks close.
+      final panT = plan.panProgress(t);
+      final zoomT = plan.zoomProgress(t);
       _mapController!.move(
-        LatLng(latTween.transform(eased), lngTween.transform(eased)),
-        zoomTween.transform(eased),
+        LatLng(latTween.transform(panT), lngTween.transform(panT)),
+        zoomTween.transform(zoomT),
       );
       if (t >= 1.0) {
         _stopMoveAnimation();
@@ -358,9 +369,51 @@ class MapStateProvider with ChangeNotifier {
     }
 
     tick();
-    _moveAnimationTimer = Timer.periodic(
-      Duration(microseconds: Duration.microsecondsPerSecond ~/ animationFps),
-      (_) => tick(),
+    _moveAnimationTimer = Timer.periodic(frame, (_) => tick());
+  }
+
+  /// Pick duration/curves from jump size. Same fps budget as before; no extra
+  /// timers. Large acquires ease in/out; tiny continuous tracks finish before
+  /// the next ~1Hz EEW policy tick so the camera can settle on center.
+  static _CameraMovePlan _planCameraMove({
+    required double latDelta,
+    required double lngDelta,
+    required double zoomDelta,
+    required bool continuousFollow,
+  }) {
+    final geo = max(latDelta, lngDelta);
+    final score = geo + zoomDelta * 0.35;
+    final largeJump = geo >= 2.5 || zoomDelta >= 1.8 || score >= 3.2;
+
+    if (continuousFollow) {
+      if (largeJump) {
+        // First EEW framing / big retarget: one smooth acquire, pan ahead.
+        final ms = (520 + score * 55).round().clamp(560, 820);
+        return _CameraMovePlan(
+          duration: Duration(milliseconds: ms),
+          panCurve: Curves.easeInOutCubic,
+          zoomCurve: Curves.easeInOutCubic,
+          panCompleteAt: 0.78,
+        );
+      }
+      // Wave expansion chase: short linear catch-up that completes inside the
+      // ~900ms policy interval instead of a 1000ms ease that keeps restarting.
+      final ms = (240 + score * 110).round().clamp(240, 520);
+      return _CameraMovePlan(
+        duration: Duration(milliseconds: ms),
+        panCurve: Curves.linear,
+        zoomCurve: Curves.linear,
+        panCompleteAt: 1.0,
+      );
+    }
+
+    // Discrete event / history / default jumps.
+    final ms = (460 + score * 65).round().clamp(500, 880);
+    return _CameraMovePlan(
+      duration: Duration(milliseconds: ms),
+      panCurve: Curves.easeInOutCubic,
+      zoomCurve: Curves.easeInOutCubic,
+      panCompleteAt: 0.82,
     );
   }
 
@@ -845,4 +898,28 @@ class _WrappedEventView {
     required this.latDiff,
     required this.lngDiff,
   });
+}
+
+class _CameraMovePlan {
+  final Duration duration;
+  final Curve panCurve;
+  final Curve zoomCurve;
+  /// Fraction of [duration] by which pan should finish (zoom may continue).
+  final double panCompleteAt;
+
+  const _CameraMovePlan({
+    required this.duration,
+    required this.panCurve,
+    required this.zoomCurve,
+    required this.panCompleteAt,
+  });
+
+  double panProgress(double t) {
+    final scaled = panCompleteAt >= 1.0
+        ? t
+        : (t / panCompleteAt).clamp(0.0, 1.0);
+    return panCurve.transform(scaled);
+  }
+
+  double zoomProgress(double t) => zoomCurve.transform(t);
 }

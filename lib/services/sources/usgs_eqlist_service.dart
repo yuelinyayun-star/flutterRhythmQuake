@@ -48,8 +48,8 @@ class UsgsEqlistService {
 
   /// 启动轮询
   ///
-  /// [interval] 轮询间隔，默认10秒，与 kanameishi 一致
-  void start({Duration interval = const Duration(seconds: 10)}) {
+  /// [interval] 轮询间隔，默认30秒（信息事件列表，无需 10s）
+  void start({Duration interval = const Duration(seconds: 30)}) {
     _timer?.cancel();
     _fetch();
     _timer = Timer.periodic(interval, (_) => _fetch());

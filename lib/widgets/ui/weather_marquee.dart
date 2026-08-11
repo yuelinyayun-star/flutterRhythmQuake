@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/event_animation_clock.dart';
-import '../../models/weather_alarm.dart';
 import '../../providers/quake_provider.dart';
 import 'ui_runtime_flags.dart';
 import 'ui_scale.dart';
@@ -15,10 +14,11 @@ class WeatherMarquee extends StatelessWidget {
       valueListenable: UiRuntimeFlags.weatherMarqueeEnabledNotifier,
       builder: (context, enabled, child) {
         if (!enabled) return const SizedBox.shrink();
-        return Selector<QuakeProvider, WeatherAlarm?>(
-          selector: (context, provider) => provider.weatherAlarm,
-          builder: (context, selectedAlarm, child) {
-            final alarm = selectedAlarm;
+        final provider = context.read<QuakeProvider>();
+        return ValueListenableBuilder<int>(
+          valueListenable: provider.weatherListenable,
+          builder: (context, _, child) {
+            final alarm = provider.weatherAlarm;
             if (alarm == null) return const SizedBox.shrink();
 
             final scale = UiScale.main(context);

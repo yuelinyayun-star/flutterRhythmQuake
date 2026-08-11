@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -50,6 +51,7 @@ class _QuakeWaveLayerState extends State<QuakeWaveLayer> {
   void initState() {
     super.initState();
     _syncClock();
+    _ensureTravelTimes();
   }
 
   @override
@@ -59,12 +61,31 @@ class _QuakeWaveLayerState extends State<QuakeWaveLayer> {
         oldWidget.frameRate != widget.frameRate) {
       _syncClock();
     }
+    if (oldWidget.event != widget.event ||
+        oldWidget.showWaves != widget.showWaves) {
+      _ensureTravelTimes();
+    }
   }
 
   @override
   void dispose() {
+    TravelTimeService().loadedListenable.removeListener(_onTravelTimesLoaded);
     _clockLease?.dispose();
     super.dispose();
+  }
+
+  void _ensureTravelTimes() {
+    final travelTimes = TravelTimeService();
+    travelTimes.loadedListenable.removeListener(_onTravelTimesLoaded);
+    if (travelTimes.isLoaded) return;
+    travelTimes.loadedListenable.addListener(_onTravelTimesLoaded);
+    unawaited(travelTimes.ensureLoaded());
+  }
+
+  void _onTravelTimesLoaded() {
+    if (!mounted || !TravelTimeService().isLoaded) return;
+    TravelTimeService().loadedListenable.removeListener(_onTravelTimesLoaded);
+    setState(() {});
   }
 
   void _syncClock() {

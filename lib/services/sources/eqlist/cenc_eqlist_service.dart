@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../../../models/quake_message.dart';
 import '../../quake_event_adapter.dart';
+import 'eqlist_http_poll_gate.dart';
 
 class CencEqlistService {
   static final CencEqlistService _instance = CencEqlistService._internal();
@@ -15,10 +16,14 @@ class CencEqlistService {
 
   void Function(List<QuakeMessage>)? onListUpdated;
   Timer? _timer;
+  final EqlistHttpPollGate _pushGate = EqlistHttpPollGate();
 
-  void start() {
+  /// FAN/Wolfx already refreshed the CENC list — skip HTTP briefly.
+  void noteExternalUpdate() => _pushGate.noteExternalUpdate();
+
+  void start({Duration interval = const Duration(seconds: 120)}) {
     if (_timer?.isActive == true) return;
-    _timer = Timer.periodic(const Duration(seconds: 120), (_) => fetch());
+    _timer = Timer.periodic(interval, (_) => fetch());
     fetch();
   }
 
@@ -28,6 +33,7 @@ class CencEqlistService {
   }
 
   Future<void> fetch() async {
+    if (_pushGate.shouldSkipHttp) return;
     try {
       final resp = await http
           .get(Uri.parse(_url))

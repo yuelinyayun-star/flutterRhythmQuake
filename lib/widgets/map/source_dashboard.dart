@@ -91,48 +91,50 @@ class _SourceDashboardState extends State<SourceDashboard> {
           alignment: Alignment.bottomLeft,
           child: ConstrainedBox(
             constraints: BoxConstraints(maxWidth: _s(430, context)),
-            child: Selector<QuakeProvider, int>(
-              selector: (context, provider) => Object.hashAll(
-                provider.sourceStatuses.entries.map(
-                  (entry) => Object.hash(entry.key, entry.value),
-                ),
-              ),
-              builder: (context, _, child) {
+            child: Builder(
+              builder: (context) {
                 final provider = context.read<QuakeProvider>();
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _buildSocketStatusRow(context, provider),
-                    AnimatedBuilder(
-                      animation: Listenable.merge([
-                        NiedMonitorService().dataFrameTime,
-                        NiedYahooService().dataFrameTime,
-                        QuakeMapView.niedSourceNotifier,
-                        CwaStationService().dataTimeNotifier,
-                        KmaMonitorService().dataTimeNotifier,
-                        SeisJsService().dataTimeNotifier,
-                        PAlertService().dataTimeNotifier,
-                        FdsnMotionService().linkedStationCountNotifier,
-                        FdsnMotionService().dataTimeNotifier,
-                        QuakeMapView.niedReplayNotifier,
-                        QuakeMapView.niedMonitorEnabledNotifier,
-                        QuakeMapView.tremStationEnabledNotifier,
-                        QuakeMapView.kmaPewsEnabledNotifier,
-                        QuakeMapView.wolfxSeisJsEnabledNotifier,
-                        QuakeMapView.pAlertEnabledNotifier,
-                        QuakeMapView.fdsnSeedLinkEnabledNotifier,
-                        _clockTick,
-                      ]),
-                      builder: (context, child) {
-                        return _buildStationStatusLines(
-                          context,
-                          provider,
-                          FdsnMotionService().linkedStationCountNotifier.value,
-                        );
-                      },
-                    ),
-                  ],
+                return ValueListenableBuilder<int>(
+                  valueListenable: provider.sourceStatusListenable,
+                  builder: (context, _, child) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildSocketStatusRow(context, provider),
+                        AnimatedBuilder(
+                          animation: Listenable.merge([
+                            NiedMonitorService().dataFrameTime,
+                            NiedYahooService().dataFrameTime,
+                            QuakeMapView.niedSourceNotifier,
+                            CwaStationService().dataTimeNotifier,
+                            KmaMonitorService().dataTimeNotifier,
+                            SeisJsService().dataTimeNotifier,
+                            PAlertService().dataTimeNotifier,
+                            FdsnMotionService().linkedStationCountNotifier,
+                            FdsnMotionService().dataTimeNotifier,
+                            QuakeMapView.niedReplayNotifier,
+                            QuakeMapView.niedMonitorEnabledNotifier,
+                            QuakeMapView.tremStationEnabledNotifier,
+                            QuakeMapView.kmaPewsEnabledNotifier,
+                            QuakeMapView.wolfxSeisJsEnabledNotifier,
+                            QuakeMapView.pAlertEnabledNotifier,
+                            QuakeMapView.fdsnSeedLinkEnabledNotifier,
+                            _clockTick,
+                          ]),
+                          builder: (context, child) {
+                            return _buildStationStatusLines(
+                              context,
+                              provider,
+                              FdsnMotionService()
+                                  .linkedStationCountNotifier
+                                  .value,
+                            );
+                          },
+                        ),
+                      ],
+                    );
+                  },
                 );
               },
             ),

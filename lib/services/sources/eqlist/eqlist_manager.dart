@@ -263,6 +263,7 @@ class EqlistManager {
   ///
   /// 由FanService推送触发
   void updateCwaList(List<QuakeMessage> items) {
+    cwa.noteExternalUpdate();
     _cwaList
       ..clear()
       ..addAll(items);
@@ -274,6 +275,7 @@ class EqlistManager {
   ///
   /// 由FanService推送触发
   void updateCencList(List<QuakeMessage> items) {
+    cenc.noteExternalUpdate();
     _cencList
       ..clear()
       ..addAll(items);
@@ -282,6 +284,7 @@ class EqlistManager {
   }
 
   void updateJmaList(List<QuakeMessage> items) {
+    jma.noteExternalUpdate();
     _jmaList
       ..clear()
       ..addAll(items);
@@ -327,6 +330,7 @@ class EqlistManager {
 
   /// 添加单个CWA条目
   void addCwaItem(QuakeMessage e) {
+    cwa.noteExternalUpdate();
     _cwaList.insert(0, e);
     _trim(_cwaList);
     onAnyUpdated?.call();
@@ -334,12 +338,20 @@ class EqlistManager {
 
   /// 添加单个CENC条目
   void addCencItem(QuakeMessage e) {
+    cenc.noteExternalUpdate();
     _cencList.insert(0, e);
     _trim(_cencList);
     onAnyUpdated?.call();
   }
 
   void upsertBucketItem(String bucket, QuakeMessage e) {
+    if (bucket == 'jmaEqlist') {
+      jma.noteExternalUpdate();
+    } else if (bucket == 'cencEqlist') {
+      cenc.noteExternalUpdate();
+    } else if (bucket == 'cwaEqlist') {
+      cwa.noteExternalUpdate();
+    }
     final list = switch (bucket) {
       'jmaEqlist' => _jmaList,
       'cencEqlist' => _cencList,
@@ -367,6 +379,17 @@ class EqlistManager {
   }
 
   bool _sameJmaHistoryEvent(QuakeMessage a, QuakeMessage b) {
+    if (!_isJmaHistorySource(a.source) || !_isJmaHistorySource(b.source)) {
+      return false;
+    }
+    final secondA =
+        _toComparableUtc(a).millisecondsSinceEpoch ~/
+        Duration.millisecondsPerSecond;
+    final secondB =
+        _toComparableUtc(b).millisecondsSinceEpoch ~/
+        Duration.millisecondsPerSecond;
+    if (secondA == secondB) return true;
+
     final keyA = _jmaHistoryDedupeKey(a);
     final keyB = _jmaHistoryDedupeKey(b);
     return keyA != null && keyA == keyB;

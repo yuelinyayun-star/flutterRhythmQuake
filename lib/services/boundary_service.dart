@@ -113,6 +113,7 @@ class BoundaryService {
   
   /// 是否正在加载
   bool _isLoading = false;
+  Future<void>? _loading;
 
   List<BoundaryLayer> get layers => _layers;
   List<CityLabel> get cityLabels => _cityLabels;
@@ -252,27 +253,26 @@ class BoundaryService {
         maxZoom: 18.0,
         isGeoJson: true,
       ),
-      BoundaryLayer(
-        name: "中国断层",
-        assetPath: 'assets/maps/cn.fault.modified.topo.json',
-        objectKey: 'region',
-        borderColor: const Color(0xFFFF6644),
-        borderWidth: 1.0,
-        minZoom: 99.0,
-        maxZoom: 18.0,
-      ),
+      // Fault layer intentionally omitted: minZoom was 99 (never drawn).
     ]);
   }
 
   /// 加载所有边界数据
   /// 
   /// 遍历所有图层配置，加载并解析对应的地图文件
-  Future<void> load() async {
+  Future<void> load() {
+    if (_isLoaded) return Future.value();
+    return _loading ??= _loadAll().whenComplete(() {
+      _loading = null;
+    });
+  }
+
+  Future<void> _loadAll() async {
     if (_isLoaded || _isLoading) return;
     _isLoading = true;
     _initLayers();
 
-    for (var layer in _layers) {
+    await Future.wait(_layers.map((layer) async {
       try {
         final jsonStr = await rootBundle.loadString(layer.assetPath);
         if (layer.isGeoJson) {
@@ -280,14 +280,26 @@ class BoundaryService {
         } else {
           parseTopoJson(jsonStr, layer);
         }
-        debugPrint('${layer.name}: ${layer.polygons.length} 多边形 + ${layer.polylines.length} 线段 [zoom ${layer.minZoom}-${layer.maxZoom}]');
+        debugPrint(
+          '${layer.name}: ${layer.polygons.length} 多边形 + ${layer.polylines.length} 线段 [zoom ${layer.minZoom}-${layer.maxZoom}]',
+        );
       } catch (e) {
         debugPrint('Failed to load ${layer.assetPath}: $e');
       }
-    }
+    }));
+
     _isLoading = false;
     _isLoaded = true;
     debugPrint('边界层加载完成，共 ${_layers.length} 层');
+  }
+
+  @visibleForTesting
+  void resetForTesting() {
+    _layers.clear();
+    _cityLabels.clear();
+    _isLoaded = false;
+    _isLoading = false;
+    _loading = null;
   }
 
   /// 解析GeoJSON格式

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../../../core/intensity_calculator.dart';
 import '../../../models/quake_message.dart';
+import 'eqlist_http_poll_gate.dart';
 
 /// CWA地震列表服务
 ///
@@ -56,10 +57,15 @@ class CwaEqlistService {
   /// 最新官方事件更新回调，字段格式与统一事件适配器的 CWA 输入一致。
   void Function(Map<String, dynamic>)? onCurrentUpdated;
 
+  final EqlistHttpPollGate _pushGate = EqlistHttpPollGate();
+
+  /// FAN already refreshed the CWA list — skip HTTP briefly.
+  void noteExternalUpdate() => _pushGate.noteExternalUpdate();
+
   /// 启动轮询
   ///
-  /// [interval] 轮询间隔，默认10秒，与 kanameishi 一致
-  void start({Duration interval = const Duration(seconds: 10)}) {
+  /// [interval] 轮询间隔，默认30秒（信息列表，无需 10s）
+  void start({Duration interval = const Duration(seconds: 30)}) {
     _timer?.cancel();
     _fetch();
     _timer = Timer.periodic(interval, (_) => _fetch());
@@ -73,6 +79,7 @@ class CwaEqlistService {
 
   /// 获取地震数据
   Future<void> _fetch() async {
+    if (_pushGate.shouldSkipHttp) return;
     try {
       final resp = await http
           .get(Uri.parse(_url))

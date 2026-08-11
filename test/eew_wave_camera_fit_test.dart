@@ -60,7 +60,7 @@ void main() {
         await tester.runAsync(
           () => Future<void>.delayed(const Duration(milliseconds: 900)),
         );
-        await tester.pump(const Duration(milliseconds: 40));
+        await tester.pump(const Duration(milliseconds: 50));
 
         expect(controller.camera.zoom, greaterThan(6.0));
         expect(controller.camera.zoom, lessThanOrEqualTo(8.0));
@@ -112,7 +112,7 @@ void main() {
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 900)),
       );
-      await tester.pump(const Duration(milliseconds: 40));
+      await tester.pump(const Duration(milliseconds: 50));
     }
 
     try {
@@ -142,7 +142,7 @@ void main() {
     }
   });
 
-  testWidgets('continuous wave follow has no idle gap before the next target', (
+  testWidgets('continuous wave follow settles after a large acquire jump', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1200, 800);
@@ -170,18 +170,66 @@ void main() {
 
       provider.animatedMove(const LatLng(36, 136), 7, continuousFollow: true);
       await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 800)),
+        () => Future<void>.delayed(const Duration(milliseconds: 200)),
       );
-      await tester.pump(const Duration(milliseconds: 20));
-      final zoomAt820ms = controller.camera.zoom;
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 100)),
-      );
-      await tester.pump(const Duration(milliseconds: 20));
-      final zoomAt940ms = controller.camera.zoom;
+      await tester.pump(const Duration(milliseconds: 50));
+      final zoomMid = controller.camera.zoom;
 
-      expect(zoomAt940ms, greaterThan(zoomAt820ms));
-      expect(zoomAt940ms, lessThan(7));
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 700)),
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(zoomMid, greaterThan(4.0));
+      expect(zoomMid, lessThan(7.0));
+      expect(controller.camera.zoom, closeTo(7.0, 0.08));
+      expect(controller.camera.center.latitude, closeTo(36.0, 0.05));
+      expect(controller.camera.center.longitude, closeTo(136.0, 0.05));
+    } finally {
+      provider.dispose();
+    }
+  });
+
+  testWidgets('small continuous follow settles on center before the next tick', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final controller = MapController();
+    final provider = MapStateProvider();
+
+    try {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: FlutterMap(
+            mapController: controller,
+            options: const MapOptions(
+              initialCenter: LatLng(35.0, 135.0),
+              initialZoom: 6.0,
+            ),
+            children: const [],
+          ),
+        ),
+      );
+      provider.setController(controller, const TestVSync());
+
+      // Tiny wave-expansion chase: should finish well under the ~900ms policy.
+      provider.animatedMove(
+        const LatLng(35.15, 135.12),
+        5.85,
+        continuousFollow: true,
+      );
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 560)),
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(controller.camera.center.latitude, closeTo(35.15, 0.01));
+      expect(controller.camera.center.longitude, closeTo(135.12, 0.01));
+      expect(controller.camera.zoom, closeTo(5.85, 0.05));
     } finally {
       provider.dispose();
     }
