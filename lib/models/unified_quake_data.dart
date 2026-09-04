@@ -13,6 +13,7 @@ import 'quake_message.dart';
 import 'cmt_moment_tensor.dart';
 import 'cmt_solution_metadata.dart';
 import 'volcano_event_data.dart';
+import 'jma_lpgm_bulletin.dart';
 
 class UnifiedQuakeData {
   final String source;
@@ -52,6 +53,8 @@ class UnifiedQuakeData {
   /// Optional raw CMT solution metadata, not used for event parameters or drawing.
   final CmtSolutionMetadata? cmtMetadata;
   final VolcanoEventData? volcanoEvent;
+  final bool isJmaLpgm;
+  final JmaLpgmBulletin? jmaLpgmBulletin;
   final QuakeMessage? rawEvent;
   final DateTime? arrivedAt;
 
@@ -86,6 +89,8 @@ class UnifiedQuakeData {
     this.momentTensor,
     this.cmtMetadata,
     this.volcanoEvent,
+    this.isJmaLpgm = false,
+    this.jmaLpgmBulletin,
     this.rawEvent,
     this.arrivedAt,
   });
@@ -111,6 +116,122 @@ class UnifiedQuakeData {
   bool get isOrange => className == 'orange' || className == 'dark-orange';
   bool get isDarkGray => className == 'dark-gray';
   bool get isVolcanoEvent => volcanoEvent != null;
+
+  /// 跨 isolate 传递统一事件时使用的结构化表示。
+  ///
+  /// 不通过字符串拼接或重新计算字段，保留接纳层已经生成的展示字段，
+  /// 让主 UI 只负责显示和后续 UI 效果。
+  Map<String, dynamic> toMap() => {
+    'source': source,
+    'origin': origin,
+    'eventId': eventId,
+    'isEew': isEew,
+    'timeZone': timeZone,
+    'titleText': titleText,
+    'reportNumText': reportNumText,
+    'useShindo': useShindo,
+    'maxIntensity': maxIntensity,
+    'className': className,
+    'hypocenter': hypocenter,
+    'originTime': originTime?.toIso8601String(),
+    'reportTime': reportTime?.toIso8601String(),
+    'magnitude': magnitude,
+    'depth': depth,
+    'depthText': depthText,
+    'lat': lat,
+    'lng': lng,
+    'isWarn': isWarn,
+    'isFinal': isFinal,
+    'isCanceled': isCanceled,
+    'isAssumption': isAssumption,
+    'warnArea': warnArea,
+    'apiTypeLabel': apiTypeLabel,
+    'nodalPlane1': nodalPlane1,
+    'nodalPlane2': nodalPlane2,
+    'centroidDepth': centroidDepth,
+    'momentTensor': momentTensor?.toMap(),
+    'cmtMetadata': cmtMetadata?.toMap(),
+    'volcanoEvent': volcanoEvent?.toMap(),
+    'isJmaLpgm': isJmaLpgm,
+    'jmaLpgmBulletin': jmaLpgmBulletin?.toMap(),
+    'rawEvent': rawEvent?.toMap(),
+    'arrivedAt': arrivedAt?.toIso8601String(),
+  };
+
+  factory UnifiedQuakeData.fromMap(Map<String, dynamic> map) {
+    DateTime? parseTime(Object? value) {
+      final text = value?.toString();
+      if (text == null || text.trim().isEmpty) return null;
+      return DateTime.tryParse(text);
+    }
+
+    double? parseDouble(Object? value) {
+      if (value is num) return value.toDouble();
+      return double.tryParse(value?.toString() ?? '');
+    }
+
+    int? parseInt(Object? value) {
+      if (value is num) return value.toInt();
+      final text = value?.toString().trim() ?? '';
+      return text.isEmpty ? null : int.tryParse(text);
+    }
+
+    final raw = map['rawEvent'];
+    return UnifiedQuakeData(
+      source: map['source']?.toString() ?? '',
+      origin: (map['origin'] as num?)?.toInt() ?? -1,
+      eventId: map['eventId']?.toString() ?? '',
+      isEew: map['isEew'] == true,
+      timeZone: parseInt(map['timeZone']) ?? 8,
+      titleText: map['titleText']?.toString() ?? '',
+      reportNumText: map['reportNumText']?.toString() ?? '',
+      useShindo: map['useShindo'] == true,
+      maxIntensity: map['maxIntensity']?.toString() ?? '-',
+      className: map['className']?.toString() ?? 'gray',
+      hypocenter: map['hypocenter']?.toString() ?? '',
+      originTime: parseTime(map['originTime']),
+      reportTime: parseTime(map['reportTime']),
+      magnitude: parseDouble(map['magnitude']) ?? -1,
+      depth: parseDouble(map['depth']) ?? -1,
+      depthText: map['depthText']?.toString() ?? '',
+      lat: parseDouble(map['lat']),
+      lng: parseDouble(map['lng']),
+      isWarn: map['isWarn'] == true,
+      isFinal: map['isFinal'] == true,
+      isCanceled: map['isCanceled'] == true,
+      isAssumption: map['isAssumption'] == true,
+      warnArea: map['warnArea']?.toString() ?? '',
+      apiTypeLabel: map['apiTypeLabel']?.toString() ?? '',
+      nodalPlane1: map['nodalPlane1']?.toString(),
+      nodalPlane2: map['nodalPlane2']?.toString(),
+      centroidDepth: parseDouble(map['centroidDepth']),
+      momentTensor: map['momentTensor'] is Map
+          ? CmtMomentTensor.fromNedMap(
+              Map<dynamic, dynamic>.from(map['momentTensor'] as Map),
+            )
+          : null,
+      cmtMetadata: map['cmtMetadata'] is Map
+          ? CmtSolutionMetadata.fromMap(
+              Map<dynamic, dynamic>.from(map['cmtMetadata'] as Map),
+            )
+          : null,
+      volcanoEvent: map['volcanoEvent'] is Map
+          ? VolcanoEventData.fromMap(
+              Map<dynamic, dynamic>.from(map['volcanoEvent'] as Map),
+            )
+          : null,
+      isJmaLpgm: map['isJmaLpgm'] == true,
+      jmaLpgmBulletin: map['jmaLpgmBulletin'] is Map
+          ? JmaLpgmBulletin.fromMap(
+              Map<dynamic, dynamic>.from(map['jmaLpgmBulletin'] as Map),
+            )
+          : null,
+      rawEvent: raw is Map
+          ? QuakeMessage.fromMap(Map<String, dynamic>.from(raw))
+          : null,
+      arrivedAt: parseTime(map['arrivedAt']),
+    );
+  }
 
   UnifiedQuakeData copyWith({
     String? source,
@@ -143,6 +264,8 @@ class UnifiedQuakeData {
     CmtMomentTensor? momentTensor,
     CmtSolutionMetadata? cmtMetadata,
     VolcanoEventData? volcanoEvent,
+    bool? isJmaLpgm,
+    JmaLpgmBulletin? jmaLpgmBulletin,
     QuakeMessage? rawEvent,
     DateTime? arrivedAt,
   }) {
@@ -177,6 +300,8 @@ class UnifiedQuakeData {
       momentTensor: momentTensor ?? this.momentTensor,
       cmtMetadata: cmtMetadata ?? this.cmtMetadata,
       volcanoEvent: volcanoEvent ?? this.volcanoEvent,
+      isJmaLpgm: isJmaLpgm ?? this.isJmaLpgm,
+      jmaLpgmBulletin: jmaLpgmBulletin ?? this.jmaLpgmBulletin,
       rawEvent: rawEvent ?? this.rawEvent,
       arrivedAt: arrivedAt ?? this.arrivedAt,
     );

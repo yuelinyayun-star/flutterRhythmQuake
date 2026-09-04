@@ -22,7 +22,9 @@ class _InAppNotificationOverlayState extends State<InAppNotificationOverlay> {
   @override
   void initState() {
     super.initState();
-    _subscription = InAppNotificationController().stream.listen(_onNotification);
+    _subscription = InAppNotificationController().stream.listen(
+      _onNotification,
+    );
   }
 
   @override
@@ -66,100 +68,96 @@ class _InAppNotificationOverlayState extends State<InAppNotificationOverlay> {
       child: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.end,
-          children:
-              _notifications.reversed.map((item) {
-                final data = item.data;
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: MouseRegion(
-                    cursor: SystemMouseCursors.click,
-                    child: GestureDetector(
-                      onTap: () {
-                        data.onTap?.call();
-                        _remove(item);
-                      },
-                      child: AnimatedOpacity(
-                        opacity: 1.0,
-                        duration: const Duration(milliseconds: 200),
-                        child: Material(
-                          color: const Color(0xFF1A1A1E),
-                          elevation: 6,
+          children: _notifications.reversed.map((item) {
+            final data = item.data;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: GestureDetector(
+                  onTap: () {
+                    data.onTap?.call();
+                    _remove(item);
+                  },
+                  child: AnimatedOpacity(
+                    opacity: 1.0,
+                    duration: const Duration(milliseconds: 200),
+                    child: Material(
+                      color: const Color(0xFF1A1A1E),
+                      elevation: 6,
+                      borderRadius: BorderRadius.circular(10),
+                      child: Container(
+                        decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(10),
-                          child: Container(
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(
-                                color: data.accentColor.withValues(alpha: 0.6),
+                          border: Border.all(
+                            color: data.accentColor.withValues(alpha: 0.6),
+                          ),
+                        ),
+                        padding: const EdgeInsets.all(12),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              width: 34,
+                              height: 34,
+                              decoration: BoxDecoration(
+                                color: data.accentColor.withValues(alpha: 0.18),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Icon(
+                                data.icon,
+                                color: data.accentColor,
+                                size: 18,
                               ),
                             ),
-                            padding: const EdgeInsets.all(12),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Container(
-                                  width: 34,
-                                  height: 34,
-                                  decoration: BoxDecoration(
-                                    color: data.accentColor.withValues(
-                                      alpha: 0.18,
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    data.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 13.5,
+                                      fontWeight: FontWeight.w700,
                                     ),
-                                    borderRadius: BorderRadius.circular(8),
                                   ),
-                                  child: Icon(
-                                    data.icon,
-                                    color: data.accentColor,
-                                    size: 18,
-                                  ),
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        data.title,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 13.5,
-                                          fontWeight: FontWeight.w700,
-                                        ),
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    data.body,
+                                    maxLines: 3,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: Colors.white.withValues(
+                                        alpha: 0.75,
                                       ),
-                                      const SizedBox(height: 3),
-                                      Text(
-                                        data.body,
-                                        maxLines: 3,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          color: Colors.white.withValues(
-                                            alpha: 0.75,
-                                          ),
-                                          fontSize: 12,
-                                          height: 1.35,
-                                        ),
-                                      ),
-                                    ],
+                                      fontSize: 12,
+                                      height: 1.35,
+                                    ),
                                   ),
-                                ),
-                                GestureDetector(
-                                  onTap: () => _remove(item),
-                                  child: Icon(
-                                    Icons.close,
-                                    color: Colors.white.withValues(alpha: 0.5),
-                                    size: 16,
-                                  ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
-                          ),
+                            GestureDetector(
+                              onTap: () => _remove(item),
+                              child: Icon(
+                                Icons.close,
+                                color: Colors.white.withValues(alpha: 0.5),
+                                size: 16,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
                   ),
-                );
-              }).toList(),
+                ),
+              ),
+            );
+          }).toList(),
         ),
       ),
     );

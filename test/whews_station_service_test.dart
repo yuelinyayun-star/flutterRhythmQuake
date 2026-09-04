@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutterrhythmquake/services/sources/whews_station_service.dart';
 
@@ -45,5 +43,62 @@ void main() {
     expect(whewsNiedSnetValueIsValid(-3.0), isFalse);
     expect(whewsNiedSnetValueIsValid(-2.99), isTrue);
     expect(whewsNiedSnetValueIsValid(0.0), isTrue);
+    expect(whewsNiedSnetValueIsValid(7.01), isFalse);
+    expect(whewsNiedSnetValueIsValid(double.nan), isFalse);
+  });
+
+  test('NIED rejects an out-of-range primary value without clamping', () async {
+    final service = WhewsStationService(
+      kind: WhewsStationKind.nied,
+      apiToken: 'test-token',
+    );
+    final frames = <WhewsStationFrame>[];
+    final subscription = service.frameStream.listen(frames.add);
+
+    service.handleMessageForTesting({
+      'type': 'nied_stations_update',
+      'stations': [
+        {'latitude': 35.0, 'longitude': 139.0},
+      ],
+    });
+    service.handleMessageForTesting({
+      'Data': {
+        'timestamp': '2026-08-10T12:00:00+09:00',
+        'shindo': [99],
+      },
+    });
+    await Future<void>.delayed(Duration.zero);
+
+    expect(frames, isEmpty);
+    await subscription.cancel();
+    service.dispose();
+  });
+
+  test('negative PGA rejects the complete station frame', () async {
+    final service = WhewsStationService(
+      kind: WhewsStationKind.snet,
+      apiToken: 'test-token',
+    );
+    final frames = <WhewsStationFrame>[];
+    final subscription = service.frameStream.listen(frames.add);
+
+    service.handleMessageForTesting({
+      'type': 'snet_stations_update',
+      'stations': [
+        {'latitude': 35.0, 'longitude': 142.0},
+      ],
+    });
+    service.handleMessageForTesting({
+      'Data': {
+        'timestamp': '2026-08-10T12:00:00+09:00',
+        'shindo': [1.2],
+        'pga': [-0.1],
+      },
+    });
+    await Future<void>.delayed(Duration.zero);
+
+    expect(frames, isEmpty);
+    await subscription.cancel();
+    service.dispose();
   });
 }

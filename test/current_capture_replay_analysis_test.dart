@@ -403,16 +403,22 @@ Future<Map<String, Object?>> _runCase(
       });
       continue;
     }
+    final observedAt = _jstWallClockToUtc(t);
     imageService.processPixels(
       decoded.packedRgb,
       surfaceGifBytes: decoded.gifBytes,
-      dataTime: t,
-      receivedAt: t,
+      dataTime: observedAt,
+      receivedAt: observedAt,
     );
     await Future<void>.delayed(Duration.zero);
     final stations = latestStations;
     if (stations == null) continue;
-    final detection = driver.processStations(stations.cast(), observedAt: t);
+    final algorithmStopwatch = Stopwatch()..start();
+    final detection = driver.processStations(
+      stations.cast(),
+      observedAt: observedAt,
+    );
+    algorithmStopwatch.stop();
     final event = StationEventTracker.instance.currentNiedEvent.value;
     final estimate = event?.estimate;
     final estimatePoint = estimate == null
@@ -424,16 +430,18 @@ Future<Map<String, Object?>> _runCase(
       'memberCount': detection.memberStationIds.length,
       'eventId': detection.eventId,
       'stage': event?.stageName,
+      'algorithmRuntimeMicros': algorithmStopwatch.elapsedMicroseconds,
       'estimate': estimate == null
           ? null
           : {
               'latitude': estimate.latitude,
               'longitude': estimate.longitude,
               'depthKm': estimate.depthKm,
+              'magnitude': estimate.magnitude,
               'confidence': estimate.confidence,
               'supportingStationCount': estimate.supportingStationCount,
               'method': estimate.method,
-              'originTime': estimate.originTime?.toIso8601String(),
+              'originTime': estimate.originTime?.toUtc().toIso8601String(),
               'errorKm': replayCase.truth == null
                   ? null
                   : _distanceKm(estimatePoint!, replayCase.truth!),
@@ -498,6 +506,17 @@ Future<Map<String, Object?>> _runCase(
     'findings': _findings(frames, replayCase),
   };
 }
+
+DateTime _jstWallClockToUtc(DateTime wallClock) => DateTime.utc(
+  wallClock.year,
+  wallClock.month,
+  wallClock.day,
+  wallClock.hour,
+  wallClock.minute,
+  wallClock.second,
+  wallClock.millisecond,
+  wallClock.microsecond,
+).subtract(const Duration(hours: 9));
 
 ({NiedDartHypSourceEstimator estimator, String label}) _writebackExperiment(
   String value, {
@@ -580,6 +599,18 @@ Map<String, Object?> _compactDiagnostics(Map<String, Object?> diagnostics) {
     'search_candidate_score_call_count',
     'search_elapsed_ms',
     'travel_time_curve_frozen',
+    'selected_detection_id',
+    'nied_dart_hyp_report_num',
+    'nied_dart_hyp_stable',
+    'nied_dart_hyp_stable_update_count',
+    'nied_dart_hyp_stable_update_threshold',
+    'nied_dart_hyp_calculation_complete',
+    'srev_kaizou_magnitude_supported',
+    'srev_kaizou_magnitude',
+    'srev_kaizou_magnitude_input_intensity',
+    'srev_kaizou_magnitude_processed_intensity',
+    'srev_kaizou_magnitude_branch',
+    'srev_kaizou_magnitude_active_detection_count',
   ];
   return <String, Object?>{
     for (final key in keys)

@@ -71,6 +71,18 @@ class TyphoonService {
     )).typhoons;
   }
 
+  /// 接收 Android 前台服务已经完成请求和解析的结果。
+  void ingestExternal(List<TyphoonData> typhoons) {
+    final next = List<TyphoonData>.unmodifiable(typhoons);
+    final signature = next.map((item) => item.signature).join('||');
+    if (signature == _lastSignature && next.length == _lastTyphoons.length) {
+      return;
+    }
+    _lastSignature = signature;
+    _lastTyphoons = next;
+    onActiveTyphoonsChanged?.call(_lastTyphoons);
+  }
+
   Future<_TyphoonFetchResult> _fetchWithRaw(Uri uri) async {
     final resp = await http
         .get(

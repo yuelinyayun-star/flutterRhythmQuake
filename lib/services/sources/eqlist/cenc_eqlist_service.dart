@@ -15,6 +15,9 @@ class CencEqlistService {
   static const String _url = 'https://api.wolfx.jp/cenc_eqlist.json';
 
   void Function(List<QuakeMessage>)? onListUpdated;
+
+  /// HTTP 轮询状态回调
+  void Function(bool connected)? onStatusChanged;
   Timer? _timer;
   final EqlistHttpPollGate _pushGate = EqlistHttpPollGate();
 
@@ -39,12 +42,14 @@ class CencEqlistService {
           .get(Uri.parse(_url))
           .timeout(const Duration(seconds: 15));
       if (resp.statusCode != 200) {
+        onStatusChanged?.call(false);
         print('CENC HTTP ${resp.statusCode}');
         return;
       }
 
       final data = json.decode(resp.body);
       if (data is! Map) return;
+      onStatusChanged?.call(true);
 
       final items = QuakeEventAdapter.convertWolfxCencEqlist(
         Map<String, dynamic>.from(data),
@@ -54,6 +59,7 @@ class CencEqlistService {
         onListUpdated?.call(items);
       }
     } catch (e) {
+      onStatusChanged?.call(false);
       print('CENC eqlist fetch error: $e');
     }
   }

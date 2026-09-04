@@ -42,9 +42,8 @@ void main() {
     expect(policy['diagnosticOnly'], isTrue);
 
     final buckets = (report['buckets'] as Map).cast<String, Object?>();
-    final kantoBucket =
-        (buckets['eventLatitudeBand_kanto_chubu'] as Map)
-            .cast<String, Object?>();
+    final kantoBucket = (buckets['eventLatitudeBand_kanto_chubu'] as Map)
+        .cast<String, Object?>();
     expect(kantoBucket['falsePositiveCount'], greaterThan(0));
     expect(kantoBucket['falseNegativeCount'], greaterThan(0));
 

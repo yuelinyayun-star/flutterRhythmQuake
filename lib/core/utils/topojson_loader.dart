@@ -4,11 +4,18 @@ import 'package:latlong2/latlong.dart';
 
 class TopoJsonRegion {
   final String name;
+  final String code;
   final List<List<LatLng>> polygons;
   final List<List<LatLng>> lines;
   LatLng? center;
 
-  TopoJsonRegion({required this.name, required this.polygons, this.lines = const [], this.center});
+  TopoJsonRegion({
+    required this.name,
+    this.code = '',
+    required this.polygons,
+    this.lines = const [],
+    this.center,
+  });
 
   void calculateCenter() {
     final allPoints = [...polygons.expand((p) => p), ...lines.expand((l) => l)];
@@ -28,14 +35,14 @@ class TopoJsonData {
   final Map<String, TopoJsonRegion> regionMap;
 
   TopoJsonData({required this.source, required this.regions})
-      : regionMap = {for (var r in regions) r.name: r};
+    : regionMap = {for (var r in regions) r.name: r};
 
   TopoJsonRegion? getRegion(String name) => regionMap[name];
 
   Map<String, (double, double)> getCenters() {
     return {
       for (var r in regions)
-        if (r.center != null) r.name: (r.center!.latitude, r.center!.longitude)
+        if (r.center != null) r.name: (r.center!.latitude, r.center!.longitude),
     };
   }
 }
@@ -53,17 +60,15 @@ class TopoJsonLoader {
   static TopoJsonData? get twData => _twData ?? _cnData;
 
   static Future<void> loadAll() async {
-    await Future.wait([
-      loadCnEew(),
-      loadJpEew(),
-      loadKrEew(),
-    ]);
+    await Future.wait([loadCnEew(), loadJpEew(), loadKrEew()]);
   }
 
   static Future<TopoJsonData?> loadCnEew() async {
     if (_cnData != null) return _cnData;
     try {
-      final jsonStr = await rootBundle.loadString('assets/maps/cn.eew.topo.json');
+      final jsonStr = await rootBundle.loadString(
+        'assets/maps/cn.eew.topo.json',
+      );
       _cnData = parse(jsonStr, source: 'cn');
       return _cnData;
     } catch (e) {
@@ -75,7 +80,9 @@ class TopoJsonLoader {
   static Future<TopoJsonData?> loadJpEew() async {
     if (_jpData != null) return _jpData;
     try {
-      final jsonStr = await rootBundle.loadString('assets/maps/jp.eew.topo.json');
+      final jsonStr = await rootBundle.loadString(
+        'assets/maps/jp.eew.topo.json',
+      );
       _jpData = parse(jsonStr, source: 'jp');
       return _jpData;
     } catch (e) {
@@ -87,7 +94,9 @@ class TopoJsonLoader {
   static Future<TopoJsonData?> loadKrEew() async {
     if (_krData != null) return _krData;
     try {
-      final jsonStr = await rootBundle.loadString('assets/maps/kr.eew.topo.json');
+      final jsonStr = await rootBundle.loadString(
+        'assets/maps/kr.eew.topo.json',
+      );
       _krData = parse(jsonStr, source: 'kr');
       return _krData;
     } catch (e) {
@@ -104,7 +113,9 @@ class TopoJsonLoader {
   static Future<TopoJsonData?> loadJpTsunami() async {
     if (_jpTsunamiData != null) return _jpTsunamiData;
     try {
-      final jsonStr = await rootBundle.loadString('assets/maps/jp.tsunami.topo.json');
+      final jsonStr = await rootBundle.loadString(
+        'assets/maps/jp.tsunami.topo.json',
+      );
       _jpTsunamiData = parse(jsonStr, source: 'jp_tsunami');
       return _jpTsunamiData;
     } catch (e) {
@@ -134,7 +145,13 @@ class TopoJsonLoader {
     final translateX = translate[0].toDouble();
     final translateY = translate[1].toDouble();
 
-    final absoluteArcs = _decodeArcsToAbsolute(rawArcs, scaleX, scaleY, translateX, translateY);
+    final absoluteArcs = _decodeArcsToAbsolute(
+      rawArcs,
+      scaleX,
+      scaleY,
+      translateX,
+      translateY,
+    );
 
     final regions = <TopoJsonRegion>[];
     final objects = data['objects'] as Map<String, dynamic>;
@@ -179,7 +196,13 @@ class TopoJsonLoader {
           continue;
         }
 
-        final region = TopoJsonRegion(name: name, polygons: polygons, lines: lines);
+        final code = props?['code']?.toString() ?? '';
+        final region = TopoJsonRegion(
+          name: name,
+          code: code,
+          polygons: polygons,
+          lines: lines,
+        );
         region.calculateCenter();
         regions.add(region);
       }
@@ -216,7 +239,10 @@ class TopoJsonLoader {
     return result;
   }
 
-  static List<LatLng> _stitchArcRefs(List arcRefs, List<List<LatLng>> absoluteArcs) {
+  static List<LatLng> _stitchArcRefs(
+    List arcRefs,
+    List<List<LatLng>> absoluteArcs,
+  ) {
     final points = <LatLng>[];
 
     for (final arcRef in arcRefs) {

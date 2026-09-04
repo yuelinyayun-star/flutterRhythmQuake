@@ -113,6 +113,25 @@ void main() {
   });
 
   testWidgets(
+    'NIED curve overlay closing does not block tracker event updates',
+    (tester) async {
+      await tester.pumpWidget(_curveHost(prepareInBackground: false));
+      eventNotifier.value = _curveEvent(depthKm: 10);
+      await _pumpUntilPaintedDepth(tester, 10);
+
+      UiRuntimeFlags.niedHypCurvePanelVisibleNotifier.value = false;
+      await tester.pump();
+
+      eventNotifier.value = _curveEvent(depthKm: 45, curveRevision: 2);
+      await tester.pump();
+      expect(eventNotifier.value?.estimate?.depthKm, 45);
+
+      UiRuntimeFlags.niedHypCurvePanelVisibleNotifier.value = true;
+      await _pumpUntilPaintedDepth(tester, 45);
+    },
+  );
+
+  testWidgets(
     'NIED curve overlay follows published depth revisions in background mode',
     (tester) async {
       final rawPanels = <Map<String, Object?>>[_curvePanel(depthKm: 10)];

@@ -36,6 +36,7 @@ class UsgsCmtService {
 
   /// 列表数据回调
   void Function(List<Map<String, dynamic>>)? onListUpdated;
+  void Function(bool connected)? onStatusChanged;
 
   Timer? _timer;
   bool _initialized = false;
@@ -66,12 +67,14 @@ class UsgsCmtService {
           .get(Uri.parse(_queryUrl))
           .timeout(const Duration(seconds: 15));
       if (resp.statusCode != 200) {
+        onStatusChanged?.call(false);
         print('USGS CMT query HTTP ${resp.statusCode}');
         return;
       }
       final data = json.decode(resp.body);
       final features = data['features'] as List?;
       if (features == null || features.isEmpty) return;
+      onStatusChanged?.call(true);
 
       // Step 2: 逐事件获取详情，提取 moment-tensor 产品
       final items = <Map<String, dynamic>>[];
@@ -88,6 +91,7 @@ class UsgsCmtService {
       }
     } catch (e) {
       print('USGS CMT fetch error: $e');
+      onStatusChanged?.call(false);
     } finally {
       _fetching = false;
     }
@@ -138,7 +142,7 @@ class UsgsCmtService {
   ///
   /// 字段映射：
   /// - eventId: feature.id（如 us7000t37a）
-  /// - originTime: mtProps.eventtime（UTC ISO → UTC+8 字符串）
+  /// - originTime: mtProps.eventtime（保留 UTC ISO 绝对时间）
   /// - latitude/longitude: feature.geometry.coordinates（震中坐标）
   /// - depth: feature.geometry.coordinates[2]（震源深度，km）
   /// - magnitude: mtProps.derived-magnitude（矩震级 Mw，fallback 速报震级）
@@ -204,18 +208,11 @@ class UsgsCmtService {
       final place = feature['properties']?['place']?.toString() ?? '';
       final cnPlace = getFEName(lat, lng);
 
-      // originTime 转 UTC+8 字符串（与 usgs_eqlist_service._formatEpochAsUtc8 一致）
-      final originTimeUtc8 = originTime.add(const Duration(hours: 8));
-      String two(int p) => p.toString().padLeft(2, '0');
-      final originTimeStr =
-          '${originTimeUtc8.year.toString().padLeft(4, '0')}-'
-          '${two(originTimeUtc8.month)}-${two(originTimeUtc8.day)} '
-          '${two(originTimeUtc8.hour)}:${two(originTimeUtc8.minute)}:'
-          '${two(originTimeUtc8.second)}';
-
       return {
         'eventId': eventId,
-        'originTime': originTimeStr,
+        // USGS eventtime is an ISO instant with a Z suffix. Do not rewrite it
+        // as a source wall clock; the adapter will localize it to the device.
+        'originTime': originTime.toUtc().toIso8601String(),
         'latitude': lat,
         'longitude': lng,
         'depth': depth ?? -1,

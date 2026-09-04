@@ -536,6 +536,7 @@ class _TopStatusBarState extends State<TopStatusBar> {
   }
 
   Future<bool> _submitNiedGifPath(String path) async {
+    final previousSource = QuakeMapView.niedSourceNotifier.value;
     try {
       QuakeMapView.niedSourceNotifier.value = 'lmoni';
       NiedMonitorService().stop();
@@ -548,11 +549,13 @@ class _TopStatusBarState extends State<TopStatusBar> {
         return false;
       }
       final count = await mockService.injectFromNiedGifPath(path);
-      _toast('NIED GIF注入成功：$count 秒');
+      _toast('NIED GIF注入成功：$count 秒，已恢复实时源');
       return true;
     } catch (e) {
       _toast('NIED GIF注入失败：$e');
       return false;
+    } finally {
+      QuakeMapView.restoreNiedLiveSource(previousSource);
     }
   }
 

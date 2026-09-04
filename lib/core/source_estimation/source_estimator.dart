@@ -5,6 +5,7 @@ import 'package:latlong2/latlong.dart';
 
 import '../../models/nied_calibration.dart';
 import '../../models/nied_station_db.dart';
+import '../calculator.dart';
 import '../../services/sources/jp_shindo_scale.dart';
 import '../../services/sources/nied_detection_rules.dart';
 import 'jma2001_travel_time_approximation.dart';
@@ -13,6 +14,7 @@ import 'kotoho7_js_eew_bridge.dart';
 import 'kotoho7_js_receiver_bridge.dart' as kotoho7_js;
 import 'nied_pgv_magnitude_diagnostics.dart';
 import 'source_estimation_models.dart';
+import 'srev_kaizou_magnitude.dart';
 import 'station_observation_history.dart';
 
 part 'kotoho7_scratch_reference_tables.dart';
@@ -1059,7 +1061,8 @@ class Kotoho7JsReceiverSourceEstimator implements SourceEstimator {
     if (latitude == null ||
         longitude == null ||
         !latitude.isFinite ||
-        !longitude.isFinite) {
+        !longitude.isFinite ||
+        !QuakeCalculator.isUsableMapCoordinate(latitude, longitude)) {
       request.metadata['kotoho7_js_receiver_null_reason'] =
           'best_source_missing_or_invalid';
       _debugKotoho7ReceiverStatus(
@@ -1310,6 +1313,9 @@ enum NiedHypSearchSchedule {
 
 class NiedDartHypSourceEstimator
     implements SourceEstimator, SourceEstimatorLifecycleOwner {
+  static const int stableHypocenterUpdateThreshold = 15;
+  static const double _stableHypocenterEpsilon = 1e-9;
+
   NiedDartHypSourceEstimator({
     this.maxCachedEvents = 8,
     this.bboxPaddingDeg = 0.60,
@@ -1342,7 +1348,11 @@ class NiedDartHypSourceEstimator
     if (workerFrame == null) return false;
     final state = _states[_stateKey(request)];
     if (state != null && state.hasLifecycleState) return true;
-    return workerFrame.activeStations.length >= 5;
+    // KA invokes FindNiedHypocenter for every non-empty active-station frame.
+    // The five-station condition belongs to the cluster's publishable-result
+    // check, not to the estimator dispatch gate. Keeping this gate open lets
+    // the reference cluster retain its early stations until later arrivals.
+    return workerFrame.activeStations.isNotEmpty;
   }
 
   @override
@@ -1363,6 +1373,10 @@ class NiedDartHypSourceEstimator
       referenceAligned:
           searchSchedule == NiedHypSearchSchedule.referenceBroadFourStage,
     );
+    eventState.magnitudeIntensityState.updateFrame(<String, double?>{
+      for (final station in workerFrame.activeStations)
+        station.code: station.currentShindo,
+    }, observedAt: request.observedAt);
     request.metadata
       ..['nied_dart_hyp_assignment_accepted'] = Map<String, String>.from(
         eventState.lastAssignmentAcceptedByCode,
@@ -1410,6 +1424,13 @@ class NiedDartHypSourceEstimator
           historicalMinimumMultiplier: historicalMinimumMultiplier,
           searchSchedule: searchSchedule,
         );
+        if (referenceAligned) {
+          detectionState.refreshPublishedHypocenterState(
+            estimate,
+            stableThreshold: stableHypocenterUpdateThreshold,
+            epsilon: _stableHypocenterEpsilon,
+          );
+        }
         metadataById[entry.key] = childMetadata;
         if (estimate != null) estimatesById[entry.key] = estimate;
         if (referenceAligned) {
@@ -1444,7 +1465,12 @@ class NiedDartHypSourceEstimator
       selectedId: selectedId,
       observedAt: request.observedAt,
     );
-    request.metadata['nied_dart_hyp_detection_ids'] = idDiagnostics;
+    request.metadata
+      ..['nied_dart_hyp_detection_ids'] = idDiagnostics
+      ..['nied_dart_hyp_sources'] = eventState.sourceSnapshots(
+        estimatesById: estimatesById,
+        selectedId: selectedId,
+      );
     final hasActiveDetectionId = eventState.hasActiveDetectionId;
     request.metadata['nied_dart_hyp_has_active_detection_id'] =
         hasActiveDetectionId;
@@ -1486,6 +1512,53 @@ class NiedDartHypSourceEstimator
       }
     }
     final selectedState = eventState.detectionIds[selectedId]!;
+    final activeDetectionCount = eventState.activeDetectionCount;
+    final multipleSources = activeDetectionCount > 1;
+    final magnitudeStationCodes = multipleSources
+        ? selectedState.worker.activeStationsByCode.keys
+        : workerFrame.activeStations.map((station) => station.code);
+    final magnitudeInputIntensity = eventState.magnitudeIntensityState
+        .maximumFor(magnitudeStationCodes);
+    SrevKaizouMagnitudeResult? calculateCurrentSrevMagnitude() =>
+        magnitudeInputIntensity == null
+        ? null
+        : calculateSrevKaizouMagnitude(
+            sourceLatitude: selected.latitude,
+            sourceLongitude: selected.longitude,
+            inputIntensity: magnitudeInputIntensity,
+            multipleSources: multipleSources,
+          );
+    final srevMagnitudeResult = referenceAligned
+        ? selectedState.srevMagnitudePublicationState.update(
+            reportNumber: selectedState.referenceReportNum,
+            stable: selectedState.referenceStable,
+            calculate: calculateCurrentSrevMagnitude,
+          )
+        : calculateCurrentSrevMagnitude();
+    final srevMagnitudeDiagnostics =
+        srevMagnitudeResult?.toDiagnostics() ??
+        <String, Object?>{
+          'srev_kaizou_magnitude_model': srevKaizouMagnitudeModelId,
+          'srev_kaizou_magnitude_source_revision':
+              srevKaizouMagnitudeSourceRevision,
+          'srev_kaizou_magnitude_source_project_sha256':
+              srevKaizouMagnitudeSourceProjectSha256,
+          'srev_kaizou_magnitude_supported': false,
+          'srev_kaizou_magnitude_unavailable_reason':
+              magnitudeInputIntensity == null
+              ? 'no_current_or_held_detection_intensity'
+              : 'invalid_source_or_station_distance',
+          'srev_kaizou_magnitude_branch': multipleSources
+              ? 'multiple_sources_detection_max'
+              : 'single_source_global_max',
+        };
+    srevMagnitudeDiagnostics['srev_kaizou_magnitude_active_detection_count'] =
+        activeDetectionCount;
+    if (referenceAligned) {
+      srevMagnitudeDiagnostics.addAll(
+        selectedState.srevMagnitudePublicationState.toDiagnostics(),
+      );
+    }
     final pgvMagnitudeDiagnostics = niedGifPgvMagnitudeDiagnostics(
       stations: request.stations,
       sourceLatitude: selected.latitude,
@@ -1519,12 +1592,29 @@ class NiedDartHypSourceEstimator
       ...pgvMagnitudeDiagnostics,
       ...jmaStyleMagnitudeDiagnostics,
       ...distanceWeightedPgvMagnitudeDiagnostics,
+      ...srevMagnitudeDiagnostics,
+    };
+    final referencePublishedStateDiagnostics = <String, Object?>{
+      if (referenceAligned) ...{
+        'nied_dart_hyp_report_num': selectedState.referenceReportNum,
+        'nied_dart_hyp_stable': selectedState.referenceStable,
+        'nied_dart_hyp_stable_update_count':
+            selectedState.referenceStableHypocenterUpdateCount,
+        'nied_dart_hyp_stable_update_threshold':
+            stableHypocenterUpdateThreshold,
+        'nied_dart_hyp_calculation_complete': true,
+        'nied_dart_hyp_calculation_state': 'complete',
+      },
+    };
+    final realtimeOutputDiagnostics = <String, Object?>{
+      ...realtimeMagnitudeDiagnostics,
+      ...referencePublishedStateDiagnostics,
     };
     if (identical(selectedState.lastOutputBaseEstimate, selected) &&
         selectedState.lastOutputEstimate != null &&
         _sameNiedRealtimeMagnitudeDiagnostics(
           selectedState.lastOutputEstimate!.diagnostics,
-          realtimeMagnitudeDiagnostics,
+          realtimeOutputDiagnostics,
         )) {
       return selectedState.lastOutputEstimate;
     }
@@ -1532,17 +1622,18 @@ class NiedDartHypSourceEstimator
       latitude: selected.latitude,
       longitude: selected.longitude,
       depthKm: selected.depthKm,
-      magnitude: selected.magnitude,
+      magnitude: srevMagnitudeResult?.magnitude,
       originTime: selected.originTime,
       confidence: selected.confidence,
       method: selected.method,
       supportingStationCount: selected.supportingStationCount,
       diagnostics: {
         ...selected.diagnostics,
-        ...realtimeMagnitudeDiagnostics,
+        ...realtimeOutputDiagnostics,
         'detection_id_model':
             'scratch_id3_id4_assignment_with_ka_detection_grid_v1',
         'selected_detection_id': selectedId,
+        'nied_dart_hyp_selected': true,
         'detection_ids': idDiagnostics,
         'detection_id_active': selectedState.active,
         'detection_id_expire_at': selectedState.expireAt.toIso8601String(),
@@ -9090,6 +9181,10 @@ _NiedHypWorkerFrame? _niedHypWorkerFrame(SourceEstimationRequest request) {
   final latitude = _doubleFromObject(values[0]);
   final longitude = _doubleFromObject(values[1]);
   if (latitude == null || longitude == null) return null;
+  if (!QuakeCalculator.isUsableMapCoordinate(latitude, longitude)) return null;
+  if (QuakeCalculator.isLikelyUninitializedCoordinate(latitude, longitude)) {
+    return null;
+  }
   return (latitude: latitude, longitude: longitude);
 }
 
@@ -9134,6 +9229,7 @@ _NiedHypWorkerStation? _niedHypStationFromSnapshot(
   final triggerAt = _niedHypSnapshotTime(snapshot['triggerStamp']);
   if (active && triggerAt == null) return null;
   final level = _intFromObject(snapshot['level']);
+  final currentShindo = _doubleFromObject(snapshot['shindo']);
   final ascend = _intFromObject(snapshot['ascend']) ?? 0;
   return _NiedHypWorkerStation(
     id: snapshot['id']?.toString() ?? code,
@@ -9142,34 +9238,52 @@ _NiedHypWorkerStation? _niedHypStationFromSnapshot(
     triggerAt: triggerAt,
     updateAt: updateAt,
     level: level,
+    currentShindo: currentShindo,
     ascend: ascend,
     active: active,
   );
 }
 
 LatLng? _niedHypSnapshotLatLng(Map<String, Object?> snapshot) {
+  LatLng? parsed;
   final latLng = snapshot['latLng'];
   if (latLng is Iterable) {
     final values = latLng.toList(growable: false);
     if (values.length >= 2) {
       final lat = _doubleFromObject(values[0]);
       final lng = _doubleFromObject(values[1]);
-      if (lat != null && lng != null) return LatLng(lat, lng);
+      if (lat != null && lng != null) parsed = LatLng(lat, lng);
     }
   }
-  if (latLng is Map) {
+  if (parsed == null && latLng is Map) {
     final lat = _doubleFromObject(latLng['lat'] ?? latLng['latitude']);
     final lng = _doubleFromObject(
       latLng['lng'] ?? latLng['lon'] ?? latLng['longitude'],
     );
-    if (lat != null && lng != null) return LatLng(lat, lng);
+    if (lat != null && lng != null) parsed = LatLng(lat, lng);
   }
-  final lat = _doubleFromObject(snapshot['lat'] ?? snapshot['latitude']);
-  final lng = _doubleFromObject(
-    snapshot['lng'] ?? snapshot['lon'] ?? snapshot['longitude'],
-  );
-  if (lat != null && lng != null) return LatLng(lat, lng);
-  return null;
+  parsed ??= () {
+    final lat = _doubleFromObject(snapshot['lat'] ?? snapshot['latitude']);
+    final lng = _doubleFromObject(
+      snapshot['lng'] ?? snapshot['lon'] ?? snapshot['longitude'],
+    );
+    if (lat != null && lng != null) return LatLng(lat, lng);
+    return null;
+  }();
+  if (parsed == null) return null;
+  if (!QuakeCalculator.isUsableMapCoordinate(
+    parsed.latitude,
+    parsed.longitude,
+  )) {
+    return null;
+  }
+  if (QuakeCalculator.isLikelyUninitializedCoordinate(
+    parsed.latitude,
+    parsed.longitude,
+  )) {
+    return null;
+  }
+  return parsed;
 }
 
 DateTime? _niedHypSnapshotTime(Object? value) {
@@ -9221,11 +9335,16 @@ class _NiedHypEventState {
   final Map<String, int> _referenceSubclusterIdByStationId = <String, int>{};
   int _nextReferenceSubclusterId = 1;
   String? lastSourceClearReason;
+  final SrevKaizouMagnitudeIntensityState magnitudeIntensityState =
+      SrevKaizouMagnitudeIntensityState();
 
   bool get hasLifecycleState => detectionIds.isNotEmpty;
 
   bool get hasActiveDetectionId =>
       detectionIds.values.any((state) => state.active);
+
+  int get activeDetectionCount =>
+      detectionIds.values.where((state) => state.active).length;
 
   Map<String, int> get stationDetectionIds => Map<String, int>.unmodifiable(
     Map<String, int>.from(_stationDetectionIdByCode),
@@ -9374,7 +9493,8 @@ class _NiedHypEventState {
         if (station.triggerAt != null) station.id: station,
       for (final station in frame.activeStations)
         if (!stateByStationId.containsKey(station.id) &&
-            !_referenceIgnoredArrivalIds.contains(station.id))
+            !_referenceIgnoredArrivalIds.contains(station.id) &&
+            station.triggerAt != null)
           station.id: station,
     };
     for (final station in arrivalsById.values) {
@@ -9687,6 +9807,7 @@ class _NiedHypEventState {
       ..referenceLastUpdateVersion = base.referenceLastUpdateVersion
       ..referenceReportNum = base.referenceReportNum;
     _referenceCopyWorkerState(merged.worker, base.worker);
+    _referenceCopyPublishedHypocenterState(merged, base);
     for (final station in stations) {
       merged.worker.activeStationsByCode[station.code] = station;
       _referenceInsertStationIntoOrder(merged, station);
@@ -9727,6 +9848,21 @@ class _NiedHypEventState {
         for (final entry in source.referencePreviousWavesByFirstWave.entries)
           entry.key: Map<String, bool>.from(entry.value),
       });
+  }
+
+  void _referenceCopyPublishedHypocenterState(
+    _NiedHypDetectionState target,
+    _NiedHypDetectionState source,
+  ) {
+    target
+      ..referenceReportHypocenter = source.referenceReportHypocenter
+      ..referenceStableHypocenter = source.referenceStableHypocenter
+      ..referenceStableHypocenterUpdateCount =
+          source.referenceStableHypocenterUpdateCount
+      ..referenceStable = source.referenceStable;
+    target.srevMagnitudePublicationState.copyFrom(
+      source.srevMagnitudePublicationState,
+    );
   }
 
   void _referenceRemoveInactiveStates(
@@ -9824,6 +9960,7 @@ class _NiedHypEventState {
       ..referenceLastUpdateVersion = base.referenceLastUpdateVersion
       ..referenceReportNum = base.referenceReportNum;
     _referenceCopyWorkerState(merged.worker, base.worker);
+    _referenceCopyPublishedHypocenterState(merged, base);
     for (final station in stations) {
       merged.worker.activeStationsByCode[station.code] = station;
       _referenceInsertStationIntoOrder(merged, station);
@@ -9859,6 +9996,7 @@ class _NiedHypEventState {
   void _clearReferenceForEmptyActiveStations() {
     lastSourceClearReason = 'kanameishi_reference_active_station_set_empty';
     detectionIds.clear();
+    magnitudeIntensityState.clear();
     _stationDetectionIdByCode.clear();
     _gridCarrierByKey.clear();
     _selectedDetectionId = null;
@@ -10212,6 +10350,7 @@ class _NiedHypEventState {
   void _clearForEmptyGridCarrier() {
     lastSourceClearReason = 'scratch_grid_carrier_id_set_empty';
     detectionIds.clear();
+    magnitudeIntensityState.clear();
     _stationDetectionIdByCode.clear();
     _gridCarrierByKey.clear();
     _selectedDetectionId = null;
@@ -10376,6 +10515,9 @@ class _NiedHypEventState {
               .where((value) => value)
               .length,
           'has_estimate': estimatesById.containsKey(state.id),
+          'report_num': state.referenceReportNum,
+          'stable': state.referenceStable,
+          'stable_update_count': state.referenceStableHypocenterUpdateCount,
           'score': state.worker.previousResult?.score.isFinite == true
               ? state.worker.previousResult!.score
               : null,
@@ -10388,6 +10530,56 @@ class _NiedHypEventState {
           'output_selection_model':
               'current_ka_active_station_overlap_keep_previous_on_tie',
         },
+    ]);
+  }
+
+  List<Map<String, Object?>> sourceSnapshots({
+    required Map<int, SourceEstimate> estimatesById,
+    required int? selectedId,
+  }) {
+    final states = detectionIds.values.toList(growable: false)
+      ..sort((left, right) => left.serial.compareTo(right.serial));
+    return List<Map<String, Object?>>.unmodifiable([
+      for (final state in states)
+        if (estimatesById[state.id] case final estimate?)
+          {
+            'detection_id': state.id,
+            'selected': state.id == selectedId,
+            'latitude': estimate.latitude,
+            'longitude': estimate.longitude,
+            'depth_km': estimate.depthKm,
+            'magnitude': estimate.magnitude,
+            'origin_time': estimate.originTime?.toIso8601String(),
+            'confidence': estimate.confidence,
+            'method': estimate.method,
+            'supporting_station_count': estimate.supportingStationCount,
+            'assigned_station_count': state.worker.activeStationsByCode.length,
+            'report_num': state.referenceReportNum,
+            'stable': state.referenceStable,
+            'stable_update_count': state.referenceStableHypocenterUpdateCount,
+            'score': state.worker.previousResult?.score.isFinite == true
+                ? state.worker.previousResult!.score
+                : null,
+            'diagnostics': {
+              for (final key in const <String>[
+                'error_level',
+                'score',
+                'wave_elapsed_s',
+                'wave_radius_cap_km',
+                'best_source_p_radius_km',
+                'best_source_s_radius_km',
+                'best_source_error',
+              ])
+                if (estimate.diagnostics.containsKey(key))
+                  key: estimate.diagnostics[key],
+              'nied_dart_hyp_report_num': state.referenceReportNum,
+              'nied_dart_hyp_stable': state.referenceStable,
+              'nied_dart_hyp_stable_update_count':
+                  state.referenceStableHypocenterUpdateCount,
+              'nied_dart_hyp_selected': state.id == selectedId,
+              'selected_detection_id': state.id,
+            },
+          },
     ]);
   }
 
@@ -10427,6 +10619,7 @@ class _NiedHypEventState {
     _referenceSubclustersById.clear();
     _referenceSubclusterIdByStationId.clear();
     _nextReferenceSubclusterId = 1;
+    magnitudeIntensityState.clear();
     lastSourceClearReason = 'scratch_event_time_reversed_reset';
   }
 }
@@ -10451,6 +10644,12 @@ class _NiedHypDetectionState {
   String? inactiveReason;
   int referenceUpdates = 0;
   int referenceReportNum = 0;
+  final SrevKaizouMagnitudePublicationState srevMagnitudePublicationState =
+      SrevKaizouMagnitudePublicationState();
+  _NiedPublishedHypocenter? referenceReportHypocenter;
+  _NiedPublishedHypocenter? referenceStableHypocenter;
+  int referenceStableHypocenterUpdateCount = 0;
+  bool referenceStable = false;
   int referenceInactiveUpdateCount = 0;
   int? referenceLastUpdateVersion;
   bool referenceDirty = true;
@@ -10458,12 +10657,84 @@ class _NiedHypDetectionState {
   SourceEstimate? lastOutputBaseEstimate;
   SourceEstimate? lastOutputEstimate;
 
+  void refreshPublishedHypocenterState(
+    SourceEstimate? estimate, {
+    required int stableThreshold,
+    required double epsilon,
+  }) {
+    if (estimate == null) {
+      referenceStableHypocenter = null;
+      referenceStableHypocenterUpdateCount = 0;
+      referenceStable = false;
+      return;
+    }
+
+    final hypocenter = _NiedPublishedHypocenter.fromEstimate(estimate);
+    if (!_samePublishedHypocenter(
+      referenceReportHypocenter,
+      hypocenter,
+      epsilon,
+    )) {
+      referenceReportNum += 1;
+      referenceReportHypocenter = hypocenter;
+    }
+
+    if (_samePublishedHypocenter(
+      referenceStableHypocenter,
+      hypocenter,
+      epsilon,
+    )) {
+      referenceStableHypocenterUpdateCount += 1;
+    } else {
+      referenceStableHypocenter = hypocenter;
+      referenceStableHypocenterUpdateCount = 1;
+      referenceStable = false;
+    }
+    if (referenceStableHypocenterUpdateCount >= stableThreshold) {
+      referenceStable = true;
+    }
+  }
+
   int get expireSeconds {
     final count = worker.activeStationsByCode.length;
     return count < 200 ? (3 + count) * 2 : 400;
   }
 
   DateTime get expireAt => createdAt.add(Duration(seconds: expireSeconds));
+}
+
+class _NiedPublishedHypocenter {
+  const _NiedPublishedHypocenter({
+    required this.latitude,
+    required this.longitude,
+    required this.depthKm,
+  });
+
+  factory _NiedPublishedHypocenter.fromEstimate(SourceEstimate estimate) =>
+      _NiedPublishedHypocenter(
+        latitude: estimate.latitude,
+        longitude: estimate.longitude,
+        depthKm: estimate.depthKm,
+      );
+
+  final double latitude;
+  final double longitude;
+  final double? depthKm;
+}
+
+bool _samePublishedHypocenter(
+  _NiedPublishedHypocenter? left,
+  _NiedPublishedHypocenter? right,
+  double epsilon,
+) {
+  if (left == null || right == null) return false;
+  final leftDepth = left.depthKm;
+  final rightDepth = right.depthKm;
+  if ((leftDepth == null) != (rightDepth == null)) return false;
+  final longitudeDifference = (left.longitude - right.longitude).abs();
+  return (left.latitude - right.latitude).abs() <= epsilon &&
+      math.min(longitudeDifference, 360.0 - longitudeDifference) <= epsilon &&
+      (leftDepth == null || (leftDepth - rightDepth!).abs() <= epsilon);
 }
 
 /// Reference-only cluster bookkeeping. The app-visible detection state remains
@@ -10534,6 +10805,7 @@ _NiedHypWorkerStation _mergeNiedHypStation(
     triggerAt: existing.triggerAt,
     updateAt: incoming.updateAt ?? existing.updateAt,
     level: math.max(existing.level ?? -1, incoming.level ?? -1).toInt(),
+    currentShindo: incoming.currentShindo,
     ascend: math.max(existing.ascend, incoming.ascend),
     active: true,
   );
@@ -10602,6 +10874,7 @@ class _NiedHypWorkerState {
         triggerAt: existing.triggerAt,
         updateAt: incoming.updateAt ?? existing.updateAt,
         level: math.max(existing.level ?? -1, incoming.level ?? -1).toInt(),
+        currentShindo: incoming.currentShindo,
         ascend: math.max(existing.ascend, incoming.ascend),
         active: true,
       );
@@ -10643,6 +10916,7 @@ class _NiedHypWorkerStation {
     required this.triggerAt,
     required this.updateAt,
     required this.level,
+    required this.currentShindo,
     required this.ascend,
     required this.active,
   });
@@ -10653,6 +10927,7 @@ class _NiedHypWorkerStation {
   final DateTime? triggerAt;
   final DateTime? updateAt;
   final int? level;
+  final double? currentShindo;
   final int ascend;
   final bool active;
 }

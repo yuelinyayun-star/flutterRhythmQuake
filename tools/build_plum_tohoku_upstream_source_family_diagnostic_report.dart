@@ -369,7 +369,9 @@ List<Map<String, Object?>> _buildFamilyTransferRows(
     for (final family in familyOrder)
       _familyTransferRow(
         family: family,
-        validation: validation.where((sample) => selector(sample) == family).toList(),
+        validation: validation
+            .where((sample) => selector(sample) == family)
+            .toList(),
         validationTotal: validation.length,
         test: test.where((sample) => selector(sample) == family).toList(),
         testTotal: test.length,
@@ -403,26 +405,30 @@ Map<String, Object?> _familyTransferRow({
 }
 
 Map<String, Object?> _familySnapshot(List<_Sample> samples, int total) {
-  final actualPositiveCount =
-      samples.where((sample) => sample.actualPositive).length;
-  final middleTransitionCount =
-      samples.where((sample) => sample.isMiddleTransitionZone).length;
-  final plumOnlyFalsePositiveCount =
-      samples.where((sample) => sample.plumOnlyFalsePositive).length;
+  final actualPositiveCount = samples
+      .where((sample) => sample.actualPositive)
+      .length;
+  final middleTransitionCount = samples
+      .where((sample) => sample.isMiddleTransitionZone)
+      .length;
+  final plumOnlyFalsePositiveCount = samples
+      .where((sample) => sample.plumOnlyFalsePositive)
+      .length;
   final meanPlumMinusJma = samples.isEmpty
       ? 0.0
       : samples
-              .map((sample) => sample.plumMinusJma)
-              .fold<double>(0.0, (sum, gap) => sum + gap) /
-          samples.length;
+                .map((sample) => sample.plumMinusJma)
+                .fold<double>(0.0, (sum, gap) => sum + gap) /
+            samples.length;
   return {
     'count': samples.length,
     'share': total == 0 ? 0.0 : samples.length / total,
     'actualPositiveCount': actualPositiveCount,
     'precision': samples.isEmpty ? 0.0 : actualPositiveCount / samples.length,
     'middleTransitionCount': middleTransitionCount,
-    'middleTransitionRate':
-        samples.isEmpty ? 0.0 : middleTransitionCount / samples.length,
+    'middleTransitionRate': samples.isEmpty
+        ? 0.0
+        : middleTransitionCount / samples.length,
     'plumOnlyFalsePositiveCount': plumOnlyFalsePositiveCount,
     'meanPlumMinusJma': meanPlumMinusJma,
   };
@@ -442,13 +448,15 @@ List<Map<String, Object?>> _buildJointTransferRows(
       final validationRows = validation
           .where(
             (sample) =>
-                firstSelector(sample) == first && secondSelector(sample) == second,
+                firstSelector(sample) == first &&
+                secondSelector(sample) == second,
           )
           .toList();
       final testRows = test
           .where(
             (sample) =>
-                firstSelector(sample) == first && secondSelector(sample) == second,
+                firstSelector(sample) == first &&
+                secondSelector(sample) == second,
           )
           .toList();
       if (validationRows.isEmpty && testRows.isEmpty) continue;
@@ -495,31 +503,34 @@ List<Map<String, Object?>> _buildEventRows(List<_Sample> samples) {
     for (final entry in byEvent.entries) entry.value.toJson(eventId: entry.key),
   ];
   rows.sort((left, right) {
-    final byCount =
-        _number(right['count']).compareTo(_number(left['count']));
+    final byCount = _number(right['count']).compareTo(_number(left['count']));
     if (byCount != 0) return byCount;
-    return _number(right['middleTransitionCount']).compareTo(
-      _number(left['middleTransitionCount']),
-    );
+    return _number(
+      right['middleTransitionCount'],
+    ).compareTo(_number(left['middleTransitionCount']));
   });
   return rows;
 }
 
 Map<String, Object?> _summaryJson(List<_Sample> samples) {
-  final actualPositiveCount =
-      samples.where((sample) => sample.actualPositive).length;
-  final middleTransitionCount =
-      samples.where((sample) => sample.isMiddleTransitionZone).length;
-  final plumOnlyFalsePositiveCount =
-      samples.where((sample) => sample.plumOnlyFalsePositive).length;
+  final actualPositiveCount = samples
+      .where((sample) => sample.actualPositive)
+      .length;
+  final middleTransitionCount = samples
+      .where((sample) => sample.isMiddleTransitionZone)
+      .length;
+  final plumOnlyFalsePositiveCount = samples
+      .where((sample) => sample.plumOnlyFalsePositive)
+      .length;
   return {
     'focusSampleCount': samples.length,
     'truePositiveCount': actualPositiveCount,
     'falsePositiveCount': samples.length - actualPositiveCount,
     'precision': samples.isEmpty ? 0.0 : actualPositiveCount / samples.length,
     'middleTransitionCount': middleTransitionCount,
-    'middleTransitionShare':
-        samples.isEmpty ? 0.0 : middleTransitionCount / samples.length,
+    'middleTransitionShare': samples.isEmpty
+        ? 0.0
+        : middleTransitionCount / samples.length,
     'plumOnlyFalsePositiveCount': plumOnlyFalsePositiveCount,
   };
 }
@@ -539,8 +550,8 @@ List<_EvidenceStation> _supportingEvidence({
       observed.longitude,
     );
     if (distance > _plumRadiusKm) continue;
-    final propagated = observed.intensity -
-        _plumDampingPer10Km * (distance / 10.0);
+    final propagated =
+        observed.intensity - _plumDampingPer10Km * (distance / 10.0);
     if (propagated >= threshold) {
       supportingEvidence.add(
         _EvidenceStation(
@@ -635,46 +646,45 @@ Map<String, Object?> _emptyReport({
   required String dataDirectory,
   required String modelPath,
 }) => {
-        'schemaVersion': 'plum_tohoku_upstream_source_family_diagnostic_v1',
-        'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
-        'status': 'fail',
-        'policy': {
-          'method': 'PLUM Tohoku upstream source-family diagnostic',
-          'rawPredictedIntensityMutated': false,
-          'frozenTestEvaluated': true,
-          'productionReady': false,
-          'productionUiConnected': false,
-          'diagnosticOnly': true,
-          'parametersTuned': false,
-          'suppressionApplied': false,
-          'plumRadiusKm': _plumRadiusKm,
-          'plumDampingPer10Km': _plumDampingPer10Km,
-        },
-        'inputs': {
-          'dataDirectory': dataDirectory,
-          'modelPath': modelPath,
-          'splits': ['validation', 'test'],
-          'threshold': _threshold.label,
-        },
-        'focusFilter': {
-          'estimatedSourceRegion': _focusRegion,
-          'minimumEvidenceCount': _focusMinimumEvidenceCount,
-          'maximumNearestEvidenceDistanceKm':
-              _focusMaximumNearestEvidenceDistanceKm,
-          'baselineThresholdCrossingRequired': true,
-          'plumMarginGateApplied': false,
-        },
-        'splitSummaries': {
-          'validation': _summaryJson(const []),
-          'test': _summaryJson(const []),
-        },
-        'sourceTriggerFamilyTransfer': const [],
-        'sourceWinnerFamilyTransfer': const [],
-        'sourceWinnerTransitionTransfer': const [],
-        'sourceWinnerEventFamilyTransfer': const [],
-        'dominantTestEvents': const [],
-        'errors': errors,
-      };
+  'schemaVersion': 'plum_tohoku_upstream_source_family_diagnostic_v1',
+  'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
+  'status': 'fail',
+  'policy': {
+    'method': 'PLUM Tohoku upstream source-family diagnostic',
+    'rawPredictedIntensityMutated': false,
+    'frozenTestEvaluated': true,
+    'productionReady': false,
+    'productionUiConnected': false,
+    'diagnosticOnly': true,
+    'parametersTuned': false,
+    'suppressionApplied': false,
+    'plumRadiusKm': _plumRadiusKm,
+    'plumDampingPer10Km': _plumDampingPer10Km,
+  },
+  'inputs': {
+    'dataDirectory': dataDirectory,
+    'modelPath': modelPath,
+    'splits': ['validation', 'test'],
+    'threshold': _threshold.label,
+  },
+  'focusFilter': {
+    'estimatedSourceRegion': _focusRegion,
+    'minimumEvidenceCount': _focusMinimumEvidenceCount,
+    'maximumNearestEvidenceDistanceKm': _focusMaximumNearestEvidenceDistanceKm,
+    'baselineThresholdCrossingRequired': true,
+    'plumMarginGateApplied': false,
+  },
+  'splitSummaries': {
+    'validation': _summaryJson(const []),
+    'test': _summaryJson(const []),
+  },
+  'sourceTriggerFamilyTransfer': const [],
+  'sourceWinnerFamilyTransfer': const [],
+  'sourceWinnerTransitionTransfer': const [],
+  'sourceWinnerEventFamilyTransfer': const [],
+  'dominantTestEvents': const [],
+  'errors': errors,
+};
 
 String plumTohokuUpstreamSourceFamilyDiagnosticMarkdown(
   Map<String, Object?> report,
@@ -684,12 +694,18 @@ String plumTohokuUpstreamSourceFamilyDiagnosticMarkdown(
   final focusFilter = _map(report['focusFilter']);
   final familyDefinitions = _map(report['familyDefinitions']);
   final splitSummaries = _map(report['splitSummaries']);
-  final sourceTriggerFamilyTransfer = _list(report['sourceTriggerFamilyTransfer']);
-  final sourceWinnerFamilyTransfer = _list(report['sourceWinnerFamilyTransfer']);
-  final sourceWinnerTransitionTransfer =
-      _list(report['sourceWinnerTransitionTransfer']);
-  final sourceWinnerEventFamilyTransfer =
-      _list(report['sourceWinnerEventFamilyTransfer']);
+  final sourceTriggerFamilyTransfer = _list(
+    report['sourceTriggerFamilyTransfer'],
+  );
+  final sourceWinnerFamilyTransfer = _list(
+    report['sourceWinnerFamilyTransfer'],
+  );
+  final sourceWinnerTransitionTransfer = _list(
+    report['sourceWinnerTransitionTransfer'],
+  );
+  final sourceWinnerEventFamilyTransfer = _list(
+    report['sourceWinnerEventFamilyTransfer'],
+  );
   final dominantTestEvents = _list(report['dominantTestEvents']);
 
   final buffer = StringBuffer()
@@ -710,9 +726,7 @@ String plumTohokuUpstreamSourceFamilyDiagnosticMarkdown(
     ..writeln()
     ..writeln('## Coverage')
     ..writeln()
-    ..writeln(
-      '- Validation variants: `${coverage['validationVariants']}`',
-    )
+    ..writeln('- Validation variants: `${coverage['validationVariants']}`')
     ..writeln('- Test variants: `${coverage['testVariants']}`')
     ..writeln(
       '- Validation station forecasts: `${coverage['validationStationForecasts']}`',
@@ -815,9 +829,7 @@ String plumTohokuUpstreamSourceFamilyDiagnosticMarkdown(
     ..writeln()
     ..writeln('## Source Winner x Transition Transfer')
     ..writeln()
-    ..writeln(
-      '| Winner | Label | Validation | Test | Delta Share |',
-    )
+    ..writeln('| Winner | Label | Validation | Test | Delta Share |')
     ..writeln('| --- | --- | --- | --- | ---: |');
   for (final raw in sourceWinnerTransitionTransfer) {
     final row = _map(raw);
@@ -833,9 +845,7 @@ String plumTohokuUpstreamSourceFamilyDiagnosticMarkdown(
     ..writeln()
     ..writeln('## Source Winner x Event Family Transfer')
     ..writeln()
-    ..writeln(
-      '| Winner | Event Family | Validation | Test | Delta Share |',
-    )
+    ..writeln('| Winner | Event Family | Validation | Test | Delta Share |')
     ..writeln('| --- | --- | --- | --- | ---: |');
   for (final raw in sourceWinnerEventFamilyTransfer.take(15)) {
     final row = _map(raw);
@@ -895,7 +905,9 @@ String _familyCell(Map<String, Object?> row) {
 
 String _mixCell(Map<String, Object?> mix) {
   final entries = mix.entries.toList()
-    ..sort((left, right) => _number(right.value).compareTo(_number(left.value)));
+    ..sort(
+      (left, right) => _number(right.value).compareTo(_number(left.value)),
+    );
   return entries
       .where((entry) => _number(entry.value) > 0)
       .map((entry) => '${entry.key}:${entry.value}')
@@ -935,19 +947,18 @@ class _EventAccumulator {
   }
 
   Map<String, Object?> toJson({required String eventId}) => {
-        'eventId': eventId,
-        'count': count,
-        'truePositiveCount': truePositiveCount,
-        'falsePositiveCount': count - truePositiveCount,
-        'precision': count == 0 ? 0.0 : truePositiveCount / count,
-        'middleTransitionCount': middleTransitionCount,
-        'middleTransitionShare':
-            count == 0 ? 0.0 : middleTransitionCount / count,
-        'dominantWinnerFamily': _maxKey(sourceWinnerCounts),
-        'dominantEventFamily': _maxKey(eventFamilyCounts),
-        'sourceTriggerCounts': sourceTriggerCounts,
-        'sourceWinnerCounts': sourceWinnerCounts,
-      };
+    'eventId': eventId,
+    'count': count,
+    'truePositiveCount': truePositiveCount,
+    'falsePositiveCount': count - truePositiveCount,
+    'precision': count == 0 ? 0.0 : truePositiveCount / count,
+    'middleTransitionCount': middleTransitionCount,
+    'middleTransitionShare': count == 0 ? 0.0 : middleTransitionCount / count,
+    'dominantWinnerFamily': _maxKey(sourceWinnerCounts),
+    'dominantEventFamily': _maxKey(eventFamilyCounts),
+    'sourceTriggerCounts': sourceTriggerCounts,
+    'sourceWinnerCounts': sourceWinnerCounts,
+  };
 }
 
 String _maxKey(Map<String, int> counts) {
@@ -1062,9 +1073,8 @@ class _Sample {
       const ['-1.0_to_0.0', '0.0_to_1.0'].contains(actualGapBand) &&
       const ['1.0_to_2.0', '2.0_to_3.0'].contains(evidenceGapBand);
 
-  String get transitionLabel => isMiddleTransitionZone
-      ? 'middle_transition_zone'
-      : 'other_focus_samples';
+  String get transitionLabel =>
+      isMiddleTransitionZone ? 'middle_transition_zone' : 'other_focus_samples';
 }
 
 class _EvidenceStation {
@@ -1083,7 +1093,10 @@ class _NeighborSummary {
   final int count;
   final double belowThresholdShare;
 
-  const _NeighborSummary({required this.count, required this.belowThresholdShare});
+  const _NeighborSummary({
+    required this.count,
+    required this.belowThresholdShare,
+  });
 }
 
 class _SupportShape {
@@ -1134,7 +1147,8 @@ StaticAttenuationModel _modelFromJson(Map<String, Object?> json) {
 Map<String, Object?> _map(Object? value) =>
     (value as Map).cast<String, Object?>();
 
-List<Object?> _list(Object? value) => (value as List?)?.cast<Object?>() ?? const [];
+List<Object?> _list(Object? value) =>
+    (value as List?)?.cast<Object?>() ?? const [];
 
 double _number(Object? value) => (value as num?)?.toDouble() ?? 0.0;
 

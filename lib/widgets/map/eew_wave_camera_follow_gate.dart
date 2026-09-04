@@ -41,3 +41,15 @@ class EewWaveCameraFollowGate {
     }
   }
 }
+
+List<T> eewCameraFocusEvents<T>({
+  required List<T> events,
+  required bool splitDistant,
+  required T? currentEvent,
+}) {
+  // Keep distant EEWs on the carousel target even after wave follow releases.
+  if (splitDistant && currentEvent != null) {
+    return <T>[currentEvent];
+  }
+  return events;
+}

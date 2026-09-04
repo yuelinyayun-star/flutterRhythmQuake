@@ -97,7 +97,7 @@ class CallbackPageTest(unittest.TestCase):
         self.assertNotIn('<script>alert("unsafe")</script>', body)
         self.assertIn("现在可以返回 RhythmQuake。", body)
         self.assertIn('href="rhythmquake://wauth-complete"', body)
-        self.assertIn('url("/wauth/assets/background.jpg")', body)
+        self.assertIn('url("/wauth/assets/background.jpg?v=4da918f5")', body)
         self.assertIn("img-src 'self'", response.headers["Content-Security-Policy"])
 
 
@@ -146,7 +146,7 @@ class GatewayHttpTest(AioHTTPTestCase):
         self.assertEqual(response.headers["Cache-Control"], "public, max-age=86400")
         self.assertEqual(
             hashlib.sha256(body).hexdigest(),
-            "0745312d39c45c595d0aeab5045af7f72547a09df28bcf9d05eae22243d06146",
+            "4da918f56ae4f37691cb8a24053ee68fe838face4ee5064f229bda834a2d096d",
         )
 
     async def test_root_only_advertises_the_live_gateway_contract(self) -> None:

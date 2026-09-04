@@ -58,8 +58,7 @@ void main(List<String> args) {
   final stationDbVersion =
       capture['stationDbVersion'] as String? ?? NiedStationDb.stationDbVersion;
   final sensorSelectionPolicy =
-      capture['sensorSelectionPolicy'] as String? ??
-      'surface_jma_s_primary_v1';
+      capture['sensorSelectionPolicy'] as String? ?? 'surface_jma_s_primary_v1';
 
   for (var time = start; !time.isAfter(end); time = time.add(interval)) {
     final timeKey = _localIso(time);

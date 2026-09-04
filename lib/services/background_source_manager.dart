@@ -2,16 +2,14 @@ import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:flutter/material.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../core/calculator.dart';
-import '../core/intensity_calculator.dart';
 import '../models/quake_message.dart';
+import '../models/cenc_ir_data.dart';
+import '../models/weather_alarm.dart';
 import '../models/unified_quake_data.dart';
-import '../models/unified_event_presentation.dart';
-import '../providers/background_settings_provider.dart';
+import '../models/tsunami_message.dart';
+import '../models/source_status.dart';
 import 'background_event_processor.dart';
 import 'epicenter_region_service.dart';
 import 'location_service.dart';
@@ -19,6 +17,8 @@ import 'ntp_service.dart';
 import 'quake_event_adapter.dart';
 import 'sources/emsc_eqlist_service.dart';
 import 'sources/eqlist/cwa_eqlist_service.dart';
+import 'sources/eqlist/cenc_eqlist_service.dart';
+import 'sources/eqlist/jma_eqlist_service.dart';
 import 'sources/fan_service.dart';
 import 'sources/global_quake_service.dart';
 import 'sources/mock_input_service.dart';
@@ -29,10 +29,77 @@ import 'sources/usgs_eqlist_service.dart';
 import 'sources/wolfx_service.dart';
 import 'sources/whews_service.dart';
 import 'wauth_service.dart';
+import 'foreground_station_payload.dart';
+import 'sources/cwa_station_service.dart';
+import 'sources/kma_monitor.dart';
+import 'sources/lmoni_image_service.dart';
+import 'sources/nied_yahoo_service.dart';
+import 'sources/palert_service.dart';
+import 'sources/seisjs_service.dart';
+import 'sources/snet_service.dart';
+import 'sources/whews_station_service.dart';
+import 'sources/whews_socket_client.dart';
+import 'sources/cenc_cmt_service.dart';
+import 'sources/usgs_cmt_service.dart';
+import 'sources/jma_cmt_service.dart';
+import 'sources/fnet_cmt_service.dart';
+import 'sources/hinet_aqua_cmt_service.dart';
+import 'sources/lpgm_monitor_service.dart';
+import 'sources/fdsn_station_service.dart';
+import 'sources/fdsn_motion_service.dart';
+import 'sources/fan_radar_service.dart';
+import 'sources/fan_satellite_cloud_service.dart';
+import 'sources/jma_radar_service.dart';
+import 'sources/jma_volcano_map_service.dart';
+import 'sources/typhoon_service.dart';
+import 'sources/cma_local_weather_service.dart';
+import 'sources/jma_local_weather_service.dart';
+import 'sources/jma_lpgm_service.dart';
+import 'sources/jma_megaquake_advisory_service.dart';
+import 'sources/china_weather_alert_service.dart';
+import '../core/local_weather_region.dart';
 
 final List<StreamSubscription> _backgroundSubscriptions = [];
-int _backgroundNotificationId = 0;
+final List<Timer> _backgroundTimers = [];
+SourceManager? _backgroundManager;
+UsgsEqlistService? _backgroundOfficialUsgs;
+EmscEqlistService? _backgroundOfficialEmsc;
+CwaEqlistService? _backgroundOfficialCwa;
+CencEqlistService? _backgroundOfficialCenc;
+JmaEqlistService? _backgroundOfficialJma;
 Timer? _backgroundSeenStatePersistTimer;
+final List<StreamSubscription<dynamic>> _backgroundStationSubscriptions = [];
+final List<StreamSubscription<dynamic>> _backgroundCmtSubscriptions = [];
+final List<StreamSubscription<dynamic>> _backgroundAuxSubscriptions = [];
+LmoniImageService? _backgroundLmoni;
+NiedYahooService? _backgroundYahoo;
+KmaMonitorService? _backgroundKma;
+CwaStationService? _backgroundCwa;
+SnetService? _backgroundSnet;
+SeisJsService? _backgroundSeisJs;
+PAlertService? _backgroundPAlert;
+WhewsStationService? _backgroundWhewsNied;
+WhewsStationService? _backgroundWhewsSnet;
+WhewsStationService? _backgroundWhewsKma;
+CencCmtService? _backgroundCencCmt;
+UsgsCmtService? _backgroundUsgsCmt;
+JmaCmtService? _backgroundJmaCmt;
+FnetCmtService? _backgroundFnetCmt;
+HinetAquaCmtService? _backgroundHinetAquaCmt;
+LpgmMonitorService? _backgroundLpgm;
+FdsnStationService? _backgroundEarthScopeStations;
+FdsnStationService? _backgroundGeofonStations;
+FdsnMotionService? _backgroundFdsnMotion;
+FanRadarService? _backgroundFanRadar;
+FanSatelliteCloudService? _backgroundFanSatellite;
+JmaRadarService? _backgroundJmaRadar;
+JmaVolcanoMapService? _backgroundVolcanoMap;
+TyphoonService? _backgroundTyphoon;
+ChinaWeatherAlertService? _backgroundChinaWeather;
+CmaLocalWeatherService? _backgroundCmaWeather;
+JmaLocalWeatherService? _backgroundJmaWeather;
+JmaLpgmService? _backgroundJmaLpgm;
+JmaMegaquakeAdvisoryService? _backgroundJmaMegaquake;
 
 /// 前台服务 isolate 中运行的 EEW/信息数据源管理
 ///
@@ -40,10 +107,22 @@ Timer? _backgroundSeenStatePersistTimer;
 /// 仅负责在 Android 前台服务期间保持关键数据源连接并直接弹出系统通知。
 ///
 /// 重新初始化 SourceManager 与相关源，订阅统一事件流，满足阈值时直接弹出通知。
-Future<void> startBackgroundSources(
-  FlutterLocalNotificationsPlugin notifications,
-) async {
+Future<void> startBackgroundSources({
+  required void Function(UnifiedQuakeData event) onUnifiedEvent,
+  required void Function(QuakeMessage event) onQuakeEvent,
+  required void Function(String source, List<QuakeMessage> events) onSourceList,
+  required void Function(CencIrData data) onCencIrData,
+  required void Function(WeatherAlarm alarm) onWeatherAlarm,
+  required void Function(TsunamiMessage event) onTsunamiEvent,
+  required void Function(SourceStatusUpdate update) onSourceStatus,
+  required void Function(Map<String, dynamic> payload) onStationData,
+  required void Function(String source, List<Map<String, dynamic>> items)
+  onCmtList,
+  required void Function(Map<String, dynamic> payload) onAuxData,
+}) async {
   if (kIsWeb || !Platform.isAndroid) return;
+
+  await stopBackgroundSources();
 
   final prefs = await SharedPreferences.getInstance();
   await EpicenterRegionService.instance.load();
@@ -60,10 +139,6 @@ Future<void> startBackgroundSources(
 
   // 启动时间同步
   NtpService().startPeriodicSync();
-
-  // 加载后台通知设置
-  final settings = BackgroundSettingsProvider();
-  await settings.load(prefs);
 
   // 加载源震级过滤设置，与主 isolate 保持一致
   final sourceMagFilters = <String, double>{};
@@ -118,9 +193,7 @@ Future<void> startBackgroundSources(
 
   // 创建新的源实例（isolate 内为独立对象，避免与主 isolate 共享状态）
   final wolfx = WolfxService();
-  final whews = WhewsService(
-    apiToken: prefs.getString(WAuthService.apiTokenPreferenceKey) ?? '',
-  );
+  final whews = WhewsService(apiToken: '');
   final fan = FanService(
     apiKey: prefs.getString(FanService.apiKeyPreferenceKey) ?? '',
   );
@@ -135,6 +208,75 @@ Future<void> startBackgroundSources(
   final officialUsgs = UsgsEqlistService();
   final officialEmsc = EmscEqlistService();
   final officialCwa = CwaEqlistService();
+  final officialCenc = CencEqlistService();
+  final officialJma = JmaEqlistService();
+  final cencCmt = CencCmtService();
+  final usgsCmt = UsgsCmtService();
+  final jmaCmt = JmaCmtService();
+  final fnetCmt = FnetCmtService();
+  final hinetAquaCmt = HinetAquaCmtService();
+  final lpgm = LpgmMonitorService();
+  final earthScopeStations = FdsnStationService.earthScope;
+  final geofonStations = FdsnStationService.geofon;
+  final fdsnMotion = FdsnMotionService();
+  final fanRadar = FanRadarService();
+  final fanSatellite = FanSatelliteCloudService();
+  final jmaRadar = JmaRadarService();
+  final volcanoMap = JmaVolcanoMapService();
+  final typhoon = TyphoonService();
+  final chinaWeather = ChinaWeatherAlertService();
+  final cmaWeather = CmaLocalWeatherService();
+  final jmaWeather = JmaLocalWeatherService();
+  final jmaLpgm = JmaLpgmService();
+  final jmaMegaquake = JmaMegaquakeAdvisoryService();
+  _backgroundFanRadar = fanRadar;
+  _backgroundFanSatellite = fanSatellite;
+  _backgroundJmaRadar = jmaRadar;
+  _backgroundVolcanoMap = volcanoMap;
+  _backgroundTyphoon = typhoon;
+  _backgroundChinaWeather = chinaWeather;
+  _backgroundCmaWeather = cmaWeather;
+  _backgroundJmaWeather = jmaWeather;
+  _backgroundJmaLpgm = jmaLpgm;
+  _backgroundJmaMegaquake = jmaMegaquake;
+  _backgroundEarthScopeStations = earthScopeStations;
+  _backgroundGeofonStations = geofonStations;
+  _backgroundFdsnMotion = fdsnMotion;
+  _backgroundLpgm = lpgm;
+  _backgroundCencCmt = cencCmt;
+  _backgroundUsgsCmt = usgsCmt;
+  _backgroundJmaCmt = jmaCmt;
+  _backgroundFnetCmt = fnetCmt;
+  _backgroundHinetAquaCmt = hinetAquaCmt;
+  final lmoni = LmoniImageService();
+  final yahoo = NiedYahooService();
+  final kma = KmaMonitorService();
+  final cwa = CwaStationService();
+  final snet = SnetService();
+  final seisJs = SeisJsService();
+  final pAlert = PAlertService();
+  final whewsNied = WhewsStationService(
+    kind: WhewsStationKind.nied,
+    apiToken: '',
+  );
+  final whewsSnet = WhewsStationService(
+    kind: WhewsStationKind.snet,
+    apiToken: '',
+  );
+  final whewsKma = WhewsStationService(
+    kind: WhewsStationKind.kma,
+    apiToken: '',
+  );
+  _backgroundLmoni = lmoni;
+  _backgroundYahoo = yahoo;
+  _backgroundKma = kma;
+  _backgroundCwa = cwa;
+  _backgroundSnet = snet;
+  _backgroundSeisJs = seisJs;
+  _backgroundPAlert = pAlert;
+  _backgroundWhewsNied = whewsNied;
+  _backgroundWhewsSnet = whewsSnet;
+  _backgroundWhewsKma = whewsKma;
   globalQuake.configureServers(
     primaryHost:
         prefs.getString(GlobalQuakeService.primaryHostPreferenceKey) ??
@@ -149,9 +291,24 @@ Future<void> startBackgroundSources(
         prefs.getInt(GlobalQuakeService.secondaryPortPreferenceKey) ??
         GlobalQuakeService.defaultPort,
   );
+  globalQuake.configureFirstReportMagnitudeFilter(
+    prefs.getDouble(
+          GlobalQuakeService.firstReportMagnitudeThresholdPreferenceKey,
+        ) ??
+        0,
+  );
 
   // 注册到 isolate 内的 SourceManager（新的单例实例）
   final manager = SourceManager();
+  _backgroundManager = manager;
+  wolfx.onJmaEqlistUpdated = (items) => onSourceList('jma', items);
+  fan.onFssnListUpdated = (items) => onSourceList('fssn', items);
+  fan.onCencListUpdated = (items) => onSourceList('cenc', items);
+  fan.onCwaListUpdated = (items) => onSourceList('cwa', items);
+  fan.onCencIrData = onCencIrData;
+  nowQuakeCencIr.onCencIrData = onCencIrData;
+  fan.onWeatherAlarm = onWeatherAlarm;
+  whews.onWeatherAlarm = onWeatherAlarm;
   manager.registerSource(wolfx);
   manager.registerSource(whews);
   manager.registerSource(fan);
@@ -168,85 +325,601 @@ Future<void> startBackgroundSources(
     'Wolfx',
     prefs.getBool('api_source_wolfx_enabled') ?? true,
   );
-  manager.setSourceEnabled(
-    'WHEWS',
-    prefs.getBool(WhewsService.enabledPreferenceKey) ?? false,
-  );
+  manager.setSourceEnabled('WHEWS', false);
   manager.setSourceEnabled(
     'P2P',
     prefs.getBool('api_source_p2pquake_enabled') ?? true,
   );
 
-  // 若用户开启 GlobalQuake 桥接则连接
-  if (prefs.getBool(GlobalQuakeService.enabledPreferenceKey) ?? false) {
-    globalQuake.connect();
+  await _verifyAndEnableBackgroundWhews(prefs, manager, whews);
+
+  void stationStatus(String source, bool connected) {
+    onSourceStatus(
+      SourceStatusUpdate(
+        source,
+        connected ? SourceStatus.connected : SourceStatus.error,
+      ),
+    );
   }
 
-  manager.startAll();
-
-  // 定期清理过期 slot，避免内存无限增长
-  Timer.periodic(const Duration(minutes: 1), (_) {
-    processor.prune();
+  lmoni.onStatusChanged = (connected) => stationStatus('NIED', connected);
+  yahoo.onStatusChanged = (connected) => stationStatus('NIED', connected);
+  kma.onStatusChanged = (connected) => stationStatus('KMA', connected);
+  cwa.onStatusChanged = (connected) => stationStatus('TREM', connected);
+  snet.onStatusChanged = (connected) => stationStatus('S-net', connected);
+  seisJs.onStatusChanged = (connected) => stationStatus('SeisJS', connected);
+  pAlert.onStatusChanged = (connected) => stationStatus('P-Alert', connected);
+  kma.onShakeDetected = (value) => onStationData({
+    'kind': 'signal',
+    'source': 'kma',
+    'action': 'detected',
+    'value': value,
+  });
+  kma.onShakeExpired = () =>
+      onStationData({'kind': 'signal', 'source': 'kma', 'action': 'expired'});
+  cwa.onShakeDetected = (value) => onStationData({
+    'kind': 'signal',
+    'source': 'trem',
+    'action': 'detected',
+    'value': value,
+  });
+  cwa.onShakeExpired = () =>
+      onStationData({'kind': 'signal', 'source': 'trem', 'action': 'expired'});
+  whewsNied.stateNotifier.addListener(() {
+    onSourceStatus(SourceStatusUpdate('NIED', _whewsState(whewsNied)));
+  });
+  whewsSnet.stateNotifier.addListener(() {
+    onSourceStatus(SourceStatusUpdate('S-net', _whewsState(whewsSnet)));
+  });
+  whewsKma.stateNotifier.addListener(() {
+    onSourceStatus(SourceStatusUpdate('KMA', _whewsState(whewsKma)));
   });
 
-  // 订阅统一事件，先经过 BackgroundEventProcessor 处理，再决定是否弹通知
+  _backgroundStationSubscriptions.add(
+    lmoni.stationStream.listen((stations) {
+      if (stations != null)
+        onStationData(ForegroundStationPayload.nied(stations));
+    }),
+  );
+  _backgroundStationSubscriptions.add(
+    yahoo.stationStream.listen((stations) {
+      if (stations != null)
+        onStationData(ForegroundStationPayload.nied(stations));
+    }),
+  );
+  _backgroundStationSubscriptions.add(
+    kma.stationStream.listen((stations) {
+      onStationData(ForegroundStationPayload.kma(stations));
+    }),
+  );
+  _backgroundStationSubscriptions.add(
+    cwa.stationStream.listen((stations) {
+      onStationData(ForegroundStationPayload.cwa(stations));
+    }),
+  );
+  _backgroundStationSubscriptions.add(
+    snet.stationStreamFromCallback.listen((stations) {
+      onStationData(ForegroundStationPayload.snet(stations));
+    }),
+  );
+  _backgroundStationSubscriptions.add(
+    seisJs.stationStream.listen((stations) {
+      onStationData(ForegroundStationPayload.seisjs(stations));
+    }),
+  );
+  _backgroundStationSubscriptions.add(
+    pAlert.stationStream.listen((stations) {
+      onStationData(ForegroundStationPayload.palert(stations));
+    }),
+  );
+  _backgroundStationSubscriptions.add(
+    whewsNied.frameStream.listen((frame) {
+      onStationData(_whewsNiedPayload(frame));
+    }),
+  );
+  _backgroundStationSubscriptions.add(
+    whewsSnet.frameStream.listen((frame) {
+      onStationData(_whewsSnetPayload(frame));
+    }),
+  );
+  _backgroundStationSubscriptions.add(
+    whewsKma.frameStream.listen((frame) {
+      onStationData(_whewsKmaPayload(frame));
+    }),
+  );
+
+  if (prefs.getBool('api_source_nied_monitor_enabled') ?? true) {
+    final niedSource = prefs.getString('nied_data_source') ?? 'lmoni';
+    if (niedSource == 'whews') {
+      // The authenticated WHEWS station socket is started below.
+    } else if (niedSource == 'yahoo') {
+      yahoo.start();
+    } else {
+      lmoni.start();
+    }
+  }
+  if (prefs.getBool('api_source_kma_pews_enabled') ?? true) {
+    final kmaSource = prefs.getString('kma_data_source') ?? 'pews';
+    if (kmaSource != 'whews') {
+      kma.setConnectionSource(kmaSource);
+      kma.setExternalInputEnabled(false);
+      kma.connect();
+    }
+  }
+  if (prefs.getBool('trem_station_enabled') ?? true) cwa.start();
+  if (prefs.getBool('api_source_snet_enabled') ?? true) snet.startMonitoring();
+  if (prefs.getBool('api_source_wolfx_seisjs_enabled') ?? true)
+    seisJs.connect();
+  if (prefs.getBool('api_source_palert_enabled') ?? true) pAlert.start();
+  await _startBackgroundWhewsStationsIfAuthorized(
+    prefs,
+    whewsNied: whewsNied,
+    whewsSnet: whewsSnet,
+    whewsKma: whewsKma,
+  );
+
+  _backgroundAuxSubscriptions.add(
+    lpgm.snapshotStream.listen((snapshot) {
+      onStationData(ForegroundStationPayload.lpgm(snapshot));
+    }),
+  );
+  if (prefs.getBool('api_source_nied_lpgm_enabled') ?? true) {
+    await lpgm.start(interval: const Duration(seconds: 15));
+  }
+
+  _backgroundAuxSubscriptions.add(
+    earthScopeStations.stationStream.listen((stations) {
+      onStationData(
+        ForegroundStationPayload.fdsnStations('EarthScope', stations),
+      );
+    }),
+  );
+  _backgroundAuxSubscriptions.add(
+    geofonStations.stationStream.listen((stations) {
+      onStationData(ForegroundStationPayload.fdsnStations('GEOFON', stations));
+    }),
+  );
+  _backgroundAuxSubscriptions.add(
+    fdsnMotion.sampleStream.listen((sample) {
+      onStationData(ForegroundStationPayload.fdsnMotion(sample));
+    }),
+  );
+  _backgroundAuxSubscriptions.add(
+    fanRadar.frameStream.listen((frame) {
+      if (frame != null)
+        onStationData(ForegroundStationPayload.fanRadar(frame));
+    }),
+  );
+  _backgroundAuxSubscriptions.add(
+    fanSatellite.frameStream.listen((frame) {
+      if (frame != null) {
+        onStationData(ForegroundStationPayload.fanSatellite(frame));
+      }
+    }),
+  );
+  _backgroundAuxSubscriptions.add(
+    jmaRadar.frameStream.listen((frame) {
+      if (frame != null)
+        onStationData(ForegroundStationPayload.jmaRadar(frame));
+    }),
+  );
+  volcanoMap.onSitesUpdated = (sites) {
+    onStationData(ForegroundStationPayload.volcanoSites(sites));
+  };
+  typhoon.onActiveTyphoonsChanged = (items) {
+    onAuxData({
+      'kind': 'typhoon',
+      'items': items.map((item) => item.toMap()).toList(growable: false),
+    });
+  };
+  cmaWeather.stateNotifier.addListener(() {
+    onAuxData(
+      ForegroundStationPayload.cmaWeather(cmaWeather.stateNotifier.value),
+    );
+  });
+  chinaWeather.onLocalAlarmChanged = (alarm) {
+    onAuxData({'kind': 'chinaWeatherAlarm', 'alarm': alarm?.toMap()});
+  };
+  jmaWeather.stateNotifier.addListener(() {
+    onAuxData(
+      ForegroundStationPayload.jmaWeather(jmaWeather.stateNotifier.value),
+    );
+  });
+  jmaLpgm.latestNotifier.addListener(() {
+    onAuxData({'kind': 'jmaLpgm', 'bulletin': jmaLpgm.latest?.toMap()});
+  });
+  jmaMegaquake.activeNotifier.addListener(() {
+    onAuxData({
+      'kind': 'jmaMegaquake',
+      'items': jmaMegaquake.active
+          .map((item) => item.toMap())
+          .toList(growable: false),
+    });
+  });
+  final fdsnEnabled =
+      prefs.getBool('api_source_fdsn_seedlink_enabled') ?? false;
+  final fdsnSources = <String>{
+    if (prefs.getBool('map_overlay_fdsnEarthScope') ?? false) 'EarthScope',
+    if (prefs.getBool('map_overlay_fdsnGeofon') ?? false) 'GEOFON',
+  };
+  if (fdsnEnabled && fdsnSources.isNotEmpty) {
+    final limit =
+        prefs.getInt(FdsnMotionService.stationLimitPreferenceKey) ??
+        FdsnMotionService.defaultStationLimit;
+    if (fdsnSources.contains('EarthScope')) {
+      unawaited(earthScopeStations.start());
+    }
+    if (fdsnSources.contains('GEOFON')) {
+      unawaited(geofonStations.start());
+    }
+    fdsnMotion.connect(stationLimit: limit, enabledSources: fdsnSources);
+  }
+  if (prefs.getBool('map_overlay_radarChinaLayer') ?? false) {
+    fanRadar.start(interval: const Duration(minutes: 10));
+  }
+  if (prefs.getBool('map_overlay_jmaRadarLayer') ?? false) {
+    jmaRadar.start(interval: JmaRadarService.refreshInterval);
+  }
+  if (prefs.getBool('map_overlay_satelliteCloudLayer') ?? false) {
+    fanSatellite.start(interval: const Duration(minutes: 30));
+  }
+  if (prefs.getBool('map_overlay_volcanoLayer') ?? false) {
+    volcanoMap.start();
+  }
+  if (prefs.getBool('map_overlay_typhoonLayer') ?? false) {
+    typhoon.start();
+  }
+  jmaLpgm.start();
+  jmaMegaquake.start();
+
+  if (savedLat != null && savedLng != null) {
+    if (LocalWeatherRegion.usesJapan(savedLat, savedLng)) {
+      unawaited(jmaWeather.startForLocation(savedLat, savedLng));
+    } else if (LocalWeatherRegion.usesChina(savedLat, savedLng)) {
+      unawaited(cmaWeather.startForLocation(savedLat, savedLng));
+      chinaWeather.setLocalAnchor(savedLat, savedLng);
+      chinaWeather.setAdminLevel(
+        switch (prefs.getString('weather_alarm_local_level') ?? 'county') {
+          'province' => ChinaWeatherAdminLevel.province,
+          'city' => ChinaWeatherAdminLevel.city,
+          _ => ChinaWeatherAdminLevel.county,
+        },
+      );
+      if (prefs.getBool('weather_alarm_local_only') ?? true) {
+        chinaWeather.start(intervalSeconds: 90);
+      }
+    }
+  }
+
+  void configureCmt(String source, void Function() start) {
+    if ((prefs.getBool('api_source_${source}_cmt_enabled') ?? true)) {
+      start();
+    }
+  }
+
+  cencCmt.onListUpdated = (items) => onCmtList('cencCmt', items);
+  usgsCmt.onListUpdated = (items) => onCmtList('usgsCmt', items);
+  jmaCmt.onListUpdated = (items) => onCmtList('jmaCmt', items);
+  fnetCmt.onListUpdated = (items) => onCmtList('fnetCmt', items);
+  hinetAquaCmt.onListUpdated = (items) => onCmtList('hinetAquaCmt', items);
+  configureCmt('cenc', cencCmt.start);
+  configureCmt('usgs', usgsCmt.start);
+  configureCmt('jma', jmaCmt.start);
+  configureCmt('fnet', fnetCmt.start);
+  configureCmt('hinet_aqua', hinetAquaCmt.start);
+
+  // 定期清理过期 slot，避免内存无限增长
+  _backgroundTimers.add(
+    Timer.periodic(const Duration(minutes: 1), (_) {
+      processor.prune();
+    }),
+  );
+
+  _backgroundSubscriptions.add(manager.onStatusUpdate.listen(onSourceStatus));
+  _backgroundSubscriptions.add(manager.onQuakeEvent.listen(onQuakeEvent));
+
+  // 订阅统一事件，先经过 BackgroundEventProcessor，再把已接纳结果交给主 UI。
   _backgroundSubscriptions.add(
     wolfx.onUnifiedEvent.listen(
-      (event) => _handleUnifiedEvent(event, settings, notifications, processor),
+      (event) => _handleUnifiedEvent(event, processor, onUnifiedEvent),
     ),
   );
   _backgroundSubscriptions.add(
     whews.onUnifiedEvent.listen(
-      (event) => _handleUnifiedEvent(event, settings, notifications, processor),
+      (event) => _handleUnifiedEvent(event, processor, onUnifiedEvent),
     ),
   );
   _backgroundSubscriptions.add(
     fan.onUnifiedEvent.listen(
-      (event) => _handleUnifiedEvent(event, settings, notifications, processor),
+      (event) => _handleUnifiedEvent(event, processor, onUnifiedEvent),
     ),
   );
   _backgroundSubscriptions.add(
     nowQuakeCencIr.onUnifiedEvent.listen(
-      (event) => _handleUnifiedEvent(event, settings, notifications, processor),
+      (event) => _handleUnifiedEvent(event, processor, onUnifiedEvent),
     ),
   );
   _backgroundSubscriptions.add(
     p2p.onUnifiedEvent.listen(
-      (event) => _handleUnifiedEvent(event, settings, notifications, processor),
+      (event) => _handleUnifiedEvent(event, processor, onUnifiedEvent),
     ),
   );
   _backgroundSubscriptions.add(
     mock.onUnifiedEvent.listen(
-      (event) => _handleUnifiedEvent(event, settings, notifications, processor),
+      (event) => _handleUnifiedEvent(event, processor, onUnifiedEvent),
     ),
   );
   _backgroundSubscriptions.add(
     globalQuake.onUnifiedEvent.listen(
-      (event) => _handleUnifiedEvent(event, settings, notifications, processor),
+      (event) => _handleUnifiedEvent(event, processor, onUnifiedEvent),
     ),
   );
+
+  _backgroundSubscriptions.add(p2p.onTsunamiEvent.listen(onTsunamiEvent));
+  _backgroundSubscriptions.add(fan.onTsunamiEvent.listen(onTsunamiEvent));
+  _backgroundSubscriptions.add(whews.onTsunamiEvent.listen(onTsunamiEvent));
+  _backgroundSubscriptions.add(mock.onTsunamiEvent.listen(onTsunamiEvent));
+
+  // 先完成所有桥接订阅，再启动连接，避免丢失首个状态或同步事件。
+  manager.startAll();
+  if (prefs.getBool(GlobalQuakeService.enabledPreferenceKey) ?? false) {
+    globalQuake.connect();
+  }
 
   void handleOfficialCurrent(String source, Map<String, dynamic> data) {
     final event = QuakeEventAdapter.convert(source, data, 0);
     if (event != null) {
-      _handleUnifiedEvent(event, settings, notifications, processor);
+      _handleUnifiedEvent(event, processor, onUnifiedEvent);
     }
   }
 
   if (_isInfoSourceEnabled(prefs, QuakeSourceType.usgs)) {
+    _backgroundOfficialUsgs = officialUsgs;
+    officialUsgs.onListUpdated = (items) => onSourceList('usgs', items);
     officialUsgs.onCurrentUpdated = (data) =>
         handleOfficialCurrent('usgsEqlist', data);
     officialUsgs.start();
   }
   if (_isInfoSourceEnabled(prefs, QuakeSourceType.emsc)) {
+    _backgroundOfficialEmsc = officialEmsc;
+    officialEmsc.onListUpdated = (items) => onSourceList('emsc', items);
     officialEmsc.onCurrentUpdated = (data) =>
         handleOfficialCurrent('emsc', data);
     officialEmsc.start();
   }
   if (_isInfoSourceEnabled(prefs, QuakeSourceType.cwa)) {
+    _backgroundOfficialCwa = officialCwa;
+    officialCwa.onListUpdated = (items) => onSourceList('cwa', items);
     officialCwa.onCurrentUpdated = (data) =>
         handleOfficialCurrent('cwaEqlist', data);
     officialCwa.start();
+  }
+  if (_isInfoSourceEnabled(prefs, QuakeSourceType.cenc)) {
+    _backgroundOfficialCenc = officialCenc;
+    officialCenc.onListUpdated = (items) => onSourceList('cenc', items);
+    officialCenc.start();
+  }
+  if (_isInfoSourceEnabled(prefs, QuakeSourceType.jma_fan)) {
+    _backgroundOfficialJma = officialJma;
+    officialJma.onListUpdated = (items) => onSourceList('jma', items);
+    officialJma.start();
+  }
+}
+
+/// 停止前台服务 isolate 中的所有连接，供服务退出和设置重载使用。
+Future<void> stopBackgroundSources() async {
+  _backgroundSeenStatePersistTimer?.cancel();
+  _backgroundSeenStatePersistTimer = null;
+  for (final timer in _backgroundTimers) {
+    timer.cancel();
+  }
+  _backgroundTimers.clear();
+  for (final subscription in _backgroundSubscriptions) {
+    await subscription.cancel();
+  }
+  _backgroundSubscriptions.clear();
+  for (final subscription in _backgroundStationSubscriptions) {
+    await subscription.cancel();
+  }
+  _backgroundStationSubscriptions.clear();
+  for (final subscription in _backgroundCmtSubscriptions) {
+    await subscription.cancel();
+  }
+  _backgroundCmtSubscriptions.clear();
+  for (final subscription in _backgroundAuxSubscriptions) {
+    await subscription.cancel();
+  }
+  _backgroundAuxSubscriptions.clear();
+  _backgroundLmoni?.stop();
+  _backgroundYahoo?.stop();
+  _backgroundKma?.disconnect();
+  _backgroundCwa?.stop();
+  _backgroundSnet?.stopMonitoring();
+  _backgroundSeisJs?.disconnect();
+  _backgroundPAlert?.stop();
+  _backgroundWhewsNied?.stop();
+  _backgroundWhewsSnet?.stop();
+  _backgroundWhewsKma?.stop();
+  _backgroundCencCmt?.stop();
+  _backgroundUsgsCmt?.stop();
+  _backgroundJmaCmt?.stop();
+  _backgroundFnetCmt?.stop();
+  _backgroundHinetAquaCmt?.stop();
+  _backgroundLpgm?.stop();
+  _backgroundEarthScopeStations?.stop();
+  _backgroundGeofonStations?.stop();
+  _backgroundFdsnMotion?.disconnect();
+  _backgroundFanRadar?.stop();
+  _backgroundFanSatellite?.stop();
+  _backgroundJmaRadar?.stop();
+  _backgroundVolcanoMap?.stop();
+  _backgroundTyphoon?.stop();
+  _backgroundChinaWeather?.stop();
+  _backgroundCmaWeather?.dispose();
+  _backgroundJmaWeather?.dispose();
+  _backgroundJmaLpgm?.dispose();
+  _backgroundJmaMegaquake?.dispose();
+  _backgroundLmoni = null;
+  _backgroundYahoo = null;
+  _backgroundKma = null;
+  _backgroundCwa = null;
+  _backgroundSnet = null;
+  _backgroundSeisJs = null;
+  _backgroundPAlert = null;
+  _backgroundWhewsNied = null;
+  _backgroundWhewsSnet = null;
+  _backgroundWhewsKma = null;
+  _backgroundCencCmt = null;
+  _backgroundUsgsCmt = null;
+  _backgroundJmaCmt = null;
+  _backgroundFnetCmt = null;
+  _backgroundHinetAquaCmt = null;
+  _backgroundLpgm = null;
+  _backgroundEarthScopeStations = null;
+  _backgroundGeofonStations = null;
+  _backgroundFdsnMotion = null;
+  _backgroundFanRadar = null;
+  _backgroundFanSatellite = null;
+  _backgroundJmaRadar = null;
+  _backgroundVolcanoMap = null;
+  _backgroundTyphoon = null;
+  _backgroundChinaWeather = null;
+  _backgroundCmaWeather = null;
+  _backgroundJmaWeather = null;
+  _backgroundJmaLpgm = null;
+  _backgroundJmaMegaquake = null;
+  _backgroundOfficialUsgs?.stop();
+  _backgroundOfficialUsgs?.onCurrentUpdated = null;
+  _backgroundOfficialUsgs?.onListUpdated = null;
+  _backgroundOfficialEmsc?.stop();
+  _backgroundOfficialEmsc?.onCurrentUpdated = null;
+  _backgroundOfficialEmsc?.onListUpdated = null;
+  _backgroundOfficialCwa?.stop();
+  _backgroundOfficialCwa?.onCurrentUpdated = null;
+  _backgroundOfficialCwa?.onListUpdated = null;
+  _backgroundOfficialCenc?.stop();
+  _backgroundOfficialCenc?.onListUpdated = null;
+  _backgroundOfficialJma?.stop();
+  _backgroundOfficialJma?.onListUpdated = null;
+  _backgroundOfficialUsgs = null;
+  _backgroundOfficialEmsc = null;
+  _backgroundOfficialCwa = null;
+  _backgroundOfficialCenc = null;
+  _backgroundOfficialJma = null;
+  _backgroundManager?.reset();
+  _backgroundManager = null;
+}
+
+SourceStatus _whewsState(WhewsStationService service) {
+  return switch (service.stateNotifier.value) {
+    WhewsSocketState.connected => SourceStatus.connected,
+    WhewsSocketState.connecting => SourceStatus.connecting,
+    WhewsSocketState.disconnected => SourceStatus.disconnected,
+    WhewsSocketState.unauthorized ||
+    WhewsSocketState.error => SourceStatus.error,
+  };
+}
+
+Map<String, dynamic> _whewsNiedPayload(WhewsStationFrame frame) => {
+  'kind': 'whewsNied',
+  'dataTime': frame.dataTime.toIso8601String(),
+  'coordinates': frame.coordinates
+      .map((value) => {'lat': value.latitude, 'lng': value.longitude})
+      .toList(growable: false),
+  'values': frame.values,
+  'pga': frame.pga,
+  'pgv': frame.pgv,
+};
+
+Map<String, dynamic> _whewsSnetPayload(WhewsStationFrame frame) => {
+  'kind': 'whewsSnet',
+  'dataTime': frame.dataTime.toIso8601String(),
+  'coordinates': frame.coordinates
+      .map((value) => {'lat': value.latitude, 'lng': value.longitude})
+      .toList(growable: false),
+  'values': frame.values,
+};
+
+Map<String, dynamic> _whewsKmaPayload(WhewsStationFrame frame) => {
+  'kind': 'whewsKma',
+  'dataTime': frame.dataTime.toIso8601String(),
+  'coordinates': frame.coordinates
+      .map((value) => {'lat': value.latitude, 'lng': value.longitude})
+      .toList(growable: false),
+  'values': frame.values,
+};
+
+Future<void> _startBackgroundWhewsStationsIfAuthorized(
+  SharedPreferences prefs, {
+  required WhewsStationService whewsNied,
+  required WhewsStationService whewsSnet,
+  required WhewsStationService whewsKma,
+}) async {
+  if (!(prefs.getBool(WhewsService.apiAuthorizedPreferenceKey) ?? false)) {
+    return;
+  }
+  final authService = WAuthService();
+  final credentials = await authService.credentialStore.readAndMigrate(
+    preferences: prefs,
+  );
+  final token = credentials.apiToken.trim();
+  if (token.isEmpty) {
+    authService.close();
+    return;
+  }
+  final auth = prefs.getBool(WhewsService.enabledPreferenceKey) ?? false;
+  whewsNied.setApiToken(token);
+  whewsSnet.setApiToken(token);
+  whewsKma.setApiToken(token);
+  if (auth && (prefs.getBool('api_source_whews_nied_enabled') ?? false)) {
+    whewsNied.start();
+  }
+  if (auth && (prefs.getBool('api_source_whews_snet_enabled') ?? false)) {
+    whewsSnet.start();
+  }
+  if (auth &&
+      (prefs.getBool('api_source_whews_kma_station_enabled') ?? false)) {
+    whewsKma.start();
+  }
+  authService.close();
+}
+
+Future<void> _verifyAndEnableBackgroundWhews(
+  SharedPreferences prefs,
+  SourceManager manager,
+  WhewsService whews,
+) async {
+  if (!(prefs.getBool(WhewsService.enabledPreferenceKey) ?? false)) return;
+
+  final auth = WAuthService();
+  try {
+    final credentials = await auth.credentialStore.readAndMigrate(
+      preferences: prefs,
+    );
+    if (!credentials.isComplete) {
+      await prefs.setBool(WhewsService.apiAuthorizedPreferenceKey, false);
+      return;
+    }
+    await auth.requireAuthorizedApiToken(credentials.apiToken);
+
+    await prefs.reload();
+    final current = await auth.credentialStore.readAndMigrate(
+      preferences: prefs,
+    );
+    if (current.accessToken != credentials.accessToken ||
+        current.apiToken != credentials.apiToken ||
+        !(prefs.getBool(WhewsService.enabledPreferenceKey) ?? false)) {
+      return;
+    }
+    await prefs.setBool(WhewsService.apiAuthorizedPreferenceKey, true);
+    whews.setApiToken(credentials.apiToken);
+    manager.setSourceEnabled('WHEWS', true);
+  } catch (_) {
+    await prefs.setBool(WhewsService.apiAuthorizedPreferenceKey, false);
+    whews.setApiToken('');
+    manager.setSourceEnabled('WHEWS', false);
+  } finally {
+    auth.close();
   }
 }
 
@@ -418,12 +1091,11 @@ class _AcceptedEewState {
 }
 
 /// 处理统一事件：先经过 [BackgroundEventProcessor] 统一过滤/合并，
-/// 再按后台通知设置决定是否弹系统通知。
+/// 只把已接纳结果交给主 isolate；通知、语音和 UI 效果由主 UI 链处理。
 void _handleUnifiedEvent(
   UnifiedQuakeData event,
-  BackgroundSettingsProvider settings,
-  FlutterLocalNotificationsPlugin notifications,
   BackgroundEventProcessor processor,
+  void Function(UnifiedQuakeData event) onUnifiedEvent,
 ) {
   final result = processor.process(event);
   if (result.type == BackgroundEventResultType.dropped ||
@@ -431,103 +1103,5 @@ void _handleUnifiedEvent(
     return;
   }
 
-  final processedEvent = result.event!;
-  final isUpdate = result.type == BackgroundEventResultType.update;
-
-  if (processedEvent.isEew) {
-    if (!settings.canNotifyEew) return;
-    final localIntensity = _computeLocalIntensityForEvent(processedEvent);
-    if (!settings.matchesEewThreshold(localIntensity)) return;
-    _showNotification(
-      notifications,
-      processedEvent.isCanceled ? '地震预警取消' : '地震预警',
-      _buildEewBody(processedEvent, localIntensity),
-      isCritical: !processedEvent.isCanceled,
-    );
-  } else {
-    // 信息事件仅在首次收到时通知，更新时不重复弹出
-    if (isUpdate) return;
-    if (!settings.canNotifyReport) return;
-    final presentation = UnifiedEventPresentation.fromEvent(processedEvent);
-    _showNotification(
-      notifications,
-      presentation.title,
-      presentation.notificationBody,
-    );
-  }
-}
-
-/// 基于单个事件计算本地预估烈度。
-///
-/// 优先根据用户位置与震源距离计算；当缺少用户位置或事件经纬度时，
-/// 再 fallback 到事件自身 maxIntensity，避免显示震中烈度作为本地烈度。
-double _computeLocalIntensityForEvent(UnifiedQuakeData event) {
-  final userPos = LocationService().currentPosition;
-  final lat = event.lat;
-  final lng = event.lng;
-  if (userPos != null && lat != null && lng != null) {
-    try {
-      final distance = QuakeCalculator.haversineDistance(
-        userPos.latitude,
-        userPos.longitude,
-        lat,
-        lng,
-      );
-      return IntensityCalculator.calculate(
-        mag: event.magnitude,
-        distance: distance,
-      );
-    } catch (e) {
-      debugPrint('后台服务本地烈度计算失败: $e');
-    }
-  }
-  final maxIntensity = double.tryParse(event.maxIntensity);
-  if (maxIntensity != null && maxIntensity > 0) {
-    return maxIntensity;
-  }
-  return 0.0;
-}
-
-String _buildEewBody(UnifiedQuakeData event, double localIntensity) {
-  final buffer = StringBuffer();
-  if (event.isCanceled) {
-    buffer.write('本次地震预警已取消。');
-  } else {
-    buffer.write(
-      '震源 ${event.hypocenter}，M${event.magnitude.toStringAsFixed(1)}，',
-    );
-    buffer.write('${event.depthText}。');
-    if (localIntensity > 0) {
-      buffer.write('本地预估烈度 ${localIntensity.toStringAsFixed(1)}。');
-    }
-  }
-  return buffer.toString();
-}
-
-Future<void> _showNotification(
-  FlutterLocalNotificationsPlugin notifications,
-  String title,
-  String body, {
-  bool isCritical = false,
-}) async {
-  final androidDetails = AndroidNotificationDetails(
-    'rhythmquake_background',
-    '后台地震通知',
-    channelDescription: '应用处于后台时接收地震预警与信息事件通知',
-    importance: isCritical ? Importance.max : Importance.high,
-    priority: isCritical ? Priority.max : Priority.high,
-    playSound: true,
-    enableVibration: isCritical,
-  );
-  const darwinDetails = DarwinNotificationDetails(
-    presentAlert: true,
-    presentBadge: true,
-    presentSound: true,
-  );
-  final details = NotificationDetails(
-    android: androidDetails,
-    iOS: darwinDetails,
-    macOS: darwinDetails,
-  );
-  await notifications.show(_backgroundNotificationId++, title, body, details);
+  onUnifiedEvent(result.event!);
 }

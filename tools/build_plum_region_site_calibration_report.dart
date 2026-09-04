@@ -174,18 +174,9 @@ Map<String, Object?> buildPlumRegionSiteCalibrationReportJson({
           'amplification proxy',
     },
     'bandDefinitions': const {
-      'high': {
-        'minPrecision': _highBandMinPrecision,
-        'label': 'high',
-      },
-      'medium': {
-        'minPrecision': _mediumBandMinPrecision,
-        'label': 'medium',
-      },
-      'low': {
-        'minPrecision': 0.0,
-        'label': 'low',
-      },
+      'high': {'minPrecision': _highBandMinPrecision, 'label': 'high'},
+      'medium': {'minPrecision': _mediumBandMinPrecision, 'label': 'medium'},
+      'low': {'minPrecision': 0.0, 'label': 'low'},
       'minSampleForBandAssignment': _minSampleForBandAssignment,
     },
     'coverage': {
@@ -250,18 +241,10 @@ String plumRegionSiteCalibrationMarkdown(Map<String, Object?> report) {
     ..writeln()
     ..writeln('## Bucket Definitions')
     ..writeln()
-    ..writeln(
-      '- region bands: `${bucketDefs['regionBands']}`',
-    )
-    ..writeln(
-      '- site bands: `${bucketDefs['siteBands']}`',
-    )
-    ..writeln(
-      '- region source: `${bucketDefs['regionSource']}`',
-    )
-    ..writeln(
-      '- site source: `${bucketDefs['siteSource']}`',
-    )
+    ..writeln('- region bands: `${bucketDefs['regionBands']}`')
+    ..writeln('- site bands: `${bucketDefs['siteBands']}`')
+    ..writeln('- region source: `${bucketDefs['regionSource']}`')
+    ..writeln('- site source: `${bucketDefs['siteSource']}`')
     ..writeln()
     ..writeln('## Band Definitions')
     ..writeln()
@@ -317,9 +300,7 @@ String plumRegionSiteCalibrationMarkdown(Map<String, Object?> report) {
       ..writeln()
       ..writeln('### Joint Calibration Table')
       ..writeln()
-      ..writeln(
-        '| Region | Site | Pred+ | TP | FP | Precision | Band |',
-      )
+      ..writeln('| Region | Site | Pred+ | TP | FP | Precision | Band |')
       ..writeln('| --- | --- | ---: | ---: | ---: | ---: | --- |');
     for (final raw in _list(row['jointBuckets'])) {
       final bucket = _map(raw);
@@ -414,17 +395,11 @@ class _ThresholdSummary {
       'baseline': baseline.toMetrics().toJson(),
       'marginalRegion': [
         for (final entry in marginalRegion.entries)
-          {
-            'region': entry.key,
-            ...entry.value.toJson(),
-          },
+          {'region': entry.key, ...entry.value.toJson()},
       ],
       'marginalSite': [
         for (final entry in marginalSite.entries)
-          {
-            'site': entry.key,
-            ...entry.value.toJson(),
-          },
+          {'site': entry.key, ...entry.value.toJson()},
       ],
       'jointBuckets': jointJson,
       'bandSummary': {

@@ -72,46 +72,57 @@ class MapConfig {
 
   /// FanStudio瓦片服务基础URL
   static const String _fanBase = 'https://tilemap.fanstudio.tech';
+  static const String _fanCacheRevision = '20260822-zxy';
 
   /// Petal深色主题瓦片
   /// 适合夜间模式和地震数据可视化
-  static const String petalDark = '$_fanBase/petaldark/{z}/{y}/{x}';
+  static const String petalDark =
+      '$_fanBase/petaldark/{z}/{x}/{y}?v=$_fanCacheRevision';
 
   /// Petal浅色主题瓦片
   /// 适合日间模式，提供清晰的地图底图
-  static const String petalLight = '$_fanBase/petallight/{z}/{y}/{x}';
+  static const String petalLight =
+      '$_fanBase/petallight/{z}/{x}/{y}?v=$_fanCacheRevision';
 
   /// ArcGIS卫星影像瓦片
   /// 提供高分辨率卫星图像
-  static const String arcgisSatellite = '$_fanBase/arcwi/{z}/{y}/{x}';
+  static const String arcgisSatellite =
+      '$_fanBase/arcwi/{z}/{x}/{y}?v=$_fanCacheRevision';
 
   /// ArcGIS地形图瓦片
   /// 提供详细的地形和地貌信息
-  static const String arcgisTopo = '$_fanBase/arcwob/{z}/{y}/{x}';
+  static const String arcgisTopo =
+      '$_fanBase/arcwob/{z}/{x}/{y}?v=$_fanCacheRevision';
 
   /// ArcGIS山体阴影瓦片
   /// 增强地形立体感
-  static const String arcgisHillshade = '$_fanBase/arcwh/{z}/{y}/{x}';
+  static const String arcgisHillshade =
+      '$_fanBase/arcwh/{z}/{x}/{y}?v=$_fanCacheRevision';
 
   /// DEM高程数据
   /// 提供数字高程模型地形数据
-  static const String demElevation = '$_fanBase/dem/{z}/{y}/{x}';
+  static const String demElevation =
+      '$_fanBase/dem/{z}/{x}/{y}?v=$_fanCacheRevision';
 
   /// 实况云图层
   /// 实时卫星云图叠加层
-  static const String cloudLayer = '$_fanBase/cloud/{z}/{y}/{x}';
+  static const String cloudLayer =
+      '$_fanBase/cloud/{z}/{x}/{y}?v=$_fanCacheRevision';
 
   /// 实况降水图层
   /// 实时降水雷达叠加层
-  static const String rainLayer = '$_fanBase/rain/{z}/{y}/{x}';
+  static const String rainLayer =
+      '$_fanBase/rain/{z}/{x}/{y}?v=$_fanCacheRevision';
 
   /// 实况风图层
   /// 实时风场图叠加层
-  static const String windLayer = '$_fanBase/wind/{z}/{y}/{x}';
+  static const String windLayer =
+      '$_fanBase/wind/{z}/{x}/{y}?v=$_fanCacheRevision';
 
   /// 中国境内等高线
   /// 中国区域等高线地形图
-  static const String cnContour = '$_fanBase/cncl/{z}/{y}/{x}';
+  static const String cnContour =
+      '$_fanBase/cncl/{z}/{x}/{y}?v=$_fanCacheRevision';
 
   /// 当前使用的瓦片URL
   /// 默认使用Petal浅色主题
@@ -135,9 +146,7 @@ class MapConfig {
     'ArcGIS 地形': 'arcgisTopo',
     'ArcGIS 山体阴影': 'arcgisHillshade',
     'DEM 高程数据': 'demElevation',
-    'CartoDB 深色': 'cartoDark',
     'Mapbox Dark': mapboxEewceDarkKey,
-    'OpenStreetMap': 'osmTileUrl',
   };
 
   /// 可选叠加图层 (显示名 -> 图层键名)
@@ -154,6 +163,9 @@ class MapConfig {
 
   static String normalizeBaseTileKey(String key) {
     if (_removedBaseTileKeys.contains(key)) return 'petalLight';
+    // Hidden-but-still-supported legacy keys (not exposed in UI).
+    // Keep them working if user already persisted them locally.
+    if (key == 'cartoDark' || key == 'osmTileUrl') return key;
     return isBaseTileKey(key) ? key : 'petalLight';
   }
 

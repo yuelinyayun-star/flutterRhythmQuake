@@ -29,35 +29,6 @@
 - Default real-time shindo input and map station display now read `jma_s` for every scan-mapped station.
 - `physicalSensorRole` remains separate from `gifDisplayPrimaryLayer`; `jma_b` is retained for explicit auxiliary borehole diagnostics.
 
-## GIF Probe
-
-- Probe root: `tmp\captures`
-- Decoded jma_s/jma_b pairs: `24`
-- Suspicious KiK-net surface-dominant candidates: `153`
-
-| Code | Network | Current layer | Surface max | Borehole max | Reason |
-|---|---|---|---:|---:|---|
-| `TCGH16` | `KiK-net` | `jma_s` | 1.23 | -3.00 | `surface_max_shindo_exceeds_borehole_by_0_5_or_more` |
-| `CHBH14` | `KiK-net` | `jma_s` | 0.25 | -3.00 | `surface_max_shindo_exceeds_borehole_by_0_5_or_more` |
-| `IBRH21` | `KiK-net` | `jma_s` | 0.03 | -3.00 | `surface_max_shindo_exceeds_borehole_by_0_5_or_more` |
-| `YMTH06` | `KiK-net` | `jma_s` | -0.19 | -3.00 | `surface_max_shindo_exceeds_borehole_by_0_5_or_more` |
-| `GNMH05` | `KiK-net` | `jma_s` | -0.29 | -3.00 | `surface_max_shindo_exceeds_borehole_by_0_5_or_more` |
-| `NGNH18` | `KiK-net` | `jma_s` | -0.29 | -3.00 | `surface_max_shindo_exceeds_borehole_by_0_5_or_more` |
-| `ABSH10` | `KiK-net` | `jma_s` | -0.40 | -3.00 | `surface_max_shindo_exceeds_borehole_by_0_5_or_more` |
-| `CHBH13` | `KiK-net` | `jma_s` | -0.51 | -3.00 | `surface_max_shindo_exceeds_borehole_by_0_5_or_more` |
-| `KNGH11` | `KiK-net` | `jma_s` | -0.51 | -3.00 | `surface_max_shindo_exceeds_borehole_by_0_5_or_more` |
-| `AICH13` | `KiK-net` | `jma_s` | -0.60 | -3.00 | `surface_max_shindo_exceeds_borehole_by_0_5_or_more` |
-| `CHBH12` | `KiK-net` | `jma_s` | -0.71 | -3.00 | `surface_max_shindo_exceeds_borehole_by_0_5_or_more` |
-| `NGNH33` | `KiK-net` | `jma_s` | -0.79 | -3.00 | `surface_max_shindo_exceeds_borehole_by_0_5_or_more` |
-| `TKCH06` | `KiK-net` | `jma_s` | -0.79 | -3.00 | `surface_max_shindo_exceeds_borehole_by_0_5_or_more` |
-| `CHBH19` | `KiK-net` | `jma_s` | -0.79 | -3.00 | `surface_max_shindo_exceeds_borehole_by_0_5_or_more` |
-| `SITH04` | `KiK-net` | `jma_s` | -0.79 | -3.00 | `surface_max_shindo_exceeds_borehole_by_0_5_or_more` |
-| `SBSH08` | `KiK-net` | `jma_s` | -0.79 | -3.00 | `surface_max_shindo_exceeds_borehole_by_0_5_or_more` |
-| `OSKH05` | `KiK-net` | `jma_s` | -0.79 | -3.00 | `surface_max_shindo_exceeds_borehole_by_0_5_or_more` |
-| `OITH07` | `KiK-net` | `jma_s` | -0.79 | -3.00 | `surface_max_shindo_exceeds_borehole_by_0_5_or_more` |
-| `FKIH05` | `KiK-net` | `jma_s` | -0.88 | -3.00 | `surface_max_shindo_exceeds_borehole_by_0_5_or_more` |
-| `FKSH11` | `KiK-net` | `jma_s` | -0.88 | -3.00 | `surface_max_shindo_exceeds_borehole_by_0_5_or_more` |
-
 ## Follow-up
 
 1. Add explicit station metadata for `gifDisplayPrimaryLayer` instead of deriving it from `network`.

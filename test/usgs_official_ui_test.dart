@@ -33,8 +33,8 @@ void main() {
     expect(payload, isNotNull);
     expect(payload!['eventId'], '6000t8pa');
     expect(payload['reviewType'], 'reviewed');
-    expect(payload['originTime'], '2026-06-27 21:34:52');
-    expect(payload['updateTime'], '2026-06-27 22:44:30');
+    expect(payload['originTime'], '2026-06-27T13:34:52.000Z');
+    expect(payload['updateTime'], '2026-06-27T14:44:30.000Z');
 
     final event = QuakeEventAdapter.convert('usgsEqlist', payload, 0);
     expect(event, isNotNull);

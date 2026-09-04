@@ -21,10 +21,7 @@ void main() {
 
       expect(event, isNotNull);
       expect(event!.source, 'cencCmt');
-      expect(
-        event.eventId,
-        'cenc_cmt_2023-12-18T15:59:30.000Z_35.700_102.300',
-      );
+      expect(event.eventId, 'cenc_cmt_2023-12-18T15:59:30.000Z_35.700_102.300');
       expect(event.titleText, 'CENC 地震矩心矩张量解');
       expect(event.reportNumText, '自动');
       expect(event.apiTypeLabel, 'CENC');

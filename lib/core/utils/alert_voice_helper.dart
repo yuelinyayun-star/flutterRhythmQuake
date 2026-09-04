@@ -48,7 +48,7 @@ class AlertVoiceHelper {
     TsunamiMessage message, {
     required bool isUpdate,
   }) {
-    final source = message.source == TsunamiSource.jma ? '日本气象厅' : '国家海洋预报台';
+    final source = message.source.voiceLabel;
     if (!message.isActive) {
       if (message.title.contains('信息') || message.titleText.contains('信息')) {
         return '$source，发布${message.title.isNotEmpty ? message.title : "海啸信息"}。';
@@ -97,8 +97,8 @@ class AlertVoiceHelper {
     };
     final location = _fallback(event.hypocenter, '震源附近');
     final mag = _magText(event.magnitude);
-    // 深度直接复用统一事件给 UI 的格式化字段，避免语音另行四舍五入。
-    final depth = event.depthText.trim();
+    // 复用 UI 的深度数值，但将日文标签和 km 单位转成自然中文语音。
+    final depth = _unifiedDepthVoiceText(event.depthText);
     final maxIntensity = _unifiedIntensityText(event);
     final report = _reportText(event.reportNumText);
     final area = event.warnArea.trim().isEmpty ? '' : '预警区域：${event.warnArea}。';
@@ -125,16 +125,20 @@ class AlertVoiceHelper {
     }
 
     final action = phase == 'first' ? '发布地震信息' : '更新地震信息';
-    final title = _fallback(event.titleText, '地震信息');
+    final title = _infoTitleForVoice(event);
+    final report = _infoReportText(event);
     final location = _fallback(event.hypocenter, '震源附近');
     final mag = _magText(event.magnitude);
     final depth = _depthText(event.depth);
     final intensity = _unifiedIntensityText(event);
 
+    final skipDuplicateTitle =
+        _isUnadaptedVoiceSource(event.source) && title == source;
     final parts = <String>[
       source,
       action,
-      title,
+      if (title.isNotEmpty && !skipDuplicateTitle) title,
+      if (report.isNotEmpty) report,
       '$location。',
       if (mag.isNotEmpty) mag,
       if (depth.isNotEmpty) depth,
@@ -146,7 +150,7 @@ class AlertVoiceHelper {
   static String _sourceLabel(String source) {
     return switch (source) {
       'jmaEew' || 'jmaEqlist' => '日本气象厅',
-      'cwaEew' || 'cwaEqlist' => '台湾中央气象署',
+      'cwaEew' || 'cwaEqlist' => '中央气象署',
       'ceaEew' => '中国地震预警网',
       'scEew' => '四川省地震局',
       'fjEew' => '福建省地震局',
@@ -168,8 +172,73 @@ class AlertVoiceHelper {
       'shanxi' => '山西省地震局',
       'beijing' => '北京市地震局',
       'yunnan' => '云南省地震局',
-      _ => source.isEmpty ? '地震信息源' : source,
+      'whews_bmkg' => '印度尼西亚气象气候与地球物理局',
+      'geonet' || 'whews_geonet' => '新西兰地球科学局',
+      'whews_tmd' => '泰国气象局',
+      'whews_ingv' => '意大利国家地球物理与火山学研究所',
+      'whews_nrcan' => '加拿大自然资源部',
+      'whews_mmd' => '马来西亚气象局',
+      'whews_phivolcs' => '菲律宾火山与地震研究所',
+      'whews_sgc' => '哥伦比亚地质局',
+      'whews_ga' => '澳大利亚地质局',
+      'whews_cenais' => '古巴国家地震研究中心',
+      _ => _unadaptedSourceLabel(source),
     };
+  }
+
+  static bool _isUnadaptedVoiceSource(String source) {
+    return source.startsWith('unadapted_') ||
+        (source.startsWith('whews_') &&
+            !_adaptedWhewsVoiceSources.contains(source));
+  }
+
+  static const _adaptedWhewsVoiceSources = <String>{
+    'whews_bmkg',
+    'whews_geonet',
+    'whews_tmd',
+    'whews_ingv',
+    'whews_nrcan',
+    'whews_mmd',
+    'whews_phivolcs',
+    'whews_sgc',
+    'whews_ga',
+    'whews_cenais',
+  };
+
+  static String _unadaptedSourceLabel(String source) {
+    if (!_isUnadaptedVoiceSource(source)) {
+      return source.isEmpty ? '地震信息源' : source;
+    }
+    if (source.startsWith('unadapted_')) {
+      final rest = source.substring('unadapted_'.length).trim();
+      return rest.isEmpty ? '地震信息源' : rest;
+    }
+    if (source.startsWith('whews_')) {
+      final rest = source.substring('whews_'.length).trim();
+      return rest.isEmpty ? '地震信息源' : rest;
+    }
+    return source.isEmpty ? '地震信息源' : source;
+  }
+
+  static String _infoTitleForVoice(UnifiedQuakeData event) {
+    final title = _fallback(event.titleText, '地震信息');
+    if (event.source != 'kmaEqlist') return title;
+    return title.replaceFirst('기상청 지진정보', '韩国气象厅地震信息');
+  }
+
+  static String _infoReportText(UnifiedQuakeData event) {
+    final text = event.reportNumText.trim().replaceAll('報', '报');
+    if (text.isEmpty) return '';
+
+    // JMA 情报不播报次；仅保留取消/订正等状态。
+    if (!event.isEew && event.source == 'jmaEqlist') {
+      if (RegExp(r'^第\d+报').hasMatch(text)) {
+        return RegExp(r'（([^）]+)）').firstMatch(text)?.group(1)?.trim() ?? '';
+      }
+      return text;
+    }
+
+    return text;
   }
 
   static String _reportText(String text) {
@@ -185,6 +254,24 @@ class AlertVoiceHelper {
     final value = event.maxIntensity.trim();
     if (value.isEmpty || value == '-' || value == '--') return '';
     return event.useShindo ? '最大震度$value。' : '最大烈度$value。';
+  }
+
+  static String _unifiedDepthVoiceText(String depthText) {
+    final trimmed = depthText.trim();
+    if (trimmed.isEmpty) return '';
+    if (trimmed.contains('ごく浅い') || trimmed.contains('很浅')) {
+      return '深度很浅。';
+    }
+
+    final value = RegExp(
+      r'(-?\d+(?:\.\d+)?)\s*(?:km|公里)?',
+      caseSensitive: false,
+    ).firstMatch(trimmed)?.group(1);
+    if (value != null) return '深度$value公里。';
+
+    return trimmed
+        .replaceAll('深さ', '深度')
+        .replaceAll(RegExp(r'\s*km\b', caseSensitive: false), '公里');
   }
 
   static String _legacyIntensityText(QuakeMessage event, double intensity) {

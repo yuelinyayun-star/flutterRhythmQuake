@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../../core/calculator.dart';
@@ -66,6 +67,7 @@ class ChinaWeatherAlertService {
   bool _includeLowerLevels = true;
   String _lastAlarmId = '';
   String? _detectedProvince;
+  String? _resolvedAdminArea;
 
   void Function(WeatherAlarm?)? onLocalAlarmChanged;
   String? get detectedProvince => _detectedProvince;
@@ -73,6 +75,13 @@ class ChinaWeatherAlertService {
   void setLocalAnchor(double lat, double lng) {
     _lat = lat;
     _lng = lng;
+  }
+
+  void setResolvedAdminArea(String? area) {
+    final normalized = area?.replaceAll(RegExp(r'\s+'), '').trim();
+    _resolvedAdminArea = normalized == null || normalized.isEmpty
+        ? null
+        : normalized;
   }
 
   void setProvinceKeywords(List<String> keywords) {
@@ -159,45 +168,16 @@ class ChinaWeatherAlertService {
   }
 
   _SelectedAlarm? _pickBestLocalAlarm(List rows) {
-    final targetProvince = _provinceFromAnchor();
+    final targetProvince = _provinceFromResolvedArea() ?? _provinceFromAnchor();
     _detectedProvince = targetProvince;
     final provinceLocked = targetProvince != null;
 
-    // Determine user's city/county from alert data
     String? targetCity;
     if (provinceLocked && _adminLevel != ChinaWeatherAdminLevel.province) {
-      final cityCenters = <String, List<double>>{};
-      for (final row in rows) {
-        if (row is! List || row.length < 7) continue;
-        final area = row[0]?.toString() ?? '';
-        final areaProvince = _extractProvince(area);
-        if (areaProvince != targetProvince) continue;
-        // Try city first, fall back to county for county-level cities (e.g. 义乌市)
-        final name = _extractCity(area) ?? _extractCounty(area);
-        if (name == null) continue;
-        final lon = double.tryParse(row[2]?.toString() ?? '');
-        final lat = double.tryParse(row[3]?.toString() ?? '');
-        if (lon == null || lat == null) continue;
-        cityCenters.putIfAbsent(name, () => [0.0, 0.0, 0]);
-        final c = cityCenters[name]!;
-        c[0] += lat;
-        c[1] += lon;
-        c[2] += 1;
+      targetCity = _localAdminFilterName();
+      if (targetCity == null && _adminLevel == ChinaWeatherAdminLevel.county) {
+        return null;
       }
-      var bestCityDist = double.infinity;
-      for (final entry in cityCenters.entries) {
-        final c = entry.value;
-        if (c[2] == 0) continue;
-        final avgLat = c[0] / c[2];
-        final avgLon = c[1] / c[2];
-        final d = QuakeCalculator.haversineDistance(_lat, _lng, avgLat, avgLon);
-        if (d < bestCityDist) {
-          bestCityDist = d;
-          targetCity = entry.key;
-        }
-      }
-      // Nearest city/county center too far → user's location has no alerts
-      if (bestCityDist > 60) return null;
     }
 
     _Candidate? best = _pickAlerts(
@@ -207,6 +187,26 @@ class ChinaWeatherAlertService {
       provinceLocked,
     );
     return best?.selected;
+  }
+
+  String? _provinceFromResolvedArea() {
+    if (_resolvedAdminArea == null || _resolvedAdminArea!.isEmpty) {
+      return null;
+    }
+    return _extractProvince(_resolvedAdminArea!);
+  }
+
+  String? _localAdminFilterName() {
+    final area = _resolvedAdminArea;
+    if (area == null || area.isEmpty) return null;
+    switch (_adminLevel) {
+      case ChinaWeatherAdminLevel.province:
+        return null;
+      case ChinaWeatherAdminLevel.city:
+        return _extractCity(area) ?? _extractCounty(area);
+      case ChinaWeatherAdminLevel.county:
+        return _extractCounty(area) ?? _extractCity(area);
+    }
   }
 
   _Candidate? _pickAlerts(
@@ -542,4 +542,19 @@ class _AlarmDetail {
     required this.issueTime,
     required this.issueContent,
   });
+}
+
+@visibleForTesting
+String? chinaWeatherPickLocalAreaForTest({
+  required List<dynamic> rows,
+  required double lat,
+  required double lng,
+  String? resolvedAdminArea,
+  ChinaWeatherAdminLevel adminLevel = ChinaWeatherAdminLevel.county,
+}) {
+  final service = ChinaWeatherAlertService();
+  service.setLocalAnchor(lat, lng);
+  service.setResolvedAdminArea(resolvedAdminArea);
+  service.setAdminLevel(adminLevel);
+  return service._pickBestLocalAlarm(rows)?.area;
 }

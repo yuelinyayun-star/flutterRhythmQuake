@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutterrhythmquake/core/utils/quake_time.dart';
 import 'package:flutterrhythmquake/services/quake_event_adapter.dart';
 
 void main() {
@@ -68,6 +69,23 @@ void main() {
 
       expect(event, isNotNull);
       expect(event!.centroidDepth, isNull);
+    });
+
+    test('UTC ISO eventtime keeps the USGS CMT absolute instant', () {
+      final event = QuakeEventAdapter.convert('usgsCmt', {
+        'eventId': 'usgs_cmt_utc_test',
+        'location': '测试区域',
+        'magnitude': 5.8,
+        'depth': 20.0,
+        'latitude': 35.0,
+        'longitude': 140.0,
+        'originTime': '2026-07-30T04:00:00.000Z',
+        'reviewType': 'reviewed',
+      }, 0);
+
+      expect(event, isNotNull);
+      expect(event!.timeZone, QuakeTime.systemTimeZoneHours);
+      expect(QuakeTime.unifiedInstantUtc(event), DateTime.utc(2026, 7, 30, 4));
     });
   });
 }

@@ -107,7 +107,8 @@ void main() {
         _cencIrData('20260728111607'),
         requireUnifiedEvent: true,
       );
-      expect(provider.cencIrData?.reportId, '20260728111607');
+      expect(provider.realtimeCencIrData?.reportId, '20260728111607');
+      expect(provider.cencIrData, isNull);
 
       await Future<void>.delayed(const Duration(milliseconds: 1));
 
@@ -115,6 +116,18 @@ void main() {
       expect(provider.cencIrData, isNull);
     },
   );
+
+  test('FAN realtime map data remains independent from unified UI', () {
+    final provider = QuakeProvider();
+    addTearDown(provider.dispose);
+
+    provider.updateRealtimeCencIrDataForTest(
+      _cencIrData('fan-report', source: CencIrDataSource.fan),
+    );
+
+    expect(provider.unifiedEvents, isEmpty);
+    expect(provider.cencIrData?.reportId, 'fan-report');
+  });
 
   test(
     'NowQuake realtime map data remains when unified UI accepts the event',
@@ -143,15 +156,16 @@ void main() {
 
     provider.updateRealtimeCencIrDataForTest(_cencIrData('20260728111607'));
     provider.handleUnifiedEventForTest(event);
-    provider.updateManualCencIrDataForTest(_cencIrData('20260728111607'));
+    provider.updateManualCencIrDataForTest(_cencIrData('manual-report'));
 
     expect(provider.isManualCencIrActive, isTrue);
-    expect(provider.manualCencIrData?.reportId, '20260728111607');
+    expect(provider.manualCencIrData?.reportId, 'manual-report');
+    expect(provider.cencIrData?.reportId, '20260728111607');
 
     provider.dismissUnifiedEventForTest(event);
 
     expect(provider.unifiedEvents, isEmpty);
-    expect(provider.cencIrData?.reportId, '20260728111607');
+    expect(provider.cencIrData?.reportId, 'manual-report');
 
     provider.clearCencIrData();
     expect(provider.cencIrData, isNull);
@@ -209,10 +223,13 @@ UnifiedQuakeData _nowQuakeCencIrEvent(String id) {
   );
 }
 
-CencIrData _cencIrData(String id) {
+CencIrData _cencIrData(
+  String id, {
+  CencIrDataSource source = CencIrDataSource.nowQuake,
+}) {
   final now = DateTime.now().toUtc();
   return CencIrData(
-    source: CencIrDataSource.nowQuake,
+    source: source,
     reportId: id,
     uniEventId: id,
     oriTime: now.subtract(const Duration(minutes: 1)),
@@ -223,5 +240,13 @@ CencIrData _cencIrData(String id) {
     focDepth: 10,
     subjectCodes: 'intensity-report',
     intensityInfoText: '',
+    instrumentIntensities: [
+      InstrumentIntensity(
+        stationName: 'QH_XH01',
+        longitude: 99.61,
+        latitude: 35.38,
+        intensity: 5.2,
+      ),
+    ],
   );
 }

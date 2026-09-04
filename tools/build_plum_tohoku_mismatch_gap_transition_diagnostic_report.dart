@@ -246,7 +246,9 @@ Map<String, Object?> buildPlumTohokuMismatchGapTransitionDiagnosticJson({
     'thresholds': {
       for (final threshold in _thresholds)
         threshold.label: _buildThresholdJson(
-          validation: splitAccumulators['validation']!.threshold(threshold.label),
+          validation: splitAccumulators['validation']!.threshold(
+            threshold.label,
+          ),
           test: splitAccumulators['test']!.threshold(threshold.label),
         ),
     },
@@ -271,9 +273,9 @@ Map<String, Object?> _buildThresholdJson({
 }
 
 Map<String, Map<String, Object?>> _indexCells(Object? rawRows) => {
-      for (final raw in _list(rawRows))
-        '${_map(raw)['actualGapBand']}|${_map(raw)['evidenceGapBand']}': _map(raw),
-    };
+  for (final raw in _list(rawRows))
+    '${_map(raw)['actualGapBand']}|${_map(raw)['evidenceGapBand']}': _map(raw),
+};
 
 List<Map<String, Object?>> _buildTransferMatrix({
   required Map<String, Map<String, Object?>> validationCells,
@@ -363,8 +365,8 @@ List<_EvidenceStation> _supportingEvidence({
       observed.longitude,
     );
     if (distance > _plumRadiusKm) continue;
-    final propagated = observed.intensity -
-        _plumDampingPer10Km * (distance / 10.0);
+    final propagated =
+        observed.intensity - _plumDampingPer10Km * (distance / 10.0);
     if (propagated >= threshold) {
       supportingEvidence.add(
         _EvidenceStation(
@@ -435,9 +437,7 @@ String plumTohokuMismatchGapTransitionDiagnosticMarkdown(
       '- Baseline threshold crossing required: '
       '`${focusFilter['baselineThresholdCrossingRequired']}`',
     )
-    ..writeln(
-      '- Neighbor windows: `${focusFilter['neighborWindowsKm']}`',
-    )
+    ..writeln('- Neighbor windows: `${focusFilter['neighborWindowsKm']}`')
     ..writeln()
     ..writeln('## Gap Definitions')
     ..writeln();
@@ -484,7 +484,8 @@ String plumTohokuMismatchGapTransitionDiagnosticMarkdown(
       );
     for (final raw in transferMatrix) {
       final row = _map(raw);
-      if ((row['validationCount'] as int) == 0 && (row['testCount'] as int) == 0) {
+      if ((row['validationCount'] as int) == 0 &&
+          (row['testCount'] as int) == 0) {
         continue;
       }
       buffer.writeln(
@@ -539,7 +540,7 @@ class _ThresholdAccumulator {
         'mismatchPrecision': mismatchSamples.isEmpty
             ? 0.0
             : mismatchSamples.where((sample) => sample.actualPositive).length /
-                mismatchSamples.length,
+                  mismatchSamples.length,
       },
       'cells': [
         for (final actualGapBand in _actualGapBands)
@@ -570,7 +571,9 @@ Map<String, Object?> _cellRow({
     'actualGapBand': actualGapBand,
     'evidenceGapBand': evidenceGapBand,
     'count': bucket.length,
-    'share': mismatchSamples.isEmpty ? 0.0 : bucket.length / mismatchSamples.length,
+    'share': mismatchSamples.isEmpty
+        ? 0.0
+        : bucket.length / mismatchSamples.length,
     'precision': bucket.isEmpty ? 0.0 : tp / bucket.length,
   };
 }
@@ -634,7 +637,10 @@ class _NeighborSummary {
   final int count;
   final double belowThresholdShare;
 
-  const _NeighborSummary({required this.count, required this.belowThresholdShare});
+  const _NeighborSummary({
+    required this.count,
+    required this.belowThresholdShare,
+  });
 }
 
 _NeighborSummary _localNeighborSummary(
@@ -675,62 +681,61 @@ Map<String, Object?> _emptyReport({
   required String dataDirectory,
   required String modelPath,
 }) => {
-        'schemaVersion': 'plum_tohoku_mismatch_gap_transition_diagnostic_v1',
-        'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
-        'status': 'fail',
-        'policy': {
-          'method': 'PLUM Tohoku mismatch gap-transition diagnostic',
-          'rawPredictedIntensityMutated': false,
-          'frozenTestEvaluated': true,
-          'productionReady': false,
-          'productionUiConnected': false,
-          'diagnosticOnly': true,
-          'parametersTuned': false,
-          'suppressionApplied': false,
-          'plumRadiusKm': _plumRadiusKm,
-          'plumDampingPer10Km': _plumDampingPer10Km,
-        },
-        'inputs': {
-          'dataDirectory': dataDirectory,
-          'modelPath': modelPath,
-          'splits': ['validation', 'test'],
-        },
-        'focusFilter': {
-          'estimatedSourceRegion': _focusRegion,
-          'minimumEvidenceCount': _focusMinimumEvidenceCount,
-          'maximumNearestEvidenceDistanceKm':
-              _focusMaximumNearestEvidenceDistanceKm,
-          'minimumPredictionMarginShindo': _focusMinimumMargin,
-          'baselineThresholdCrossingRequired': true,
-          'neighborWindowsKm': [_localNeighbor10Km, _localNeighbor20Km],
-        },
-        'gapDefinitions': const {
-          'actualGapBand': {
-            'lt_-2.0': 'actual - threshold < -2.0',
-            '-2.0_to_-1.0': '-2.0 <= actual - threshold < -1.0',
-            '-1.0_to_0.0': '-1.0 <= actual - threshold < 0.0',
-            '0.0_to_1.0': '0.0 <= actual - threshold < 1.0',
-            'gte_1.0': 'actual - threshold >= 1.0',
-          },
-          'evidenceGapBand': {
-            'lt_1.0': 'strongestEvidence - actual < 1.0',
-            '1.0_to_2.0': '1.0 <= strongestEvidence - actual < 2.0',
-            '2.0_to_3.0': '2.0 <= strongestEvidence - actual < 3.0',
-            'gte_3.0': 'strongestEvidence - actual >= 3.0',
-            'missing': 'no supporting evidence intensity available',
-          },
-        },
-        'coverage': {
-          'validationVariants': 0,
-          'testVariants': 0,
-          'validationStationForecasts': 0,
-          'testStationForecasts': 0,
-          'skippedMissingMagnitudeEvents': 0,
-          'skippedNoSourceEstimateVariants': 0,
-        },
-        'thresholds': const {},
-        'errors': errors,
-      };
+  'schemaVersion': 'plum_tohoku_mismatch_gap_transition_diagnostic_v1',
+  'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
+  'status': 'fail',
+  'policy': {
+    'method': 'PLUM Tohoku mismatch gap-transition diagnostic',
+    'rawPredictedIntensityMutated': false,
+    'frozenTestEvaluated': true,
+    'productionReady': false,
+    'productionUiConnected': false,
+    'diagnosticOnly': true,
+    'parametersTuned': false,
+    'suppressionApplied': false,
+    'plumRadiusKm': _plumRadiusKm,
+    'plumDampingPer10Km': _plumDampingPer10Km,
+  },
+  'inputs': {
+    'dataDirectory': dataDirectory,
+    'modelPath': modelPath,
+    'splits': ['validation', 'test'],
+  },
+  'focusFilter': {
+    'estimatedSourceRegion': _focusRegion,
+    'minimumEvidenceCount': _focusMinimumEvidenceCount,
+    'maximumNearestEvidenceDistanceKm': _focusMaximumNearestEvidenceDistanceKm,
+    'minimumPredictionMarginShindo': _focusMinimumMargin,
+    'baselineThresholdCrossingRequired': true,
+    'neighborWindowsKm': [_localNeighbor10Km, _localNeighbor20Km],
+  },
+  'gapDefinitions': const {
+    'actualGapBand': {
+      'lt_-2.0': 'actual - threshold < -2.0',
+      '-2.0_to_-1.0': '-2.0 <= actual - threshold < -1.0',
+      '-1.0_to_0.0': '-1.0 <= actual - threshold < 0.0',
+      '0.0_to_1.0': '0.0 <= actual - threshold < 1.0',
+      'gte_1.0': 'actual - threshold >= 1.0',
+    },
+    'evidenceGapBand': {
+      'lt_1.0': 'strongestEvidence - actual < 1.0',
+      '1.0_to_2.0': '1.0 <= strongestEvidence - actual < 2.0',
+      '2.0_to_3.0': '2.0 <= strongestEvidence - actual < 3.0',
+      'gte_3.0': 'strongestEvidence - actual >= 3.0',
+      'missing': 'no supporting evidence intensity available',
+    },
+  },
+  'coverage': {
+    'validationVariants': 0,
+    'testVariants': 0,
+    'validationStationForecasts': 0,
+    'testStationForecasts': 0,
+    'skippedMissingMagnitudeEvents': 0,
+    'skippedNoSourceEstimateVariants': 0,
+  },
+  'thresholds': const {},
+  'errors': errors,
+};
 
 StaticAttenuationModel _modelFromJson(Map<String, Object?> json) {
   return StaticAttenuationModel(

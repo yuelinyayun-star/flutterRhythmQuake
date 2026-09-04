@@ -83,10 +83,7 @@ void main() {
               features['supportingEvidenceCentroidOffsetKm'],
               isA<double>(),
             );
-            expect(
-              features['supportingEvidenceMeanDistanceKm'],
-              isA<double>(),
-            );
+            expect(features['supportingEvidenceMeanDistanceKm'], isA<double>());
             expect(features['supportingEvidenceMaxSpreadKm'], isA<double>());
           }
 
@@ -94,8 +91,14 @@ void main() {
         }
 
         if (label == 'shindo4') {
-          expect((splits['test']! as Map)['focusSampleCount'] as int, greaterThan(0));
-          expect((splits['test']! as Map)['falsePositiveCount'] as int, greaterThan(0));
+          expect(
+            (splits['test']! as Map)['focusSampleCount'] as int,
+            greaterThan(0),
+          );
+          expect(
+            (splits['test']! as Map)['falsePositiveCount'] as int,
+            greaterThan(0),
+          );
         }
         expect(validationPrecision, isNotNull);
         expect(testPrecision, isNotNull);

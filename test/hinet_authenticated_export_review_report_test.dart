@@ -110,7 +110,10 @@ void main() {
           .toList(growable: false);
       expect(submittedCases, hasLength(6));
       final acceptedCases = submittedCases
-          .where((item) => item['decisionStatus'] == 'accepted_constrained_reference')
+          .where(
+            (item) =>
+                item['decisionStatus'] == 'accepted_constrained_reference',
+          )
           .toList(growable: false);
       expect(acceptedCases, hasLength(6));
       for (final item in acceptedCases) {

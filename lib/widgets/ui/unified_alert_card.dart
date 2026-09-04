@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:ui';
+import '../../core/utils/quake_time.dart';
 import '../../models/unified_quake_data.dart';
 import 'unified_intensity_format.dart';
 
@@ -172,11 +173,14 @@ class UnifiedAlertCard extends StatelessWidget {
 
   Widget _buildIntensityBadge(BuildContext context) {
     final color = _colorFromClass(event.className);
+    final isLpgm = event.isJmaLpgm;
     final value = double.tryParse(event.maxIntensity);
-    final display = value != null
+    final display = isLpgm
+        ? '长周期'
+        : value != null
         ? unifiedRomanIntensityLabel(event.maxIntensity)
         : event.maxIntensity;
-    final isNumeric = value != null;
+    final isNumeric = value != null && !isLpgm;
     return Container(
       width: _s(48, context),
       height: _s(48, context),
@@ -206,7 +210,7 @@ class UnifiedAlertCard extends StatelessWidget {
           ),
           SizedBox(height: _s(1, context)),
           Text(
-            '烈度',
+            isLpgm ? '长周期' : '烈度',
             style: TextStyle(
               fontSize: _s(7, context),
               fontWeight: FontWeight.w500,
@@ -287,15 +291,16 @@ class UnifiedAlertCard extends StatelessWidget {
 
   Widget _buildInfoColumn(BuildContext context) {
     final currentEvent = event;
-    final isScalePrompt =
-        currentEvent.magnitude < 0 && currentEvent.hypocenter.isEmpty;
+    final hypocenterInvestigating = _isInvestigatingHypocenter(
+      currentEvent.hypocenter,
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          isScalePrompt ? '震源 調査中' : currentEvent.hypocenter,
+          hypocenterInvestigating ? '震源 調査中' : currentEvent.hypocenter,
           style: TextStyle(
             color: Colors.white,
             fontSize: _s(13, context),
@@ -329,12 +334,12 @@ class UnifiedAlertCard extends StatelessWidget {
   }
 
   String _formatMagDepth(UnifiedQuakeData event, BuildContext context) {
-    final isScalePrompt = event.magnitude < 0 && event.hypocenter.isEmpty;
-    if (isScalePrompt) return '規模 調査中';
+    final magnitudeInvestigating = event.magnitude < 0;
+    if (magnitudeInvestigating) {
+      return '規模 調査中';
+    }
     if (event.isAssumption) return '仮定震源要素';
-    final magStr = event.magnitude >= 0
-        ? 'M${event.magnitude.toStringAsFixed(1)}'
-        : 'M--';
+    final magStr = 'M${event.magnitude.toStringAsFixed(1)}';
     if (event.depthText.isNotEmpty) {
       return '$magStr  ·  ${event.depthText}';
     }
@@ -342,9 +347,18 @@ class UnifiedAlertCard extends StatelessWidget {
     return '$magStr  ·  $depthStr';
   }
 
+  bool _isInvestigatingHypocenter(String value) {
+    final text = value.trim();
+    return text.isEmpty ||
+        text.contains('調査中') ||
+        text.contains('调查中') ||
+        text == '不明' ||
+        text == '不詳' ||
+        text.toLowerCase() == 'unknown';
+  }
+
   String _formatTime(UnifiedQuakeData event, BuildContext context) {
-    if (event.originTime == null) return '--:--:--';
-    return event.originTime!.toLocal().toString().substring(11, 19);
+    return QuakeTime.formatUnifiedOriginClock(event, includeSeconds: false);
   }
 
   Color _colorFromClass(String className) {

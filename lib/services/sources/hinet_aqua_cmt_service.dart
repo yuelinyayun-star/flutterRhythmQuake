@@ -32,6 +32,7 @@ class HinetAquaCmtService {
       'https://www.hinet.bosai.go.jp/AQUA/aqua_catalogue.php';
 
   void Function(List<Map<String, dynamic>>)? onListUpdated;
+  void Function(bool connected)? onStatusChanged;
 
   Timer? _timer;
   bool _initialized = false;
@@ -77,8 +78,10 @@ class HinetAquaCmtService {
 
       onListUpdated?.call(allItems);
       _initialized = true;
+      onStatusChanged?.call(true);
     } catch (e) {
       print('Hi-net AQUA CMT fetch error: $e');
+      onStatusChanged?.call(false);
     } finally {
       _fetching = false;
     }

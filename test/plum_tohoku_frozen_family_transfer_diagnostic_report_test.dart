@@ -31,13 +31,16 @@ void main() {
       expect(focus['minimumPredictionMarginShindo'], 1.0);
       expect(focus['baselineThresholdCrossingRequired'], isTrue);
 
-      final definitions =
-          (report['familyDefinitions'] as Map).cast<String, Object?>();
-      expect(definitions.keys, containsAll(<String>[
-        'localConsistencyBand',
-        'geometryBand',
-        'spreadBand',
-      ]));
+      final definitions = (report['familyDefinitions'] as Map)
+          .cast<String, Object?>();
+      expect(
+        definitions.keys,
+        containsAll(<String>[
+          'localConsistencyBand',
+          'geometryBand',
+          'spreadBand',
+        ]),
+      );
 
       final thresholds = (report['thresholds'] as Map).cast<String, Object?>();
       expect(thresholds.keys, containsAll(<String>['shindo4', 'shindo5-']));

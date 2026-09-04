@@ -3,9 +3,7 @@ import 'package:flutterrhythmquake/services/sources/eqlist/eqlist_http_poll_gate
 
 void main() {
   test('skips HTTP only while external push is fresh', () {
-    final gate = EqlistHttpPollGate(
-      freshWindow: const Duration(seconds: 30),
-    );
+    final gate = EqlistHttpPollGate(freshWindow: const Duration(seconds: 30));
     expect(gate.shouldSkipHttp, isFalse);
 
     gate.noteExternalUpdate(DateTime.now());

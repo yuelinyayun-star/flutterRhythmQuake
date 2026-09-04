@@ -5,23 +5,19 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:ntp/ntp.dart';
 
-enum NtpSyncState {
-  local,
-  synced,
-  stale,
-}
+enum NtpSyncState { local, synced, stale }
 
 /// NTP时间同步服务
-/// 
+///
 /// 该类提供网络时间协议(NTP)同步功能。
 /// 用于校正设备本地时间与标准时间的偏差。
-/// 
+///
 /// 主要功能：
 /// - 同步NTP服务器时间
 /// - 计算设备时间偏移量
 /// - 提供修正后的当前时间
 /// - 定时同步防止时钟漂移
-/// 
+///
 /// 使用场景：
 /// - 地震预警需要精确的时间同步
 /// - 确保S波到达倒计时准确
@@ -46,11 +42,11 @@ class NtpService {
   ];
 
   /// 设备时间与NTP时间的偏移量（毫秒）
-  /// 
+  ///
   /// 正值表示标准时间快于设备时间
   /// 负值表示标准时间慢于设备时间
   int _deviceOffset = 0;
-  
+
   /// 是否已同步
   bool _isSynced = false;
   DateTime? _lastSyncedAt;
@@ -75,7 +71,7 @@ class NtpService {
   }
 
   /// 获取经过修正后的当前时间
-  /// 
+  ///
   /// 返回NTP校准后的时间
   DateTime get now {
     final localNow = DateTime.now();
@@ -84,10 +80,10 @@ class NtpService {
   }
 
   /// 同步时间
-  /// 
+  ///
   /// 优先使用参考项目同款 HTTP 时间接口，UDP NTP 不通时也能拿到稳定偏移。
   /// HTTP 接口失败后再尝试 NTP 服务器。
-  /// 
+  ///
   /// [lookUpAddress] NTP服务器地址
   /// 常用服务器：
   /// - pool.ntp.org: NTP池，全球分布
@@ -187,7 +183,7 @@ class NtpService {
   }
 
   /// 启动定时同步任务
-  /// 
+  ///
   /// 建议每小时执行一次，防止系统时钟漂移。
   /// 立即执行一次同步，然后每小时重复。
   void startPeriodicSync() {

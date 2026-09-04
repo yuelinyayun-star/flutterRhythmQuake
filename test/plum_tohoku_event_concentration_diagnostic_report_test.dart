@@ -31,12 +31,13 @@ void main() {
       expect(focus['baselineThresholdCrossingRequired'], isTrue);
       expect(focus['plumMarginGateApplied'], isFalse);
 
-      final dominantEvent = (report['dominantEvent'] as Map).cast<String, Object?>();
+      final dominantEvent = (report['dominantEvent'] as Map)
+          .cast<String, Object?>();
       expect(dominantEvent['eventId'], isNot('none'));
       expect(dominantEvent['testFocusShare'], isA<num>());
 
-      final sliceSummaries =
-          (report['sliceSummaries'] as Map).cast<String, Object?>();
+      final sliceSummaries = (report['sliceSummaries'] as Map)
+          .cast<String, Object?>();
       expect(sliceSummaries['validation'], isA<Map>());
       expect(sliceSummaries['testFull'], isA<Map>());
       expect(sliceSummaries['dominantTestEventOnly'], isA<Map>());

@@ -188,10 +188,8 @@ class NiedStation {
     return sublist.firstWhere((v) => v != -1, orElse: () => -1);
   }
 
-  /// Equivalent to reference calcAscend: fills -1 gaps, finds latest minimum
-  /// where trend reverses, returns (ascend, triggerStamp).
-  /// triggerStamp = updateStamp - latestMinIndex * 1000 (only if original
-  /// KA history at latestMinIndex is not -1).
+  /// Matches KA calcAscend: fills short -1 gaps, then scans backwards until
+  /// the first level rebound to find the latest minimum.
   (int, int) _calcAscend(
     List<int> recentLevels,
     int expireSeconds, {
@@ -199,44 +197,45 @@ class NiedStation {
   }) {
     if (recentLevels.isEmpty) return (0, 0);
 
-    // Copy and fill -1 gaps with next valid value, stop if gap > expireSeconds
+    // Fill short missing runs with the next valid value. Long or trailing
+    // missing runs end the usable history, exactly as in KA.
     final arr = List<int>.from(recentLevels);
-    var i = 0;
-    while (i < arr.length) {
-      if (arr[i] == -1) {
-        var nanCount = 1;
-        var nextValidIndex = i + 1;
-        while (nextValidIndex < arr.length && arr[nextValidIndex] == -1) {
-          nanCount++;
-          if (nanCount > expireSeconds) {
-            arr.removeRange(i, arr.length);
-            break;
-          }
-          nextValidIndex++;
-        }
-        if (nextValidIndex < arr.length && i < arr.length) {
-          arr[i] = arr[nextValidIndex];
-          i++;
-        } else if (i < arr.length) {
-          arr.removeRange(i, arr.length);
+    var index = 0;
+    while (index < arr.length) {
+      if (arr[index] != -1) {
+        index++;
+        continue;
+      }
+      var missingCount = 1;
+      var nextValidIndex = index + 1;
+      while (nextValidIndex < arr.length && arr[nextValidIndex] == -1) {
+        missingCount++;
+        if (missingCount > expireSeconds) {
+          arr.removeRange(index, arr.length);
           break;
         }
+        nextValidIndex++;
+      }
+      if (index >= arr.length) break;
+      if (nextValidIndex < arr.length) {
+        arr[index] = arr[nextValidIndex];
+        index++;
       } else {
-        i++;
+        arr.removeRange(index, arr.length);
+        break;
       }
     }
     if (arr.isEmpty) return (0, 0);
 
-    // Find latest minimum: scan until trend reverses or identical stretch exceeds expireSeconds
     var latestMinVal = arr[0];
     var latestMinIndex = 0;
     var identicalCount = 1;
-    for (var j = 0; j < arr.length - 1; j++) {
-      final current = arr[j];
-      final next = arr[j + 1];
+    for (var i = 0; i < arr.length - 1; i++) {
+      final current = arr[i];
+      final next = arr[i + 1];
       if (next < current) {
         latestMinVal = next;
-        latestMinIndex = j + 1;
+        latestMinIndex = i + 1;
         identicalCount = 1;
       } else if (next > current) {
         break;
@@ -324,8 +323,9 @@ class NiedStation {
   void setActive([void Function()? onExpired]) {
     isActive = true;
     activeTimer?.cancel();
-    // Kanameishi keeps an activated NIED station for exactly 10 seconds.
-    activeTimer = Timer(const Duration(seconds: 10), () {
+    // KA keeps an activated NIED station for 10.5 seconds so the hold spans
+    // the boundary before the next one-second frame arrives.
+    activeTimer = Timer(const Duration(milliseconds: 10500), () {
       isActive = false;
       onExpired?.call();
     });
@@ -342,12 +342,13 @@ class NiedMonitorService extends ChangeNotifier {
   factory NiedMonitorService() => _instance;
   NiedMonitorService._internal();
 
-  static const String _lmoniBaseUrl = 'https://smi.lmoniexp.bosai.go.jp';
+  static const String _lmoniBaseUrl = 'https://www.lmoni.bosai.go.jp/img_svr';
   static const String _kmoniBaseUrl = 'http://www.kmoni.bosai.go.jp';
   static const Duration _metadataTimeout = Duration(seconds: 3);
+  static const Duration _metadataRefreshInterval = Duration(seconds: 60);
   static const Duration _surfaceTimeout = Duration(seconds: 3);
   static const Duration _optionalLayerTimeout = Duration(milliseconds: 900);
-  static const int _defaultRealtimeDelayMs = 1200;
+  static const int _defaultRealtimeDelayMs = 0;
   static const int _maxRealtimeDelayMs = 5000;
   static const int _maxLiveCandidateAttemptsPerTick = 3;
 
@@ -361,9 +362,9 @@ class NiedMonitorService extends ChangeNotifier {
   int? _timeSyncGeneration;
   String? _lastFetchedStampKey;
   DateTime? _lastFetchedFrameTime;
-  DateTime? _lastDelayDecayAt;
   DateTime? _liveFrameAnchorJst;
   final Stopwatch _liveFrameAnchorClock = Stopwatch();
+  final Stopwatch _metadataRefreshClock = Stopwatch();
   int _realtimeDelayMs = _defaultRealtimeDelayMs;
   String _baseUrl = _lmoniBaseUrl;
   String _sourceName = 'lmoni';
@@ -381,7 +382,6 @@ class NiedMonitorService extends ChangeNotifier {
     _isRunning = true;
     _lastFetchedStampKey = null;
     _lastFetchedFrameTime = null;
-    _lastDelayDecayAt = null;
     _realtimeDelayMs = _defaultRealtimeDelayMs;
     _resetLiveFrameAnchor();
     _runGeneration++;
@@ -416,7 +416,6 @@ class NiedMonitorService extends ChangeNotifier {
     _lastFetchedStampKey = null;
     _lastFetchedFrameTime = null;
     dataFrameTime.value = null;
-    _lastDelayDecayAt = null;
     _realtimeDelayMs = _defaultRealtimeDelayMs;
     _resetLiveFrameAnchor();
     _restartRunningRequests();
@@ -447,7 +446,25 @@ class NiedMonitorService extends ChangeNotifier {
       final attemptCount = _replayConfig.enabled
           ? candidates.length
           : _liveCandidateAttemptCount(candidates.length);
+      final forwardCatchUp =
+          !_replayConfig.enabled &&
+          _isForwardCatchUpCandidates(candidates, attemptCount);
       var attempted = false;
+      var fetchedAny = false;
+      List<Uint8List?>? prefetchedSurfaceBytes;
+      if (forwardCatchUp) {
+        attempted = attemptCount > 0;
+        prefetchedSurfaceBytes = await Future.wait([
+          for (var i = 0; i < attemptCount; i++)
+            _fetchLayerSurfaceBytes(
+              candidates[i],
+              layer: NiedGifLayer.realtimeShindo,
+              timeout: _surfaceTimeout,
+              generation: generation,
+            ),
+        ]);
+        if (!_isCurrentRun(generation)) return;
+      }
       for (int i = 0; i < attemptCount; i++) {
         if (!_isCurrentRun(generation)) return;
         final stamp = candidates[i];
@@ -455,12 +472,14 @@ class NiedMonitorService extends ChangeNotifier {
         if (stampKey == _lastFetchedStampKey) continue;
 
         attempted = true;
-        final surfaceBytes = await _fetchLayerSurfaceBytes(
-          stamp,
-          layer: NiedGifLayer.realtimeShindo,
-          timeout: _surfaceTimeout,
-          generation: generation,
-        );
+        final surfaceBytes = prefetchedSurfaceBytes == null
+            ? await _fetchLayerSurfaceBytes(
+                stamp,
+                layer: NiedGifLayer.realtimeShindo,
+                timeout: _surfaceTimeout,
+                generation: generation,
+              )
+            : prefetchedSurfaceBytes[i];
         if (!_isCurrentRun(generation)) return;
         if (surfaceBytes == null) {
           if (_replayConfig.enabled) {
@@ -470,6 +489,9 @@ class NiedMonitorService extends ChangeNotifier {
               success: false,
             );
             return;
+          }
+          if (forwardCatchUp) {
+            continue;
           }
           continue;
         }
@@ -499,7 +521,9 @@ class NiedMonitorService extends ChangeNotifier {
           surfaceHeight = backgroundFrame.height;
         } else {
           final surface = await _decodeBytes(surfaceBytes);
-          if (surface == null) continue;
+          if (surface == null) {
+            continue;
+          }
           imageService.processPixels(
             surface.packedRgb,
             surfaceGifBytes: surfaceBytes,
@@ -511,10 +535,12 @@ class NiedMonitorService extends ChangeNotifier {
           surfaceHeight = surface.height;
         }
         imageService.publishStations();
+        fetchedAny = true;
         if (_replayConfig.enabled) {
           await _waitForReplaySourceBridgeBackpressure();
         }
-        if (_physicalLayersEnabled) {
+        if (_physicalLayersEnabled &&
+            (!forwardCatchUp || i == attemptCount - 1)) {
           unawaited(
             _processPhysicalLayers(
               stamp: stamp,
@@ -548,9 +574,13 @@ class NiedMonitorService extends ChangeNotifier {
           _timeSyncGeneration = generation;
           unawaited(_resyncClockAfterConnection(generation));
         }
-        return;
+        if (!forwardCatchUp) return;
+        // Broadcast streams are asynchronous and station objects are reused.
+        // Let the detection/HYP listener consume this exact frame before the
+        // next catch-up frame mutates the same station instances.
+        await Future<void>.delayed(Duration.zero);
       }
-      if (attempted) {
+      if (attempted && !fetchedAny) {
         _increaseRealtimeDelay();
       }
     } finally {
@@ -731,9 +761,8 @@ class NiedMonitorService extends ChangeNotifier {
       return [replayTime];
     }
 
-    final latest = await _fetchLatestFrameTime(generation);
+    final latest = await _latestFrameTimeForTick(generation);
     if (latest != null) {
-      _updateLiveFrameAnchor(latest);
       return _buildLiveCandidateTimes(
         latestTime: latest,
         projectedTime: _projectLiveFrameTime(),
@@ -760,6 +789,35 @@ class NiedMonitorService extends ChangeNotifier {
     );
   }
 
+  Future<DateTime?> _latestFrameTimeForTick(int generation) async {
+    final anchor = _liveFrameAnchorJst;
+    final refreshDue =
+        anchor == null ||
+        !_metadataRefreshClock.isRunning ||
+        _metadataRefreshClock.elapsed >= _metadataRefreshInterval;
+    if (!refreshDue) return anchor;
+
+    _metadataRefreshClock
+      ..reset()
+      ..start();
+    if (anchor == null) {
+      await _refreshLiveFrameAnchor(generation);
+      return _liveFrameAnchorJst;
+    }
+
+    // The official viewers keep the one-second image clock running while
+    // their periodic server-time refresh is in flight. Do the same so a slow
+    // metadata response cannot pause GIF updates.
+    unawaited(_refreshLiveFrameAnchor(generation));
+    return anchor;
+  }
+
+  Future<void> _refreshLiveFrameAnchor(int generation) async {
+    final latest = await _fetchLatestFrameTime(generation);
+    if (!_isCurrentRun(generation) || latest == null) return;
+    _updateLiveFrameAnchor(latest);
+  }
+
   Future<void> _waitForReplaySourceBridgeBackpressure() async {
     await Future<void>.delayed(Duration.zero);
     const maxWait = Duration(milliseconds: 1200);
@@ -784,7 +842,10 @@ class NiedMonitorService extends ChangeNotifier {
 
   Future<DateTime?> _fetchLatestFrameTime(int generation) async {
     final nowMs = DateTime.now().millisecondsSinceEpoch;
-    final text = await _fetchText(_latestFrameMetadataUrl(nowMs), generation);
+    final text = await _fetchText(
+      _latestFrameMetadataUrlForSource(_sourceName, nowMs),
+      generation,
+    );
     if (text == null) return null;
     try {
       final decoded = jsonDecode(text);
@@ -797,12 +858,14 @@ class NiedMonitorService extends ChangeNotifier {
     }
   }
 
-  static String _latestFrameMetadataUrl(int nonce) =>
-      '$_lmoniBaseUrl/webservice/server/pros/latest.json?_=$nonce';
+  static String _latestFrameMetadataUrlForSource(String source, int nonce) =>
+      '${_baseUrlForSource(source)}/webservice/server/pros/latest.json?_=$nonce';
 
   @visibleForTesting
-  static String latestFrameMetadataUrlForTest(int nonce) =>
-      _latestFrameMetadataUrl(nonce);
+  static String latestFrameMetadataUrlForTest({
+    required String source,
+    required int nonce,
+  }) => _latestFrameMetadataUrlForSource(source, nonce);
 
   static int _liveCandidateAttemptCount(int candidateCount) =>
       candidateCount.clamp(0, _maxLiveCandidateAttemptsPerTick).toInt();
@@ -900,26 +963,17 @@ class NiedMonitorService extends ChangeNotifier {
     }
 
     if (previousFrameTime != null) {
-      if (latestTime.isAfter(previousFrameTime)) {
-        // 实时地图优先直接跳到上游最新帧；只有最新帧暂时取不到时，
-        // 才按从新到旧的顺序尝试仍比上一成功帧新的候选。
-        add(latestTime);
-        for (var i = 1; i < 30; i++) {
-          final fallback = latestTime.subtract(Duration(seconds: i));
-          if (!fallback.isAfter(previousFrameTime)) break;
-          add(fallback);
-        }
-        return candidates;
-      }
-
-      if (targetTime.isAfter(latestTime)) {
-        final aheadSeconds = targetTime
-            .difference(latestTime)
-            .inSeconds
-            .clamp(0, 12)
-            .toInt();
-        for (var i = aheadSeconds; i >= 1; i--) {
-          add(latestTime.add(Duration(seconds: i)));
+      final catchUpTarget = latestTime.isAfter(previousFrameTime)
+          ? latestTime
+          : targetTime;
+      if (catchUpTarget.isAfter(previousFrameTime)) {
+        // Preserve the one-second station history used by triggerStamp and
+        // HYP clustering. Metadata is only a periodic time anchor; projected
+        // seconds between metadata refreshes must use the same ordered path.
+        var next = previousFrameTime.add(const Duration(seconds: 1));
+        for (var i = 0; i < 30 && !next.isAfter(catchUpTarget); i++) {
+          add(next);
+          next = next.add(const Duration(seconds: 1));
         }
       }
       return candidates;
@@ -940,6 +994,17 @@ class NiedMonitorService extends ChangeNotifier {
       add(latestTime.subtract(Duration(seconds: i)));
     }
     return candidates;
+  }
+
+  static bool _isForwardCatchUpCandidates(
+    List<DateTime> candidates,
+    int attemptCount,
+  ) {
+    if (attemptCount < 2) return false;
+    for (var index = 1; index < attemptCount; index++) {
+      if (!candidates[index].isAfter(candidates[index - 1])) return false;
+    }
+    return true;
   }
 
   void _updateLiveFrameAnchor(DateTime latest) {
@@ -976,19 +1041,11 @@ class NiedMonitorService extends ChangeNotifier {
 
   void _decayRealtimeDelayIfNeeded() {
     if (_replayConfig.enabled) return;
-    final now = DateTime.now();
-    final lastDecay = _lastDelayDecayAt;
-    if (lastDecay != null &&
-        now.difference(lastDecay) < const Duration(seconds: 10)) {
-      return;
-    }
-    _lastDelayDecayAt = now;
     if (_realtimeDelayMs <= _defaultRealtimeDelayMs) {
       _realtimeDelayMs = _defaultRealtimeDelayMs;
       return;
     }
-    final step = _realtimeDelayMs <= (_maxRealtimeDelayMs * 2 ~/ 3) ? 20 : 100;
-    _realtimeDelayMs = (_realtimeDelayMs - step).clamp(
+    _realtimeDelayMs = (_realtimeDelayMs - 100).clamp(
       _defaultRealtimeDelayMs,
       _maxRealtimeDelayMs,
     );
@@ -997,6 +1054,9 @@ class NiedMonitorService extends ChangeNotifier {
   void _resetLiveFrameAnchor() {
     _liveFrameAnchorJst = null;
     _liveFrameAnchorClock
+      ..stop()
+      ..reset();
+    _metadataRefreshClock
       ..stop()
       ..reset();
   }
@@ -1093,7 +1153,9 @@ class NiedMonitorService extends ChangeNotifier {
   }
 
   Map<String, String> get _headers => {
-    'Referer': '$_baseUrl/',
+    'Referer': _sourceName == 'kmoni'
+        ? 'http://www.kmoni.bosai.go.jp/'
+        : 'https://www.lmoni.bosai.go.jp/monitor/',
     'User-Agent':
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   };

@@ -31,12 +31,12 @@ void main() {
       expect(focus['minimumPredictionMarginShindo'], 1.0);
       expect(focus['baselineThresholdCrossingRequired'], isTrue);
 
-      final definitions =
-          (report['gapDefinitions'] as Map).cast<String, Object?>();
-      expect(definitions.keys, containsAll(<String>[
-        'actualGapBand',
-        'evidenceGapBand',
-      ]));
+      final definitions = (report['gapDefinitions'] as Map)
+          .cast<String, Object?>();
+      expect(
+        definitions.keys,
+        containsAll(<String>['actualGapBand', 'evidenceGapBand']),
+      );
 
       final thresholds = (report['thresholds'] as Map).cast<String, Object?>();
       expect(thresholds.keys, containsAll(<String>['shindo4', 'shindo5-']));
@@ -47,7 +47,9 @@ void main() {
         expect(threshold['transferMatrix'], isA<List>());
       }
 
-      final markdown = plumTohokuMismatchGapTransitionDiagnosticMarkdown(report);
+      final markdown = plumTohokuMismatchGapTransitionDiagnosticMarkdown(
+        report,
+      );
       expect(
         markdown,
         contains('# PLUM Tohoku Mismatch Gap-Transition Diagnostic'),

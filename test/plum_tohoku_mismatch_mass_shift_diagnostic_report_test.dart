@@ -31,14 +31,17 @@ void main() {
       expect(focus['minimumPredictionMarginShindo'], 1.0);
       expect(focus['baselineThresholdCrossingRequired'], isTrue);
 
-      final definitions =
-          (report['decompositionDefinitions'] as Map).cast<String, Object?>();
-      expect(definitions.keys, containsAll(<String>[
-        'localConsistencyBand',
-        'geometrySpread',
-        'actualGapBand',
-        'evidenceGapBand',
-      ]));
+      final definitions = (report['decompositionDefinitions'] as Map)
+          .cast<String, Object?>();
+      expect(
+        definitions.keys,
+        containsAll(<String>[
+          'localConsistencyBand',
+          'geometrySpread',
+          'actualGapBand',
+          'evidenceGapBand',
+        ]),
+      );
 
       final thresholds = (report['thresholds'] as Map).cast<String, Object?>();
       expect(thresholds.keys, containsAll(<String>['shindo4', 'shindo5-']));

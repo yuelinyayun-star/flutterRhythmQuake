@@ -58,18 +58,21 @@ void main() {
       expect(service.lookup(39.9042, 116.4074), '北京市东城区');
     });
 
-    test('getFEName falls back before load and uses detail after load', () async {
-      EpicenterRegionService.instance.setResolverForTesting(null);
-      expect(EpicenterRegionService.instance.isLoaded, isFalse);
+    test(
+      'getFEName falls back before load and uses detail after load',
+      () async {
+        EpicenterRegionService.instance.setResolverForTesting(null);
+        expect(EpicenterRegionService.instance.isLoaded, isFalse);
 
-      final before = getFEName(39.9042, 116.4074);
-      expect(before, isNotEmpty);
-      expect(before.endsWith('附近'), isTrue);
+        final before = getFEName(39.9042, 116.4074);
+        expect(before, isNotEmpty);
+        expect(before.endsWith('附近'), isTrue);
 
-      await EpicenterRegionService.instance.load();
-      final after = getFEName(39.9042, 116.4074);
-      expect(after, '北京市东城区附近');
-    });
+        await EpicenterRegionService.instance.load();
+        final after = getFEName(39.9042, 116.4074);
+        expect(after, '北京市东城区附近');
+      },
+    );
   });
 
   group('BoundaryService lazy load', () {

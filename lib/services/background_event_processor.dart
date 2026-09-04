@@ -126,9 +126,7 @@ class BackgroundEventProcessor {
     final oldEvent = slot.event;
     if (_isSameUsgsInfoBody(oldEvent, event) ||
         _isSameNoUpdateInfoBody(oldEvent, event) ||
-        ((oldEvent.origin == WhewsService.adapterOrigin ||
-                event.origin == WhewsService.adapterOrigin) &&
-            _infoSlotSource(oldEvent) == _infoSlotSource(event) &&
+        (_isSameInfoEvent(oldEvent, event) &&
             _isSameInfoBody(oldEvent, event)) ||
         _isCencRecentInfoUpdate(oldEvent, event)) {
       return _dropped;
@@ -160,6 +158,9 @@ class BackgroundEventProcessor {
           !isWhewsBodyCorrection) {
         return _dropped;
       }
+    } else if (!_isSameInfoEvent(oldEvent, event) &&
+        !_isLaterInfoEvent(oldEvent, event)) {
+      return _dropped;
     }
 
     final isNewEvent = _canonicalEventId(oldEvent) != _canonicalEventId(event);
@@ -190,7 +191,11 @@ class BackgroundEventProcessor {
 
     final index = _findEewSlotIndex(event);
     final eventKey = _eventKey(event);
-    if (_dismissedKeys.contains(eventKey)) return _dropped;
+    if (_dismissedKeys.contains(eventKey) ||
+        (index >= 0 &&
+            _dismissedKeys.contains(_eventKey(_eewSlots[index].event)))) {
+      return _dropped;
+    }
 
     if (index < 0) {
       final reportNum = _extractReportNum(event.reportNumText);
@@ -215,19 +220,16 @@ class BackgroundEventProcessor {
 
     final oldEvent = _eewSlots[index].event;
     final oldKey = _eventKey(oldEvent);
-    if (_shouldKeepExistingCwaWolfx(oldEvent, event)) return _dropped;
 
     final reportNum = _extractReportNum(event.reportNumText);
     final storedReportNum = _acceptedEewReportNums[oldKey];
-    final canTakeover = _shouldAllowCwaWolfxTakeover(
+    final canApplyWhewsRevision = _isWhewsSameReportEewRevision(
       oldEvent,
       event,
-      reportNum,
-      storedReportNum,
     );
     if (storedReportNum != null &&
         reportNum <= storedReportNum &&
-        !canTakeover) {
+        !canApplyWhewsRevision) {
       return _dropped;
     }
 
@@ -283,10 +285,19 @@ class BackgroundEventProcessor {
 
   String _canonicalEventId(UnifiedQuakeData event) {
     if (!event.isEew && _infoSlotSource(event) == 'jmaEqlist') {
+      final originTime = event.originTime;
+      if (originTime != null) return _jmaInfoTimeToken(originTime);
       final digits = event.eventId.replaceAll(RegExp(r'[^0-9]'), '');
       if (digits.length >= 12) return digits;
     }
     return event.eventId;
+  }
+
+  String _jmaInfoTimeToken(DateTime time) {
+    String two(int value) => value.toString().padLeft(2, '0');
+    return '${time.year.toString().padLeft(4, '0')}'
+        '${two(time.month)}${two(time.day)}${two(time.hour)}'
+        '${two(time.minute)}${two(time.second)}';
   }
 
   bool _passesInfoMagnitudeFilter(UnifiedQuakeData event) {
@@ -295,8 +306,10 @@ class BackgroundEventProcessor {
         ? QuakeSourceType.cenc
         : sourceType;
     if (filterSource == null) return true;
+    final filterKey = 'source_mag_filter_${filterSource.name}';
     final threshold =
-        _sourceInfoMagFilters['source_mag_filter_${filterSource.name}'];
+        _sourceInfoMagFilters[filterKey] ??
+        (filterSource == QuakeSourceType.unadapted ? -1 : null);
     if (threshold == null || threshold == 0) return true;
     if (threshold < 0) return false;
     return event.magnitude >= threshold || _matchesInfoActionWhitelist(event);
@@ -371,7 +384,7 @@ class BackgroundEventProcessor {
       event.depth.toStringAsFixed(3),
       event.magnitude.toStringAsFixed(3),
       event.maxIntensity,
-      event.originTime?.toUtc().toIso8601String() ?? '',
+      QuakeTime.unifiedInstantUtc(event).toIso8601String(),
     ].join('|');
   }
 
@@ -393,16 +406,21 @@ class BackgroundEventProcessor {
   }
 
   bool _isSameInfoBody(UnifiedQuakeData oldEvent, UnifiedQuakeData event) {
-    return oldEvent.eventId == event.eventId &&
+    return _canonicalEventId(oldEvent) == _canonicalEventId(event) &&
         oldEvent.titleText == event.titleText &&
+        oldEvent.reportNumText == event.reportNumText &&
         oldEvent.hypocenter == event.hypocenter &&
         _sameDouble(oldEvent.lat, event.lat) &&
         _sameDouble(oldEvent.lng, event.lng) &&
         _sameDouble(oldEvent.depth, event.depth) &&
         _sameDouble(oldEvent.magnitude, event.magnitude) &&
         oldEvent.maxIntensity == event.maxIntensity &&
+        oldEvent.className == event.className &&
+        oldEvent.warnArea == event.warnArea &&
+        oldEvent.isCanceled == event.isCanceled &&
         _sameVolcanoEvent(oldEvent, event) &&
-        oldEvent.originTime?.toUtc() == event.originTime?.toUtc();
+        QuakeTime.unifiedInstantUtc(oldEvent) ==
+            QuakeTime.unifiedInstantUtc(event);
   }
 
   bool _sameVolcanoEvent(UnifiedQuakeData oldEvent, UnifiedQuakeData event) {
@@ -419,10 +437,6 @@ class BackgroundEventProcessor {
     UnifiedQuakeData event,
   ) {
     if (event.source != 'cencEqlist') return false;
-    if (oldEvent.origin == WhewsService.adapterOrigin ||
-        event.origin == WhewsService.adapterOrigin) {
-      return false;
-    }
     final oldReportTime = oldEvent.reportTime;
     final newReportTime = event.reportTime;
     if (oldReportTime == null || newReportTime == null) return false;
@@ -538,7 +552,7 @@ class BackgroundEventProcessor {
     UnifiedQuakeData oldEvent,
     UnifiedQuakeData event,
   ) {
-    if (!_isSameUnifiedJmaInfoEvent(oldEvent, event)) return event;
+    if (!_isSameInfoEvent(oldEvent, event)) return event;
     var merged = event.copyWith(eventId: oldEvent.eventId);
     if (_jmaInfoTitleRank(event.titleText) <
         _jmaInfoTitleRank(oldEvent.titleText)) {
@@ -550,8 +564,49 @@ class BackgroundEventProcessor {
         className: oldEvent.className,
       );
     }
-    if (event.warnArea.trim().isEmpty && oldEvent.warnArea.trim().isNotEmpty) {
+    if (event.titleText.trim().isEmpty &&
+        oldEvent.titleText.trim().isNotEmpty) {
+      merged = merged.copyWith(titleText: oldEvent.titleText);
+    }
+    if (event.reportNumText.trim().isEmpty &&
+        oldEvent.reportNumText.trim().isNotEmpty &&
+        event.origin != 2) {
+      merged = merged.copyWith(reportNumText: oldEvent.reportNumText);
+    }
+    if (event.hypocenter.trim().isEmpty &&
+        oldEvent.hypocenter.trim().isNotEmpty) {
+      merged = merged.copyWith(hypocenter: oldEvent.hypocenter);
+    }
+    if (event.lat == null && oldEvent.lat != null) {
+      merged = merged.copyWith(lat: oldEvent.lat);
+    }
+    if (event.lng == null && oldEvent.lng != null) {
+      merged = merged.copyWith(lng: oldEvent.lng);
+    }
+    if (event.depthText.trim().isEmpty &&
+        oldEvent.depthText.trim().isNotEmpty) {
+      merged = merged.copyWith(depthText: oldEvent.depthText);
+    }
+    if (!event.isCanceled &&
+        event.warnArea.trim().isEmpty &&
+        oldEvent.warnArea.trim().isNotEmpty) {
       merged = merged.copyWith(warnArea: oldEvent.warnArea);
+    }
+    if (event.apiTypeLabel.trim().isEmpty &&
+        oldEvent.apiTypeLabel.trim().isNotEmpty) {
+      merged = merged.copyWith(apiTypeLabel: oldEvent.apiTypeLabel);
+    }
+    if (event.centroidDepth == null && oldEvent.centroidDepth != null) {
+      merged = merged.copyWith(centroidDepth: oldEvent.centroidDepth);
+    }
+    if (event.momentTensor == null && oldEvent.momentTensor != null) {
+      merged = merged.copyWith(momentTensor: oldEvent.momentTensor);
+    }
+    if (event.cmtMetadata == null && oldEvent.cmtMetadata != null) {
+      merged = merged.copyWith(cmtMetadata: oldEvent.cmtMetadata);
+    }
+    if (event.volcanoEvent == null && oldEvent.volcanoEvent != null) {
+      merged = merged.copyWith(volcanoEvent: oldEvent.volcanoEvent);
     }
     if (!_hasUnifiedHypocenter(event) && _hasUnifiedHypocenter(oldEvent)) {
       merged = merged.copyWith(
@@ -572,16 +627,25 @@ class BackgroundEventProcessor {
     return merged;
   }
 
-  bool _isSameUnifiedJmaInfoEvent(
-    UnifiedQuakeData oldEvent,
-    UnifiedQuakeData event,
-  ) {
-    return !oldEvent.isEew &&
-        !event.isEew &&
-        _infoSlotSource(oldEvent) == 'jmaEqlist' &&
-        _infoSlotSource(event) == 'jmaEqlist' &&
-        _canonicalEventId(oldEvent).isNotEmpty &&
-        _canonicalEventId(oldEvent) == _canonicalEventId(event);
+  bool _isSameInfoEvent(UnifiedQuakeData oldEvent, UnifiedQuakeData event) {
+    if (oldEvent.isEew || event.isEew) return false;
+    if (_infoSlotSource(oldEvent) != _infoSlotSource(event)) return false;
+    final oldId = _canonicalEventId(oldEvent).trim();
+    final newId = _canonicalEventId(event).trim();
+    return oldId.isNotEmpty && oldId == newId;
+  }
+
+  bool _isLaterInfoEvent(UnifiedQuakeData oldEvent, UnifiedQuakeData event) {
+    final oldOrigin = oldEvent.originTime;
+    final newOrigin = event.originTime;
+    if (oldOrigin != null && newOrigin != null) {
+      return newOrigin.isAfter(oldOrigin);
+    }
+    final oldArrived = oldEvent.arrivedAt;
+    final newArrived = event.arrivedAt;
+    return oldArrived != null &&
+        newArrived != null &&
+        newArrived.isAfter(oldArrived);
   }
 
   int _jmaInfoTitleRank(String title) {
@@ -607,32 +671,26 @@ class BackgroundEventProcessor {
   }
 
   int _findEewSlotIndex(UnifiedQuakeData event) {
-    if (!_isCwaEew(event)) {
-      return _eewSlots.indexWhere(
-        (slot) =>
-            slot.event.source == event.source &&
-            slot.event.eventId == event.eventId,
-      );
-    }
     return _eewSlots.indexWhere(
-      (slot) =>
-          slot.event.source == event.source &&
-          _isSameCwaEewEvent(slot.event, event),
+      (slot) => _isSameUnifiedEewEvent(slot.event, event),
     );
   }
 
-  bool _isCwaEew(UnifiedQuakeData event) =>
-      event.isEew && event.source == 'cwaEew';
-  bool _isWolfxCwaEew(UnifiedQuakeData event) =>
-      _isCwaEew(event) && event.origin == 0;
-  bool _isFanCwaEew(UnifiedQuakeData event) =>
-      _isCwaEew(event) && event.origin != 0;
-
-  bool _isSameCwaEewEvent(UnifiedQuakeData oldEvent, UnifiedQuakeData event) {
-    if (!_isCwaEew(oldEvent) || !_isCwaEew(event)) return false;
+  bool _isSameUnifiedEewEvent(
+    UnifiedQuakeData oldEvent,
+    UnifiedQuakeData event,
+  ) {
+    if (!oldEvent.isEew || !event.isEew || oldEvent.source != event.source) {
+      return false;
+    }
     final oldId = oldEvent.eventId.trim();
     final newId = event.eventId.trim();
     if (oldId.isNotEmpty && newId.isNotEmpty && oldId == newId) return true;
+    final oldIdTime = _eewEventIdTimeToken(oldId);
+    final newIdTime = _eewEventIdTimeToken(newId);
+    if (oldIdTime != null && newIdTime != null && oldIdTime != newIdTime) {
+      return false;
+    }
     final oldOrigin = oldEvent.originTime;
     final newOrigin = event.originTime;
     if (oldOrigin == null ||
@@ -653,29 +711,25 @@ class BackgroundEventProcessor {
     return (oldLat - newLat).abs() <= 0.05 && (oldLng - newLng).abs() <= 0.05;
   }
 
-  bool _shouldKeepExistingCwaWolfx(
+  bool _isWhewsSameReportEewRevision(
     UnifiedQuakeData oldEvent,
     UnifiedQuakeData event,
   ) {
-    return _isWolfxCwaEew(oldEvent) &&
-        _isFanCwaEew(event) &&
-        _isSameCwaEewEvent(oldEvent, event);
-  }
-
-  bool _shouldAllowCwaWolfxTakeover(
-    UnifiedQuakeData oldEvent,
-    UnifiedQuakeData event,
-    int reportNum,
-    int? storedReportNum,
-  ) {
-    if (!_isFanCwaEew(oldEvent) ||
-        !_isWolfxCwaEew(event) ||
-        !_isSameCwaEewEvent(oldEvent, event) ||
-        storedReportNum == null) {
+    if (event.origin != WhewsService.adapterOrigin ||
+        !_isSameUnifiedEewEvent(oldEvent, event) ||
+        _extractReportNum(oldEvent.reportNumText) !=
+            _extractReportNum(event.reportNumText) ||
+        _isSameInfoBody(oldEvent, event)) {
       return false;
     }
-    return reportNum == storedReportNum &&
-        reportNum == _extractReportNum(oldEvent.reportNumText);
+    final oldReportTime = oldEvent.reportTime;
+    final newReportTime = event.reportTime;
+    if (oldReportTime == null || newReportTime == null) return false;
+    return !newReportTime.isBefore(oldReportTime);
+  }
+
+  String? _eewEventIdTimeToken(String eventId) {
+    return RegExp(r'(?:19|20)\d{12}').firstMatch(eventId)?.group(0);
   }
 
   String? _noUpdateTimeFanInfoSourceKey(String source) {
@@ -722,6 +776,7 @@ class BackgroundEventProcessor {
       'bcsf': QuakeSourceType.bcsf,
       'gfz': QuakeSourceType.gfz,
       'usp': QuakeSourceType.usp,
+      'geonet': QuakeSourceType.geonet,
       'ningxia': QuakeSourceType.ningxia,
       'guangxi': QuakeSourceType.guangxi,
       'shanxi': QuakeSourceType.shanxi,
@@ -734,8 +789,17 @@ class BackgroundEventProcessor {
       'whews_nrcan': QuakeSourceType.nrcan,
       'whews_mmd': QuakeSourceType.mmd,
       'whews_phivolcs': QuakeSourceType.phivolcs,
+      'whews_sgc': QuakeSourceType.sgc,
+      'whews_ga': QuakeSourceType.ga,
+      'whews_cenais': QuakeSourceType.cenais,
     };
-    return map[event.source];
+    final mapped = map[event.source];
+    if (mapped != null) return mapped;
+    if (event.source.startsWith('unadapted_') ||
+        event.source.startsWith('whews_')) {
+      return QuakeSourceType.unadapted;
+    }
+    return null;
   }
 
   int _extractReportNum(String text) {

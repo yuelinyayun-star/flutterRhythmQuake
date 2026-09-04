@@ -41,11 +41,11 @@ void _factory267(Thread thread) {
       if ((or0(indexGet(b2.value, 1)) - or0(b1.value) < 120)) {
         b3.value = 'start';
         b4.value = indexGet(b0.value, or0(or0(p1) + 4));
-        b5.value = (scratchNumber(or0(or0(or0(or0(indexGet(b0.value, or0(or0(p1) + 5))) * or0(or0(indexGet(b0.value, or0(or0(p1) + 5))) * indexGet(b0.value, or0(or0(p1) + 5))))) * or0(8 * math.pow(10, -5))) + 11))).round();
-        b6.value = (scratchNumber(or0(or0(or0(0.3 * or0(or0(or0(indexGet(b0.value, or0(or0(p1) + 4))) * 10) + indexGet(b0.value, or0(or0(p1) + 5))))) + 50))).round();
-        if ((compareEqual(indexGet(b7.value, or0(or0(or0(p1) / 2) + 2))), '') || (or0(indexGet(b2.value, 1)) - or0(b1.value) < 10))) {
-          b8.value = ((scratchNumber(or0(or0(listGetList(b9.value as List<Object?>, indexGet(b0.value, or0(or0(p1) + 1)))) * 60))).round() / 60));
-          b10.value = ((scratchNumber(or0(or0(listGetList(b11.value as List<Object?>, indexGet(b0.value, or0(or0(p1) + 1)))) * 60))).round() / 60));
+        b5.value = (scratchNumber(or0(or0(or0(or0(indexGet(b0.value, or0(or0(p1) + 5))) * or0(or0(indexGet(b0.value, or0(or0(p1) + 5))) * indexGet(b0.value, or0(or0(p1) + 5)))) * or0(8 * math.pow(10, -5))) + 11))).round();
+        b6.value = (scratchNumber(or0(or0(or0(0.3 * or0(or0(or0(indexGet(b0.value, or0(or0(p1) + 4))) * 10) + indexGet(b0.value, or0(or0(p1) + 5)))) + 50))).round();
+        if (compareEqual(indexGet(b7.value, or0(or0(or0(p1) / 2) + 2)), '') || (or0(indexGet(b2.value, 1)) - or0(b1.value) < 10)) {
+          b8.value = (scratchNumber(or0(or0(listGetList(b9.value as List<Object?>, indexGet(b0.value, or0(or0(p1) + 1)))) * 60))).round() / 60;
+          b10.value = (scratchNumber(or0(or0(listGetList(b11.value as List<Object?>, indexGet(b0.value, or0(or0(p1) + 1)))) * 60))).round() / 60;
           b12.value = 10;
           b13.value = (or0(b1.value) - 2);
         } else {

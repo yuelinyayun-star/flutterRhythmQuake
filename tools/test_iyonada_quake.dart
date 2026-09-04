@@ -32,7 +32,8 @@ void main() {
     // M2.7 JMA 震度估算 (距离衰减)
     // log10(PGA) = 0.43M - log10(R+10) - 0.0014R + 0.17
     final hypoDist = max(dist3d, 5.0);
-    final logPga = 0.43 * eqMag - log(hypoDist + 10) / ln10 - 0.0014 * hypoDist + 0.17;
+    final logPga =
+        0.43 * eqMag - log(hypoDist + 10) / ln10 - 0.0014 * hypoDist + 0.17;
     final pga = pow(10, logPga).toDouble();
     // PGV ~ PGA / 5 (近似)
     final pgv = max(pga / 5.0, 0.01);
@@ -73,12 +74,16 @@ void main() {
   onSnapshot(snapshot) {
     print('─── Detection Snapshot ───');
     print('Stage: ${snapshot.stage.name}');
-    print('Weak: ${snapshot.weakCount}, Detected: ${snapshot.detectedCount}, Strong: ${snapshot.strongCount}');
+    print(
+      'Weak: ${snapshot.weakCount}, Detected: ${snapshot.detectedCount}, Strong: ${snapshot.strongCount}',
+    );
     print('Max Shindo: ${snapshot.maxShindo}');
     if (snapshot.detectedStations.isNotEmpty) {
       print('Top stations:');
       for (final s in snapshot.detectedStations.take(5)) {
-        print('  ${s.prefecture} (${s.code}) level=${s.level} shindo=${s.jmaShindo} state=${s.detectState} reason=${s.detectReason}');
+        print(
+          '  ${s.prefecture} (${s.code}) level=${s.level} shindo=${s.jmaShindo} state=${s.detectState} reason=${s.detectReason}',
+        );
       }
     }
     print('');
@@ -95,7 +100,14 @@ void main() {
     if (frame == 0) {
       // 第一帧: 轻微前震
       for (final s in stations) {
-        if (s.level >= 0 && _haversine(eqLat, eqLng, s.coordinate.latitude, s.coordinate.longitude) < 30) {
+        if (s.level >= 0 &&
+            _haversine(
+                  eqLat,
+                  eqLng,
+                  s.coordinate.latitude,
+                  s.coordinate.longitude,
+                ) <
+                30) {
           s.level = max(s.level, _shindoToLevel(1.0));
         }
       }
@@ -103,7 +115,12 @@ void main() {
     if (frame >= 1) {
       // 后续帧: 主震
       for (final s in stations) {
-        final dist = _haversine(eqLat, eqLng, s.coordinate.latitude, s.coordinate.longitude);
+        final dist = _haversine(
+          eqLat,
+          eqLng,
+          s.coordinate.latitude,
+          s.coordinate.longitude,
+        );
         final actualLevel = _shindoToLevel(3.5 - dist * 0.02);
         if (actualLevel >= 0) s.level = actualLevel;
       }
@@ -115,8 +132,15 @@ void main() {
   print('─── Hypocenter Estimation ───');
   final estimate = HypocenterEstimator.estimate(stations);
   if (estimate != null) {
-    final distError = _haversine(eqLat, eqLng, estimate.latitude, estimate.longitude);
-    print('Estimated: ${estimate.latitude.toStringAsFixed(3)}N, ${estimate.longitude.toStringAsFixed(3)}E');
+    final distError = _haversine(
+      eqLat,
+      eqLng,
+      estimate.latitude,
+      estimate.longitude,
+    );
+    print(
+      'Estimated: ${estimate.latitude.toStringAsFixed(3)}N, ${estimate.longitude.toStringAsFixed(3)}E',
+    );
     print('True:     $eqLat N, $eqLng E');
     print('Error:    ${distError.toStringAsFixed(1)} km');
     print('Confidence: ${(estimate.confidence * 100).toStringAsFixed(0)}%');
@@ -129,17 +153,47 @@ double _haversine(double lat1, double lon1, double lat2, double lon2) {
   const r = 6371.0;
   final dLat = (lat2 - lat1) * pi / 180;
   final dLon = (lon2 - lon1) * pi / 180;
-  final a = sin(dLat / 2) * sin(dLat / 2) +
-      cos(lat1 * pi / 180) * cos(lat2 * pi / 180) * sin(dLon / 2) * sin(dLon / 2);
+  final a =
+      sin(dLat / 2) * sin(dLat / 2) +
+      cos(lat1 * pi / 180) *
+          cos(lat2 * pi / 180) *
+          sin(dLon / 2) *
+          sin(dLon / 2);
   return 2 * r * atan2(sqrt(a), sqrt(1 - a));
 }
 
 int _shindoToLevel(double shindo) {
   const scratchValues = [
-    -3.0, -2.5, -2.0, -1.5, -1.17, -0.84, -0.5, -0.17,
-    0.16, 0.5, 0.83, 1.16, 1.5, 1.83, 2.16, 2.5,
-    2.83, 3.16, 3.5, 3.83, 4.16, 4.5, 4.75, 5.0,
-    5.25, 5.5, 5.75, 6.0, 6.25, 6.5,
+    -3.0,
+    -2.5,
+    -2.0,
+    -1.5,
+    -1.17,
+    -0.84,
+    -0.5,
+    -0.17,
+    0.16,
+    0.5,
+    0.83,
+    1.16,
+    1.5,
+    1.83,
+    2.16,
+    2.5,
+    2.83,
+    3.16,
+    3.5,
+    3.83,
+    4.16,
+    4.5,
+    4.75,
+    5.0,
+    5.25,
+    5.5,
+    5.75,
+    6.0,
+    6.25,
+    6.5,
   ];
   if (shindo < scratchValues.first) return -1;
   if (shindo >= scratchValues.last) return scratchValues.length - 1;

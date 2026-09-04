@@ -100,6 +100,65 @@ class CencIrData {
     this.instrumentIntensities = const [],
   });
 
+  Map<String, dynamic> toMap() => {
+    'source': source.name,
+    'reportId': reportId,
+    'uniEventId': uniEventId,
+    'oriTime': oriTime.toIso8601String(),
+    'gmtCreate': gmtCreate.toIso8601String(),
+    'locName': locName,
+    'epiLon': epiLon,
+    'epiLat': epiLat,
+    'focDepth': focDepth,
+    'subjectCodes': subjectCodes,
+    'intensityInfoText': intensityInfoText,
+    'contourGeojson': contourGeojson,
+    'instrumentIntensities': instrumentIntensities
+        .map((item) => item.toMap())
+        .toList(),
+  };
+
+  factory CencIrData.fromMap(Map<dynamic, dynamic> map) {
+    DateTime parseTime(Object? value) =>
+        DateTime.tryParse(value?.toString() ?? '') ??
+        DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+    double parseDouble(Object? value) {
+      if (value is num) return value.toDouble();
+      return double.tryParse(value?.toString() ?? '') ?? 0;
+    }
+
+    final rawItems = map['instrumentIntensities'];
+    return CencIrData(
+      source: CencIrDataSource.values.firstWhere(
+        (item) => item.name == map['source']?.toString(),
+        orElse: () => CencIrDataSource.fan,
+      ),
+      reportId: map['reportId']?.toString() ?? '',
+      uniEventId: map['uniEventId']?.toString() ?? '',
+      oriTime: parseTime(map['oriTime']),
+      gmtCreate: parseTime(map['gmtCreate']),
+      locName: map['locName']?.toString() ?? '',
+      epiLon: parseDouble(map['epiLon']),
+      epiLat: parseDouble(map['epiLat']),
+      focDepth: parseDouble(map['focDepth']),
+      subjectCodes: map['subjectCodes']?.toString() ?? '',
+      intensityInfoText: map['intensityInfoText']?.toString() ?? '',
+      contourGeojson: map['contourGeojson'] is Map
+          ? Map<String, dynamic>.from(map['contourGeojson'] as Map)
+          : null,
+      instrumentIntensities: rawItems is List
+          ? rawItems
+                .whereType<Map>()
+                .map(
+                  (item) => InstrumentIntensity.fromMap(
+                    Map<dynamic, dynamic>.from(item),
+                  ),
+                )
+                .toList()
+          : const [],
+    );
+  }
+
   /// 从 JSON 创建实例
   ///
   /// 解析 FAN 平台返回的 CENC 烈度速报数据。
@@ -258,6 +317,35 @@ class InstrumentIntensity {
     this.pgv,
   });
 
+  Map<String, dynamic> toMap() => {
+    'stationName': stationName,
+    'longitude': longitude,
+    'latitude': latitude,
+    'intensity': intensity,
+    'pga': pga,
+    'pgv': pgv,
+  };
+
+  factory InstrumentIntensity.fromMap(Map<dynamic, dynamic> map) =>
+      InstrumentIntensity(
+        stationName: map['stationName']?.toString() ?? '',
+        longitude: _parseNumber(map['longitude']),
+        latitude: _parseNumber(map['latitude']),
+        intensity: _parseNumber(map['intensity']),
+        pga: _parseNullableNumber(map['pga']),
+        pgv: _parseNullableNumber(map['pgv']),
+      );
+
+  bool get hasUsableCoordinate {
+    return latitude.isFinite &&
+        longitude.isFinite &&
+        latitude >= -90 &&
+        latitude <= 90 &&
+        longitude >= -180 &&
+        longitude <= 180 &&
+        (latitude != 0 || longitude != 0);
+  }
+
   /// 从 JSON 创建实例
   ///
   /// 支持多种字段名称格式：
@@ -312,4 +400,14 @@ class InstrumentIntensity {
       ),
     );
   }
+}
+
+double _parseNumber(Object? value) {
+  if (value is num) return value.toDouble();
+  return double.tryParse(value?.toString() ?? '') ?? 0;
+}
+
+double? _parseNullableNumber(Object? value) {
+  if (value is num) return value.toDouble();
+  return double.tryParse(value?.toString() ?? '');
 }

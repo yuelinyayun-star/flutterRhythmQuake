@@ -15,7 +15,7 @@ import '../../core/intensity_calculator.dart';
 /// - 解析地震数据
 /// - 计算中国地震烈度(CSIS)
 /// - 转换地名显示
-/// - 时间转换为UTC+8
+/// - epoch 时间保留为绝对时间，并按设备时区显示
 ///
 /// 数据源：
 /// - USGS 2.5级以上一周内地震
@@ -46,6 +46,9 @@ class UsgsEqlistService {
   /// 最新官方事件更新回调，字段格式与统一事件适配器的 USGS 输入一致。
   void Function(Map<String, dynamic>)? onCurrentUpdated;
 
+  /// HTTP 轮询状态回调
+  void Function(bool connected)? onStatusChanged;
+
   /// 启动轮询
   ///
   /// [interval] 轮询间隔，默认30秒（信息事件列表，无需 10s）
@@ -67,10 +70,14 @@ class UsgsEqlistService {
       final resp = await http
           .get(Uri.parse(_url))
           .timeout(const Duration(seconds: 15));
-      if (resp.statusCode != 200) return;
+      if (resp.statusCode != 200) {
+        onStatusChanged?.call(false);
+        return;
+      }
 
       final data = json.decode(resp.body);
       final features = data['features'] as List?;
+      onStatusChanged?.call(true);
       if (features == null || features.isEmpty) return;
 
       final currentPayload = normalizeFeatureForUnifiedUi(features.first);
@@ -100,7 +107,7 @@ class UsgsEqlistService {
           timeMs,
           isUtc: true,
         );
-        final DateTime originTime = originTimeUtc.add(const Duration(hours: 8));
+        final DateTime originTime = originTimeUtc.toLocal();
 
         final String eventId =
             f['id']?.toString() ?? props['code']?.toString() ?? 'usgs_$timeMs';
@@ -128,6 +135,7 @@ class UsgsEqlistService {
             longitude: longitude,
             depth: depth,
             originTime: originTime,
+            timeZone: _systemTimeZoneHours,
             isHistory: true,
             maxIntensity: maxIntensity,
             reviewType: reviewType,
@@ -139,7 +147,9 @@ class UsgsEqlistService {
       if (currentPayload != null) onCurrentUpdated?.call(currentPayload);
       // 当前事件会同步进入统一列表桶；随后用官方完整列表覆盖，避免重复条目。
       onListUpdated?.call(_latestList);
-    } catch (_) {}
+    } catch (_) {
+      onStatusChanged?.call(false);
+    }
   }
 
   /// 将 USGS GeoJSON feature 规范成统一 UI 已使用的 USGS 字段。
@@ -161,8 +171,10 @@ class UsgsEqlistService {
     final longitude = double.tryParse(coords[0]?.toString() ?? '');
     final latitude = double.tryParse(coords[1]?.toString() ?? '');
     final depth = double.tryParse(coords[2]?.toString() ?? '');
-    final originTime = _formatEpochAsUtc8(props['time']);
-    final updateTime = _formatEpochAsUtc8(props['updated']);
+    // USGS supplies epoch milliseconds. Keep them as ISO UTC instants; the
+    // direct-source adapter converts them to the device timezone.
+    final originTime = _formatEpochAsIso(props['time']);
+    final updateTime = _formatEpochAsIso(props['updated']);
     if (magnitude == null ||
         longitude == null ||
         latitude == null ||
@@ -197,18 +209,16 @@ class UsgsEqlistService {
     };
   }
 
-  String? _formatEpochAsUtc8(Object? value) {
+  String? _formatEpochAsIso(Object? value) {
     final milliseconds = value is int
         ? value
         : int.tryParse(value?.toString() ?? '');
     if (milliseconds == null || milliseconds <= 0) return null;
-    final time = DateTime.fromMillisecondsSinceEpoch(
+    return DateTime.fromMillisecondsSinceEpoch(
       milliseconds,
       isUtc: true,
-    ).add(const Duration(hours: 8));
-    String two(int part) => part.toString().padLeft(2, '0');
-    return '${time.year.toString().padLeft(4, '0')}-'
-        '${two(time.month)}-${two(time.day)} '
-        '${two(time.hour)}:${two(time.minute)}:${two(time.second)}';
+    ).toIso8601String();
   }
+
+  int get _systemTimeZoneHours => DateTime.now().timeZoneOffset.inMinutes ~/ 60;
 }

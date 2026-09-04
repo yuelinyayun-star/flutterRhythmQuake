@@ -53,6 +53,14 @@ class EpicenterRegionService {
     return _resolver?.lookup(latitude, longitude);
   }
 
+  /// China-only lookup that prefers county/district detail when available.
+  String? lookupChinaPlace(double latitude, double longitude) {
+    if (!latitude.isFinite || !longitude.isFinite) return null;
+    if (latitude < -90 || latitude > 90) return null;
+    if (longitude < -180 || longitude > 180) return null;
+    return _resolver?.lookupChinaPlace(latitude, longitude);
+  }
+
   @visibleForTesting
   void setResolverForTesting(EpicenterRegionResolver? resolver) {
     _resolver = resolver;
@@ -106,6 +114,39 @@ class EpicenterRegionResolver {
     // the FE grid while still using CWA town/nearshore/sea polygons elsewhere.
     if (_japanLand.lookup(latitude, longitude) != null) return null;
     return _cwa.lookup(latitude, longitude);
+  }
+
+  /// China lookup that prefers the most specific place name available.
+  ///
+  /// Admin polygons are authoritative when they include county/district detail,
+  /// but some prefecture polygons only resolve to the parent city. In those
+  /// cases the coarse China place grid can still provide county-level names.
+  @visibleForTesting
+  String? lookupChinaPlace(double latitude, double longitude) {
+    if (!latitude.isFinite || !longitude.isFinite) return null;
+    if (latitude < -90 || latitude > 90) return null;
+    if (longitude < -180 || longitude > 180) return null;
+
+    final admin = _chinaAdmin.lookup(latitude, longitude);
+    final grid = _china.lookup(latitude, longitude);
+    if (admin == null || admin.isEmpty) return grid;
+    if (grid == null || grid.isEmpty) return admin;
+    if (admin == grid) return admin;
+
+    final adminHasCounty = _hasCountySuffix(admin);
+    final gridHasCounty = _hasCountySuffix(grid);
+    if (!adminHasCounty && gridHasCounty) return grid;
+    if (adminHasCounty && !gridHasCounty) return admin;
+    return admin.length >= grid.length ? admin : grid;
+  }
+
+  static bool _hasCountySuffix(String area) {
+    final normalized = area.replaceAll(RegExp(r'\s+'), '');
+    if (normalized.isEmpty) return false;
+    if (RegExp(r'(?:区|县|旗|自治县|林区)(?!$)').hasMatch(normalized)) {
+      return true;
+    }
+    return '\u5e02'.allMatches(normalized).length >= 2;
   }
 }
 

@@ -1,0 +1,1876 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RhythmQuake · 设置中心（UI 原型）</title>
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #020208;
+      --appbar: rgba(8, 8, 24, 0.45);
+      --panel: rgba(255, 255, 255, 0.06);
+      --content: rgba(36, 36, 38, 0.40);
+      --section: rgba(255, 255, 255, 0.08);
+      --field: rgba(255, 255, 255, 0.09);
+      --border: rgba(255, 255, 255, 0.16);
+      --divider: rgba(255, 255, 255, 0.10);
+      --muted: rgba(255, 255, 255, 0.58);
+      --accent: #82b1ff;
+      --text: #fff;
+      --text70: rgba(255, 255, 255, 0.7);
+      --text60: rgba(255, 255, 255, 0.6);
+      --cat-data: #62c6ff;
+      --cat-map: #72d6b1;
+      --cat-alert: #ffc66d;
+      --cat-voice: #d6a5ff;
+      --cat-advanced: #aeb8cc;
+      --glass-blur: blur(22px) saturate(1);
+      --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.28);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      overflow: hidden;
+    }
+
+    .material-icons-outlined {
+      font-size: 18px;
+      line-height: 1;
+      user-select: none;
+    }
+
+    /* App shell */
+    .app {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      background: var(--bg);
+      overflow: hidden;
+    }
+
+    /* Page backdrop */
+    .app-bg {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      background: var(--bg);
+    }
+    .app-bg img {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: center;
+      opacity: 0.35;
+    }
+    .app > *:not(.app-bg) {
+      position: relative;
+      z-index: 1;
+    }
+    .app > .shell {
+      flex: 0 1 auto;
+      /* Fill window with small inset; keep 1180×660 landscape aspect. */
+      width: min(calc(100% - 88px), calc((100vh - 88px) * 1180 / 660));
+      aspect-ratio: 1180 / 660;
+      max-height: calc(100% - 88px);
+      margin: auto;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      box-sizing: border-box;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      flex-shrink: 0;
+    }
+    .header h2 { font-size: 22px; font-weight: 700; }
+    .header .sub { color: var(--muted); font-size: 12px; margin-top: 3px; }
+    .search {
+      width: 340px; height: 42px;
+      display: flex; align-items: center; gap: 8px;
+      background: var(--field);
+      border: 1px solid var(--divider);
+      border-radius: 8px;
+      padding: 0 12px;
+      transition: border-color .15s;
+    }
+    .search:focus-within { border-color: var(--accent); }
+    .search .material-icons-outlined { color: var(--muted); font-size: 19px; }
+    .search input {
+      flex: 1; background: transparent; border: none; outline: none;
+      color: var(--text); font-size: 13px;
+    }
+    .search input::placeholder { color: var(--muted); }
+    .search .clear {
+      border: none; background: transparent; color: rgba(255,255,255,0.7);
+      cursor: pointer; display: none; padding: 2px;
+    }
+    .search.has-value .clear { display: grid; place-items: center; }
+
+    /* One unified panel: left buttons + right content */
+    .panel {
+      flex: 1;
+      min-width: 0;
+      min-height: 0;
+      background: var(--content);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      display: flex;
+      overflow: hidden;
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      box-shadow: var(--glass-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+
+    .panel-nav {
+      width: 228px;
+      flex-shrink: 0;
+      padding: 0;
+      border-right: 1px solid var(--divider);
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      background: transparent;
+    }
+    .panel-nav-head {
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 6px;
+      height: 78px;
+      padding: 0 10px 1px;
+      margin-bottom: 0;
+      border-bottom: none;
+      flex-shrink: 0;
+      box-sizing: border-box;
+      position: relative;
+    }
+    /* Split header rule: left segment, fade at both ends */
+    .panel-nav-head::after {
+      content: "";
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      bottom: 0;
+      height: 1px;
+      background: linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0) 0%,
+        rgba(255, 255, 255, 0.12) 18%,
+        rgba(255, 255, 255, 0.12) 82%,
+        rgba(255, 255, 255, 0) 100%
+      );
+      pointer-events: none;
+    }
+    .panel-nav-head .back {
+      width: 32px; height: 32px;
+      border: none; background: transparent; color: var(--accent);
+      border-radius: 8px; cursor: pointer;
+      display: grid; place-items: center;
+      flex-shrink: 0;
+    }
+    .panel-nav-head .back:hover { background: rgba(130,177,255,0.12); }
+    .panel-nav-head .back .material-icons-outlined { font-size: 20px; }
+    .panel-nav-head .label {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .nav-btn {
+      width: calc(100% - 20px);
+      margin: 0 10px;
+      height: 58px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--text70);
+      border-radius: 10px;
+      cursor: pointer;
+      text-align: left;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 12px;
+      transition: background .16s, border-color .16s, color .16s, box-shadow .16s;
+      font-family: inherit;
+    }
+    .panel-nav > .nav-btn:first-of-type { margin-top: 8px; }
+    .panel-nav > .nav-btn:last-of-type { margin-bottom: 10px; }
+    .nav-btn .icon { font-size: 19px; color: var(--text60); flex-shrink: 0; }
+    .nav-btn .meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .nav-btn .title {
+      font-size: 13.5px; font-weight: 500;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .nav-btn .subtitle {
+      font-size: 10.5px; color: var(--muted);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .nav-btn.active {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.10);
+      border-color: rgba(255, 255, 255, 0.22);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.18),
+        0 4px 16px rgba(0, 0, 0, 0.18);
+    }
+    .nav-btn.active .title { font-weight: 700; color: #fff; }
+    .nav-btn[data-cat="data"].active {
+      background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(98,198,255,0.14));
+      border-color: rgba(98,198,255,0.42);
+    }
+    .nav-btn[data-cat="data"].active .icon { color: var(--cat-data); }
+    .nav-btn[data-cat="map"].active {
+      background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(114,214,177,0.14));
+      border-color: rgba(114,214,177,0.42);
+    }
+    .nav-btn[data-cat="map"].active .icon { color: var(--cat-map); }
+    .nav-btn[data-cat="alert"].active {
+      background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,198,109,0.14));
+      border-color: rgba(255,198,109,0.42);
+    }
+    .nav-btn[data-cat="alert"].active .icon { color: var(--cat-alert); }
+    .nav-btn[data-cat="voice"].active {
+      background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(214,165,255,0.14));
+      border-color: rgba(214,165,255,0.42);
+    }
+    .nav-btn[data-cat="voice"].active .icon { color: var(--cat-voice); }
+    .nav-btn[data-cat="advanced"].active {
+      background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(174,184,204,0.14));
+      border-color: rgba(174,184,204,0.42);
+    }
+    .nav-btn[data-cat="advanced"].active .icon { color: var(--cat-advanced); }
+
+    .panel-main {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .content-head {
+      height: 78px;
+      padding: 0 18px 1px;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      border-bottom: none;
+      flex-shrink: 0;
+      box-sizing: border-box;
+      position: relative;
+    }
+    /* Split header rule: right segment, fade at both ends */
+    .content-head::after {
+      content: "";
+      position: absolute;
+      left: 14px;
+      right: 14px;
+      bottom: 0;
+      height: 1px;
+      background: linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0) 0%,
+        rgba(255, 255, 255, 0.12) 18%,
+        rgba(255, 255, 255, 0.12) 82%,
+        rgba(255, 255, 255, 0) 100%
+      );
+      pointer-events: none;
+    }
+    .content-icon {
+      width: 36px; height: 36px;
+      border-radius: 8px;
+      display: grid; place-items: center;
+      background: rgba(98,198,255,0.13);
+    }
+    .content-icon .material-icons-outlined { font-size: 20px; color: var(--cat-data); }
+    .content-head h3 { font-size: 16px; font-weight: 700; }
+    .content-head p { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+
+    .content-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 16px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .content-body::-webkit-scrollbar { width: 8px; }
+    .content-body::-webkit-scrollbar-thumb {
+      background: rgba(255,255,255,0.12); border-radius: 8px;
+    }
+
+    .category-panel { display: none; flex-direction: column; gap: 12px; }
+    .category-panel.active { display: flex; }
+
+    /* Section — flat on the glass panel, no nested card */
+    .section {
+      background: transparent;
+      border: none;
+      border-radius: 0;
+      padding: 4px 2px 8px;
+      box-shadow: none;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+    .section + .section {
+      margin-top: 6px;
+      padding-top: 14px;
+      border-top: 1px solid var(--divider);
+    }
+    .section-title {
+      display: flex; align-items: center; gap: 9px;
+      margin-bottom: 14px;
+    }
+    .section-title .material-icons-outlined { color: var(--accent); font-size: 18px; }
+    .section-title h4 { font-size: 15px; font-weight: 700; }
+
+    .divider {
+      height: 1px;
+      background: var(--divider);
+      margin: 12px 0;
+    }
+
+    /* Setting row */
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+    .row-left {
+      flex: 1;
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      min-width: 0;
+    }
+    .leading {
+      width: 34px; height: 34px; flex-shrink: 0;
+      border-radius: 8px;
+      background: rgba(130,177,255,0.14);
+      border: 1px solid rgba(130,177,255,0.28);
+      display: grid; place-items: center;
+      color: var(--accent);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
+    .leading .material-icons-outlined { font-size: 18px; }
+    .row-text { min-width: 0; padding-top: 1px; }
+    .row-text .title { font-size: 14px; font-weight: 600; }
+    .row-text .subtitle { font-size: 12px; color: var(--muted); line-height: 1.25; margin-top: 4px; }
+    .row-control {
+      width: 260px;
+      flex-shrink: 0;
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+    }
+    .row-control.wide { width: 330px; }
+    .row-control.full { width: 100%; max-width: 330px; }
+
+    /* Controls */
+    .switch {
+      position: relative;
+      width: 46px; height: 28px;
+      flex-shrink: 0;
+    }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .switch .track {
+      position: absolute; inset: 0;
+      background: rgba(255,255,255,0.15);
+      border-radius: 14px;
+      transition: .2s;
+      cursor: pointer;
+    }
+    .switch .thumb {
+      position: absolute;
+      width: 20px; height: 20px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.7);
+      top: 4px; left: 4px;
+      transition: .2s;
+      pointer-events: none;
+    }
+    .switch input:checked + .track { background: rgba(130,177,255,0.38); }
+    .switch input:checked + .track .thumb {
+      transform: translateX(18px);
+      background: var(--accent);
+    }
+
+    .field, select.field {
+      width: 100%;
+      height: 40px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      font-size: 14px;
+      padding: 0 12px;
+      outline: none;
+      font-family: inherit;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%2382B1FF' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      padding-right: 32px;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+    input.field, textarea.field {
+      appearance: none;
+      background-image: none;
+      padding-right: 12px;
+    }
+    input.field:focus, select.field:focus, textarea.field:focus {
+      border-color: var(--accent);
+    }
+    input.field::placeholder { color: rgba(255,255,255,0.38); }
+    select.field option { background: #101327; color: #fff; }
+
+    .btn {
+      height: 40px;
+      border-radius: 10px;
+      border: 1px solid rgba(130, 177, 255, 0.78);
+      background: rgba(130, 177, 255, 0.18);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 500;
+      padding: 0 14px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      font-family: inherit;
+      white-space: nowrap;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
+    }
+    .btn:hover { background: rgba(130,177,255,0.24); }
+    .btn .material-icons-outlined { font-size: 16px; }
+    .btn.ghost {
+      border-color: rgba(255,255,255,0.24);
+      background: rgba(255, 255, 255, 0.11);
+      color: #fff;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+    .btn.ghost:hover {
+      background: rgba(255, 255, 255, 0.15);
+      border-color: rgba(255, 255, 255, 0.34);
+    }
+    .btn.icon-only {
+      width: 40px; padding: 0; border: none; color: var(--accent);
+    }
+    .btn.sm {
+      height: 28px; font-size: 12px; padding: 0 10px;
+      border-color: rgba(255,255,255,0.24); color: rgba(255,255,255,0.7);
+    }
+
+    .seg {
+      display: flex; gap: 6px; width: 100%;
+    }
+    .seg button {
+      flex: 1;
+      height: 40px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      background: rgba(255, 255, 255, 0.11);
+      color: var(--text70);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+      padding: 0 8px;
+      transition: background .16s, border-color .16s, color .16s, box-shadow .16s;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+    .seg button:hover {
+      background: rgba(255, 255, 255, 0.15);
+      border-color: rgba(255, 255, 255, 0.32);
+      color: #fff;
+    }
+    .seg button.active {
+      color: #fff;
+      font-weight: 700;
+      background: linear-gradient(135deg, rgba(255,255,255,0.16), rgba(130,177,255,0.34));
+      border-color: rgba(130, 177, 255, 0.78);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.20),
+        0 3px 14px rgba(130, 177, 255, 0.18),
+        0 3px 10px rgba(0, 0, 0, 0.18);
+    }
+    .chip-row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+    .chip-row.chip-stack {
+      flex-direction: column;
+      align-items: stretch;
+      justify-content: flex-start;
+    }
+    .chip-row.chip-stack .chip { width: 100%; }
+    .chip {
+      height: 36px;
+      padding: 0 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      background: rgba(255, 255, 255, 0.11);
+      color: var(--text70);
+      font-size: 12.5px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      transition: background .16s, border-color .16s, color .16s, box-shadow .16s;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+    .chip:hover {
+      background: rgba(255, 255, 255, 0.15);
+      border-color: rgba(255, 255, 255, 0.32);
+      color: #fff;
+    }
+    .chip.active {
+      color: #fff;
+      font-weight: 700;
+      background: linear-gradient(135deg, rgba(255,255,255,0.16), rgba(130,177,255,0.34));
+      border-color: rgba(130, 177, 255, 0.78);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.20),
+        0 3px 14px rgba(130, 177, 255, 0.18),
+        0 3px 10px rgba(0, 0, 0, 0.18);
+    }
+
+    .view-btn {
+      flex: 1;
+      height: 40px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      background: rgba(255, 255, 255, 0.11);
+      color: var(--text70);
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+      font-size: 12.5px; font-weight: 500; cursor: pointer; font-family: inherit;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      transition: background .16s, border-color .16s, color .16s, box-shadow .16s;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+    .view-btn:hover {
+      background: rgba(255, 255, 255, 0.15);
+      border-color: rgba(255, 255, 255, 0.32);
+      color: #fff;
+    }
+    .view-btn.active {
+      color: #fff;
+      font-weight: 700;
+      background: linear-gradient(135deg, rgba(255,255,255,0.16), rgba(130,177,255,0.34));
+      border-color: rgba(130, 177, 255, 0.78);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.20),
+        0 3px 14px rgba(130, 177, 255, 0.18),
+        0 3px 10px rgba(0, 0, 0, 0.18);
+    }
+    .view-btn .material-icons-outlined { font-size: 16px; }
+    .btn-pair { display: flex; gap: 8px; width: 100%; }
+
+    .notif-card, .perm-card, .bg-card {
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    }
+    .notif-card + .notif-card, .bg-card { margin-top: 14px; }
+    .notif-card h5 {
+      font-size: 13.5px; font-weight: 700;
+    }
+    .notif-card .desc {
+      font-size: 11.5px; color: rgba(255,255,255,0.55); margin: 2px 0 4px;
+    }
+    .simple-switch {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 4px;
+      border-top: 1px solid var(--divider);
+      cursor: pointer;
+    }
+    .simple-switch:first-of-type { border-top: none; }
+    .simple-switch .material-icons-outlined { color: var(--text70); font-size: 18px; }
+    .simple-switch.on .material-icons-outlined { color: var(--accent); }
+    .simple-switch .label {
+      flex: 1; font-size: 12.5px; font-weight: 500; color: var(--text70);
+    }
+    .simple-switch.on .label { color: #fff; }
+
+    .mini-switch {
+      height: 38px;
+      padding: 0 4px 0 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.06);
+      display: flex; align-items: center;
+      margin-bottom: 8px;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+    .mini-switch:last-child { margin-bottom: 0; }
+    .mini-switch.on { border-color: var(--accent); }
+    .mini-switch span {
+      flex: 1; font-size: 13px; font-weight: 600; color: var(--text70);
+    }
+    .mini-switch.on span { color: #fff; }
+
+    .slider-row {
+      display: flex; align-items: center; gap: 8px; width: 100%;
+    }
+    .slider-row input[type="range"] {
+      flex: 1; accent-color: var(--accent);
+    }
+    .slider-row .val {
+      width: 44px; text-align: right;
+      font-size: 12px; font-weight: 700;
+    }
+
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #888; margin-right: 8px;
+    }
+    .status-dot.ok { background: #4caf50; }
+    .status-line {
+      display: flex; align-items: center;
+      padding-left: 46px; margin-bottom: 8px;
+      font-size: 12px; color: var(--muted);
+    }
+
+    .input-with-btn {
+      display: flex; gap: 6px; width: 100%; align-items: center;
+    }
+    .input-with-btn input { flex: 1; }
+
+    .empty-search {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 64px 24px;
+      color: var(--muted);
+      text-align: center;
+    }
+    .empty-search .material-icons-outlined { font-size: 40px; opacity: 0.5; }
+
+    .prototype-note {
+      position: fixed;
+      right: 16px; bottom: 16px;
+      background: rgba(16, 19, 39, 0.45);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-size: 11.5px;
+      color: var(--muted);
+      max-width: 280px;
+      z-index: 20;
+      line-height: 1.4;
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      box-shadow: var(--glass-shadow);
+    }
+    .prototype-note strong { color: var(--accent); font-weight: 600; }
+
+    /* Responsive */
+    @media (max-width: 860px) {
+      .header { flex-direction: column; align-items: stretch; }
+      .search { width: 100%; }
+    }
+    @media (max-width: 600px) {
+      .app > .shell {
+        width: calc(100% - 24px);
+        max-width: none;
+        aspect-ratio: auto;
+        max-height: none;
+        margin: 12px auto;
+        padding: 0;
+      }
+      .panel {
+        border-radius: 14px;
+        flex-direction: column;
+      }
+      .panel-nav {
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid var(--divider);
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        align-content: start;
+        overflow: visible;
+        padding: 0 10px 10px;
+        gap: 8px;
+      }
+      .panel-nav-head {
+        grid-column: 1 / -1;
+        height: 78px;
+        margin: 0 -10px;
+        padding: 0 10px;
+      }
+      .nav-btn,
+      .panel-nav > .nav-btn:first-of-type,
+      .panel-nav > .nav-btn:last-of-type {
+        width: 100%;
+        margin: 0;
+        height: 44px;
+        padding: 0 10px;
+        min-width: 0;
+      }
+      .nav-btn .meta { min-width: 0; }
+      .nav-btn .meta .subtitle { display: none; }
+      .nav-btn .title {
+        font-size: 12.5px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+    }
+    @media (max-width: 560px) {
+      .row { flex-direction: column; align-items: stretch; gap: 12px; }
+      .row-control, .row-control.wide, .row-control.full { width: 100%; max-width: none; justify-content: stretch; }
+      .seg { flex-wrap: wrap; }
+      .btn-pair { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="app-bg" aria-hidden="true">
+      <img src="madoka_bg.png" alt="" />
+    </div>
+    <div class="shell">
+      <section class="panel">
+        <nav class="panel-nav" id="nav" aria-label="设置分类">
+          <div class="panel-nav-head">
+            <button class="back" type="button" title="返回" aria-label="返回">
+              <span class="material-icons-outlined">arrow_back</span>
+            </button>
+            <span class="label">应用设置</span>
+          </div>
+        </nav>
+
+        <div class="panel-main">
+          <div class="content-head">
+            <div class="content-icon" id="contentIcon">
+              <span class="material-icons-outlined">hub</span>
+            </div>
+            <div>
+              <h3 id="contentTitle">API与数据源</h3>
+              <p id="contentSub">接口开关、数据源和过滤</p>
+            </div>
+          </div>
+
+          <div class="content-body" id="contentBody">
+            <!-- ========== DATA ========== -->
+            <div class="category-panel active" data-cat="data">
+
+              <!-- 账号与 API 授权 -->
+              <div class="section">
+                <div class="section-title">
+                  <span class="material-icons-outlined">key</span>
+                  <h4>账号与 API 授权</h4>
+                </div>
+
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">key</span></div>
+                    <div class="row-text">
+                      <div class="title">FAN Studio API Key</div>
+                      <div class="subtitle">用于 FAN Studio 鉴权；留空时按未认证模式连接</div>
+                    </div>
+                  </div>
+                  <div class="row-control wide">
+                    <div class="input-with-btn">
+                      <input class="field" type="password" placeholder="未设置" />
+                      <button class="btn icon-only" type="button" title="保存 FAN Studio API Key">
+                        <span class="material-icons-outlined">save</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">account_circle</span></div>
+                    <div class="row-text">
+                      <div class="title">WAuth 账号授权</div>
+                      <div class="subtitle">未登录时 WAuth 业务 API 不可开启</div>
+                    </div>
+                  </div>
+                  <div class="row-control">
+                    <button class="btn" type="button" style="width:160px">
+                      <span class="material-icons-outlined">login</span>
+                      登录
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- API/数据接口开关 -->
+              <div class="section">
+                <div class="section-title">
+                  <span class="material-icons-outlined">power_settings_new</span>
+                  <h4>API/数据接口开关</h4>
+                </div>
+                <div id="apiSwitches"></div>
+              </div>
+
+              <!-- API/数据接口选项 -->
+              <div class="section">
+                <div class="section-title">
+                  <span class="material-icons-outlined">tune</span>
+                  <h4>API/数据接口选项</h4>
+                </div>
+
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">dns</span></div>
+                    <div class="row-text">
+                      <div class="title">FAN Studio 默认服务器</div>
+                      <div class="subtitle">选择 FAN Studio 数据源优先连接的服务器</div>
+                    </div>
+                  </div>
+                  <div class="row-control">
+                    <select class="field">
+                      <option selected>ws.fanstudio.tech</option>
+                      <option>ws.fanstudio.hk</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">public</span></div>
+                    <div class="row-text">
+                      <div class="title">NIED 強震モニタ 数据源</div>
+                      <div class="subtitle">切换强震监测数据输入来源</div>
+                    </div>
+                  </div>
+                  <div class="row-control wide">
+                    <div class="seg" data-seg>
+                      <button type="button" class="active">Lmoni</button>
+                      <button type="button">KMONI</button>
+                      <button type="button">Yahoo</button>
+                      <button type="button">WHEWS</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">sensors</span></div>
+                    <div class="row-text">
+                      <div class="title">KMA 实时测站数据源</div>
+                      <div class="subtitle">选择 KMA 测站实时数据输入来源</div>
+                    </div>
+                  </div>
+                  <div class="row-control wide">
+                    <div class="seg" data-seg>
+                      <button type="button" class="active">KMA-PEWS</button>
+                      <button type="button">FAN</button>
+                      <button type="button">WHEWS</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">waves</span></div>
+                    <div class="row-text">
+                      <div class="title">S-Net 实时测站数据源</div>
+                      <div class="subtitle">选择海底测站实时数据输入来源</div>
+                    </div>
+                  </div>
+                  <div class="row-control">
+                    <div class="seg" data-seg>
+                      <button type="button" class="active">MSIL</button>
+                      <button type="button">WHEWS</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">history_toggle_off</span></div>
+                    <div class="row-text">
+                      <div class="title">NIED 回放</div>
+                      <div class="subtitle">按 JST 时间回放当前 NIED 数据源</div>
+                    </div>
+                  </div>
+                  <div class="row-control">
+                    <label class="switch">
+                      <input type="checkbox" id="niedReplay" />
+                      <span class="track"><span class="thumb"></span></span>
+                    </label>
+                  </div>
+                </div>
+
+                <div id="niedReplayExtra" style="display:none">
+                  <div class="divider"></div>
+                  <div class="row">
+                    <div class="row-left">
+                      <div class="leading"><span class="material-icons-outlined">schedule</span></div>
+                      <div class="row-text">
+                        <div class="title">回放起点</div>
+                        <div class="subtitle">格式: yyyy-MM-dd HH:mm:ss</div>
+                      </div>
+                    </div>
+                    <div class="row-control">
+                      <input class="field" type="text" value="2026-05-30 23:34:00" />
+                    </div>
+                  </div>
+                  <div class="divider"></div>
+                  <div class="row">
+                    <div class="row-left">
+                      <div class="leading"><span class="material-icons-outlined">speed</span></div>
+                      <div class="row-text">
+                        <div class="title">回放步长</div>
+                        <div class="subtitle">每秒回放推进的数据时间步长</div>
+                      </div>
+                    </div>
+                    <div class="row-control">
+                      <div class="seg" data-seg>
+                        <button type="button" class="active">1 s</button>
+                        <button type="button">5 s</button>
+                        <button type="button">10 s</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">speed</span></div>
+                    <div class="row-text">
+                      <div class="title">摇晃检测灵敏度</div>
+                      <div class="subtitle">影响 NIED / KMA / TREM 的触发阈值</div>
+                    </div>
+                  </div>
+                  <div class="row-control wide">
+                    <div class="seg" data-seg>
+                      <button type="button">低灵敏度</button>
+                      <button type="button" class="active">标准（推荐）</button>
+                      <button type="button">高灵敏度</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">looks_one</span></div>
+                    <div class="row-text">
+                      <div class="title">显示低烈度数字</div>
+                      <div class="subtitle">NIED / TREM / P-Alert 显示震度0，KMA 显示 MMI 1</div>
+                    </div>
+                  </div>
+                  <div class="row-control">
+                    <label class="switch">
+                      <input type="checkbox" />
+                      <span class="track"><span class="thumb"></span></span>
+                    </label>
+                  </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">timer</span></div>
+                    <div class="row-text">
+                      <div class="title">KMA 加速度保持</div>
+                      <div class="subtitle">保留最近时段内的最高 MMI 显示</div>
+                    </div>
+                  </div>
+                  <div class="row-control wide">
+                    <div class="seg" data-seg>
+                      <button type="button" class="active">实时</button>
+                      <button type="button">5秒</button>
+                      <button type="button">10秒</button>
+                      <button type="button">30秒</button>
+                      <button type="button">60秒</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">public</span></div>
+                    <div class="row-text">
+                      <div class="title">FDSN 测站</div>
+                      <div class="subtitle">显示 EarthScope / GEOFON 测站点位；实时包由应用内 SeedLink 连接接收</div>
+                    </div>
+                  </div>
+                  <div class="row-control">
+                    <div class="chip-row chip-stack" style="justify-content:stretch">
+                      <button type="button" class="chip" data-chip>EarthScope</button>
+                      <button type="button" class="chip" data-chip>GEOFON</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">hub</span></div>
+                    <div class="row-text">
+                      <div class="title">连接上限</div>
+                      <div class="subtitle">限制应用内 SeedLink 最多连接的全球实时台站数量</div>
+                    </div>
+                  </div>
+                  <div class="row-control" style="max-width:148px">
+                    <select class="field">
+                      <option>100</option>
+                      <option>300</option>
+                      <option selected>500</option>
+                      <option>1000</option>
+                      <option>2000</option>
+                      <option>3000</option>
+                      <option>4000</option>
+                      <option>5000</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 信息事件震级过滤 -->
+              <div class="section">
+                <div class="section-title">
+                  <span class="material-icons-outlined">filter_alt</span>
+                  <h4>信息事件震级过滤</h4>
+                </div>
+                <div id="magFilters"></div>
+                <div class="divider"></div>
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">playlist_add_check</span></div>
+                    <div class="row-text">
+                      <div class="title">信息事件地点白名单</div>
+                      <div class="subtitle">使用 | 分隔地点关键词；命中后可绕过震级阈值，但“不接收”仍然优先</div>
+                    </div>
+                  </div>
+                  <div class="row-control wide">
+                    <input class="field" type="text" placeholder="例如：四川|重庆|日本" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ========== MAP ========== -->
+            <div class="category-panel" data-cat="map">
+              <div class="section">
+                <div class="section-title">
+                  <span class="material-icons-outlined">layers</span>
+                  <h4>地图外观</h4>
+                </div>
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">layers</span></div>
+                    <div class="row-text">
+                      <div class="title">地图底图</div>
+                      <div class="subtitle">调整主地图底图样式</div>
+                    </div>
+                  </div>
+                  <div class="row-control">
+                    <select class="field">
+                      <option selected>Petal 浅色</option>
+                      <option>Petal 深色</option>
+                      <option>ArcGIS 卫星</option>
+                      <option>ArcGIS 地形</option>
+                      <option>ArcGIS 山体阴影</option>
+                      <option>DEM 高程数据</option>
+                      <option>Mapbox Dark</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div class="section">
+                <div class="section-title">
+                  <span class="material-icons-outlined">my_location</span>
+                  <h4>所在地定位</h4>
+                </div>
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">my_location</span></div>
+                    <div class="row-text">
+                      <div class="title">所在地定位</div>
+                      <div class="subtitle">本地预警与距离计算的参考点；可自动定位或手动输入经纬度。未设置</div>
+                    </div>
+                  </div>
+                  <div class="row-control wide">
+                    <div class="btn-pair">
+                      <button class="btn ghost" type="button"><span class="material-icons-outlined">gps_fixed</span>自动定位</button>
+                      <button class="btn ghost" type="button"><span class="material-icons-outlined">edit_location_alt</span>手动输入</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="section">
+                <div class="section-title">
+                  <span class="material-icons-outlined">map</span>
+                  <h4>视野切换</h4>
+                </div>
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">swap_horiz</span></div>
+                    <div class="row-text">
+                      <div class="title">视野切换</div>
+                      <div class="subtitle">在所在地视野与默认视野之间切换地图。所在地视野需先在上方设置所在地。</div>
+                    </div>
+                  </div>
+                  <div class="row-control wide">
+                    <div class="btn-pair" data-view>
+                      <button type="button" class="view-btn"><span class="material-icons-outlined">my_location</span>所在地视野</button>
+                      <button type="button" class="view-btn active"><span class="material-icons-outlined">public</span>默认视野</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="section">
+                <div class="section-title">
+                  <span class="material-icons-outlined">notifications</span>
+                  <h4>轻通知</h4>
+                </div>
+
+                <div class="perm-card" style="margin-bottom:14px">
+                  <div style="display:flex;align-items:center;gap:10px">
+                    <span class="material-icons-outlined" style="color:#69d18a;font-size:18px">notifications_active</span>
+                    <div style="flex:1">
+                      <div style="color:#69d18a;font-size:12.5px;font-weight:600">系统通知权限：已授权</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="notif-card">
+                  <h5>收到地震预警（警报）时</h5>
+                  <div class="desc">预估烈度/震度达到警报阈值</div>
+                  <label class="simple-switch on"><span class="material-icons-outlined">notifications</span><span class="label">通知</span><span class="switch"><input type="checkbox" checked /><span class="track"><span class="thumb"></span></span></span></label>
+                  <label class="simple-switch on"><span class="material-icons-outlined">volume_up</span><span class="label">声音</span><span class="switch"><input type="checkbox" checked /><span class="track"><span class="thumb"></span></span></span></label>
+                  <label class="simple-switch on"><span class="material-icons-outlined">center_focus_strong</span><span class="label">聚焦</span><span class="switch"><input type="checkbox" checked /><span class="track"><span class="thumb"></span></span></span></label>
+                </div>
+
+                <div class="notif-card">
+                  <h5>收到任意地震预警时</h5>
+                  <div class="desc">包括普通 EEW 更新、取消报</div>
+                  <label class="simple-switch on"><span class="material-icons-outlined">notifications</span><span class="label">通知</span><span class="switch"><input type="checkbox" checked /><span class="track"><span class="thumb"></span></span></span></label>
+                  <label class="simple-switch on"><span class="material-icons-outlined">volume_up</span><span class="label">声音</span><span class="switch"><input type="checkbox" checked /><span class="track"><span class="thumb"></span></span></span></label>
+                  <label class="simple-switch"><span class="material-icons-outlined">center_focus_strong</span><span class="label">聚焦</span><span class="switch"><input type="checkbox" /><span class="track"><span class="thumb"></span></span></span></label>
+                </div>
+
+                <div class="notif-card">
+                  <h5>收到地震信息时</h5>
+                  <div class="desc">CENC / JMA / USGS 等机构的地震情报</div>
+                  <label class="simple-switch on"><span class="material-icons-outlined">notifications</span><span class="label">通知</span><span class="switch"><input type="checkbox" checked /><span class="track"><span class="thumb"></span></span></span></label>
+                  <label class="simple-switch"><span class="material-icons-outlined">volume_up</span><span class="label">声音</span><span class="switch"><input type="checkbox" /><span class="track"><span class="thumb"></span></span></span></label>
+                  <label class="simple-switch"><span class="material-icons-outlined">center_focus_strong</span><span class="label">聚焦</span><span class="switch"><input type="checkbox" /><span class="track"><span class="thumb"></span></span></span></label>
+                </div>
+
+                <div class="bg-card">
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                    <span class="material-icons-outlined" style="color:var(--accent);font-size:18px">phone_android</span>
+                    <div style="flex:1;font-size:13.5px;font-weight:700">后台通知（移动端）</div>
+                    <label class="switch"><input type="checkbox" id="bgNotif" /><span class="track"><span class="thumb"></span></span></label>
+                  </div>
+                  <div style="font-size:11.5px;color:rgba(255,255,255,0.55);margin-bottom:8px">
+                    切到后台时仅保留 EEW / 信息数据源，关闭地图/测站等高功耗功能，并通过系统通知推送事件。
+                  </div>
+                  <div id="bgExtra" style="display:none">
+                    <label class="simple-switch"><span class="label" style="margin-left:0">信息事件通知</span><label class="switch"><input type="checkbox" checked /><span class="track"><span class="thumb"></span></span></label></label>
+                    <label class="simple-switch on"><span class="label" style="margin-left:0">地震预警（EEW）通知</span><label class="switch"><input type="checkbox" checked /><span class="track"><span class="thumb"></span></span></label></label>
+                    <div style="padding:10px 4px;border-top:1px solid var(--divider)">
+                      <div style="font-size:12.5px;margin-bottom:8px">EEW 通知阈值</div>
+                      <div class="chip-row" style="justify-content:flex-start" data-chips>
+                        <button type="button" class="chip active">全量通知</button>
+                        <button type="button" class="chip">预估烈度 ≥ 3</button>
+                        <button type="button" class="chip">预估烈度 ≥ 4</button>
+                        <button type="button" class="chip">预估烈度 ≥ 5</button>
+                        <button type="button" class="chip">预估烈度 ≥ 6</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ========== ALERT ========== -->
+            <div class="category-panel" data-cat="alert">
+              <div class="section">
+                <div class="section-title">
+                  <span class="material-icons-outlined">layers</span>
+                  <h4>信息显示</h4>
+                </div>
+                <div id="overlaySwitches"></div>
+              </div>
+
+              <div class="section">
+                <div class="section-title">
+                  <span class="material-icons-outlined">warning_amber</span>
+                  <h4>气象预警</h4>
+                </div>
+
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">place</span></div>
+                    <div class="row-text">
+                      <div class="title">气象预警接收范围</div>
+                      <div class="subtitle">在“全部预警”和“当地预警”之间切换</div>
+                    </div>
+                  </div>
+                  <div class="row-control">
+                    <div class="seg" data-seg id="weatherScope">
+                      <button type="button">全部预警</button>
+                      <button type="button" class="active">当地预警</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div id="weatherLevelWrap">
+                  <div class="divider"></div>
+                  <div class="row">
+                    <div class="row-left">
+                      <div class="leading"><span class="material-icons-outlined">account_tree</span></div>
+                      <div class="row-text">
+                        <div class="title">当地气象预警级别</div>
+                        <div class="subtitle">按行政层级过滤（省 / 市 / 县），仅在当地预警模式生效</div>
+                      </div>
+                    </div>
+                    <div class="row-control">
+                      <div class="seg" data-seg>
+                        <button type="button">省级</button>
+                        <button type="button">市级</button>
+                        <button type="button" class="active">县级</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">subtitles</span></div>
+                    <div class="row-text">
+                      <div class="title">显示天气预警字幕</div>
+                      <div class="subtitle">在地图顶部显示天气预警跑马灯；默认关闭</div>
+                    </div>
+                  </div>
+                  <div class="row-control">
+                    <label class="switch">
+                      <input type="checkbox" />
+                      <span class="track"><span class="thumb"></span></span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ========== VOICE ========== -->
+            <div class="category-panel" data-cat="voice">
+              <div class="section">
+                <div class="section-title">
+                  <span class="material-icons-outlined">record_voice_over</span>
+                  <h4>语音播报</h4>
+                </div>
+
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">record_voice_over</span></div>
+                    <div class="row-text">
+                      <div class="title">语音播报</div>
+                      <div class="subtitle">SREV 音效播放后，再播报事件文字。</div>
+                    </div>
+                  </div>
+                  <div class="row-control">
+                    <label class="switch"><input type="checkbox" /><span class="track"><span class="thumb"></span></span></label>
+                  </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">smart_toy</span></div>
+                    <div class="row-text">
+                      <div class="title">GPT-SoVITS 语音合成</div>
+                      <div class="subtitle">启用后将通过本地 GPT-SoVITS-V4 服务生成语音。</div>
+                    </div>
+                  </div>
+                  <div class="row-control">
+                    <label class="switch"><input type="checkbox" id="gptSovits" /><span class="track"><span class="thumb"></span></span></label>
+                  </div>
+                </div>
+
+                <div id="gptExtra" style="display:none">
+                  <div class="row" style="margin-top:12px">
+                    <div class="row-left">
+                      <div class="leading"><span class="material-icons-outlined">link</span></div>
+                      <div class="row-text">
+                        <div class="title">服务地址</div>
+                        <div class="subtitle">GPT-SoVITS API 地址，默认 http://localhost:9880</div>
+                      </div>
+                    </div>
+                    <div class="row-control">
+                      <input class="field" type="text" value="http://localhost:9880" />
+                    </div>
+                  </div>
+                  <div class="row" style="margin-top:12px">
+                    <div class="row-left">
+                      <div class="leading"><span class="material-icons-outlined">audiotrack</span></div>
+                      <div class="row-text">
+                        <div class="title">参考音频</div>
+                        <div class="subtitle">GPT-SoVITS 参考音频 WAV 路径</div>
+                      </div>
+                    </div>
+                    <div class="row-control">
+                      <input class="field" type="text" placeholder="参考音频路径" />
+                    </div>
+                  </div>
+                  <div class="row" style="margin-top:12px">
+                    <div class="row-left">
+                      <div class="leading"><span class="material-icons-outlined">text_fields</span></div>
+                      <div class="row-text">
+                        <div class="title">参考文本</div>
+                        <div class="subtitle">参考音频对应的文本内容</div>
+                      </div>
+                    </div>
+                    <div class="row-control">
+                      <input class="field" type="text" placeholder="参考文本" />
+                    </div>
+                  </div>
+                  <div class="status-line">
+                    <span class="status-dot"></span>
+                    <span>未检测</span>
+                    <button class="btn sm" type="button" style="margin-left:12px">检测</button>
+                  </div>
+                  <div class="divider"></div>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">campaign</span></div>
+                    <div class="row-text">
+                      <div class="title">播报内容</div>
+                      <div class="subtitle">可分别控制事件说明、倒计时和更新报文。</div>
+                    </div>
+                  </div>
+                  <div class="row-control">
+                    <div style="width:100%">
+                      <div class="mini-switch"><span>事件</span><label class="switch"><input type="checkbox" /><span class="track"><span class="thumb"></span></span></label></div>
+                      <div class="mini-switch"><span>倒计时</span><label class="switch"><input type="checkbox" /><span class="track"><span class="thumb"></span></span></label></div>
+                      <div class="mini-switch"><span>更新报</span><label class="switch"><input type="checkbox" /><span class="track"><span class="thumb"></span></span></label></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">graphic_eq</span></div>
+                    <div class="row-text">
+                      <div class="title">语音音色</div>
+                      <div class="subtitle">可选择系统已安装的 TTS 语音；没有合适选项时使用系统默认。</div>
+                    </div>
+                  </div>
+                  <div class="row-control">
+                    <select class="field">
+                      <option selected>系统默认</option>
+                      <option>Microsoft Huihui</option>
+                      <option>Microsoft Yaoyao</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">speed</span></div>
+                    <div class="row-text">
+                      <div class="title">语速</div>
+                      <div class="subtitle">调低会更清楚，调高会更紧凑。</div>
+                    </div>
+                  </div>
+                  <div class="row-control wide">
+                    <div class="slider-row">
+                      <input type="range" min="0.35" max="0.85" step="0.01" value="0.58" data-slider />
+                      <span class="val">0.58</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">tune</span></div>
+                    <div class="row-text">
+                      <div class="title">音调</div>
+                      <div class="subtitle">用于微调语音明亮度。</div>
+                    </div>
+                  </div>
+                  <div class="row-control wide">
+                    <div class="slider-row">
+                      <input type="range" min="0.75" max="1.35" step="0.01" value="1.00" data-slider />
+                      <span class="val">1.00</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">play_circle</span></div>
+                    <div class="row-text">
+                      <div class="title">试听</div>
+                      <div class="subtitle">立即用当前配置播放一段测试语音。</div>
+                    </div>
+                  </div>
+                  <div class="row-control">
+                    <button class="btn" type="button" style="width:150px">播放测试</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ========== ADVANCED ========== -->
+            <div class="category-panel" data-cat="advanced">
+              <div class="section">
+                <div class="section-title">
+                  <span class="material-icons-outlined">visibility</span>
+                  <h4>界面行为</h4>
+                </div>
+
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">grid_off</span></div>
+                    <div class="row-text">
+                      <div class="title">预警时隐藏网格</div>
+                      <div class="subtitle">地震预警触发时隐藏测站闪烁网格</div>
+                    </div>
+                  </div>
+                  <div class="row-control">
+                    <label class="switch"><input type="checkbox" /><span class="track"><span class="thumb"></span></span></label>
+                  </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">view_sidebar</span></div>
+                    <div class="row-text">
+                      <div class="title">打开侧栏常驻</div>
+                      <div class="subtitle">在主界面右侧常驻显示信息侧栏</div>
+                    </div>
+                  </div>
+                  <div class="row-control">
+                    <label class="switch"><input type="checkbox" checked /><span class="track"><span class="thumb"></span></span></label>
+                  </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">crisis_alert</span></div>
+                    <div class="row-text">
+                      <div class="title">推算震中显示（beta）</div>
+                      <div class="subtitle">NIED 检测时在地图上显示网格搜索推算的震中位置</div>
+                    </div>
+                  </div>
+                  <div class="row-control">
+                    <label class="switch"><input type="checkbox" /><span class="track"><span class="thumb"></span></span></label>
+                  </div>
+                </div>
+              </div>
+
+              <div class="section">
+                <div class="section-title">
+                  <span class="material-icons-outlined">developer_mode</span>
+                  <h4>开发工具</h4>
+                </div>
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">developer_mode</span></div>
+                    <div class="row-text">
+                      <div class="title">调试页面</div>
+                      <div class="subtitle">进入应用调试页面</div>
+                    </div>
+                  </div>
+                  <div class="row-control">
+                    <a class="btn" href="debug-page.html" style="width:160px; text-decoration:none">
+                      <span class="material-icons-outlined">open_in_new</span>
+                      打开调试页
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="empty-search" id="emptySearch">
+              <span class="material-icons-outlined">search_off</span>
+              <div>未找到匹配的设置分类</div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div class="prototype-note">
+    <strong>UI 原型</strong> · 左侧分类 + 右侧内容，合并为同一面板。
+    · <a href="debug-page.html" style="color:#82b1ff;text-decoration:none">打开 Debug</a>
+  </div>
+
+  <script>
+    const CATEGORIES = [
+      {
+        id: 'data',
+        title: 'API与数据源',
+        subtitle: '接口开关、数据源和过滤',
+        icon: 'hub',
+        accent: '#62c6ff',
+        keywords: ['api','whews','wauth','账号','授权','fan','nowquake','cenc','烈度','wolfx','p2pquake','kma','pews','p-alert','trem','rts','nied','lmoni','kmoni','yahoo','s-net','fdsn','seedlink','摇晃','灵敏度','过滤']
+      },
+      {
+        id: 'map',
+        title: '地图与通知',
+        subtitle: '底图、图层、定位和通知',
+        icon: 'map',
+        accent: '#72d6b1',
+        keywords: ['地图','底图','图层','云图','卫星','定位','经纬度','通知','推送','提醒','测站']
+      },
+      {
+        id: 'alert',
+        title: '气象火山预警',
+        subtitle: '气象预警与信息显示',
+        icon: 'crisis_alert',
+        accent: '#ffc66d',
+        keywords: ['预警','气象','火山','信息显示','云图','风场','降水','等高线','台风','当地','省级','市级','县级']
+      },
+      {
+        id: 'voice',
+        title: '语音播报',
+        subtitle: '音色、内容与语速',
+        icon: 'record_voice_over',
+        accent: '#d6a5ff',
+        keywords: ['语音','tts','gpt-sovits','播报','事件','倒计时','更新报','音色','语速','音调','试听']
+      },
+      {
+        id: 'advanced',
+        title: '高级',
+        subtitle: '界面行为与开发工具',
+        icon: 'tune',
+        accent: '#aeb8cc',
+        keywords: ['高级','网格','侧边','震中','调试','开发']
+      }
+    ];
+
+    const API_SWITCHES = [
+      ['FAN Studio', true],
+      ['WHEWS 地震预警/情报', false],
+      ['NowQuake', true],
+      ['CENC 震源机制解 (CMT)', true],
+      ['USGS 震源机制解 (CMT)', true],
+      ['JMA 震源机制解 (CMT)', true],
+      ['F-net 震源机制解 (CMT)', true],
+      ['Hi-net AQUA 震源机制解 (CMT)', true],
+      ['Wolfx Project', true],
+      ['Wolfx SeisJS', true],
+      ['P2PQuake', true],
+      ['KMA 实时测站', true],
+      ['P-Alert', true],
+      ['TREM RTS', true],
+      ['NIED 強震モニタ', true],
+      ['NIED 長周期地震動モニタ', true],
+      ['S-net 日本海溝海底地震津波観測網', true],
+      ['WHEWS NIED 实时测站', false],
+      ['WHEWS S-Net 实时测站', false],
+      ['WHEWS KMA 实时测站', false],
+      ['FDSN / SeedLink 实时测站', false],
+    ];
+
+    const OVERLAYS = [
+      ['实况云图', 'cloud'],
+      ['实况风场', 'air'],
+      ['实况降水', 'water_drop'],
+      ['全国雷达', 'radar'],
+      ['东南沿海及西太卫星云图', 'cloud_queue'],
+      ['中国等高线', 'terrain'],
+      ['JMA 火山', 'local_fire_department'],
+      ['台风路径', 'storm'],
+    ];
+
+    const MAG_SOURCES = [
+      '中国地震台网 (CENC)',
+      'USGS (美国)',
+      '中央气象署 (CWA)',
+      'FSSN 地震信息',
+      'P2P 预警网',
+      '香港天文台 (HKO)',
+      '欧洲地中海地震中心',
+      '法国中央地震研究所',
+      '德国地学研究中心',
+      '巴西圣保罗大学',
+      '韩国气象厅 (KMA)',
+      '宁夏地震局',
+      '广西地震局',
+      '山西地震局',
+      '北京地震局',
+      '云南地震局',
+      '印度尼西亚气象气候与地球物理局',
+      '新西兰 GeoNet',
+      '泰国气象局',
+      '意大利国家地球物理与火山学研究所',
+      '加拿大自然资源部',
+      '马来西亚气象局',
+      '菲律宾火山与地震研究所',
+    ];
+
+    const MAG_OPTIONS = ['不接收','不过滤','M 1.0','M 1.5','M 2.0','M 2.5','M 3.0','M 3.5','M 4.0','M 4.5','M 5.0'];
+
+    let selected = 'data';
+    let query = '';
+
+    // Deep-link from Debug page: settings-page.html?cat=advanced
+    {
+      const cat = new URLSearchParams(location.search).get('cat');
+      if (cat && CATEGORIES.some((c) => c.id === cat)) selected = cat;
+    }
+
+    function switchHtml(checked) {
+      return `<label class="switch"><input type="checkbox" ${checked ? 'checked' : ''} /><span class="track"><span class="thumb"></span></span></label>`;
+    }
+
+    function renderNav() {
+      const nav = document.getElementById('nav');
+      const head = nav.querySelector('.panel-nav-head');
+      nav.querySelectorAll('.nav-btn').forEach(btn => btn.remove());
+      const buttons = CATEGORIES.map(c => `
+        <button type="button" class="nav-btn ${c.id===selected && !query ? 'active':''}" data-cat="${c.id}">
+          <span class="material-icons-outlined icon">${c.icon}</span>
+          <span class="meta">
+            <span class="title">${c.title}</span>
+            <span class="subtitle">${c.subtitle}</span>
+          </span>
+        </button>
+      `).join('');
+      head.insertAdjacentHTML('afterend', buttons);
+
+      nav.querySelectorAll('.nav-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          selected = btn.dataset.cat;
+          query = '';
+          updateView();
+        });
+      });
+    }
+
+    function renderApiSwitches() {
+      const el = document.getElementById('apiSwitches');
+      el.innerHTML = API_SWITCHES.map(([title, on], i) => `
+        <div class="row">
+          <div class="row-left">
+            <div class="leading"><span class="material-icons-outlined">${on ? 'link' : 'link_off'}</span></div>
+            <div class="row-text">
+              <div class="title">${title}</div>
+              <div class="subtitle">${on ? '已启用，允许建立数据连接' : '已关闭，不建立数据连接'}</div>
+            </div>
+          </div>
+          <div class="row-control">${switchHtml(on)}</div>
+        </div>
+        ${i < API_SWITCHES.length - 1 ? '<div class="divider"></div>' : ''}
+      `).join('');
+    }
+
+    function renderOverlays() {
+      const el = document.getElementById('overlaySwitches');
+      el.innerHTML = OVERLAYS.map(([title, icon], i) => `
+        <div class="row">
+          <div class="row-left">
+            <div class="leading"><span class="material-icons-outlined">${icon}</span></div>
+            <div class="row-text">
+              <div class="title">${title}</div>
+              <div class="subtitle">已关闭，隐藏该信息</div>
+            </div>
+          </div>
+          <div class="row-control">${switchHtml(false)}</div>
+        </div>
+        ${i < OVERLAYS.length - 1 ? '<div class="divider"></div>' : ''}
+      `).join('');
+    }
+
+    function renderMagFilters() {
+      const el = document.getElementById('magFilters');
+      const opts = MAG_OPTIONS.map(o => `<option ${o==='不过滤'?'selected':''}>${o}</option>`).join('');
+      el.innerHTML = MAG_SOURCES.map((name, i) => `
+        <div class="row">
+          <div class="row-left">
+            <div class="leading"><span class="material-icons-outlined">timeline</span></div>
+            <div class="row-text">
+              <div class="title">${name}</div>
+              <div class="subtitle">低于阈值的信息事件不会显示</div>
+            </div>
+          </div>
+          <div class="row-control" style="max-width:148px">
+            <select class="field">${opts}</select>
+          </div>
+        </div>
+        ${i < MAG_SOURCES.length - 1 ? '<div class="divider"></div>' : ''}
+      `).join('');
+    }
+
+    function matches(cat) {
+      if (!query) return cat.id === selected;
+      const q = query.toLowerCase();
+      return [cat.title, cat.subtitle, ...cat.keywords].some(v => v.toLowerCase().includes(q));
+    }
+
+    function updateView() {
+      const matched = CATEGORIES.filter(matches);
+      const head = query
+        ? { title: '搜索结果', subtitle: matched.length ? `${matched.length} 个相关分类` : `未找到“${query}”`, icon: 'search', accent: '#82b1ff' }
+        : CATEGORIES.find(c => c.id === selected);
+
+      document.getElementById('contentTitle').textContent = head.title;
+      document.getElementById('contentSub').textContent = head.subtitle;
+      const iconWrap = document.getElementById('contentIcon');
+      iconWrap.style.background = head.accent + '22';
+      iconWrap.querySelector('.material-icons-outlined').textContent = head.icon;
+      iconWrap.querySelector('.material-icons-outlined').style.color = head.accent;
+
+      document.querySelectorAll('.category-panel').forEach(p => {
+        const show = query ? matched.some(c => c.id === p.dataset.cat) : p.dataset.cat === selected;
+        p.classList.toggle('active', show);
+      });
+
+      document.getElementById('emptySearch').style.display = query && matched.length === 0 ? 'flex' : 'none';
+      renderNav();
+      bindInteractive();
+    }
+
+    function bindInteractive() {
+      document.querySelectorAll('[data-seg]').forEach(seg => {
+        seg.querySelectorAll('button').forEach(btn => {
+          btn.onclick = () => {
+            seg.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            if (seg.id === 'weatherScope') {
+              document.getElementById('weatherLevelWrap').style.display =
+                btn.textContent.trim() === '当地预警' ? '' : 'none';
+            }
+          };
+        });
+      });
+
+      document.querySelectorAll('[data-chip]').forEach(chip => {
+        chip.onclick = () => chip.classList.toggle('active');
+      });
+
+      document.querySelectorAll('[data-chips]').forEach(group => {
+        group.querySelectorAll('.chip').forEach(chip => {
+          chip.onclick = () => {
+            group.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+            chip.classList.add('active');
+          };
+        });
+      });
+
+      document.querySelectorAll('[data-view]').forEach(group => {
+        group.querySelectorAll('.view-btn').forEach(btn => {
+          btn.onclick = () => {
+            group.querySelectorAll('.view-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+          };
+        });
+      });
+
+      document.querySelectorAll('.simple-switch').forEach(row => {
+        const input = row.querySelector('input[type=checkbox]');
+        if (!input) return;
+        const sync = () => row.classList.toggle('on', input.checked);
+        sync();
+        input.onchange = sync;
+      });
+
+      document.querySelectorAll('.mini-switch').forEach(row => {
+        const input = row.querySelector('input[type=checkbox]');
+        if (!input) return;
+        const sync = () => row.classList.toggle('on', input.checked);
+        sync();
+        input.onchange = sync;
+      });
+
+      document.querySelectorAll('[data-slider]').forEach(slider => {
+        const val = slider.parentElement.querySelector('.val');
+        const sync = () => { val.textContent = Number(slider.value).toFixed(2); };
+        sync();
+        slider.oninput = sync;
+      });
+    }
+
+    // Conditional sections
+    document.getElementById('niedReplay').addEventListener('change', (e) => {
+      document.getElementById('niedReplayExtra').style.display = e.target.checked ? '' : 'none';
+    });
+    document.getElementById('bgNotif').addEventListener('change', (e) => {
+      document.getElementById('bgExtra').style.display = e.target.checked ? '' : 'none';
+    });
+    document.getElementById('gptSovits').addEventListener('change', (e) => {
+      document.getElementById('gptExtra').style.display = e.target.checked ? '' : 'none';
+    });
+
+    // Init
+    renderApiSwitches();
+    renderOverlays();
+    renderMagFilters();
+    updateView();
+  </script>
+</body>
+</html>

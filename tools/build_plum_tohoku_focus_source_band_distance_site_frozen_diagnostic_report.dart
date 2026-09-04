@@ -42,11 +42,10 @@ void main(List<String> args) {
   final outputPath = _argument(args, '--output') ?? _defaultOutputPath;
   final markdownPath = _argument(args, '--markdown') ?? _defaultMarkdownPath;
 
-  final report =
-      buildPlumTohokuFocusSourceBandDistanceSiteFrozenDiagnosticJson(
-        dataDirectory: dataDirectory,
-        modelPath: modelPath,
-      );
+  final report = buildPlumTohokuFocusSourceBandDistanceSiteFrozenDiagnosticJson(
+    dataDirectory: dataDirectory,
+    modelPath: modelPath,
+  );
 
   final output = File(outputPath)..parent.createSync(recursive: true);
   output.writeAsStringSync(
@@ -185,7 +184,9 @@ buildPlumTohokuFocusSourceBandDistanceSiteFrozenDiagnosticJson({
             }
             if (margin < _focusMinimumMargin) continue;
 
-            splitAccumulator.threshold(threshold.label).add(
+            splitAccumulator
+                .threshold(threshold.label)
+                .add(
                   _SourceBandDistanceSiteSample(
                     actual: station.intensity,
                     baselineRaw: baselineRaw,
@@ -203,8 +204,9 @@ buildPlumTohokuFocusSourceBandDistanceSiteFrozenDiagnosticJson({
 
   final thresholds = <String, Object?>{};
   for (final threshold in _thresholds) {
-    final validation =
-        splitAccumulators['validation']!.threshold(threshold.label);
+    final validation = splitAccumulators['validation']!.threshold(
+      threshold.label,
+    );
     final test = splitAccumulators['test']!.threshold(threshold.label);
     final validationBands = validation.validationBandByJointKey();
     thresholds[threshold.label] = {
@@ -469,23 +471,22 @@ class _ThresholdAccumulator {
     final actualPositive = sample.actual >= threshold;
     baseline.add(actualPositive: actualPositive);
     final jointKey = '${sample.sourceBand}|${sample.distance}|${sample.site}';
-    jointBuckets.putIfAbsent(
-      jointKey,
-      _SourceBandDistanceSiteBucket.new,
-    ).add(
-      sourceBand: sample.sourceBand,
-      distance: sample.distance,
-      site: sample.site,
-      actualPositive: actualPositive,
-    );
-    marginalSourceBand.putIfAbsent(sample.sourceBand, _PredictedBucket.new).add(
+    jointBuckets
+        .putIfAbsent(jointKey, _SourceBandDistanceSiteBucket.new)
+        .add(
+          sourceBand: sample.sourceBand,
+          distance: sample.distance,
+          site: sample.site,
           actualPositive: actualPositive,
         );
+    marginalSourceBand
+        .putIfAbsent(sample.sourceBand, _PredictedBucket.new)
+        .add(actualPositive: actualPositive);
   }
 
   Map<String, String> validationBandByJointKey() => {
-        for (final entry in jointBuckets.entries) entry.key: _bandFor(entry.value),
-      };
+    for (final entry in jointBuckets.entries) entry.key: _bandFor(entry.value),
+  };
 
   Map<String, Object?> toJson({
     required Map<String, String> bandByJointKey,
@@ -538,7 +539,8 @@ class _ThresholdAccumulator {
       ],
       'jointBuckets': jointJson,
       'bandSummary': {
-        for (final entry in bandSummary.entries) entry.key: entry.value.toJson(),
+        for (final entry in bandSummary.entries)
+          entry.key: entry.value.toJson(),
       },
       if (includeTransfer)
         'bandTransferSummary': {
@@ -621,11 +623,11 @@ class _PredictedBucket {
       predictedPositive == 0 ? 0.0 : truePositive / predictedPositive;
 
   Map<String, Object?> toJson() => {
-        'predictedPositive': predictedPositive,
-        'truePositive': truePositive,
-        'falsePositive': falsePositive,
-        'precision': precision,
-      };
+    'predictedPositive': predictedPositive,
+    'truePositive': truePositive,
+    'falsePositive': falsePositive,
+    'precision': precision,
+  };
 }
 
 class _BandAccumulator {
@@ -645,12 +647,12 @@ class _BandAccumulator {
       predictedPositive == 0 ? 0.0 : truePositive / predictedPositive;
 
   Map<String, Object?> toJson() => {
-        'bucketCount': bucketCount,
-        'predictedPositive': predictedPositive,
-        'truePositive': truePositive,
-        'falsePositive': falsePositive,
-        'precision': precision,
-      };
+    'bucketCount': bucketCount,
+    'predictedPositive': predictedPositive,
+    'truePositive': truePositive,
+    'falsePositive': falsePositive,
+    'precision': precision,
+  };
 }
 
 class _Threshold {
@@ -665,64 +667,63 @@ Map<String, Object?> _emptyReport({
   required String dataDirectory,
   required String modelPath,
 }) => {
-      'schemaVersion':
-          'plum_tohoku_focus_source_band_distance_site_frozen_diagnostic_v1',
-      'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
-      'status': 'fail',
-      'policy': {
-        'method': 'PLUM Tohoku focus source-band distance/site frozen diagnostic',
-        'rawPredictedIntensityMutated': false,
-        'frozenTestEvaluated': true,
-        'productionReady': false,
-        'productionUiConnected': false,
-        'diagnosticOnly': true,
-        'parametersTuned': false,
-        'suppressionApplied': false,
-        'plumRadiusKm': _plumRadiusKm,
-        'plumDampingPer10Km': _plumDampingPer10Km,
-        'validationBandThresholds': {
-          'high': _highBandMinPrecision,
-          'medium': _mediumBandMinPrecision,
-          'minSampleForBandAssignment': _minSampleForBandAssignment,
-        },
-      },
-      'inputs': {
-        'dataDirectory': dataDirectory,
-        'modelPath': modelPath,
-        'splits': ['validation', 'test'],
-      },
-      'focusFilter': {
-        'estimatedSourceRegion': _focusRegion,
-        'minimumEvidenceCount': _focusMinimumEvidenceCount,
-        'maximumNearestEvidenceDistanceKm':
-            _focusMaximumNearestEvidenceDistanceKm,
-        'minimumPredictionMarginShindo': _focusMinimumMargin,
-        'baselineThresholdCrossingRequired': true,
-      },
-      'bucketDefinitions': const {
-        'sourceBands': _sourceBands,
-        'distanceBands': _distanceBands,
-        'siteBands': _siteBands,
-        'sourceBandSource': 'estimated_source_latitude_sub_band',
-        'distanceSource': 'estimated_source_to_station_distance',
-        'siteSource': 'station_latitude',
-        'sourceBandDefinitions': {
-          'south_tohoku': '37.5 <= lat < 38.5',
-          'mid_tohoku': '38.5 <= lat < 39.5',
-          'north_tohoku': '39.5 <= lat < 41.0',
-        },
-      },
-      'coverage': {
-        'validationVariants': 0,
-        'testVariants': 0,
-        'validationStationForecasts': 0,
-        'testStationForecasts': 0,
-        'skippedMissingMagnitudeEvents': 0,
-        'skippedNoSourceEstimateVariants': 0,
-      },
-      'thresholds': const {},
-      'errors': errors,
-    };
+  'schemaVersion':
+      'plum_tohoku_focus_source_band_distance_site_frozen_diagnostic_v1',
+  'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
+  'status': 'fail',
+  'policy': {
+    'method': 'PLUM Tohoku focus source-band distance/site frozen diagnostic',
+    'rawPredictedIntensityMutated': false,
+    'frozenTestEvaluated': true,
+    'productionReady': false,
+    'productionUiConnected': false,
+    'diagnosticOnly': true,
+    'parametersTuned': false,
+    'suppressionApplied': false,
+    'plumRadiusKm': _plumRadiusKm,
+    'plumDampingPer10Km': _plumDampingPer10Km,
+    'validationBandThresholds': {
+      'high': _highBandMinPrecision,
+      'medium': _mediumBandMinPrecision,
+      'minSampleForBandAssignment': _minSampleForBandAssignment,
+    },
+  },
+  'inputs': {
+    'dataDirectory': dataDirectory,
+    'modelPath': modelPath,
+    'splits': ['validation', 'test'],
+  },
+  'focusFilter': {
+    'estimatedSourceRegion': _focusRegion,
+    'minimumEvidenceCount': _focusMinimumEvidenceCount,
+    'maximumNearestEvidenceDistanceKm': _focusMaximumNearestEvidenceDistanceKm,
+    'minimumPredictionMarginShindo': _focusMinimumMargin,
+    'baselineThresholdCrossingRequired': true,
+  },
+  'bucketDefinitions': const {
+    'sourceBands': _sourceBands,
+    'distanceBands': _distanceBands,
+    'siteBands': _siteBands,
+    'sourceBandSource': 'estimated_source_latitude_sub_band',
+    'distanceSource': 'estimated_source_to_station_distance',
+    'siteSource': 'station_latitude',
+    'sourceBandDefinitions': {
+      'south_tohoku': '37.5 <= lat < 38.5',
+      'mid_tohoku': '38.5 <= lat < 39.5',
+      'north_tohoku': '39.5 <= lat < 41.0',
+    },
+  },
+  'coverage': {
+    'validationVariants': 0,
+    'testVariants': 0,
+    'validationStationForecasts': 0,
+    'testStationForecasts': 0,
+    'skippedMissingMagnitudeEvents': 0,
+    'skippedNoSourceEstimateVariants': 0,
+  },
+  'thresholds': const {},
+  'errors': errors,
+};
 
 StaticAttenuationModel _modelFromJson(Map<String, Object?> json) {
   return StaticAttenuationModel(

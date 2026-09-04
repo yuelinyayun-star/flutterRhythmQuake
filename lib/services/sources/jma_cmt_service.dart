@@ -30,6 +30,7 @@ class JmaCmtService {
 
   /// 列表数据回调（全量字段 map 列表）
   void Function(List<Map<String, dynamic>>)? onListUpdated;
+  void Function(bool connected)? onStatusChanged;
 
   Timer? _timer;
   bool _initialized = false;
@@ -56,6 +57,7 @@ class JmaCmtService {
           .get(Uri.parse(_url))
           .timeout(const Duration(seconds: 15));
       if (resp.statusCode != 200) {
+        onStatusChanged?.call(false);
         print('JMA CMT HTTP ${resp.statusCode}');
         return;
       }
@@ -81,8 +83,10 @@ class JmaCmtService {
         onListUpdated?.call(list);
         _initialized = true;
       }
+      onStatusChanged?.call(true);
     } catch (e) {
       print('JMA CMT fetch error: $e');
+      onStatusChanged?.call(false);
     }
   }
 

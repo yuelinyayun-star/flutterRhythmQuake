@@ -57,6 +57,9 @@ class CwaEqlistService {
   /// 最新官方事件更新回调，字段格式与统一事件适配器的 CWA 输入一致。
   void Function(Map<String, dynamic>)? onCurrentUpdated;
 
+  /// HTTP 轮询状态回调
+  void Function(bool connected)? onStatusChanged;
+
   final EqlistHttpPollGate _pushGate = EqlistHttpPollGate();
 
   /// FAN already refreshed the CWA list — skip HTTP briefly.
@@ -84,7 +87,10 @@ class CwaEqlistService {
       final resp = await http
           .get(Uri.parse(_url))
           .timeout(const Duration(seconds: 15));
-      if (resp.statusCode != 200) return;
+      if (resp.statusCode != 200) {
+        onStatusChanged?.call(false);
+        return;
+      }
 
       final raw = resp.body;
       final data = json.decode(raw);
@@ -92,6 +98,7 @@ class CwaEqlistService {
         debugPrint(
           'CWA Eqlist unexpected format: ${raw.substring(0, min(200, raw.length))}',
         );
+        onStatusChanged?.call(false);
         return;
       }
 
@@ -108,8 +115,10 @@ class CwaEqlistService {
 
       if (currentPayload != null) onCurrentUpdated?.call(currentPayload);
       onListUpdated?.call(_latestList);
+      onStatusChanged?.call(true);
     } catch (e) {
       debugPrint('CWA Eqlist fetch error: $e');
+      onStatusChanged?.call(false);
     }
   }
 

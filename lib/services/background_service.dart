@@ -8,6 +8,7 @@
 /// - 在 Android 上启动前台服务，保证切后台后 EEW / 信息源仍能连接
 import 'dart:async';
 import 'dart:io' show Platform;
+import 'dart:ui' show DartPluginRegistrant;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -31,7 +32,13 @@ import 'package:local_notifier/local_notifier.dart' as local;
 
 import '../models/unified_quake_data.dart';
 import '../models/unified_event_presentation.dart';
+import '../models/quake_message.dart';
+import '../models/cenc_ir_data.dart';
+import '../models/weather_alarm.dart';
+import '../models/tsunami_message.dart';
+import '../models/source_status.dart';
 import '../providers/background_settings_provider.dart';
+import 'sources/source_manager.dart';
 import 'background_source_manager.dart';
 
 /// 应用前后台状态
@@ -63,6 +70,7 @@ class BackgroundService {
   bool get isInBackground => _state == AppLifecycleStateExt.background;
 
   BackgroundSettingsProvider? _settings;
+  final ValueNotifier<bool> connectionHostingNotifier = ValueNotifier(false);
 
   /// 状态变化回调集合
   final Set<void Function(AppLifecycleStateExt)> _stateListeners = {};
@@ -74,12 +82,86 @@ class BackgroundService {
   bool _foregroundServiceConfigured = false;
   bool _isForegroundServiceRunning = false;
 
+  StreamSubscription<Map<String, dynamic>?>? _foregroundEventSubscription;
+  StreamSubscription<Map<String, dynamic>?>? _foregroundQuakeSubscription;
+  StreamSubscription<Map<String, dynamic>?>? _foregroundListSubscription;
+  StreamSubscription<Map<String, dynamic>?>? _foregroundCencIrSubscription;
+  StreamSubscription<Map<String, dynamic>?>? _foregroundWeatherSubscription;
+  StreamSubscription<Map<String, dynamic>?>? _foregroundTsunamiSubscription;
+  StreamSubscription<Map<String, dynamic>?>? _foregroundStatusSubscription;
+  StreamSubscription<Map<String, dynamic>?>? _foregroundStationSubscription;
+  StreamSubscription<Map<String, dynamic>?>? _foregroundCmtSubscription;
+  StreamSubscription<Map<String, dynamic>?>? _foregroundAuxSubscription;
+  final _foregroundUnifiedController =
+      StreamController<UnifiedQuakeData>.broadcast();
+  final _foregroundQuakeController = StreamController<QuakeMessage>.broadcast();
+  final _foregroundListController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  final _foregroundCencIrController = StreamController<CencIrData>.broadcast();
+  final _foregroundWeatherController =
+      StreamController<WeatherAlarm>.broadcast();
+  final _foregroundTsunamiController =
+      StreamController<TsunamiMessage>.broadcast();
+  final _foregroundStatusController =
+      StreamController<SourceStatusUpdate>.broadcast();
+  final _foregroundStationController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  final _foregroundCmtController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  final _foregroundAuxController =
+      StreamController<Map<String, dynamic>>.broadcast();
+
   static const String _foregroundChannelId = 'rhythmquake_foreground_service';
   static const String _foregroundNotificationTitle = 'RhythmQuake 后台运行中';
   static const String _foregroundNotificationContent = '正在连接地震预警与信息源';
 
   /// Android 前台服务是否正在运行（由主 isolate 维护）。
   bool get isAndroidForegroundServiceActive => _isForegroundServiceRunning;
+
+  /// Android 前台服务已实际运行并接管连接时，主 isolate 不应再启动相同数据源。
+  bool get isAndroidConnectionHostedByForegroundService =>
+      !kIsWeb &&
+      Platform.isAndroid &&
+      (_settings?.enabled ?? false) &&
+      _isForegroundServiceRunning;
+
+  void _onSettingsChanged() {
+    _syncConnectionHostingState();
+    if (!_initialized || !Platform.isAndroid) return;
+    if (_settings?.enabled ?? false) {
+      unawaited(_startForegroundServiceIfNeededSafely());
+    } else {
+      unawaited(stopForegroundService(force: true));
+    }
+  }
+
+  void _syncConnectionHostingState() {
+    final next = isAndroidConnectionHostedByForegroundService;
+    if (connectionHostingNotifier.value != next) {
+      connectionHostingNotifier.value = next;
+    }
+  }
+
+  Stream<UnifiedQuakeData> get onForegroundUnifiedEvent =>
+      _foregroundUnifiedController.stream;
+  Stream<QuakeMessage> get onForegroundQuakeEvent =>
+      _foregroundQuakeController.stream;
+  Stream<Map<String, dynamic>> get onForegroundSourceList =>
+      _foregroundListController.stream;
+  Stream<CencIrData> get onForegroundCencIrData =>
+      _foregroundCencIrController.stream;
+  Stream<WeatherAlarm> get onForegroundWeatherAlarm =>
+      _foregroundWeatherController.stream;
+  Stream<TsunamiMessage> get onForegroundTsunamiEvent =>
+      _foregroundTsunamiController.stream;
+  Stream<SourceStatusUpdate> get onForegroundSourceStatus =>
+      _foregroundStatusController.stream;
+  Stream<Map<String, dynamic>> get onForegroundStationData =>
+      _foregroundStationController.stream;
+  Stream<Map<String, dynamic>> get onForegroundCmtList =>
+      _foregroundCmtController.stream;
+  Stream<Map<String, dynamic>> get onForegroundAuxData =>
+      _foregroundAuxController.stream;
 
   /// Android 系统是否允许本应用发送通知。
   ///
@@ -148,6 +230,8 @@ class BackgroundService {
   }) async {
     if (_initialized) return;
     _settings = settings;
+    _settings?.addListener(_onSettingsChanged);
+    _syncConnectionHostingState();
 
     if (!_supportsNotifications) {
       _initialized = true;
@@ -203,7 +287,7 @@ class BackgroundService {
   /// 监听生命周期变化
   ///
   /// 通常在 MyApp 的 State 中通过 [AppLifecycleListener] 调用。
-  /// Android 平台在切后台且开启后台通知时启动前台服务，切回前台时停止。
+  /// Android 平台在后台功能开启后保持前台服务运行。
   void onLifecycleStateChanged(AppLifecycleState state) {
     if (!isBackgroundHandlingEnabled) return;
     final ext = switch (state) {
@@ -216,11 +300,10 @@ class BackgroundService {
     if (_state == ext) return;
     _state = ext;
 
-    // Android：后台启动前台服务，前台停止；iOS 仍走现有 AppLifecycle 逻辑。
-    if (Platform.isAndroid && ext == AppLifecycleStateExt.background) {
+    // Android：后台功能开启时，数据连接由独立前台服务 isolate 维护。
+    // 生命周期变化只负责确保服务继续运行；主 isolate 不再建立第二套连接。
+    if (Platform.isAndroid && (_settings?.enabled ?? false)) {
       unawaited(_startForegroundServiceIfNeededSafely());
-    } else if (Platform.isAndroid && ext == AppLifecycleStateExt.foreground) {
-      unawaited(stopForegroundService());
     }
 
     for (final listener in _stateListeners.toList()) {
@@ -331,11 +414,26 @@ class BackgroundService {
     if (!Platform.isAndroid) return;
     if (_foregroundServiceConfigured) return;
 
+    await _configureForegroundService(
+      autoStartOnBoot: _settings?.autoStartOnBoot ?? false,
+    );
+  }
+
+  /// 更新插件 BootReceiver 使用的开机启动配置，不重启当前服务。
+  Future<void> setAutoStartOnBoot(bool enabled) async {
+    if (!Platform.isAndroid) return;
+    await _configureForegroundService(autoStartOnBoot: enabled);
+  }
+
+  Future<void> _configureForegroundService({
+    required bool autoStartOnBoot,
+  }) async {
     final service = FlutterBackgroundService();
     await service.configure(
       androidConfiguration: AndroidConfiguration(
         onStart: backgroundEntryPoint,
         autoStart: false,
+        autoStartOnBoot: autoStartOnBoot,
         isForegroundMode: true,
         notificationChannelId: _foregroundChannelId,
         initialNotificationTitle: _foregroundNotificationTitle,
@@ -348,7 +446,113 @@ class BackgroundService {
         onBackground: onIosBackground,
       ),
     );
+    _bindForegroundServiceEvents(service);
     _foregroundServiceConfigured = true;
+    if (_settings?.enabled ?? false) {
+      await _startForegroundServiceIfNeededSafely();
+    }
+  }
+
+  void _bindForegroundServiceEvents(FlutterBackgroundService service) {
+    _foregroundEventSubscription ??= service
+        .on('foregroundUnifiedEvent')
+        .listen((payload) {
+          if (payload == null) return;
+          try {
+            _foregroundUnifiedController.add(UnifiedQuakeData.fromMap(payload));
+          } catch (error, stack) {
+            debugPrint('前台服务统一事件解码失败: $error\n$stack');
+          }
+        });
+    _foregroundQuakeSubscription ??= service.on('foregroundQuakeEvent').listen((
+      payload,
+    ) {
+      if (payload == null) return;
+      try {
+        _foregroundQuakeController.add(
+          QuakeMessage.fromMap(Map<String, dynamic>.from(payload)),
+        );
+      } catch (error, stack) {
+        debugPrint('前台服务原始事件解码失败: $error\n$stack');
+      }
+    });
+    _foregroundListSubscription ??= service.on('foregroundSourceList').listen((
+      payload,
+    ) {
+      if (payload != null) _foregroundListController.add(payload);
+    });
+    _foregroundCencIrSubscription ??= service.on('foregroundCencIrData').listen(
+      (payload) {
+        if (payload == null) return;
+        try {
+          _foregroundCencIrController.add(CencIrData.fromMap(payload));
+        } catch (error, stack) {
+          debugPrint('前台服务 CENC 烈度解码失败: $error\n$stack');
+        }
+      },
+    );
+    _foregroundWeatherSubscription ??= service
+        .on('foregroundWeatherAlarm')
+        .listen((payload) {
+          if (payload == null) return;
+          try {
+            _foregroundWeatherController.add(WeatherAlarm.fromMap(payload));
+          } catch (error, stack) {
+            debugPrint('前台服务天气预警解码失败: $error\n$stack');
+          }
+        });
+    _foregroundTsunamiSubscription ??= service
+        .on('foregroundTsunamiEvent')
+        .listen((payload) {
+          if (payload == null) return;
+          try {
+            _foregroundTsunamiController.add(TsunamiMessage.fromMap(payload));
+          } catch (error, stack) {
+            debugPrint('前台服务海啸事件解码失败: $error\n$stack');
+          }
+        });
+    _foregroundStatusSubscription ??= service
+        .on('foregroundSourceStatus')
+        .listen((payload) {
+          if (payload == null) return;
+          final name = payload['sourceName']?.toString();
+          final rawStatus = payload['status']?.toString();
+          if (name == null || rawStatus == null) return;
+          SourceStatus? status;
+          for (final candidate in SourceStatus.values) {
+            if (candidate.name == rawStatus) {
+              status = candidate;
+              break;
+            }
+          }
+          if (status != null) {
+            _foregroundStatusController.add(SourceStatusUpdate(name, status));
+          }
+        });
+    _foregroundStationSubscription ??= service
+        .on('foregroundStationData')
+        .listen((payload) {
+          if (payload != null) _foregroundStationController.add(payload);
+        });
+    _foregroundCmtSubscription ??= service.on('foregroundCmtList').listen((
+      payload,
+    ) {
+      if (payload != null) _foregroundCmtController.add(payload);
+    });
+    _foregroundAuxSubscription ??= service.on('foregroundAuxData').listen((
+      payload,
+    ) {
+      if (payload != null) _foregroundAuxController.add(payload);
+    });
+  }
+
+  /// 设置改变后要求前台服务重新读取 SharedPreferences 并重建连接。
+  Future<void> requestSourceReload() async {
+    if (!isAndroidConnectionHostedByForegroundService) return;
+    final service = FlutterBackgroundService();
+    if (await service.isRunning()) {
+      service.invoke('reloadSources');
+    }
   }
 
   /// 安全地尝试启动前台服务，避免 Android 12+ 限制导致未处理异常。
@@ -366,32 +570,42 @@ class BackgroundService {
   /// 启动 Android 前台服务（仅在 Android 平台生效）。
   Future<void> startForegroundService() async {
     if (!Platform.isAndroid) return;
-    if (_isForegroundServiceRunning) return;
 
     final service = FlutterBackgroundService();
     if (await service.isRunning()) {
       _isForegroundServiceRunning = true;
+      _syncConnectionHostingState();
       return;
     }
+    _isForegroundServiceRunning = false;
+    _syncConnectionHostingState();
     await service.startService();
     _isForegroundServiceRunning = await service.isRunning();
+    _syncConnectionHostingState();
   }
 
   /// 停止 Android 前台服务（仅在 Android 平台生效）。
-  Future<void> stopForegroundService() async {
+  Future<void> stopForegroundService({bool force = false}) async {
     if (!Platform.isAndroid) return;
+    if (!force && (_settings?.enabled ?? false)) {
+      debugPrint('保持 Android 前台服务运行：后台功能仍开启，忽略非强制停止请求');
+      return;
+    }
     if (!_isForegroundServiceRunning) {
       // 即使本地标记未运行，也尝试停止，避免进程重启后状态不一致。
       final service = FlutterBackgroundService();
       if (await service.isRunning()) {
         service.invoke('stopService');
       }
+      _isForegroundServiceRunning = false;
+      _syncConnectionHostingState();
       return;
     }
 
     final service = FlutterBackgroundService();
     service.invoke('stopService');
     _isForegroundServiceRunning = false;
+    _syncConnectionHostingState();
   }
 
   /// 当前平台是否支持后台生命周期处理与 Android 前台服务（仅 Android / iOS）。
@@ -414,40 +628,93 @@ class BackgroundService {
 @pragma('vm:entry-point')
 Future<void> backgroundEntryPoint(ServiceInstance service) async {
   WidgetsFlutterBinding.ensureInitialized();
+  DartPluginRegistrant.ensureInitialized();
 
-  // 初始化本地通知渠道与插件（isolate 内独立实例）
-  final notifications = FlutterLocalNotificationsPlugin();
-  const androidChannel = AndroidNotificationChannel(
-    'rhythmquake_background',
-    '后台地震通知',
-    description: '应用处于后台时接收地震预警与信息事件通知',
-    importance: Importance.high,
-  );
-  await notifications
-      .resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin
-      >()
-      ?.createNotificationChannel(androidChannel);
+  Future<void> sendUnifiedEvent(UnifiedQuakeData event) async {
+    service.invoke('foregroundUnifiedEvent', event.toMap());
+  }
 
-  const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
-  const darwinInit = DarwinInitializationSettings(
-    requestAlertPermission: true,
-    requestBadgePermission: true,
-    requestSoundPermission: true,
-  );
-  const initSettings = InitializationSettings(
-    android: androidInit,
-    iOS: darwinInit,
-    macOS: darwinInit,
-  );
-  await notifications.initialize(initSettings);
+  Future<void> sendQuakeEvent(QuakeMessage event) async {
+    service.invoke('foregroundQuakeEvent', event.toMap());
+  }
 
-  // 启动 EEW/信息数据源并直接通过本地通知弹出事件
-  await startBackgroundSources(notifications);
+  Future<void> sendSourceList(String source, List<QuakeMessage> events) async {
+    service.invoke('foregroundSourceList', {
+      'source': source,
+      'items': events.map((event) => event.toMap()).toList(),
+    });
+  }
+
+  Future<void> sendCencIrData(CencIrData data) async {
+    service.invoke('foregroundCencIrData', data.toMap());
+  }
+
+  Future<void> sendWeatherAlarm(WeatherAlarm alarm) async {
+    service.invoke('foregroundWeatherAlarm', alarm.toMap());
+  }
+
+  Future<void> sendTsunamiEvent(TsunamiMessage event) async {
+    service.invoke('foregroundTsunamiEvent', event.toMap());
+  }
+
+  Future<void> sendSourceStatus(SourceStatusUpdate update) async {
+    service.invoke('foregroundSourceStatus', {
+      'sourceName': update.sourceName,
+      'status': update.status.name,
+    });
+  }
+
+  Future<void> sendStationData(Map<String, dynamic> payload) async {
+    service.invoke('foregroundStationData', payload);
+  }
+
+  Future<void> sendCmtList(
+    String source,
+    List<Map<String, dynamic>> items,
+  ) async {
+    service.invoke('foregroundCmtList', {'source': source, 'items': items});
+  }
+
+  Future<void> sendAuxData(Map<String, dynamic> payload) async {
+    service.invoke('foregroundAuxData', payload);
+  }
+
+  Future<void> startSources() async {
+    await startBackgroundSources(
+      onUnifiedEvent: sendUnifiedEvent,
+      onQuakeEvent: sendQuakeEvent,
+      onSourceList: sendSourceList,
+      onCencIrData: sendCencIrData,
+      onWeatherAlarm: sendWeatherAlarm,
+      onTsunamiEvent: sendTsunamiEvent,
+      onSourceStatus: sendSourceStatus,
+      onStationData: sendStationData,
+      onCmtList: sendCmtList,
+      onAuxData: sendAuxData,
+    );
+  }
+
+  Future<void>? reloadFuture;
+  Future<void> reloadSources() {
+    return reloadFuture ??= () async {
+      await stopBackgroundSources();
+      await startSources();
+      reloadFuture = null;
+    }();
+  }
+
+  await startSources();
+
+  service.on('reloadSources').listen((_) {
+    unawaited(reloadSources());
+  });
 
   // 接收主 isolate 的停止指令
   service.on('stopService').listen((event) {
-    service.stopSelf();
+    unawaited(() async {
+      await stopBackgroundSources();
+      service.stopSelf();
+    }());
   });
 }
 

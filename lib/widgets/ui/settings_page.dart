@@ -1,4 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -8,6 +11,7 @@ import '../../providers/quake_provider.dart';
 import '../../providers/map_state_provider.dart';
 import '../../providers/notification_settings_provider.dart';
 import '../../providers/background_settings_provider.dart';
+import '../../providers/page_background_provider.dart';
 import '../../models/notification_event_settings.dart';
 import '../../services/location_service.dart';
 import '../../services/background_service.dart';
@@ -20,13 +24,16 @@ import '../../services/sources/nied_monitor.dart';
 import '../../services/sources/source_manager.dart';
 import '../../services/sources/eqlist/eqlist_manager.dart';
 import '../../services/wauth_service.dart';
+import '../../services/wauth_credential_store.dart';
 import '../map/map_config.dart';
 import '../map/quake_map_view.dart';
 import '../../models/quake_message.dart';
 import 'app_page_background.dart';
 import 'debug_page.dart';
+import 'obs_automation_presets_page.dart';
 import 'ui_runtime_flags.dart';
 import 'package:flutter/foundation.dart';
+import 'package:file_picker/file_picker.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -37,6 +44,10 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage>
     with WidgetsBindingObserver {
+  void _requestForegroundConnectionReload() {
+    unawaited(BackgroundService().requestSourceReload());
+  }
+
   _SettingsCategory _selectedCategory = _SettingsCategory.data;
   String _settingsQuery = '';
   bool _fanEnabled = true;
@@ -50,6 +61,7 @@ class _SettingsPageState extends State<SettingsPage>
   bool _wauthBusy = false;
   bool _wauthBrowserOpened = false;
   bool _wauthVerifying = false;
+  bool _wauthRestoredFromStorage = false;
   bool _whewsApiAuthorized = false;
   String? _wauthError;
   bool _nowQuakeCencIrEnabled = true;
@@ -73,15 +85,20 @@ class _SettingsPageState extends State<SettingsPage>
   bool _overlayWind = false;
   bool _overlayRain = false;
   bool _overlayRadarChina = false;
+  bool _overlayJmaRadar = false;
   bool _overlaySatelliteCloud = false;
   bool _overlayCnContour = false;
   bool _overlayJmaVolcano = false;
   bool _overlayTyphoon = false;
+  bool _overlayWeatherStation = false;
+  String _weatherStationMode = 'auto';
   bool _overlayFdsnEarthScope = false;
   bool _overlayFdsnGeofon = false;
   int _fdsnStationLimit = FdsnMotionService.defaultStationLimit;
   final Map<String, double> _sourceMagFilters = {};
   String _niedDataSource = 'lmoni';
+  String _kmaDataSource = 'pews';
+  String _snetDataSource = 'msil';
   bool _niedReplayEnabled = false;
   String _niedReplayStart = '2026-05-30 23:34:00';
   int _niedReplayStepSeconds = 1;
@@ -128,17 +145,25 @@ class _SettingsPageState extends State<SettingsPage>
   static const String _overlayWindKey = 'map_overlay_windLayer';
   static const String _overlayRainKey = 'map_overlay_rainLayer';
   static const String _overlayRadarChinaKey = 'map_overlay_radarChinaLayer';
+  static const String _overlayJmaRadarKey = 'map_overlay_jmaRadarLayer';
   static const String _overlaySatelliteCloudKey =
       'map_overlay_satelliteCloudLayer';
   static const String _overlayCnContourKey = 'map_overlay_cnContour';
   static const String _overlayJmaVolcanoKey = 'map_overlay_volcanoLayer';
   static const String _overlayTyphoonKey = 'map_overlay_typhoonLayer';
+  static const String _overlayWeatherStationKey =
+      'map_overlay_weatherStationLayer';
+  static const String _weatherStationModeKey = 'map_overlay_weatherStationMode';
   static const String _overlayFdsnEarthScopeKey = 'map_overlay_fdsnEarthScope';
   static const String _overlayFdsnGeofonKey = 'map_overlay_fdsnGeofon';
   static const String _fdsnStationLimitKey =
       FdsnMotionService.stationLimitPreferenceKey;
   static const String _magFilterPrefix = 'source_mag_filter_';
   static const String _niedDataSourceKey = 'nied_data_source';
+  static const String _kmaDataSourceKey =
+      QuakeMapView.kmaDataSourcePreferenceKey;
+  static const String _snetDataSourceKey =
+      QuakeMapView.snetDataSourcePreferenceKey;
   static const String _niedReplayEnabledKey = 'nied_replay_enabled';
   static const String _niedReplayStartKey = 'nied_replay_start_jst';
   static const String _niedReplayStepKey = 'nied_replay_step_seconds';
@@ -201,12 +226,19 @@ class _SettingsPageState extends State<SettingsPage>
   ];
 
   static const Color _accentColor = Color(0xFF82B1FF);
-  static const Color _appBarColor = Color.fromRGBO(8, 8, 24, 0.8);
-  static const Color _panelColor = Color.fromRGBO(8, 10, 24, 0.66);
-  static const Color _fieldColor = Color.fromRGBO(255, 255, 255, 0.07);
-  static const Color _borderColor = Color.fromRGBO(130, 177, 255, 0.32);
-  static const Color _dividerColor = Color.fromRGBO(255, 255, 255, 0.08);
+
+  /// HTML uses rgba(36,36,38,0.40) + blur(22px). Flutter BackdropFilter
+  /// composites darker, so keep a lighter fill + milder sigma to match.
+  static const Color _panelColor = Color.fromRGBO(48, 48, 52, 0.28);
+  static const double _panelBlurSigma = 14;
+  static const Color _fieldColor = Color.fromRGBO(255, 255, 255, 0.09);
+  static const Color _borderColor = Color.fromRGBO(255, 255, 255, 0.16);
+  static const Color _dividerColor = Color.fromRGBO(255, 255, 255, 0.10);
   static const Color _mutedTextColor = Color.fromRGBO(255, 255, 255, 0.58);
+
+  /// Left “应用设置” header and right category title share this height
+  /// so their bottom dividers line up across the vertical split.
+  static const double _panelHeaderHeight = 78;
   static const List<_SettingsCategoryInfo> _categories = [
     _SettingsCategoryInfo(
       category: _SettingsCategory.data,
@@ -290,6 +322,8 @@ class _SettingsPageState extends State<SettingsPage>
         '云图',
         '风场',
         '降水',
+        '雷达',
+        'jma',
         '等高线',
         '台风',
         '当地',
@@ -324,7 +358,22 @@ class _SettingsPageState extends State<SettingsPage>
       subtitle: '界面行为与开发工具',
       icon: Icons.tune_outlined,
       accent: Color(0xFFAEB8CC),
-      keywords: ['高级', '网格', '侧边', '震中', '调试', '开发'],
+      keywords: [
+        '高级',
+        '网格',
+        '侧边',
+        '震中',
+        '调试',
+        '开发',
+        '背景',
+        '自定义背景',
+        'obs',
+        '自动化',
+        '自动录制',
+        '回放',
+        'replay buffer',
+        '预设',
+      ],
     ),
   ];
 
@@ -380,9 +429,19 @@ class _SettingsPageState extends State<SettingsPage>
     final tts = TtsService();
     await tts.init();
     final ttsVoices = await tts.loadVoices();
-    final savedWAuthAccessToken = prefs
-        .getString(WAuthService.accessTokenPreferenceKey)
-        ?.trim();
+    WAuthCredentials credentials;
+    try {
+      credentials = await _wauthService.credentialStore.readAndMigrate(
+        preferences: prefs,
+      );
+    } catch (_) {
+      credentials = const WAuthCredentials();
+    }
+    final savedWAuthAccessToken = credentials.accessToken.trim();
+    Map<String, dynamic>? cachedWAuthUserInfo;
+    if (savedWAuthAccessToken.isNotEmpty) {
+      cachedWAuthUserInfo = _readCachedWAuthUserInfo(prefs);
+    }
     if (!mounted) return;
     setState(() {
       _fanEnabled = prefs.getBool(_fanEnabledKey) ?? true;
@@ -407,11 +466,14 @@ class _SettingsPageState extends State<SettingsPage>
       _fdsnSeedLinkEnabled = prefs.getBool(_fdsnSeedLinkEnabledKey) ?? false;
       _fanApiKeyController.text =
           prefs.getString(FanService.apiKeyPreferenceKey) ?? '';
-      _wauthAccessToken = savedWAuthAccessToken?.isEmpty == false
+      _wauthAccessToken = savedWAuthAccessToken.isNotEmpty
           ? savedWAuthAccessToken
           : null;
-      _wauthUserInfo = null;
+      _wauthUserInfo = cachedWAuthUserInfo;
       _wauthVerifying = false;
+      _wauthRestoredFromStorage = savedWAuthAccessToken.isNotEmpty;
+      _whewsApiAuthorized =
+          prefs.getBool(WhewsService.apiAuthorizedPreferenceKey) ?? false;
       _tileKey = MapConfig.normalizeBaseTileKey(
         prefs.getString(_tileKeyKey) ?? 'petalLight',
       );
@@ -419,11 +481,16 @@ class _SettingsPageState extends State<SettingsPage>
       _overlayWind = prefs.getBool(_overlayWindKey) ?? false;
       _overlayRain = prefs.getBool(_overlayRainKey) ?? false;
       _overlayRadarChina = prefs.getBool(_overlayRadarChinaKey) ?? false;
+      _overlayJmaRadar = prefs.getBool(_overlayJmaRadarKey) ?? false;
       _overlaySatelliteCloud =
           prefs.getBool(_overlaySatelliteCloudKey) ?? false;
       _overlayCnContour = prefs.getBool(_overlayCnContourKey) ?? false;
       _overlayJmaVolcano = prefs.getBool(_overlayJmaVolcanoKey) ?? false;
       _overlayTyphoon = prefs.getBool(_overlayTyphoonKey) ?? false;
+      _overlayWeatherStation =
+          prefs.getBool(_overlayWeatherStationKey) ?? false;
+      _weatherStationMode =
+          prefs.getString(_weatherStationModeKey) ?? 'auto';
       _overlayFdsnEarthScope =
           prefs.getBool(_overlayFdsnEarthScopeKey) ?? false;
       _overlayFdsnGeofon = prefs.getBool(_overlayFdsnGeofonKey) ?? false;
@@ -432,6 +499,15 @@ class _SettingsPageState extends State<SettingsPage>
             FdsnMotionService.defaultStationLimit,
       );
       _niedDataSource = prefs.getString(_niedDataSourceKey) ?? 'lmoni';
+      final savedKmaDataSource = prefs.getString(_kmaDataSourceKey);
+      _kmaDataSource = switch (savedKmaDataSource) {
+        'fan' => 'fan',
+        'whews' => 'whews',
+        _ => 'pews',
+      };
+      _snetDataSource = prefs.getString(_snetDataSourceKey) == 'whews'
+          ? 'whews'
+          : 'msil';
       _niedReplayEnabled = prefs.getBool(_niedReplayEnabledKey) ?? false;
       _niedReplayStart =
           prefs.getString(_niedReplayStartKey) ?? '2026-05-30 23:34:00';
@@ -468,14 +544,24 @@ class _SettingsPageState extends State<SettingsPage>
       _mapViewLng = prefs.getDouble(_mapViewLngKey);
       for (final source in QuakeProvider.infoMagFilterSources) {
         final key = '$_magFilterPrefix${source.name}';
-        final val = prefs.getDouble(key) ?? 0;
-        if (val != 0) _sourceMagFilters[source.name] = val;
+        final hasSavedValue = prefs.containsKey(key);
+        final val = hasSavedValue
+            ? (prefs.getDouble(key) ?? 0.0)
+            : source == QuakeSourceType.unadapted
+            ? -1.0
+            : 0.0;
+        if (val != 0 ||
+            (source == QuakeSourceType.unadapted && hasSavedValue)) {
+          _sourceMagFilters[source.name] = val;
+        }
       }
       _infoActionWhitelistController.text =
           prefs.getString(QuakeProvider.infoActionWhitelistPreferenceKey) ?? '';
       _initialized = true;
     });
     QuakeMapView.niedSourceNotifier.value = _niedDataSource;
+    QuakeMapView.kmaSourceNotifier.value = _kmaDataSource;
+    QuakeMapView.snetSourceNotifier.value = _snetDataSource;
     QuakeMapView.shakeSensitivityNotifier.value = _shakeSensitivity;
     QuakeMapView.wolfxSeisJsEnabledNotifier.value = _wolfxSeisJsEnabled;
     QuakeMapView.kmaPewsEnabledNotifier.value = _kmaPewsEnabled;
@@ -487,8 +573,7 @@ class _SettingsPageState extends State<SettingsPage>
     QuakeMapView.kmaIntensityHoldNotifier.value = _kmaIntensityHoldFrames;
     QuakeMapView.snetEnabledNotifier.value = _snetEnabled;
     QuakeMapView.fdsnSeedLinkEnabledNotifier.value = _fdsnSeedLinkEnabled;
-    QuakeMapView.whewsApiTokenNotifier.value =
-        prefs.getString(WAuthService.apiTokenPreferenceKey) ?? '';
+    QuakeMapView.whewsApiTokenNotifier.value = credentials.apiToken;
     QuakeMapView.whewsNiedEnabledNotifier.value = false;
     QuakeMapView.whewsSnetEnabledNotifier.value = false;
     QuakeMapView.whewsKmaEnabledNotifier.value = false;
@@ -513,10 +598,13 @@ class _SettingsPageState extends State<SettingsPage>
     mapState.setOverlayEnabled('windLayer', _overlayWind);
     mapState.setOverlayEnabled('rainLayer', _overlayRain);
     mapState.setOverlayEnabled('radarChinaLayer', _overlayRadarChina);
+    mapState.setOverlayEnabled('jmaRadarLayer', _overlayJmaRadar);
     mapState.setOverlayEnabled('satelliteCloudLayer', _overlaySatelliteCloud);
     mapState.setOverlayEnabled('cnContour', _overlayCnContour);
     mapState.setOverlayEnabled('volcanoLayer', _overlayJmaVolcano);
     mapState.setOverlayEnabled('typhoonLayer', _overlayTyphoon);
+    mapState.setOverlayEnabled('weatherStationLayer', _overlayWeatherStation);
+    mapState.setWeatherStationMode(_weatherStationMode);
     mapState.setOverlayEnabled('fdsnEarthScope', _overlayFdsnEarthScope);
     mapState.setOverlayEnabled('fdsnGeofon', _overlayFdsnGeofon);
     mapState.setShowEstimatedEpicenter(_showEpicenter);
@@ -532,6 +620,7 @@ class _SettingsPageState extends State<SettingsPage>
       await _confirmSavedWAuthLogin();
     } else {
       await prefs.remove(WAuthService.userInfoPreferenceKey);
+      _wauthRestoredFromStorage = false;
       await _disableWhewsSources();
     }
   }
@@ -623,7 +712,26 @@ class _SettingsPageState extends State<SettingsPage>
     bool enabled,
   ) async {
     if (enabled && !await _ensureNotificationPermission()) return;
-    await settings.setEnabled(enabled);
+    if (enabled) {
+      // 先让 Android 前台服务实际启动；启动失败时保留主 isolate 连接，避免出现数据空档。
+      await settings.setEnabled(true);
+      await BackgroundService().startForegroundService();
+      if (BackgroundService().isAndroidConnectionHostedByForegroundService) {
+        SourceManager().stopAll();
+        EqlistManager().stopOfficialHttpServices();
+      }
+    } else {
+      // 先停止 Android 前台服务，再恢复主 isolate，避免两套连接同时运行。
+      await BackgroundService().stopForegroundService(force: true);
+      await settings.setEnabled(false);
+      if (settings.autoStartOnBoot) {
+        await settings.setAutoStartOnBoot(false);
+        await BackgroundService().setAutoStartOnBoot(false);
+      }
+      // 关闭前台连接后恢复桌面/前台的主 isolate 连接路径。
+      SourceManager().startAll();
+      EqlistManager().startOfficialHttpServices();
+    }
   }
 
   Future<void> _saveFanServer(int index) async {
@@ -665,6 +773,17 @@ class _SettingsPageState extends State<SettingsPage>
     return '已授权用户';
   }
 
+  Map<String, dynamic>? _readCachedWAuthUserInfo(SharedPreferences prefs) {
+    final raw = prefs.getString(WAuthService.userInfoPreferenceKey);
+    if (raw == null || raw.trim().isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) return decoded;
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    } catch (_) {}
+    return null;
+  }
+
   String _wauthErrorText(Object error) {
     if (error is WAuthApiException) {
       if (error.statusCode == 408) return '连接 WAuth 服务超时，请检查网络后重试。';
@@ -684,94 +803,176 @@ class _SettingsPageState extends State<SettingsPage>
 
   Future<void> _removeSavedWAuthLogin() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(WAuthService.accessTokenPreferenceKey);
-    await prefs.remove(WAuthService.apiTokenPreferenceKey);
+    await _wauthService.credentialStore.clear(preferences: prefs);
     await prefs.remove(WAuthService.legacySessionTokenPreferenceKey);
     await prefs.remove(WAuthService.userInfoPreferenceKey);
   }
 
   Future<void> _confirmSavedWAuthLogin() async {
-    final accessToken = _wauthAccessToken;
-    if (accessToken == null || accessToken.isEmpty || _wauthVerifying) return;
+    if (_wauthVerifying) return;
+    final prefs = await SharedPreferences.getInstance();
+    final cachedUserInfo = _wauthUserInfo ?? _readCachedWAuthUserInfo(prefs);
+    final previousApiAuthorized =
+        _whewsApiAuthorized ||
+        (prefs.getBool(WhewsService.apiAuthorizedPreferenceKey) ?? false);
     if (mounted) {
       setState(() {
         _wauthVerifying = true;
-        _wauthUserInfo = null;
-        _wauthError = null;
+        if (cachedUserInfo != null) {
+          _wauthUserInfo = cachedUserInfo;
+        }
+        if (_wauthAccessToken != null) {
+          _wauthRestoredFromStorage = true;
+        }
       });
     }
+
+    WAuthStoredAuthorization status;
     try {
-      final authorized = await _wauthService.requireAuthorizedAccessToken(
-        accessToken,
+      status = await _wauthService.inspectStoredAuthorization(
+        preferences: prefs,
       );
-      final prefs = await SharedPreferences.getInstance();
-      final apiToken = prefs.getString(WAuthService.apiTokenPreferenceKey);
-      final apiAuthorized = await _wauthService
-          .requireAuthorizedApiToken(apiToken)
-          .then((_) => true)
-          .catchError((_) => false);
-      await prefs.setString(
-        WAuthService.userInfoPreferenceKey,
-        jsonEncode(authorized.userInfo),
-      );
-      await prefs.setBool(
-        WhewsService.apiAuthorizedPreferenceKey,
-        apiAuthorized,
-      );
-      if (!apiAuthorized) await _disableWhewsSources();
-      if (apiAuthorized) {
-        SourceManager().setSourceEnabled('WHEWS', _whewsEnabled);
-        QuakeMapView.whewsNiedEnabledNotifier.value = _whewsNiedEnabled;
-        QuakeMapView.whewsSnetEnabledNotifier.value = _whewsSnetEnabled;
-        QuakeMapView.whewsKmaEnabledNotifier.value = _whewsKmaEnabled;
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _wauthVerifying = false;
+          if (_wauthAccessToken != null) {
+            _wauthRestoredFromStorage = true;
+          }
+          _wauthError = 'WAuth 校验暂不可用，已保留本地登录状态。';
+        });
       }
-      if (!mounted) return;
-      setState(() {
-        _wauthUserInfo = authorized.userInfo;
-        _whewsApiAuthorized = apiAuthorized;
-        _wauthError = null;
-      });
-    } on WAuthApiException catch (error) {
-      if (error.statusCode == 401 || error.statusCode == 403) {
+      await _restoreCachedWhewsSources(
+        preferences: prefs,
+        keepEnabled: previousApiAuthorized,
+      );
+      return;
+    }
+
+    if (!status.hasCredentials) {
+      if (mounted) setState(() => _wauthVerifying = false);
+      return;
+    }
+
+    try {
+      if (status.shouldForgetLogin) {
         await _removeSavedWAuthLogin();
         await _disableWhewsSources();
         if (!mounted) return;
         setState(() {
           _wauthAccessToken = null;
           _wauthUserInfo = null;
+          _wauthRestoredFromStorage = false;
+          _whewsApiAuthorized = false;
           _wauthError = 'WAuth 登录已失效，请重新登录。';
         });
+        return;
+      }
+
+      final userInfo = status.userInfo ?? cachedUserInfo;
+      if (status.accessAuthorized && status.userInfo != null) {
+        await prefs.setString(
+          WAuthService.userInfoPreferenceKey,
+          jsonEncode(status.userInfo),
+        );
+      }
+
+      if (status.apiAuthorized) {
+        await prefs.setBool(WhewsService.apiAuthorizedPreferenceKey, true);
+        await _enableWhewsSources(
+          apiToken: status.credentials.apiToken,
+          preferences: prefs,
+        );
+      } else if (status.hasTransientVerificationFailure) {
+        await _restoreCachedWhewsSources(
+          preferences: prefs,
+          keepEnabled: previousApiAuthorized,
+        );
       } else {
-        _whewsApiAuthorized = false;
+        await prefs.setBool(WhewsService.apiAuthorizedPreferenceKey, false);
         await _disableWhewsSources();
-        if (!mounted) return;
-        setState(() {
-          _wauthUserInfo = null;
-          _wauthError = '无法确认 WAuth 授权状态，API 保持关闭。';
-        });
       }
-    } catch (_) {
-      _whewsApiAuthorized = false;
-      await _disableWhewsSources();
-      if (mounted) {
-        setState(() {
-          _wauthUserInfo = null;
-          _wauthError = '无法确认 WAuth 授权状态，API 保持关闭。';
-        });
-      }
+
+      if (!mounted) return;
+      setState(() {
+        _wauthAccessToken = status.credentials.accessToken;
+        _wauthUserInfo = userInfo;
+        _wauthRestoredFromStorage = true;
+        _whewsApiAuthorized = status.apiAuthorized
+            ? true
+            : (status.hasTransientVerificationFailure
+                  ? previousApiAuthorized
+                  : false);
+        _wauthError = status.apiAuthorized
+            ? null
+            : (status.hasTransientVerificationFailure
+                  ? 'WAuth API 暂不可用，已保留本地登录状态。'
+                  : '无法确认 WAuth API 授权状态。');
+      });
     } finally {
       if (mounted) setState(() => _wauthVerifying = false);
     }
   }
 
+  Future<void> _enableWhewsSources({
+    required String apiToken,
+    required SharedPreferences preferences,
+  }) async {
+    QuakeMapView.whewsApiTokenNotifier.value = apiToken;
+    SourceManager().getSource<WhewsService>()?.setApiToken(apiToken);
+    SourceManager().setSourceEnabled(
+      'WHEWS',
+      preferences.getBool(_whewsEnabledKey) ?? _whewsEnabled,
+    );
+    _requestForegroundConnectionReload();
+    QuakeMapView.whewsNiedEnabledNotifier.value =
+        preferences.getBool(_whewsNiedEnabledKey) ?? _whewsNiedEnabled;
+    QuakeMapView.whewsSnetEnabledNotifier.value =
+        preferences.getBool(_whewsSnetEnabledKey) ?? _whewsSnetEnabled;
+    QuakeMapView.whewsKmaEnabledNotifier.value =
+        preferences.getBool(_whewsKmaEnabledKey) ?? _whewsKmaEnabled;
+    await BackgroundService().stopForegroundService();
+  }
+
+  Future<void> _restoreCachedWhewsSources({
+    required SharedPreferences preferences,
+    required bool keepEnabled,
+  }) async {
+    if (!keepEnabled) return;
+    WAuthCredentials credentials;
+    try {
+      credentials = await _wauthService.credentialStore.readAndMigrate(
+        preferences: preferences,
+      );
+    } catch (_) {
+      return;
+    }
+    if (!credentials.isComplete) return;
+    await _enableWhewsSources(
+      apiToken: credentials.apiToken,
+      preferences: preferences,
+    );
+  }
+
   Future<void> _disableWhewsSources() async {
     final prefs = await SharedPreferences.getInstance();
+    final fallbackNied = _niedDataSource == 'whews';
+    final fallbackSnet = _snetDataSource == 'whews';
+    final fallbackKma = _kmaDataSource == 'whews';
+    if (fallbackNied) await prefs.setString(_niedDataSourceKey, 'lmoni');
+    if (fallbackSnet) await prefs.setString(_snetDataSourceKey, 'msil');
+    if (fallbackKma) await prefs.setString(_kmaDataSourceKey, 'pews');
     await prefs.setBool(_whewsEnabledKey, false);
     await prefs.setBool(WhewsService.apiAuthorizedPreferenceKey, false);
     await prefs.setBool(_whewsNiedEnabledKey, false);
     await prefs.setBool(_whewsSnetEnabledKey, false);
     await prefs.setBool(_whewsKmaEnabledKey, false);
     SourceManager().setSourceEnabled('WHEWS', false);
+    _requestForegroundConnectionReload();
+    await BackgroundService().stopForegroundService();
+    if (fallbackNied) QuakeMapView.niedSourceNotifier.value = 'lmoni';
+    if (fallbackSnet) QuakeMapView.snetSourceNotifier.value = 'msil';
+    if (fallbackKma) QuakeMapView.kmaSourceNotifier.value = 'pews';
     QuakeMapView.whewsNiedEnabledNotifier.value = false;
     QuakeMapView.whewsSnetEnabledNotifier.value = false;
     QuakeMapView.whewsKmaEnabledNotifier.value = false;
@@ -781,6 +982,9 @@ class _SettingsPageState extends State<SettingsPage>
       _whewsNiedEnabled = false;
       _whewsSnetEnabled = false;
       _whewsKmaEnabled = false;
+      if (fallbackNied) _niedDataSource = 'lmoni';
+      if (fallbackSnet) _snetDataSource = 'msil';
+      if (fallbackKma) _kmaDataSource = 'pews';
     });
   }
 
@@ -788,6 +992,24 @@ class _SettingsPageState extends State<SettingsPage>
     if (_whewsApiAuthorized) return true;
     _showWAuthMessage('WHEWS API 需要先完成 WAuth API 授权。');
     return false;
+  }
+
+  void _setNiedDataSource(String source) {
+    setState(() => _niedDataSource = source);
+    _saveNiedDataSource(source);
+    QuakeMapView.niedSourceNotifier.value = source;
+  }
+
+  void _setKmaDataSource(String source) {
+    setState(() => _kmaDataSource = source);
+    _saveKmaDataSource(source);
+    QuakeMapView.kmaSourceNotifier.value = source;
+  }
+
+  void _setSnetDataSource(String source) {
+    setState(() => _snetDataSource = source);
+    _saveSnetDataSource(source);
+    QuakeMapView.snetSourceNotifier.value = source;
   }
 
   Future<void> _startWAuthAuthorization() async {
@@ -815,24 +1037,27 @@ class _SettingsPageState extends State<SettingsPage>
         timeout: Duration(seconds: session.expiresIn ?? 600),
       );
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(
-        WAuthService.accessTokenPreferenceKey,
-        result.token.accessToken,
-      );
       final apiToken = result.token.apiToken;
       if (apiToken == null || apiToken.isEmpty) {
-        await prefs.remove(WAuthService.apiTokenPreferenceKey);
-      } else {
-        await prefs.setString(WAuthService.apiTokenPreferenceKey, apiToken);
+        throw const WAuthApiException(
+          statusCode: 401,
+          message: 'WAuth 登录未返回 API token，受保护数据源保持关闭。',
+        );
       }
+      await _wauthService.credentialStore.write(
+        accessToken: result.token.accessToken,
+        apiToken: apiToken,
+        preferences: prefs,
+      );
       await prefs.remove(WAuthService.legacySessionTokenPreferenceKey);
       await prefs.setString(
         WAuthService.userInfoPreferenceKey,
         jsonEncode(result.userInfo),
       );
       if (!mounted) return;
-      QuakeMapView.whewsApiTokenNotifier.value = apiToken ?? '';
-      SourceManager().getSource<WhewsService>()?.setApiToken(apiToken ?? '');
+      QuakeMapView.whewsApiTokenNotifier.value = apiToken;
+      SourceManager().getSource<WhewsService>()?.setApiToken(apiToken);
+      _requestForegroundConnectionReload();
       setState(() {
         _wauthAccessToken = result.token.accessToken;
         _wauthUserInfo = result.userInfo;
@@ -859,11 +1084,14 @@ class _SettingsPageState extends State<SettingsPage>
     await _removeSavedWAuthLogin();
     QuakeMapView.whewsApiTokenNotifier.value = '';
     SourceManager().getSource<WhewsService>()?.setApiToken('');
+    _requestForegroundConnectionReload();
     await _disableWhewsSources();
     if (!mounted) return;
     setState(() {
       _wauthAccessToken = null;
       _wauthUserInfo = null;
+      _wauthRestoredFromStorage = false;
+      _whewsApiAuthorized = false;
       _wauthError = null;
     });
   }
@@ -892,7 +1120,12 @@ class _SettingsPageState extends State<SettingsPage>
     final prefs = await SharedPreferences.getInstance();
     final key = '$_magFilterPrefix$sourceName';
     if (val == 0) {
-      await prefs.remove(key);
+      // 保留未适配机构的显式“不过滤”，否则下次启动会恢复默认不接收。
+      if (sourceName == QuakeSourceType.unadapted.name) {
+        await prefs.setDouble(key, 0);
+      } else {
+        await prefs.remove(key);
+      }
     } else {
       await prefs.setDouble(key, val);
     }
@@ -909,6 +1142,16 @@ class _SettingsPageState extends State<SettingsPage>
   Future<void> _saveNiedDataSource(String source) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_niedDataSourceKey, source);
+  }
+
+  Future<void> _saveKmaDataSource(String source) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kmaDataSourceKey, source);
+  }
+
+  Future<void> _saveSnetDataSource(String source) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_snetDataSourceKey, source);
   }
 
   Future<void> _saveNiedReplayEnabled(bool enabled) async {
@@ -1322,68 +1565,83 @@ class _SettingsPageState extends State<SettingsPage>
     lngCtl.dispose();
   }
 
+  /// Design canvas (logical px) — landscape panel ≈ 16:9.
+  /// Scales uniformly to fill the window (minus outer inset); aspect stays fixed.
+  static const double _designPanelWidth = 1180;
+  static const double _designPanelHeight = 660;
+  static const double _designNavWidth = 228; // ≈ 19.3% of panel width
+  static const double _desktopOuterInset = 14;
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF020208),
-      appBar: AppBar(
-        backgroundColor: _appBarColor,
-        elevation: 0,
-        titleSpacing: 4,
-        title: const Text(
-          '设置中心',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 17,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        iconTheme: const IconThemeData(color: _accentColor),
-      ),
       body: Stack(
         children: [
           const AppPageBackground(),
           if (_initialized)
-            Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1180),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final bool isMobile =
-                          defaultTargetPlatform == TargetPlatform.android ||
-                          defaultTargetPlatform == TargetPlatform.iOS;
-                      final wide = !isMobile && constraints.maxWidth >= 860;
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          _buildSettingsHeader(),
-                          const SizedBox(height: 14),
-                          if (!wide) ...[
-                            _buildCompactCategoryBar(),
-                            const SizedBox(height: 12),
-                          ],
-                          Expanded(
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                if (wide) ...[
-                                  SizedBox(
-                                    width: 228,
-                                    child: _buildCategoryNavigation(),
+            SafeArea(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final sideBySide = constraints.maxWidth >= 600;
+                  if (!sideBySide) {
+                    return Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: _buildUnifiedPanel(sideBySide: false),
+                    );
+                  }
+
+                  final maxW = (constraints.maxWidth - _desktopOuterInset * 2)
+                      .clamp(0.0, double.infinity);
+                  final maxH = (constraints.maxHeight - _desktopOuterInset * 2)
+                      .clamp(0.0, double.infinity);
+                  if (maxW <= 0 || maxH <= 0) {
+                    return const SizedBox.shrink();
+                  }
+                  // Keep the baseline scale while letting the wider axis expand.
+                  final scale = math.min(
+                    maxW / _designPanelWidth,
+                    maxH / _designPanelHeight,
+                  );
+                  final panelW = maxW;
+                  final panelH = maxH;
+                  final logicalPanelWidth = panelW / scale;
+                  final logicalPanelHeight = panelH / scale;
+
+                  return Center(
+                    child: SizedBox(
+                      width: panelW,
+                      height: panelH,
+                      child: ClipRect(
+                        child: OverflowBox(
+                          alignment: Alignment.center,
+                          minWidth: logicalPanelWidth,
+                          maxWidth: logicalPanelWidth,
+                          minHeight: logicalPanelHeight,
+                          maxHeight: logicalPanelHeight,
+                          child: Transform.scale(
+                            scale: scale,
+                            child: SizedBox(
+                              width: logicalPanelWidth,
+                              height: logicalPanelHeight,
+                              child: MediaQuery(
+                                data: MediaQuery.of(context).copyWith(
+                                  size: Size(
+                                    logicalPanelWidth,
+                                    logicalPanelHeight,
                                   ),
-                                  const SizedBox(width: 14),
-                                ],
-                                Expanded(child: _buildSettingsContent()),
-                              ],
+                                  padding: EdgeInsets.zero,
+                                  viewPadding: EdgeInsets.zero,
+                                ),
+                                child: _buildUnifiedPanel(sideBySide: true),
+                              ),
                             ),
                           ),
-                        ],
-                      );
-                    },
-                  ),
-                ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
               ),
             )
           else
@@ -1393,132 +1651,179 @@ class _SettingsPageState extends State<SettingsPage>
     );
   }
 
-  Widget _buildSettingsHeader() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 680;
-        final heading = Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              '应用设置',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 22,
-                fontWeight: FontWeight.w700,
+  Widget _buildUnifiedPanel({required bool sideBySide}) {
+    final body = sideBySide
+        ? Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(
+                width: _designNavWidth,
+                child: _buildCategoryNavigation(compactGrid: false),
               ),
-            ),
-            const SizedBox(height: 3),
-            Text(
-              '${_categories.length} 个分类',
-              style: const TextStyle(color: _mutedTextColor, fontSize: 12),
-            ),
-          ],
-        );
-        final search = SizedBox(
-          width: compact ? double.infinity : 340,
-          height: 42,
-          child: TextField(
-            controller: _settingsSearchController,
-            style: const TextStyle(color: Colors.white, fontSize: 13),
-            onChanged: (value) => setState(() => _settingsQuery = value.trim()),
-            decoration: InputDecoration(
-              hintText: '搜索设置',
-              hintStyle: const TextStyle(color: _mutedTextColor),
-              prefixIcon: const Icon(
-                Icons.search,
-                size: 19,
-                color: _mutedTextColor,
+              const VerticalDivider(
+                width: 1,
+                thickness: 1,
+                color: _dividerColor,
               ),
-              suffixIcon: _settingsQuery.isEmpty
-                  ? null
-                  : IconButton(
-                      tooltip: '清除搜索',
-                      onPressed: () {
-                        _settingsSearchController.clear();
-                        setState(() => _settingsQuery = '');
-                      },
-                      icon: const Icon(
-                        Icons.close,
-                        size: 18,
-                        color: Colors.white70,
-                      ),
+              Expanded(child: _buildSettingsContent()),
+            ],
+          )
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildCategoryNavigation(compactGrid: true),
+              const Divider(height: 1, thickness: 1, color: _dividerColor),
+              Expanded(child: _buildSettingsContent()),
+            ],
+          );
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(14),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(
+          sigmaX: _panelBlurSigma,
+          sigmaY: _panelBlurSigma,
+        ),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: _panelColor,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: _borderColor),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.28),
+                blurRadius: 32,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          // Match HTML inset top highlight without overriding panel fill.
+          child: Stack(
+            children: [
+              body,
+              const Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                height: 1,
+                child: IgnorePointer(
+                  child: ColoredBox(color: Color.fromRGBO(255, 255, 255, 0.08)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCategoryNavigation({required bool compactGrid}) {
+    final head = SizedBox(
+      height: _panelHeaderHeight,
+      child: Column(
+        children: [
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  IconButton(
+                    tooltip: '返回',
+                    onPressed: () => Navigator.of(context).maybePop(),
+                    icon: const Icon(Icons.arrow_back, size: 20),
+                    color: _accentColor,
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
                     ),
-              filled: true,
-              fillColor: _fieldColor,
-              contentPadding: EdgeInsets.zero,
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: const BorderSide(color: _dividerColor),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: const BorderSide(color: _accentColor),
+                  ),
+                  const SizedBox(width: 6),
+                  const Text(
+                    '应用设置',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      height: 1.2,
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
-        );
-
-        if (compact) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [heading, const SizedBox(height: 12), search],
-          );
-        }
-        return Row(
-          children: [
-            Expanded(child: heading),
-            search,
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _buildCategoryNavigation() {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: _panelColor,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: _dividerColor),
-      ),
-      child: ListView(
-        padding: const EdgeInsets.all(8),
-        children: [
-          for (final info in _categories)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: _buildCategoryButton(info, expanded: true),
-            ),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 12),
+            child: _HeaderFadeDivider(),
+          ),
         ],
       ),
     );
-  }
 
-  Widget _buildCompactCategoryBar() {
-    return SizedBox(
-      height: 42,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: _categories.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 7),
-        itemBuilder: (context, index) {
-          return _buildCategoryButton(_categories[index], expanded: false);
-        },
-      ),
+    if (compactGrid) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            head,
+            const SizedBox(height: 8),
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: _categories.length,
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                mainAxisSpacing: 8,
+                crossAxisSpacing: 8,
+                mainAxisExtent: 44,
+              ),
+              itemBuilder: (context, index) {
+                return _buildCategoryButton(
+                  _categories[index],
+                  expanded: false,
+                  fillWidth: true,
+                );
+              },
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        head,
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+            children: [
+              for (final info in _categories)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: _buildCategoryButton(info, expanded: true),
+                ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
   Widget _buildCategoryButton(
     _SettingsCategoryInfo info, {
     required bool expanded,
+    bool fillWidth = false,
   }) {
     final selected =
         _settingsQuery.isEmpty && _selectedCategory == info.category;
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(7),
+        borderRadius: BorderRadius.circular(10),
         onTap: () {
           _settingsSearchController.clear();
           setState(() {
@@ -1528,19 +1833,40 @@ class _SettingsPageState extends State<SettingsPage>
         },
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 160),
-          height: expanded ? 58 : 42,
-          padding: EdgeInsets.symmetric(horizontal: expanded ? 12 : 13),
+          height: expanded ? 58 : 44,
+          width: fillWidth ? double.infinity : null,
+          padding: EdgeInsets.symmetric(horizontal: expanded ? 12 : 10),
           decoration: BoxDecoration(
-            color: selected ? info.accent.withValues(alpha: 0.13) : null,
-            borderRadius: BorderRadius.circular(7),
+            gradient: selected
+                ? LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Colors.white.withValues(alpha: 0.12),
+                      info.accent.withValues(alpha: 0.14),
+                    ],
+                  )
+                : null,
+            borderRadius: BorderRadius.circular(10),
             border: Border.all(
               color: selected
-                  ? info.accent.withValues(alpha: 0.48)
+                  ? info.accent.withValues(alpha: 0.42)
                   : Colors.transparent,
             ),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.18),
+                      blurRadius: 16,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                : null,
           ),
           child: Row(
-            mainAxisSize: expanded ? MainAxisSize.max : MainAxisSize.min,
+            mainAxisSize: (expanded || fillWidth)
+                ? MainAxisSize.max
+                : MainAxisSize.min,
             children: [
               Icon(
                 info.icon,
@@ -1576,6 +1902,19 @@ class _SettingsPageState extends State<SettingsPage>
                     ],
                   ),
                 )
+              else if (fillWidth)
+                Expanded(
+                  child: Text(
+                    info.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: selected ? Colors.white : Colors.white70,
+                      fontSize: 12.5,
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                    ),
+                  ),
+                )
               else
                 Text(
                   info.title,
@@ -1598,88 +1937,101 @@ class _SettingsPageState extends State<SettingsPage>
         : _categories.where(_categoryMatchesQuery).toList(growable: false);
     final activeInfo = _categoryInfo(_selectedCategory);
 
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: const Color.fromRGBO(5, 7, 18, 0.76),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: _dividerColor),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
-            child: Row(
-              children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color:
-                        (_settingsQuery.isEmpty
-                                ? activeInfo.accent
-                                : _accentColor)
-                            .withValues(alpha: 0.13),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(
-                    _settingsQuery.isEmpty ? activeInfo.icon : Icons.search,
-                    color: _settingsQuery.isEmpty
-                        ? activeInfo.accent
-                        : _accentColor,
-                    size: 20,
-                  ),
-                ),
-                const SizedBox(width: 11),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(
+          height: _panelHeaderHeight,
+          child: Column(
+            children: [
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 18),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      Text(
-                        _settingsQuery.isEmpty ? activeInfo.title : '搜索结果',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color:
+                              (_settingsQuery.isEmpty
+                                      ? activeInfo.accent
+                                      : _accentColor)
+                                  .withValues(alpha: 0.13),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(
+                          _settingsQuery.isEmpty
+                              ? activeInfo.icon
+                              : Icons.search,
+                          color: _settingsQuery.isEmpty
+                              ? activeInfo.accent
+                              : _accentColor,
+                          size: 20,
                         ),
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        _settingsQuery.isEmpty
-                            ? activeInfo.subtitle
-                            : matches.isEmpty
-                            ? '未找到“$_settingsQuery”'
-                            : '${matches.length} 个相关分类',
-                        style: const TextStyle(
-                          color: _mutedTextColor,
-                          fontSize: 11.5,
+                      const SizedBox(width: 11),
+                      Expanded(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _settingsQuery.isEmpty
+                                  ? activeInfo.title
+                                  : '搜索结果',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                                height: 1.2,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              _settingsQuery.isEmpty
+                                  ? activeInfo.subtitle
+                                  : matches.isEmpty
+                                  ? '未找到“$_settingsQuery”'
+                                  : '${matches.length} 个相关分类',
+                              style: const TextStyle(
+                                color: _mutedTextColor,
+                                fontSize: 11.5,
+                                height: 1.2,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],
                   ),
                 ),
-              ],
-            ),
+              ),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 14),
+                child: _HeaderFadeDivider(),
+              ),
+            ],
           ),
-          const Divider(height: 1, color: _dividerColor),
-          Expanded(
-            child: _settingsQuery.isEmpty
-                ? _buildCategoryScrollView(
-                    key: ValueKey(_selectedCategory),
-                    categories: [_selectedCategory],
-                  )
-                : matches.isEmpty
-                ? const _EmptySettingsSearch()
-                : _buildCategoryScrollView(
-                    key: ValueKey(_settingsQuery),
-                    categories: matches
-                        .map((info) => info.category)
-                        .toList(growable: false),
-                    showCategoryHeaders: true,
-                  ),
-          ),
-        ],
-      ),
+        ),
+        Expanded(
+          child: _settingsQuery.isEmpty
+              ? _buildCategoryScrollView(
+                  key: ValueKey(_selectedCategory),
+                  categories: [_selectedCategory],
+                )
+              : matches.isEmpty
+              ? const _EmptySettingsSearch()
+              : _buildCategoryScrollView(
+                  key: ValueKey(_settingsQuery),
+                  categories: matches
+                      .map((info) => info.category)
+                      .toList(growable: false),
+                  showCategoryHeaders: true,
+                ),
+        ),
+      ],
     );
   }
 
@@ -1752,13 +2104,19 @@ class _SettingsPageState extends State<SettingsPage>
               _buildWAuthSetting(),
             ],
           ),
-          const SizedBox(height: 12),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 6),
+            child: Divider(height: 1, thickness: 1, color: _dividerColor),
+          ),
           _buildSectionPanel(
             icon: Icons.power_settings_new_outlined,
             title: 'API/数据接口开关',
             children: [_buildApiInterfaceSwitches()],
           ),
-          const SizedBox(height: 12),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 6),
+            child: Divider(height: 1, thickness: 1, color: _dividerColor),
+          ),
           _buildSectionPanel(
             icon: Icons.tune_outlined,
             title: 'API/数据接口选项',
@@ -1766,6 +2124,10 @@ class _SettingsPageState extends State<SettingsPage>
               _buildFanServerSelector(),
               const _SettingsDivider(),
               _buildNiedDataSourceSelector(),
+              const _SettingsDivider(),
+              _buildKmaDataSourceSelector(),
+              const _SettingsDivider(),
+              _buildSnetDataSourceSelector(),
               const _SettingsDivider(),
               _buildNiedReplayControls(),
               const _SettingsDivider(),
@@ -1780,7 +2142,10 @@ class _SettingsPageState extends State<SettingsPage>
               _buildFdsnStationLimitSelector(),
             ],
           ),
-          const SizedBox(height: 12),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 6),
+            child: Divider(height: 1, thickness: 1, color: _dividerColor),
+          ),
           _buildSectionPanel(
             icon: Icons.filter_alt_outlined,
             title: '信息事件震级过滤',
@@ -1794,19 +2159,28 @@ class _SettingsPageState extends State<SettingsPage>
             title: '地图外观',
             children: [_buildTileSelector()],
           ),
-          const SizedBox(height: 12),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 6),
+            child: Divider(height: 1, thickness: 1, color: _dividerColor),
+          ),
           _buildSectionPanel(
             icon: Icons.my_location_outlined,
             title: '所在地定位',
             children: [_buildMapCenterControls()],
           ),
-          const SizedBox(height: 12),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 6),
+            child: Divider(height: 1, thickness: 1, color: _dividerColor),
+          ),
           _buildSectionPanel(
             icon: Icons.map_outlined,
             title: '视野切换',
             children: [_buildDefaultViewControls()],
           ),
-          const SizedBox(height: 12),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 6),
+            child: Divider(height: 1, thickness: 1, color: _dividerColor),
+          ),
           _buildSectionPanel(
             icon: Icons.notifications_outlined,
             title: '轻通知',
@@ -1820,10 +2194,13 @@ class _SettingsPageState extends State<SettingsPage>
             title: '信息显示',
             children: [_buildMapOverlaySelector()],
           ),
-          const SizedBox(height: 12),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 6),
+            child: Divider(height: 1, thickness: 1, color: _dividerColor),
+          ),
           _buildSectionPanel(
             icon: Icons.warning_amber_outlined,
-            title: '气象预警',
+            title: '气象预警与实况',
             children: [
               _buildWeatherAlarmScopeSelector(),
               if (_weatherLocalOnly) ...[
@@ -1832,6 +2209,12 @@ class _SettingsPageState extends State<SettingsPage>
               ],
               const _SettingsDivider(),
               _buildWeatherMarqueeEnabledSwitch(),
+              const _SettingsDivider(),
+              _buildWeatherStationLayerSwitch(),
+              if (_overlayWeatherStation) ...[
+                const _SettingsDivider(),
+                _buildWeatherStationModeSelector(),
+              ],
             ],
           ),
         ];
@@ -1862,9 +2245,23 @@ class _SettingsPageState extends State<SettingsPage>
               _buildSideInfoAutoShowSwitch(),
               const _SettingsDivider(),
               _buildEpicenterShowSwitch(),
+              const _SettingsDivider(),
+              _buildPageBackgroundSettings(),
             ],
           ),
-          const SizedBox(height: 12),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 6),
+            child: Divider(height: 1, thickness: 1, color: _dividerColor),
+          ),
+          _buildSectionPanel(
+            icon: Icons.account_tree_outlined,
+            title: '自动化',
+            children: [_buildObsAutomationEntry()],
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 6),
+            child: Divider(height: 1, thickness: 1, color: _dividerColor),
+          ),
           _buildSectionPanel(
             icon: Icons.developer_mode_outlined,
             title: '开发工具',
@@ -1879,35 +2276,28 @@ class _SettingsPageState extends State<SettingsPage>
     required String title,
     required List<Widget> children,
   }) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: const Color.fromRGBO(255, 255, 255, 0.035),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: _dividerColor),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(icon, color: _accentColor, size: 18),
-                const SizedBox(width: 9),
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                  ),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(2, 4, 2, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: _accentColor, size: 18),
+              const SizedBox(width: 9),
+              Text(
+                title,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
                 ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            ...children,
-          ],
-        ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          ...children,
+        ],
       ),
     );
   }
@@ -1921,16 +2311,19 @@ class _SettingsPageState extends State<SettingsPage>
           setState(() => _fanEnabled = val);
           _saveApiSourceEnabled(_fanEnabledKey, val);
           SourceManager().setSourceEnabled('FAN', val);
+          _requestForegroundConnectionReload();
         },
       ),
       _buildApiSwitch(
         title: 'WHEWS 地震预警/情报',
         value: _whewsEnabled,
-        onChanged: (val) {
+        onChanged: (val) async {
           if (val && !_canEnableWhews()) return;
           setState(() => _whewsEnabled = val);
-          _saveApiSourceEnabled(_whewsEnabledKey, val);
+          await _saveApiSourceEnabled(_whewsEnabledKey, val);
           SourceManager().setSourceEnabled('WHEWS', val);
+          _requestForegroundConnectionReload();
+          await BackgroundService().stopForegroundService();
         },
       ),
       _buildApiSwitch(
@@ -1940,6 +2333,7 @@ class _SettingsPageState extends State<SettingsPage>
           setState(() => _nowQuakeCencIrEnabled = val);
           _saveApiSourceEnabled(_nowQuakeCencIrEnabledKey, val);
           SourceManager().setSourceEnabled('NowQuake', val);
+          _requestForegroundConnectionReload();
         },
       ),
       _buildApiSwitch(
@@ -1948,7 +2342,11 @@ class _SettingsPageState extends State<SettingsPage>
         onChanged: (val) {
           setState(() => _cencCmtEnabled = val);
           _saveApiSourceEnabled(_cencCmtEnabledKey, val);
-          if (val) {
+          if (BackgroundService()
+              .isAndroidConnectionHostedByForegroundService) {
+            EqlistManager().cencCmt.stop();
+            _requestForegroundConnectionReload();
+          } else if (val) {
             EqlistManager().cencCmt.start();
           } else {
             EqlistManager().cencCmt.stop();
@@ -1961,7 +2359,11 @@ class _SettingsPageState extends State<SettingsPage>
         onChanged: (val) {
           setState(() => _usgsCmtEnabled = val);
           _saveApiSourceEnabled(_usgsCmtEnabledKey, val);
-          if (val) {
+          if (BackgroundService()
+              .isAndroidConnectionHostedByForegroundService) {
+            EqlistManager().usgsCmt.stop();
+            _requestForegroundConnectionReload();
+          } else if (val) {
             EqlistManager().usgsCmt.start();
           } else {
             EqlistManager().usgsCmt.stop();
@@ -1974,7 +2376,11 @@ class _SettingsPageState extends State<SettingsPage>
         onChanged: (val) {
           setState(() => _jmaCmtEnabled = val);
           _saveApiSourceEnabled(_jmaCmtEnabledKey, val);
-          if (val) {
+          if (BackgroundService()
+              .isAndroidConnectionHostedByForegroundService) {
+            EqlistManager().jmaCmt.stop();
+            _requestForegroundConnectionReload();
+          } else if (val) {
             EqlistManager().jmaCmt.start();
           } else {
             EqlistManager().jmaCmt.stop();
@@ -1987,7 +2393,11 @@ class _SettingsPageState extends State<SettingsPage>
         onChanged: (val) {
           setState(() => _fnetCmtEnabled = val);
           _saveApiSourceEnabled(_fnetCmtEnabledKey, val);
-          if (val) {
+          if (BackgroundService()
+              .isAndroidConnectionHostedByForegroundService) {
+            EqlistManager().fnetCmt.stop();
+            _requestForegroundConnectionReload();
+          } else if (val) {
             EqlistManager().fnetCmt.start();
           } else {
             EqlistManager().fnetCmt.stop();
@@ -2000,7 +2410,11 @@ class _SettingsPageState extends State<SettingsPage>
         onChanged: (val) {
           setState(() => _hinetAquaCmtEnabled = val);
           _saveApiSourceEnabled(_hinetAquaCmtEnabledKey, val);
-          if (val) {
+          if (BackgroundService()
+              .isAndroidConnectionHostedByForegroundService) {
+            EqlistManager().hinetAquaCmt.stop();
+            _requestForegroundConnectionReload();
+          } else if (val) {
             EqlistManager().hinetAquaCmt.start();
           } else {
             EqlistManager().hinetAquaCmt.stop();
@@ -2014,6 +2428,7 @@ class _SettingsPageState extends State<SettingsPage>
           setState(() => _wolfxEnabled = val);
           _saveApiSourceEnabled(_wolfxEnabledKey, val);
           SourceManager().setSourceEnabled('Wolfx', val);
+          _requestForegroundConnectionReload();
         },
       ),
       _buildApiSwitch(
@@ -2032,10 +2447,11 @@ class _SettingsPageState extends State<SettingsPage>
           setState(() => _p2pquakeEnabled = val);
           _saveApiSourceEnabled(_p2pquakeEnabledKey, val);
           SourceManager().setSourceEnabled('P2P', val);
+          _requestForegroundConnectionReload();
         },
       ),
       _buildApiSwitch(
-        title: 'KMA PEWS',
+        title: 'KMA 实时测站',
         value: _kmaPewsEnabled,
         onChanged: (val) {
           setState(() => _kmaPewsEnabled = val);
@@ -2091,31 +2507,43 @@ class _SettingsPageState extends State<SettingsPage>
       _buildApiSwitch(
         title: 'WHEWS NIED 实时测站',
         value: _whewsNiedEnabled,
-        onChanged: (val) {
+        onChanged: (val) async {
           if (val && !_canEnableWhews()) return;
+          if (!val && _niedDataSource == 'whews') {
+            _setNiedDataSource('lmoni');
+          }
           setState(() => _whewsNiedEnabled = val);
-          _saveApiSourceEnabled(_whewsNiedEnabledKey, val);
+          await _saveApiSourceEnabled(_whewsNiedEnabledKey, val);
           QuakeMapView.whewsNiedEnabledNotifier.value = val;
+          await BackgroundService().stopForegroundService();
         },
       ),
       _buildApiSwitch(
         title: 'WHEWS S-Net 实时测站',
         value: _whewsSnetEnabled,
-        onChanged: (val) {
+        onChanged: (val) async {
           if (val && !_canEnableWhews()) return;
+          if (!val && _snetDataSource == 'whews') {
+            _setSnetDataSource('msil');
+          }
           setState(() => _whewsSnetEnabled = val);
-          _saveApiSourceEnabled(_whewsSnetEnabledKey, val);
+          await _saveApiSourceEnabled(_whewsSnetEnabledKey, val);
           QuakeMapView.whewsSnetEnabledNotifier.value = val;
+          await BackgroundService().stopForegroundService();
         },
       ),
       _buildApiSwitch(
         title: 'WHEWS KMA 实时测站',
         value: _whewsKmaEnabled,
-        onChanged: (val) {
+        onChanged: (val) async {
           if (val && !_canEnableWhews()) return;
+          if (!val && _kmaDataSource == 'whews') {
+            _setKmaDataSource('pews');
+          }
           setState(() => _whewsKmaEnabled = val);
-          _saveApiSourceEnabled(_whewsKmaEnabledKey, val);
+          await _saveApiSourceEnabled(_whewsKmaEnabledKey, val);
           QuakeMapView.whewsKmaEnabledNotifier.value = val;
+          await BackgroundService().stopForegroundService();
         },
       ),
       _buildApiSwitch(
@@ -2231,27 +2659,35 @@ class _SettingsPageState extends State<SettingsPage>
     );
   }
 
+  String _wauthSettingSubtitle() {
+    if (_wauthBusy) {
+      return _wauthBrowserOpened ? '等待在浏览器中完成 WAuth 登录' : '正在连接 WAuth 登录服务';
+    }
+    final hasSavedLogin =
+        _wauthAccessToken != null || _wauthRestoredFromStorage;
+    if (hasSavedLogin) {
+      final userInfo = _wauthUserInfo;
+      final loginLabel = userInfo != null
+          ? '已登录：${_wauthUserLabel(userInfo)}'
+          : '已登录';
+      if (_wauthError != null && _wauthError!.isNotEmpty) {
+        return '$loginLabel。$_wauthError';
+      }
+      return loginLabel;
+    }
+    return _wauthError ?? '未登录时 WAuth 业务 API 不可开启';
+  }
+
   Widget _buildWAuthSetting() {
-    final userInfo = _wauthUserInfo;
-    final authenticated =
-        userInfo != null && _wauthAccessToken != null && !_wauthVerifying;
-    final status = _wauthBusy
-        ? _wauthBrowserOpened
-              ? '等待在浏览器中完成 WAuth 登录'
-              : '正在连接 WAuth 登录服务'
-        : _wauthVerifying
-        ? '正在确认 WAuth 授权状态；API 保持关闭'
-        : authenticated
-        ? '已登录：${_wauthUserLabel(userInfo)}'
-        : _wauthError != null
-        ? _wauthError!
-        : '未登录时 WAuth 业务 API 不可开启';
+    final hasSavedLogin =
+        _wauthAccessToken != null || _wauthRestoredFromStorage;
+    final status = _wauthSettingSubtitle();
     return _buildSettingRow(
       title: 'WAuth 账号授权',
       subtitle: status,
-      leading: _wauthBusy || _wauthVerifying
+      leading: _wauthBusy
           ? Icons.hourglass_top_outlined
-          : authenticated
+          : hasSavedLogin
           ? Icons.verified_user_outlined
           : Icons.account_circle_outlined,
       control: Wrap(
@@ -2271,44 +2707,22 @@ class _SettingsPageState extends State<SettingsPage>
           SizedBox(
             width: 160,
             height: 40,
-            child: OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(
-                side: BorderSide(
-                  color: _accentColor.withValues(
-                    alpha: _wauthBusy || _wauthVerifying ? 0.35 : 1,
-                  ),
-                ),
-                foregroundColor: Colors.white,
-                disabledForegroundColor: Colors.white54,
-              ),
-              onPressed: _wauthBusy || _wauthVerifying
+            child: _buildGlassActionButton(
+              label: _wauthBusy
+                  ? _wauthBrowserOpened
+                        ? '等待登录'
+                        : '正在打开'
+                  : hasSavedLogin
+                  ? '重新登录'
+                  : '登录',
+              icon: _wauthBusy
                   ? null
-                  : _startWAuthAuthorization,
-              icon: _wauthBusy || _wauthVerifying
-                  ? const SizedBox.square(
-                      dimension: 15,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 1.8,
-                        color: Colors.white70,
-                      ),
-                    )
-                  : Icon(
-                      authenticated
-                          ? Icons.refresh_outlined
-                          : Icons.login_outlined,
-                      size: 16,
-                    ),
-              label: Text(
-                _wauthBusy
-                    ? _wauthBrowserOpened
-                          ? '等待登录'
-                          : '正在打开'
-                    : _wauthVerifying
-                    ? '检查中'
-                    : authenticated
-                    ? '重新登录'
-                    : '登录',
-              ),
+                  : (hasSavedLogin
+                        ? Icons.refresh_outlined
+                        : Icons.login_outlined),
+              busy: _wauthBusy,
+              emphasized: true,
+              onPressed: _wauthBusy ? null : _startWAuthAuthorization,
             ),
           ),
         ],
@@ -2382,6 +2796,19 @@ class _SettingsPageState extends State<SettingsPage>
         },
       ),
       _buildInfoLayerSwitch(
+        title: 'JMA 雷达',
+        value: _overlayJmaRadar,
+        leading: Icons.radar,
+        onChanged: (val) {
+          setState(() => _overlayJmaRadar = val);
+          _saveOverlayState(_overlayJmaRadarKey, val);
+          context.read<MapStateProvider>().setOverlayEnabled(
+            'jmaRadarLayer',
+            val,
+          );
+        },
+      ),
+      _buildInfoLayerSwitch(
         title: '东南沿海及西太卫星云图',
         value: _overlaySatelliteCloud,
         leading: Icons.cloud_queue_outlined,
@@ -2431,6 +2858,19 @@ class _SettingsPageState extends State<SettingsPage>
           context.read<QuakeProvider>().setTyphoonLayerEnabled(val);
         },
       ),
+      _buildInfoLayerSwitch(
+        title: '气象站实况',
+        value: _overlayWeatherStation,
+        leading: Icons.cloud_sync_outlined,
+        onChanged: (val) {
+          setState(() => _overlayWeatherStation = val);
+          _saveOverlayState(_overlayWeatherStationKey, val);
+          context.read<MapStateProvider>().setOverlayEnabled(
+            'weatherStationLayer',
+            val,
+          );
+        },
+      ),
     ];
     return Column(
       children: [
@@ -2466,30 +2906,148 @@ class _SettingsPageState extends State<SettingsPage>
     );
   }
 
+  /// Shared frosted selectable chip / segment look.
+  BoxDecoration _glassSelectableDecoration({required bool selected}) {
+    return BoxDecoration(
+      gradient: selected
+          ? LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Colors.white.withValues(alpha: 0.16),
+                _accentColor.withValues(alpha: 0.34),
+              ],
+            )
+          : null,
+      color: selected ? null : Colors.white.withValues(alpha: 0.11),
+      borderRadius: BorderRadius.circular(10),
+      border: Border.all(
+        color: selected
+            ? _accentColor.withValues(alpha: 0.78)
+            : Colors.white.withValues(alpha: 0.22),
+      ),
+      boxShadow: selected
+          ? [
+              BoxShadow(
+                color: _accentColor.withValues(alpha: 0.18),
+                blurRadius: 14,
+                offset: const Offset(0, 3),
+              ),
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.18),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
+              ),
+            ]
+          : null,
+    );
+  }
+
+  ButtonStyle _glassOutlinedButtonStyle({bool emphasize = false}) {
+    return OutlinedButton.styleFrom(
+      foregroundColor: Colors.white,
+      backgroundColor: emphasize
+          ? _accentColor.withValues(alpha: 0.18)
+          : Colors.white.withValues(alpha: 0.11),
+      side: BorderSide(
+        color: emphasize
+            ? _accentColor.withValues(alpha: 0.78)
+            : Colors.white.withValues(alpha: 0.24),
+      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+    );
+  }
+
+  Widget _buildGlassActionButton({
+    required String label,
+    required VoidCallback? onPressed,
+    IconData? icon,
+    bool busy = false,
+    bool emphasized = false,
+  }) {
+    final enabled = onPressed != null && !busy;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: enabled ? onPressed : null,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          height: 40,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: _glassSelectableDecoration(selected: emphasized).copyWith(
+            color: emphasized
+                ? null
+                : Colors.white.withValues(alpha: enabled ? 0.11 : 0.06),
+            border: Border.all(
+              color: emphasized
+                  ? _accentColor.withValues(alpha: enabled ? 0.78 : 0.35)
+                  : Colors.white.withValues(alpha: enabled ? 0.22 : 0.12),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (busy)
+                const SizedBox.square(
+                  dimension: 15,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.8,
+                    color: Colors.white70,
+                  ),
+                )
+              else if (icon != null)
+                Icon(
+                  icon,
+                  size: 16,
+                  color: enabled ? Colors.white : Colors.white54,
+                ),
+              if (busy || icon != null) const SizedBox(width: 6),
+              Text(
+                label,
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.visible,
+                style: TextStyle(
+                  color: enabled ? Colors.white : Colors.white54,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  height: 1.1,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildOverlayToggle({
     required String label,
     required bool selected,
     required ValueChanged<bool> onTap,
   }) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(8),
-      onTap: () => onTap(!selected),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 140),
-        height: 36,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: selected ? _accentColor.withValues(alpha: 0.22) : _fieldColor,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: selected ? _accentColor : _dividerColor),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: selected ? Colors.white : Colors.white70,
-            fontSize: 12.5,
-            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: () => onTap(!selected),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          height: 36,
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          alignment: Alignment.center,
+          decoration: _glassSelectableDecoration(selected: selected),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: selected ? Colors.white : Colors.white70,
+              fontSize: 12.5,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+            ),
           ),
         ),
       ),
@@ -2507,10 +3065,7 @@ class _SettingsPageState extends State<SettingsPage>
           final buttonA = SizedBox(
             height: 40,
             child: OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(
-                side: BorderSide(color: _accentColor.withValues(alpha: 0.7)),
-                foregroundColor: Colors.white,
-              ),
+              style: _glassOutlinedButtonStyle(),
               onPressed: _autoLocateMapCenter,
               icon: const Icon(Icons.gps_fixed, size: 16),
               label: const Text('自动定位'),
@@ -2519,10 +3074,7 @@ class _SettingsPageState extends State<SettingsPage>
           final buttonB = SizedBox(
             height: 40,
             child: OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(
-                side: BorderSide(color: _accentColor.withValues(alpha: 0.7)),
-                foregroundColor: Colors.white,
-              ),
+              style: _glassOutlinedButtonStyle(),
               onPressed: _openManualCenterDialog,
               icon: const Icon(Icons.edit_location_alt_outlined, size: 16),
               label: const Text('手动输入'),
@@ -2605,40 +3157,39 @@ class _SettingsPageState extends State<SettingsPage>
     required bool selected,
     required VoidCallback onTap,
   }) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(8),
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 140),
-        height: 40,
-        padding: const EdgeInsets.symmetric(horizontal: 10),
-        decoration: BoxDecoration(
-          color: selected ? _accentColor.withValues(alpha: 0.22) : _fieldColor,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: selected ? _accentColor : _dividerColor),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              icon,
-              size: 16,
-              color: selected ? Colors.white : Colors.white70,
-            ),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: selected ? Colors.white : Colors.white70,
-                  fontSize: 12.5,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          height: 40,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: _glassSelectableDecoration(selected: selected),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 16,
+                color: selected ? Colors.white : Colors.white70,
+              ),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: selected ? Colors.white : Colors.white70,
+                    fontSize: 12.5,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -2835,6 +3386,17 @@ class _SettingsPageState extends State<SettingsPage>
               value: bg.eewEnabled,
               onChanged: bg.setEewEnabled,
             ),
+            if (_isAndroidNotificationPlatform) ...[
+              const Divider(height: 1, color: _dividerColor),
+              _buildBackgroundSwitch(
+                label: '开机自动启动前台服务',
+                value: bg.autoStartOnBoot,
+                onChanged: (value) async {
+                  await bg.setAutoStartOnBoot(value);
+                  await BackgroundService().setAutoStartOnBoot(value);
+                },
+              ),
+            ],
             if (bg.eewEnabled) ...[
               const Divider(height: 1, color: _dividerColor),
               _buildBackgroundIntensitySelector(bg),
@@ -2901,22 +3463,28 @@ class _SettingsPageState extends State<SettingsPage>
             runSpacing: 8,
             children: options.map((value) {
               final selected = bg.eewMinIntensity == value;
-              return ChoiceChip(
-                label: Text(BackgroundSettingsProvider.intensityLabel(value)),
-                selected: selected,
-                onSelected: (_) => bg.setEewMinIntensity(value),
-                selectedColor: _accentColor.withValues(alpha: 0.35),
-                backgroundColor: Colors.white.withValues(alpha: 0.08),
-                labelStyle: TextStyle(
-                  color: selected
-                      ? Colors.white
-                      : Colors.white.withValues(alpha: 0.75),
-                  fontSize: 12,
-                ),
-                side: BorderSide(
-                  color: selected
-                      ? _accentColor.withValues(alpha: 0.65)
-                      : _dividerColor,
+              return Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: () => bg.setEewMinIntensity(value),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 160),
+                    height: 36,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    alignment: Alignment.center,
+                    decoration: _glassSelectableDecoration(selected: selected),
+                    child: Text(
+                      BackgroundSettingsProvider.intensityLabel(value),
+                      style: TextStyle(
+                        color: selected ? Colors.white : Colors.white70,
+                        fontSize: 12,
+                        fontWeight: selected
+                            ? FontWeight.w700
+                            : FontWeight.w500,
+                      ),
+                    ),
+                  ),
                 ),
               );
             }).toList(),
@@ -3037,10 +3605,8 @@ class _SettingsPageState extends State<SettingsPage>
       title: 'FDSN 测站',
       subtitle: '显示 EarthScope / GEOFON 测站点位；实时包由应用内 SeedLink 连接接收',
       leading: Icons.public_outlined,
-      control: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        alignment: WrapAlignment.end,
+      control: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _buildOverlayToggle(
             label: 'EarthScope',
@@ -3054,6 +3620,7 @@ class _SettingsPageState extends State<SettingsPage>
               );
             },
           ),
+          const SizedBox(height: 8),
           _buildOverlayToggle(
             label: 'GEOFON',
             selected: _overlayFdsnGeofon,
@@ -3093,10 +3660,11 @@ class _SettingsPageState extends State<SettingsPage>
   }
 
   Widget _buildNiedDataSourceSelector() {
-    const options = [
+    final options = [
       ('lmoni', 'Lmoni'),
       ('kmoni', 'KMONI'),
       ('yahoo', 'Yahoo'),
+      if (_whewsApiAuthorized && _whewsNiedEnabled) ('whews', 'WHEWS'),
     ];
     return _buildSettingRow(
       title: 'NIED 強震モニタ 数据源',
@@ -3107,9 +3675,48 @@ class _SettingsPageState extends State<SettingsPage>
         options: options.map((opt) => _SelectOption(opt.$1, opt.$2)).toList(),
         onChanged: (val) {
           if (val == null) return;
-          setState(() => _niedDataSource = val);
-          _saveNiedDataSource(val);
-          QuakeMapView.niedSourceNotifier.value = val;
+          _setNiedDataSource(val);
+        },
+      ),
+    );
+  }
+
+  Widget _buildKmaDataSourceSelector() {
+    final options = [
+      ('pews', 'KMA-PEWS'),
+      ('fan', 'FAN'),
+      if (_whewsApiAuthorized && _whewsKmaEnabled) ('whews', 'WHEWS'),
+    ];
+    return _buildSettingRow(
+      title: 'KMA 实时测站数据源',
+      subtitle: '选择 KMA 测站实时数据输入来源',
+      leading: Icons.sensors_outlined,
+      control: _buildSegmentedSelector<String>(
+        value: _kmaDataSource,
+        options: options.map((opt) => _SelectOption(opt.$1, opt.$2)).toList(),
+        onChanged: (val) {
+          if (val == null) return;
+          _setKmaDataSource(val);
+        },
+      ),
+    );
+  }
+
+  Widget _buildSnetDataSourceSelector() {
+    final options = [
+      ('msil', 'MSIL'),
+      if (_whewsApiAuthorized && _whewsSnetEnabled) ('whews', 'WHEWS'),
+    ];
+    return _buildSettingRow(
+      title: 'S-Net 实时测站数据源',
+      subtitle: '选择海底测站实时数据输入来源',
+      leading: Icons.waves_outlined,
+      control: _buildSegmentedSelector<String>(
+        value: _snetDataSource,
+        options: options.map((opt) => _SelectOption(opt.$1, opt.$2)).toList(),
+        onChanged: (val) {
+          if (val == null) return;
+          _setSnetDataSource(val);
         },
       ),
     );
@@ -3293,28 +3900,33 @@ class _SettingsPageState extends State<SettingsPage>
   }
 
   Widget _buildWeatherAlarmLocalLevelSelector() {
-    final provider = context.watch<QuakeProvider>();
-    final province = provider.weatherDetectedProvince;
-    return _buildSettingRow(
-      title: '当地气象预警级别',
-      subtitle: province != null
-          ? '当前区域：$province — 按行政层级过滤（省 / 市 / 县）'
-          : '按行政层级过滤（省 / 市 / 县），仅在当地预警模式生效',
-      leading: Icons.account_tree_outlined,
-      control: _buildSegmentedSelector<String>(
-        value: _weatherLocalLevel,
-        options: const [
-          _SelectOption('province', '省级'),
-          _SelectOption('city', '市级'),
-          _SelectOption('county', '县级'),
-        ],
-        onChanged: (val) {
-          if (val == null) return;
-          setState(() => _weatherLocalLevel = val);
-          _saveWeatherLocalLevel(val);
-          context.read<QuakeProvider>().setWeatherLocalAdminLevel(val);
-        },
-      ),
+    final provider = context.read<QuakeProvider>();
+    return ValueListenableBuilder<int>(
+      valueListenable: provider.weatherListenable,
+      builder: (context, _, child) {
+        final province = provider.weatherDetectedProvince;
+        return _buildSettingRow(
+          title: '当地气象预警级别',
+          subtitle: province != null
+              ? '当前区域：$province — 按行政层级过滤（省 / 市 / 县）'
+              : '按行政层级过滤（省 / 市 / 县），仅在当地预警模式生效',
+          leading: Icons.account_tree_outlined,
+          control: _buildSegmentedSelector<String>(
+            value: _weatherLocalLevel,
+            options: const [
+              _SelectOption('province', '省级'),
+              _SelectOption('city', '市级'),
+              _SelectOption('county', '县级'),
+            ],
+            onChanged: (val) {
+              if (val == null) return;
+              setState(() => _weatherLocalLevel = val);
+              _saveWeatherLocalLevel(val);
+              context.read<QuakeProvider>().setWeatherLocalAdminLevel(val);
+            },
+          ),
+        );
+      },
     );
   }
 
@@ -3337,6 +3949,57 @@ class _SettingsPageState extends State<SettingsPage>
             UiRuntimeFlags.weatherMarqueeEnabledNotifier.value = val;
           },
         ),
+      ),
+    );
+  }
+
+  Widget _buildWeatherStationLayerSwitch() {
+    return _buildSettingRow(
+      title: '气象站实况图层',
+      subtitle: '在地图上绘制全国气象观测站实况，突出显示降水与雨量',
+      leading: Icons.cloud_sync_outlined,
+      control: Align(
+        alignment: Alignment.centerRight,
+        child: Switch(
+          value: _overlayWeatherStation,
+          activeThumbColor: _accentColor,
+          activeTrackColor: _accentColor.withValues(alpha: 0.38),
+          inactiveThumbColor: Colors.white70,
+          inactiveTrackColor: Colors.white24,
+          onChanged: (val) {
+            setState(() => _overlayWeatherStation = val);
+            _saveOverlayState(_overlayWeatherStationKey, val);
+            context.read<MapStateProvider>().setOverlayEnabled(
+              'weatherStationLayer',
+              val,
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWeatherStationModeSelector() {
+    return _buildSettingRow(
+      title: '气象站展示要素',
+      subtitle: '切换地图气象站的主要呈现数据',
+      leading: Icons.tune_outlined,
+      control: _buildSegmentedSelector<String>(
+        value: _weatherStationMode,
+        options: const [
+          _SelectOption('auto', '综合(降雨优先)'),
+          _SelectOption('rain', '降水雨量'),
+          _SelectOption('temperature', '气温'),
+          _SelectOption('wind', '风向风力'),
+        ],
+        onChanged: (val) {
+          if (val == null) return;
+          setState(() => _weatherStationMode = val);
+          SharedPreferences.getInstance().then((prefs) {
+            prefs.setString(_weatherStationModeKey, val);
+          });
+          context.read<MapStateProvider>().setWeatherStationMode(val);
+        },
       ),
     );
   }
@@ -3605,10 +4268,16 @@ class _SettingsPageState extends State<SettingsPage>
                 SizedBox(
                   height: 28,
                   child: OutlinedButton(
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Colors.white24),
-                      foregroundColor: Colors.white70,
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                    style: _glassOutlinedButtonStyle().copyWith(
+                      padding: const WidgetStatePropertyAll(
+                        EdgeInsets.symmetric(horizontal: 10),
+                      ),
+                      textStyle: const WidgetStatePropertyAll(
+                        TextStyle(fontSize: 12),
+                      ),
+                      foregroundColor: const WidgetStatePropertyAll(
+                        Colors.white70,
+                      ),
                     ),
                     onPressed: _gptSovitsStatus == 1
                         ? null
@@ -3717,10 +4386,7 @@ class _SettingsPageState extends State<SettingsPage>
               width: 150,
               height: 40,
               child: OutlinedButton(
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: _accentColor),
-                  foregroundColor: Colors.white,
-                ),
+                style: _glassOutlinedButtonStyle(emphasize: true),
                 onPressed: () {
                   TtsService().speak('RhythmQuake 语音播报测试。', interrupt: true);
                 },
@@ -3741,11 +4407,7 @@ class _SettingsPageState extends State<SettingsPage>
     return Container(
       height: 38,
       padding: const EdgeInsets.only(left: 12, right: 4),
-      decoration: BoxDecoration(
-        color: _fieldColor,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: value ? _accentColor : _dividerColor),
-      ),
+      decoration: _glassSelectableDecoration(selected: value),
       child: Row(
         children: [
           Expanded(
@@ -3813,13 +4475,20 @@ class _SettingsPageState extends State<SettingsPage>
         ...List.generate(sources.length, (index) {
           final source = sources[index];
           final sourceName = source.name;
-          final currentVal = _sourceMagFilters[sourceName] ?? 0;
-          final displayName = source.displayName;
+          final currentVal =
+              _sourceMagFilters[sourceName] ??
+              (source == QuakeSourceType.unadapted ? -1 : 0);
+          final displayName = source == QuakeSourceType.unadapted
+              ? '未适配机构'
+              : source.displayName;
+          final subtitle = source == QuakeSourceType.unadapted
+              ? '未登记机构的信息事件；默认不接收'
+              : '低于阈值的信息事件不会显示';
           return Column(
             children: [
               _buildSettingRow(
                 title: displayName,
-                subtitle: '低于阈值的信息事件不会显示',
+                subtitle: subtitle,
                 leading: Icons.timeline_outlined,
                 control: _buildDropdown<double>(
                   value: magOptions.contains(currentVal) ? currentVal : 0,
@@ -3830,7 +4499,7 @@ class _SettingsPageState extends State<SettingsPage>
                   onChanged: (val) {
                     if (val == null) return;
                     setState(() {
-                      if (val == 0) {
+                      if (val == 0 && source != QuakeSourceType.unadapted) {
                         _sourceMagFilters.remove(sourceName);
                       } else {
                         _sourceMagFilters[sourceName] = val;
@@ -3887,6 +4556,94 @@ class _SettingsPageState extends State<SettingsPage>
     );
   }
 
+  Widget _buildPageBackgroundSettings() {
+    final pageBg = context.watch<PageBackgroundProvider>();
+    final usingCustom = pageBg.useCustom && pageBg.hasCustomImage;
+    final canEnableSaved = !usingCustom && pageBg.hasCustomImage;
+
+    return _buildSettingRow(
+      title: '自定义背景',
+      subtitle: '${pageBg.statusLabel}；用于设置页与调试页',
+      leading: Icons.wallpaper_outlined,
+      control: Align(
+        alignment: Alignment.centerRight,
+        child: Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          alignment: WrapAlignment.end,
+          children: [
+            _buildGlassActionButton(
+              label: '选择图片',
+              icon: Icons.image_outlined,
+              emphasized: true,
+              onPressed: kIsWeb ? null : _pickCustomPageBackground,
+            ),
+            _buildGlassActionButton(
+              label: usingCustom ? '恢复默认' : (canEnableSaved ? '启用自定义' : '恢复默认'),
+              icon: usingCustom || !canEnableSaved
+                  ? Icons.restart_alt
+                  : Icons.check_circle_outline,
+              onPressed: usingCustom
+                  ? () => _restoreDefaultPageBackground(pageBg)
+                  : (canEnableSaved
+                        ? () => _enableSavedCustomPageBackground(pageBg)
+                        : null),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickCustomPageBackground() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'],
+        allowMultiple: false,
+        withData: false,
+      );
+      if (!mounted || result == null || result.files.isEmpty) return;
+
+      final path = result.files.single.path;
+      if (path == null || path.trim().isEmpty) {
+        _showPageBackgroundSnack('未能读取所选图片路径');
+        return;
+      }
+
+      final ok = await context.read<PageBackgroundProvider>().setCustomImage(
+        path,
+      );
+      if (!mounted) return;
+      _showPageBackgroundSnack(ok ? '已应用自定义背景' : '应用自定义背景失败');
+    } catch (e) {
+      if (!mounted) return;
+      _showPageBackgroundSnack('选择背景失败：$e');
+    }
+  }
+
+  Future<void> _restoreDefaultPageBackground(
+    PageBackgroundProvider pageBg,
+  ) async {
+    await pageBg.restoreDefault();
+    if (!mounted) return;
+    _showPageBackgroundSnack('已恢复默认背景');
+  }
+
+  Future<void> _enableSavedCustomPageBackground(
+    PageBackgroundProvider pageBg,
+  ) async {
+    await pageBg.enableSavedCustom();
+    if (!mounted) return;
+    _showPageBackgroundSnack(pageBg.useCustom ? '已启用自定义背景' : '没有可用的自定义背景');
+  }
+
+  void _showPageBackgroundSnack(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
+    );
+  }
+
   Widget _buildDebugPageEntry() {
     return _buildSettingRow(
       title: '调试页面',
@@ -3898,10 +4655,7 @@ class _SettingsPageState extends State<SettingsPage>
           width: 160,
           height: 40,
           child: OutlinedButton.icon(
-            style: OutlinedButton.styleFrom(
-              side: const BorderSide(color: _accentColor),
-              foregroundColor: Colors.white,
-            ),
+            style: _glassOutlinedButtonStyle(emphasize: true),
             onPressed: () {
               Navigator.push(
                 context,
@@ -3910,6 +4664,34 @@ class _SettingsPageState extends State<SettingsPage>
             },
             icon: const Icon(Icons.open_in_new, size: 16),
             label: const Text('打开调试页'),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildObsAutomationEntry() {
+    return _buildSettingRow(
+      title: 'OBS 自动化预设',
+      subtitle: '编辑触发条件与录制、回放动作',
+      leading: Icons.videocam_outlined,
+      control: Align(
+        alignment: Alignment.centerRight,
+        child: SizedBox(
+          width: 160,
+          height: 40,
+          child: OutlinedButton.icon(
+            style: _glassOutlinedButtonStyle(emphasize: true),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const ObsAutomationPresetsPage(),
+                ),
+              );
+            },
+            icon: const Icon(Icons.open_in_new, size: 16),
+            label: const Text('管理预设'),
           ),
         ),
       ),
@@ -3934,7 +4716,7 @@ class _SettingsPageState extends State<SettingsPage>
               decoration: BoxDecoration(
                 color: _accentColor.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: _accentColor.withValues(alpha: 0.18)),
+                border: Border.all(color: _accentColor.withValues(alpha: 0.28)),
               ),
               child: Icon(leading, size: 18, color: _accentColor),
             ),
@@ -3997,33 +4779,71 @@ class _SettingsPageState extends State<SettingsPage>
     required ValueChanged<T?> onChanged,
     double? width,
   }) {
+    const dropdownTextStyle = TextStyle(
+      color: Colors.white,
+      fontSize: 13,
+      fontWeight: FontWeight.w600,
+    );
+    final selected = options.cast<_SelectOption<T>?>().firstWhere(
+      (option) => option?.value == value,
+      orElse: () => null,
+    );
+    final selectedLabel = selected?.label ?? value.toString();
     return SizedBox(
       width: width,
-      child: InputDecorator(
-        decoration: InputDecoration(
-          filled: true,
-          fillColor: _fieldColor,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: _dividerColor),
-          ),
+      height: 40,
+      child: PopupMenuButton<T>(
+        tooltip: '',
+        padding: EdgeInsets.zero,
+        color: const Color(0xFF23283D),
+        surfaceTintColor: Colors.transparent,
+        elevation: 8,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
         ),
-        child: DropdownButtonHideUnderline(
-          child: DropdownButton<T>(
-            value: value,
-            isExpanded: true,
-            dropdownColor: const Color(0xFF101327),
-            iconEnabledColor: _accentColor,
-            style: const TextStyle(color: Colors.white, fontSize: 14),
-            alignment: Alignment.centerLeft,
-            items: options.map((option) {
-              return DropdownMenuItem<T>(
-                value: option.value,
-                child: Text(option.label, overflow: TextOverflow.ellipsis),
-              );
-            }).toList(),
-            onChanged: onChanged,
+        onSelected: onChanged,
+        itemBuilder: (context) {
+          return options.map((option) {
+            final isSelected = option.value == value;
+            return PopupMenuItem<T>(
+              value: option.value,
+              height: 42,
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: Text(
+                option.label,
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+                style: dropdownTextStyle.copyWith(
+                  color: isSelected ? Colors.white : Colors.white70,
+                ),
+              ),
+            );
+          }).toList();
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: _glassSelectableDecoration(selected: false).copyWith(
+            color: _fieldColor,
+            border: Border.all(color: _borderColor),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  selectedLabel,
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                  style: dropdownTextStyle,
+                ),
+              ),
+              const SizedBox(width: 8),
+              const Icon(
+                Icons.keyboard_arrow_down_rounded,
+                color: _accentColor,
+                size: 20,
+              ),
+            ],
           ),
         ),
       ),
@@ -4040,31 +4860,26 @@ class _SettingsPageState extends State<SettingsPage>
         final useColumn = constraints.maxWidth < 300;
         Widget buildItem(_SelectOption<T> option) {
           final selected = option.value == value;
-          return InkWell(
-            borderRadius: BorderRadius.circular(8),
-            onTap: () => onChanged(option.value),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 140),
-              height: 40,
-              alignment: Alignment.center,
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              decoration: BoxDecoration(
-                color: selected
-                    ? _accentColor.withValues(alpha: 0.22)
-                    : _fieldColor,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: selected ? _accentColor : _dividerColor,
-                ),
-              ),
-              child: Text(
-                option.label,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: selected ? Colors.white : Colors.white70,
-                  fontSize: 13,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+          return Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(10),
+              onTap: () => onChanged(option.value),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 160),
+                height: 40,
+                alignment: Alignment.center,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                decoration: _glassSelectableDecoration(selected: selected),
+                child: Text(
+                  option.label,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: selected ? Colors.white : Colors.white70,
+                    fontSize: 13,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  ),
                 ),
               ),
             ),
@@ -4145,6 +4960,32 @@ class _EmptySettingsSearch extends StatelessWidget {
             style: TextStyle(color: Colors.white60, fontSize: 13),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Header rule that fades out at both ends.
+class _HeaderFadeDivider extends StatelessWidget {
+  const _HeaderFadeDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox(
+      height: 1,
+      width: double.infinity,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              Color.fromRGBO(255, 255, 255, 0),
+              Color.fromRGBO(255, 255, 255, 0.12),
+              Color.fromRGBO(255, 255, 255, 0.12),
+              Color.fromRGBO(255, 255, 255, 0),
+            ],
+            stops: [0.0, 0.18, 0.82, 1.0],
+          ),
+        ),
       ),
     );
   }

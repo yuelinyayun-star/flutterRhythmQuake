@@ -72,7 +72,9 @@ class JmaVolcanoService {
       final entries = _parseFeedEntries(xml).where(_isVolcanoEntry).toList();
       if (entries.isEmpty) return;
 
-      final newEntries = entries.where((e) => !_seenIds.contains(e.id)).toList();
+      final newEntries = entries
+          .where((e) => !_seenIds.contains(e.id))
+          .toList();
       if (newEntries.isEmpty) {
         if (_latest.isEmpty) {
           final seededEntries = entries.take(_maxCacheSize).toList();
@@ -118,7 +120,9 @@ class JmaVolcanoService {
       final prefs = await SharedPreferences.getInstance();
       if (!force) {
         final lastSyncRaw = prefs.getString(_longFeedSyncKey);
-        final lastSync = lastSyncRaw == null ? null : DateTime.tryParse(lastSyncRaw);
+        final lastSync = lastSyncRaw == null
+            ? null
+            : DateTime.tryParse(lastSyncRaw);
         if (lastSync != null &&
             DateTime.now().difference(lastSync) < _longFeedMinInterval) {
           return;
@@ -136,11 +140,16 @@ class JmaVolcanoService {
       final xml = utf8.decode(resp.bodyBytes, allowMalformed: true);
       final entries = _parseFeedEntries(xml).where(_isVolcanoEntry).toList();
       if (entries.isEmpty) {
-        await prefs.setString(_longFeedSyncKey, DateTime.now().toIso8601String());
+        await prefs.setString(
+          _longFeedSyncKey,
+          DateTime.now().toIso8601String(),
+        );
         return;
       }
 
-      final newEntries = entries.where((e) => !_seenIds.contains(e.id)).toList();
+      final newEntries = entries
+          .where((e) => !_seenIds.contains(e.id))
+          .toList();
       if (newEntries.isNotEmpty) {
         final parsed = await _buildBulletins(newEntries);
         if (parsed.isNotEmpty) {
@@ -148,7 +157,9 @@ class JmaVolcanoService {
           _recordSeenIds(newEntries.map((e) => e.id));
           await _saveCachedBulletins();
           _primed = true;
-          debugPrint('JMA Volcano long feed intake: ${parsed.length} bulletin(s)');
+          debugPrint(
+            'JMA Volcano long feed intake: ${parsed.length} bulletin(s)',
+          );
           onBulletinsUpdated?.call(List.unmodifiable(_latest));
         }
       } else if (_latest.isEmpty) {
@@ -172,7 +183,9 @@ class JmaVolcanoService {
     }
   }
 
-  Future<List<VolcanoBulletin>> _buildBulletins(List<_FeedEntry> entries) async {
+  Future<List<VolcanoBulletin>> _buildBulletins(
+    List<_FeedEntry> entries,
+  ) async {
     final parsed = <VolcanoBulletin>[];
     for (final entry in entries) {
       final detail = await _fetchDetail(entry.link);
@@ -219,7 +232,9 @@ class JmaVolcanoService {
           final parsed = VolcanoBulletin.fromJson(item);
           if (_isVolcanoBulletin(parsed)) items.add(parsed);
         } else if (item is Map) {
-          final parsed = VolcanoBulletin.fromJson(Map<String, dynamic>.from(item));
+          final parsed = VolcanoBulletin.fromJson(
+            Map<String, dynamic>.from(item),
+          );
           if (_isVolcanoBulletin(parsed)) items.add(parsed);
         }
       }
@@ -270,7 +285,8 @@ class JmaVolcanoService {
   }
 
   bool _isVolcanoEntry(_FeedEntry entry) {
-    final code = RegExp(r'_([A-Z0-9]{6})_').firstMatch(entry.id)?.group(1) ?? '';
+    final code =
+        RegExp(r'_([A-Z0-9]{6})_').firstMatch(entry.id)?.group(1) ?? '';
     if (code.startsWith('VFVO')) return true;
     final text = '${entry.title} ${entry.content}';
     return text.contains('火山') ||
@@ -301,10 +317,10 @@ class JmaVolcanoService {
     for (final match in entryRegex.allMatches(xml)) {
       final block = match.group(1) ?? '';
       final id = _extractTag(block, 'id')?.trim() ?? '';
-      final link = RegExp(r'<link[^>]*href="([^"]+)"[^>]*/?>', dotAll: true)
-          .firstMatch(block)
-          ?.group(1)
-          ?.trim();
+      final link = RegExp(
+        r'<link[^>]*href="([^"]+)"[^>]*/?>',
+        dotAll: true,
+      ).firstMatch(block)?.group(1)?.trim();
       if (id.isEmpty || link == null || link.isEmpty) continue;
       entries.add(
         _FeedEntry(
@@ -385,8 +401,10 @@ class JmaVolcanoService {
       bulletinTitle: detail?.bulletinTitle ?? entry.title,
       infoKind: detail?.infoKind ?? entry.title,
       summary: normalizedSummary,
-      volcanoName: detail?.volcanoName ?? _parseVolcanoName(entry.title, entry.content),
-      alertLevelText: detail?.alertLevelText ??
+      volcanoName:
+          detail?.volcanoName ?? _parseVolcanoName(entry.title, entry.content),
+      alertLevelText:
+          detail?.alertLevelText ??
           _parseAlertLevel(entry.content, entry.title),
       latitude: detail?.latitude,
       longitude: detail?.longitude,

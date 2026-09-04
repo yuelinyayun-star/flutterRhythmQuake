@@ -72,16 +72,39 @@ class SourceStationPhaseClassifier {
           ? station?.descriptor.code
           : rawCode;
       if (code == null || code.isEmpty) continue;
-      final latitude = _doubleFromKotoho7Js(item['lat']);
-      final longitude =
+      var latitude = _doubleFromKotoho7Js(item['lat']);
+      var longitude =
           _doubleFromKotoho7Js(item['lng']) ??
           _doubleFromKotoho7Js(item['lon']);
-      if (latitude == null || longitude == null) continue;
+      final stationRecord = station ?? recordsByCode[code];
+      final resolvedLatitude = latitude ?? double.nan;
+      final resolvedLongitude = longitude ?? double.nan;
+      final needsFallback =
+          !QuakeCalculator.isUsableMapCoordinate(
+            resolvedLatitude,
+            resolvedLongitude,
+          ) ||
+          QuakeCalculator.isLikelyUninitializedCoordinate(
+            resolvedLatitude,
+            resolvedLongitude,
+          );
+      if (needsFallback) {
+        final fallback = stationRecord?.descriptor.coordinate;
+        if (fallback == null ||
+            !QuakeCalculator.isUsableMapCoordinate(
+              fallback.latitude,
+              fallback.longitude,
+            )) {
+          continue;
+        }
+        latitude = fallback.latitude;
+        longitude = fallback.longitude;
+      }
       stations.add(
         EstimatedStationPhaseRecord(
-          station: station ?? recordsByCode[code],
+          station: stationRecord,
           stationCode: code,
-          coordinate: LatLng(latitude, longitude),
+          coordinate: LatLng(latitude!, longitude!),
           phase: _phaseFromKotoho7Js(item['phase']),
           residualSeconds: _doubleFromKotoho7Js(item['residualSeconds']),
         ),

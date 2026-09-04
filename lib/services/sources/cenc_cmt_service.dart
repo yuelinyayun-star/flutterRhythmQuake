@@ -31,6 +31,9 @@ class CencCmtService {
   /// 列表数据回调（合并后的全量字段 map 列表）
   void Function(List<Map<String, dynamic>>)? onListUpdated;
 
+  /// HTTP 轮询状态回调
+  void Function(bool connected)? onStatusChanged;
+
   Timer? _timer;
   bool _initialized = false;
 
@@ -77,8 +80,10 @@ class CencCmtService {
         // 有数据走增量推送（应走首次填充 eqlist 桶逻辑）
         _initialized = true;
       }
+      onStatusChanged?.call(true);
     } catch (e) {
       print('CENC CMT fetch error: $e');
+      onStatusChanged?.call(false);
     }
   }
 

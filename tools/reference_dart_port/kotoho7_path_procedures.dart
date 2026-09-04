@@ -78,7 +78,51 @@ void _factory21(Thread thread) {
     final p1 = args[1];
     final p2 = args[2];
     final p3 = args[3];
-    b0.value = or0(111.31949 * (((math.acos((((((((scratchNumber(math.sin((math.pi * scratchNumber(p1)) / 180) * 1e10)).round() / 1e10)) * ((scratchNumber(math.sin((math.pi * scratchNumber(p3)) / 180) * 1e10)).round() / 1e10))) + ((((scratchNumber(math.cos((math.pi * scratchNumber(p1)) / 180) * 1e10)).round() / 1e10)) * ((scratchNumber(math.cos((math.pi * scratchNumber(p3)) / 180) * 1e10)).round() / 1e10)) * ((scratchNumber(math.cos((math.pi * (scratchNumber(p0) - scratchNumber(p2))) / 180) * 1e10)).round() / 1e10))))) * 180) / math.pi));
+    b0.value = or0(
+      111.31949 *
+          (((math.acos(
+                    (((((((scratchNumber(
+                                  math.sin(
+                                        (math.pi * scratchNumber(p1)) / 180,
+                                      ) *
+                                      1e10,
+                                )).round() /
+                                1e10)) *
+                            ((scratchNumber(
+                                  math.sin(
+                                        (math.pi * scratchNumber(p3)) / 180,
+                                      ) *
+                                      1e10,
+                                )).round() /
+                                1e10))) +
+                        ((((scratchNumber(
+                                      math.cos(
+                                            (math.pi * scratchNumber(p1)) / 180,
+                                          ) *
+                                          1e10,
+                                    )).round() /
+                                    1e10)) *
+                                ((scratchNumber(
+                                      math.cos(
+                                            (math.pi * scratchNumber(p3)) / 180,
+                                          ) *
+                                          1e10,
+                                    )).round() /
+                                    1e10)) *
+                            ((scratchNumber(
+                                  math.cos(
+                                        (math.pi *
+                                                (scratchNumber(p0) -
+                                                    scratchNumber(p2))) /
+                                            180,
+                                      ) *
+                                      1e10,
+                                )).round() /
+                                1e10))),
+                  )) *
+                  180) /
+              math.pi),
+    );
     return '';
   };
 }

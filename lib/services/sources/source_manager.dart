@@ -120,6 +120,7 @@ class SourceManager {
   ///
   /// 广播模式，允许多个监听者同时订阅状态更新。
   final _statusController = StreamController<SourceStatusUpdate>.broadcast();
+  final _eventController = StreamController<QuakeMessage>.broadcast();
 
   /// 状态更新事件流
   ///
@@ -135,6 +136,9 @@ class SourceManager {
   /// });
   /// ```
   Stream<SourceStatusUpdate> get onStatusUpdate => _statusController.stream;
+
+  /// 经过去重后的原始统一入口消息，用于 Android 前台服务跨 isolate 转发。
+  Stream<QuakeMessage> get onQuakeEvent => _eventController.stream;
 
   final List<StreamSubscription<QuakeMessage>> _sourceSubscriptions = [];
   bool _started = false;
@@ -216,6 +220,14 @@ class SourceManager {
     _sourceSubscriptions.clear();
   }
 
+  /// 清空当前 isolate 的源实例，供 Android 前台服务重载设置时使用。
+  void reset() {
+    stopAll();
+    _sources.clear();
+    _disabledSourceNames.clear();
+    _processedIds.clear();
+  }
+
   /// 获取指定类型的数据源实例
   ///
   /// 从已注册的数据源中查找并返回指定类型的实例。
@@ -270,6 +282,7 @@ class SourceManager {
     }
 
     QuakeEventBus().publish(event);
+    _eventController.add(event);
 
     _processedIds.removeWhere(
       (key, time) => DateTime.now().difference(time).inHours > 1,

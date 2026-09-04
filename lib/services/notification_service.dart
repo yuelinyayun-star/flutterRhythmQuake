@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import '../models/unified_quake_data.dart';
 import '../providers/notification_settings_provider.dart';
 import '../providers/quake_provider.dart';
@@ -46,12 +48,8 @@ class NotificationService {
     final notify = isWarn
         ? (base.notification || warn.notification)
         : base.notification;
-    final sound = isWarn
-        ? (base.sound || warn.sound)
-        : base.sound;
-    final focus = isWarn
-        ? (base.focus || warn.focus)
-        : base.focus;
+    final sound = isWarn ? (base.sound || warn.sound) : base.sound;
+    final focus = isWarn ? (base.focus || warn.focus) : base.focus;
 
     if (!notify && !sound && !focus) return;
 
@@ -127,7 +125,7 @@ class NotificationService {
     final eventKey = '${event.source}|${event.eventId}';
 
     if (settings.sound) {
-      SoundEffectService().play(_infoSoundKey(event));
+      SoundEffectService().play(_infoSoundKeyForEvent(event));
     }
 
     if (settings.focus) {
@@ -139,13 +137,15 @@ class NotificationService {
     }
   }
 
-  String _infoSoundKey(UnifiedQuakeData event) {
+  static String _infoSoundKeyForEvent(UnifiedQuakeData event) {
     if (event.isCanceled) return 'cancel';
     final source = event.source;
     final title = event.titleText;
     if (source == 'jmaEqlist' || source == 'p2pJmaEqlist') {
       if (title.contains('震度速報')) return 'prompt';
-      if (title.contains('震源')) return 'hypocenter';
+      if (title == '震源に関する情報' || title == '震源情報') {
+        return 'hypocenter';
+      }
       return 'detail';
     }
     if (source == 'cencEqlist') {
@@ -166,6 +166,11 @@ class NotificationService {
       return 'detail';
     }
     return 'detail';
+  }
+
+  @visibleForTesting
+  static String infoSoundKeyForTest(UnifiedQuakeData event) {
+    return _infoSoundKeyForEvent(event);
   }
 
   void _focusEvent(UnifiedQuakeData event, String eventKey) {

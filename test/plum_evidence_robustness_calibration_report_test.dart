@@ -31,8 +31,10 @@ void main() {
       modelPath: model.path,
     );
 
-    expect(report['schemaVersion'],
-        'plum_evidence_robustness_calibration_report_v1');
+    expect(
+      report['schemaVersion'],
+      'plum_evidence_robustness_calibration_report_v1',
+    );
     expect(report['status'], 'pass');
     expect(report['errors'], isEmpty);
 
@@ -58,8 +60,8 @@ void main() {
       expect(threshold['marginalBranchAgreement'], isA<Map>());
       expect(threshold['marginalRobustnessScore'], isA<Map>());
 
-      final bandSummary =
-          (threshold['bandSummary'] as Map).cast<String, Object?>();
+      final bandSummary = (threshold['bandSummary'] as Map)
+          .cast<String, Object?>();
       expect(
         bandSummary.keys,
         containsAll(['high', 'medium', 'low', 'insufficient']),
@@ -70,19 +72,22 @@ void main() {
         expect(bucket['branchAgreement'], startsWith('agree_'));
         expect(bucket['robustnessScore'], startsWith('score_'));
         expect(bucket['band'], isA<String>());
-        expect(
-          bucket['band'],
-          isIn(['high', 'medium', 'low', 'insufficient']),
-        );
+        expect(bucket['band'], isIn(['high', 'medium', 'low', 'insufficient']));
       }
     }
 
     final markdown = plumEvidenceRobustnessCalibrationMarkdown(report);
-    expect(markdown, contains('PLUM Evidence Robustness Calibration Diagnostic'));
+    expect(
+      markdown,
+      contains('PLUM Evidence Robustness Calibration Diagnostic'),
+    );
     expect(markdown, contains('Raw predicted intensity mutated: `false`'));
     expect(markdown, contains('Joint Calibration Table'));
     expect(markdown, contains('Band Summary'));
-    expect(markdown, contains('do not replace, cap, or hide predicted intensity'));
+    expect(
+      markdown,
+      contains('do not replace, cap, or hide predicted intensity'),
+    );
   });
 }
 

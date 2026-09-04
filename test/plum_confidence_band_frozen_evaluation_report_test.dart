@@ -8,8 +8,10 @@ void main() {
     () {
       final report = buildPlumConfidenceBandFrozenEvaluationJson();
 
-      expect(report['schemaVersion'],
-          'plum_confidence_band_frozen_evaluation_v1');
+      expect(
+        report['schemaVersion'],
+        'plum_confidence_band_frozen_evaluation_v1',
+      );
       expect(report['status'], 'pass');
       expect(report['errors'], isEmpty);
 
@@ -22,19 +24,19 @@ void main() {
       expect(policy['rawPredictedIntensityMutated'], isFalse);
       expect(policy['diagnosticOnly'], isTrue);
 
-      final validationRef =
-          (report['validationReference'] as Map).cast<String, Object?>();
+      final validationRef = (report['validationReference'] as Map)
+          .cast<String, Object?>();
       expect(validationRef['bandPrecision'], isA<Map>());
       expect(validationRef['bandPredictedPositive'], isA<Map>());
       expect(validationRef['highMediumShare'], isA<double>());
 
-      final frozenCoverage =
-          (report['frozenCoverage'] as Map).cast<String, Object?>();
+      final frozenCoverage = (report['frozenCoverage'] as Map)
+          .cast<String, Object?>();
       expect(frozenCoverage['stationForecastCount'], greaterThan(0));
       expect(frozenCoverage['totalPredictedPositive'], greaterThan(0));
 
-      final frozenBands =
-          (report['frozenBands'] as Map).cast<String, Object?>();
+      final frozenBands = (report['frozenBands'] as Map)
+          .cast<String, Object?>();
       expect(
         frozenBands.keys,
         containsAll(['high', 'medium', 'low', 'insufficient']),

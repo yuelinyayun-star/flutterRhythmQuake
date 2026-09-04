@@ -26,7 +26,10 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:web_socket_channel/io.dart';
 import 'base_source.dart';
 import '../quake_event_adapter.dart';
 import '../../models/quake_message.dart';
@@ -45,10 +48,13 @@ class WolfxService extends BaseSourceService {
   // 连接配置
   // ═══════════════════════════════════════════════════════════════════════════
 
-  /// WebSocket 服务端点 URL
-  ///
-  /// Wolfx API 的统一入口，订阅所有地震预警数据流。
-  final String _wsUrl = "wss://ws-api.wolfx.jp/all_eew";
+  /// WebSocket 服务端点列表 (支持备用源)
+  static const List<String> _wsUrls = [
+    "wss://ws-api.wolfx.jp/all_eew",
+    "wss://api.wolfx.jp/all_eew",
+    "wss://ws-api.wolfx.jp/",
+  ];
+  int _currentUrlIndex = 0;
 
   /// WebSocket 通道实例
   WebSocketChannel? _channel;
@@ -102,12 +108,27 @@ class WolfxService extends BaseSourceService {
     await _cleanup();
     if (!_isCurrentConnection(serial)) return;
 
+    final targetUrl = _wsUrls[_currentUrlIndex % _wsUrls.length];
     onStatusChanged?.call(SourceStatus.connecting);
-    print("正在建立 Wolfx 链路: $_wsUrl (尝试次数: ${_retryCount + 1})");
+    print("正在建立 Wolfx 链路: $targetUrl (尝试次数: ${_retryCount + 1})");
 
     WebSocketChannel? channel;
     try {
-      final newChannel = WebSocketChannel.connect(Uri.parse(_wsUrl));
+      WebSocketChannel newChannel;
+      if (!kIsWeb) {
+        final client = HttpClient()
+          ..badCertificateCallback = ((cert, host, port) => true)
+          ..connectionTimeout = const Duration(seconds: 8);
+        final ws = await WebSocket.connect(
+          targetUrl,
+          customClient: client,
+        ).timeout(const Duration(seconds: 10));
+        newChannel = IOWebSocketChannel(ws);
+      } else {
+        newChannel = WebSocketChannel.connect(Uri.parse(targetUrl));
+        await newChannel.ready.timeout(const Duration(seconds: 10));
+      }
+
       channel = newChannel;
       if (!_isCurrentConnection(serial)) {
         await newChannel.sink.close();
@@ -139,8 +160,8 @@ class WolfxService extends BaseSourceService {
         cancelOnError: true,
       );
 
-      await newChannel.ready.timeout(const Duration(seconds: 10));
-      if (!_isActiveConnection(newChannel, serial)) return;
+      // 连接成功立即更新状态，避免无数据时长时间红标
+      onStatusChanged?.call(SourceStatus.connected);
 
       unawaited(_sendSubscriptionMessages(newChannel, serial));
       _queryTimer?.cancel();
@@ -152,6 +173,7 @@ class WolfxService extends BaseSourceService {
       if (!_isCurrentConnection(serial)) return;
       if (_failedConnectionSerial == serial) return;
       print("Wolfx 初始握手失败: $e");
+      _currentUrlIndex = (_currentUrlIndex + 1) % _wsUrls.length;
       await _handleFailure(channel, serial);
     }
   }
@@ -257,7 +279,8 @@ class WolfxService extends BaseSourceService {
           _emitUnified('cwaEew', json);
           break;
         default:
-          print("Wolfx 未知 type: $type");
+          _logRawPayload(type, json, rawPayload);
+          _emitUnified(type, json);
       }
     } catch (e) {
       print("Wolfx 数据解析异常: $e");

@@ -274,6 +274,7 @@ class JmaVolcanoMapService {
     final infoReportTime = _parseDate(info?['reportDatetime']);
     final eruptionReportTime = _parseDate(eruption?['reportDatetime']);
 
+    final infoHeadTitle = info == null ? null : '${info['headTitle'] ?? ''}';
     return JmaVolcanoSite(
       code: code,
       nameJp: '${raw['name_jp'] ?? ''}',
@@ -289,9 +290,10 @@ class JmaVolcanoMapService {
       warningKindName: warning?.kindName,
       warningAlarm: warning?.alarm,
       warningReportTime: warningReportTime,
-      infoHeadTitle: info == null ? null : '${info['headTitle'] ?? ''}',
+      infoHeadTitle: infoHeadTitle,
       infoReportTime: infoReportTime,
       eruptionReportTime: eruptionReportTime,
+      hasProvisionalInfo: _isProvisionalInfoTitle(infoHeadTitle),
     );
   }
 
@@ -336,6 +338,12 @@ class JmaVolcanoMapService {
       alarm: alarm,
       reportTime: reportTime,
     );
+  }
+
+  static bool _isProvisionalInfoTitle(String? title) {
+    final text = title?.trim() ?? '';
+    if (text.isEmpty) return false;
+    return text.contains('臨時') || text.contains('临时');
   }
 
   int _alertLevelFromKindCode(String? code) {

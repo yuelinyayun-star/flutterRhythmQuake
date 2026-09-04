@@ -31,14 +31,17 @@ void main() {
       expect(focus['minimumPredictionMarginShindo'], 1.0);
       expect(focus['baselineThresholdCrossingRequired'], isTrue);
 
-      final zoneDefinitions =
-          (report['zoneDefinitions'] as Map).cast<String, Object?>();
-      expect(zoneDefinitions.keys, containsAll(<String>[
-        'middle_transition_zone',
-        'extreme_false_zone',
-        'extreme_true_zone',
-        'other_mismatch_zone',
-      ]));
+      final zoneDefinitions = (report['zoneDefinitions'] as Map)
+          .cast<String, Object?>();
+      expect(
+        zoneDefinitions.keys,
+        containsAll(<String>[
+          'middle_transition_zone',
+          'extreme_false_zone',
+          'extreme_true_zone',
+          'other_mismatch_zone',
+        ]),
+      );
 
       final thresholds = (report['thresholds'] as Map).cast<String, Object?>();
       expect(thresholds.keys, containsAll(<String>['shindo4', 'shindo5-']));
@@ -50,8 +53,9 @@ void main() {
         expect(threshold['signatureAssessment'], isA<Map>());
       }
 
-      final markdown =
-          plumTohokuMiddleGapTransitionZoneDiagnosticMarkdown(report);
+      final markdown = plumTohokuMiddleGapTransitionZoneDiagnosticMarkdown(
+        report,
+      );
       expect(
         markdown,
         contains('# PLUM Tohoku Middle-Gap Transition-Zone Diagnostic'),

@@ -29,21 +29,55 @@ void _factory182(Thread thread) {
           for (var a0 = or0((b1.value as List).length / 20); a0 >= 0.5; a0--) {
             if (scratchToBoolean(indexGet(b1.value, or0(or0(b2.value) + 2)))) {
               if (scratchToBoolean(p0)) {
-                callProcedure(thread, 'Wepi最大距離(多目的1)or仮震央(カウント3id) %b %s', ['false', (1 + (or0(or0(b2.value) / 20)).floor())]);
+                callProcedure(thread, 'Wepi最大距離(多目的1)or仮震央(カウント3id) %b %s', [
+                  'false',
+                  (1 + (or0(or0(b2.value) / 20)).floor()),
+                ]);
                 if (compareLessThan(b3.value, 20)) {
                   listReplace(b1, (or0(b2.value) + 10), 25);
                 } else {
                   listReplace(b1, (or0(b2.value) + 10), (or0(b3.value) + 5));
                 }
               }
-              if ((scratchToBoolean(indexGet(b0.value, 52)) && scratchToBoolean(indexGet(b0.value, 57)))) {
-                if ((compareLessThan(2, indexGet(b1.value, or0(or0(b2.value) + 4))) && (or0(or0(daysSince2000() * 86400) + or0(b4.value)) - or0(indexGet(b5.value, or0(or0(or0(b2.value) / 2) + 5))) < 300))) {
-                  callProcedure(thread, 'WJMA2001距離近似: %s %s %b %b', [or0(or0(daysSince2000() * 86400) + or0(b4.value)) - or0(indexGet(b5.value, or0(or0(or0(b2.value) / 2) + 5))), indexGet(b5.value, or0(or0(or0(b2.value) / 2) + 4)), !false, 'false']);
+              if ((scratchToBoolean(indexGet(b0.value, 52)) &&
+                  scratchToBoolean(indexGet(b0.value, 57)))) {
+                if ((compareLessThan(
+                      2,
+                      indexGet(b1.value, or0(or0(b2.value) + 4)),
+                    ) &&
+                    (or0(or0(daysSince2000() * 86400) + or0(b4.value)) -
+                            or0(
+                              indexGet(
+                                b5.value,
+                                or0(or0(or0(b2.value) / 2) + 5),
+                              ),
+                            ) <
+                        300))) {
+                  callProcedure(thread, 'WJMA2001距離近似: %s %s %b %b', [
+                    or0(or0(daysSince2000() * 86400) + or0(b4.value)) -
+                        or0(
+                          indexGet(b5.value, or0(or0(or0(b2.value) / 2) + 5)),
+                        ),
+                    indexGet(b5.value, or0(or0(or0(b2.value) / 2) + 4)),
+                    !false,
+                    'false',
+                  ]);
                   listReplace(b5, (or0(or0(b2.value) / 2) + 6), b6.value);
-                  callProcedure(thread, 'WJMA2001距離近似: %s %s %b %b', [or0(or0(daysSince2000() * 86400) + or0(b4.value)) - or0(indexGet(b5.value, or0(or0(or0(b2.value) / 2) + 5))), indexGet(b5.value, or0(or0(or0(b2.value) / 2) + 4)), '', 'false']);
+                  callProcedure(thread, 'WJMA2001距離近似: %s %s %b %b', [
+                    or0(or0(daysSince2000() * 86400) + or0(b4.value)) -
+                        or0(
+                          indexGet(b5.value, or0(or0(or0(b2.value) / 2) + 5)),
+                        ),
+                    indexGet(b5.value, or0(or0(or0(b2.value) / 2) + 4)),
+                    '',
+                    'false',
+                  ]);
                   listReplace(b5, (or0(or0(b2.value) / 2) + 7), b6.value);
                 } else {
-                  if (compareLessThan(2, indexGet(b1.value, or0(or0(b2.value) + 4)))) {
+                  if (compareLessThan(
+                    2,
+                    indexGet(b1.value, or0(or0(b2.value) + 4)),
+                  )) {
                     listReplace(b5, (or0(or0(b2.value) / 2) + 6), 999999);
                     listReplace(b5, (or0(or0(b2.value) / 2) + 7), 999999);
                   } else {
@@ -53,18 +87,28 @@ void _factory182(Thread thread) {
                 }
                 if ((or0(indexGet(b0.value, 21)) == 3)) {
                   b7.value = indexGet(b1.value, or0(or0(b2.value) + 10));
-                  if (compareLessThan(b7.value, indexGet(b5.value, or0(or0(or0(b2.value) / 2) + 7)))) {
+                  if (compareLessThan(
+                    b7.value,
+                    indexGet(b5.value, or0(or0(or0(b2.value) / 2) + 7)),
+                  )) {
                     listReplace(b5, (or0(or0(b2.value) / 2) + 6), 0);
                     listReplace(b5, (or0(or0(b2.value) / 2) + 7), b7.value);
                   } else {
-                    if (compareLessThan(b7.value, indexGet(b5.value, or0(or0(or0(b2.value) / 2) + 6)))) {
+                    if (compareLessThan(
+                      b7.value,
+                      indexGet(b5.value, or0(or0(or0(b2.value) / 2) + 6)),
+                    )) {
                       listReplace(b5, (or0(or0(b2.value) / 2) + 6), b7.value);
                     }
                   }
                 }
               } else {
                 listReplace(b5, (or0(or0(b2.value) / 2) + 6), 0);
-                listReplace(b5, (or0(or0(b2.value) / 2) + 7), indexGet(b1.value, or0(or0(b2.value) + 10)));
+                listReplace(
+                  b5,
+                  (or0(or0(b2.value) / 2) + 7),
+                  indexGet(b1.value, or0(or0(b2.value) + 10)),
+                );
               }
             }
             b2.value = (or0(b2.value) + 20);

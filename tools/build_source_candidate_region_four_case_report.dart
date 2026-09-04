@@ -45,15 +45,11 @@ Map<String, Object?> buildSourceCandidateRegionFourCaseReportJson({
       residualCases['20260621_fukushima_offshore_m32_eq6'],
       localCases['20260621_fukushima_offshore_m32_eq6'],
     ),
-    _residualDelayedCase(
-      residualCases['20260622_kushiro_offshore_m30_jma'],
-    ),
+    _residualDelayedCase(residualCases['20260622_kushiro_offshore_m30_jma']),
     _residualImmediateCase(
       residualCases['20260622_tomakomai_south_offshore_m35_hinet'],
     ),
-    _localSupportDelayedCase(
-      localCases['20260625_iwate_offshore_m32_jma'],
-    ),
+    _localSupportDelayedCase(localCases['20260625_iwate_offshore_m32_jma']),
   ];
 
   final errors = <String>[
@@ -111,7 +107,7 @@ Map<String, Object?> _falseRecoveryGuardCase(
         local?['nearCompleteBlockedOnlyByGrowthCount'],
     'productionCoordinateSwitchAllowedCount':
         _intValue(residual?['coordinateSwitchAllowedCount']) +
-            _intValue(local?['productionCoordinateSwitchAllowedCount']),
+        _intValue(local?['productionCoordinateSwitchAllowedCount']),
   };
 }
 
@@ -129,11 +125,11 @@ Map<String, Object?> _residualDelayedCase(Map<String, Object?>? residual) {
     'rejectedPositiveFrameCount': residual?['rejectedPositiveFrameCount'],
     'delayedRecoveredPositiveFrameCount':
         residual?['delayedRecoveredPositiveFrameCount'],
-    'residualConfirmedDelayedCount':
-        residual?['residualConfirmedDelayedCount'],
+    'residualConfirmedDelayedCount': residual?['residualConfirmedDelayedCount'],
     'acceptedPositiveFrameCount': residual?['acceptedPositiveFrameCount'],
-    'productionCoordinateSwitchAllowedCount':
-        _intValue(residual?['coordinateSwitchAllowedCount']),
+    'productionCoordinateSwitchAllowedCount': _intValue(
+      residual?['coordinateSwitchAllowedCount'],
+    ),
   };
 }
 
@@ -151,8 +147,9 @@ Map<String, Object?> _residualImmediateCase(Map<String, Object?>? residual) {
     'acceptedPositiveFrameCount': residual?['acceptedPositiveFrameCount'],
     'rejectedPositiveFrameCount': residual?['rejectedPositiveFrameCount'],
     'confirmedImmediateCount': residual?['confirmedImmediateCount'],
-    'productionCoordinateSwitchAllowedCount':
-        _intValue(residual?['coordinateSwitchAllowedCount']),
+    'productionCoordinateSwitchAllowedCount': _intValue(
+      residual?['coordinateSwitchAllowedCount'],
+    ),
   };
 }
 
@@ -170,8 +167,9 @@ Map<String, Object?> _localSupportDelayedCase(Map<String, Object?>? local) {
     'localSupportConfirmedCount': local?['localSupportConfirmedCount'],
     'confirmedDelayedCount': local?['confirmedDelayedCount'],
     'minConfirmedMemberGrowth': local?['minConfirmedMemberGrowth'],
-    'productionCoordinateSwitchAllowedCount':
-        _intValue(local?['productionCoordinateSwitchAllowedCount']),
+    'productionCoordinateSwitchAllowedCount': _intValue(
+      local?['productionCoordinateSwitchAllowedCount'],
+    ),
   };
 }
 
@@ -254,8 +252,7 @@ Map<String, Object?> _validation(
   if (_intValue(kushiro?['residualConfirmedDelayedCount']) != 1) {
     violations.add('kushiro_residual_delayed_count_regressed');
   }
-  if (tomakomai?['actualOutcome'] !=
-      'dual_residual_immediate_confirmation') {
+  if (tomakomai?['actualOutcome'] != 'dual_residual_immediate_confirmation') {
     violations.add('tomakomai_missing_immediate_confirmation');
   }
   if (_intValue(tomakomai?['acceptedPositiveFrameCount']) != 3) {

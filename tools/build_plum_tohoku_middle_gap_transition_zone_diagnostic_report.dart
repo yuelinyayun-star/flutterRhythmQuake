@@ -62,13 +62,12 @@ Map<String, Object?> buildPlumTohokuMiddleGapTransitionZoneDiagnosticJson({
   String dataDirectory = _defaultDataDirectory,
   String modelPath = _defaultModelPath,
 }) {
-  final base = gap_transition.buildPlumTohokuMismatchGapTransitionDiagnosticJson(
-    dataDirectory: dataDirectory,
-    modelPath: modelPath,
-  );
-  final errors = [
-    for (final error in _list(base['errors'])) error.toString(),
-  ];
+  final base = gap_transition
+      .buildPlumTohokuMismatchGapTransitionDiagnosticJson(
+        dataDirectory: dataDirectory,
+        modelPath: modelPath,
+      );
+  final errors = [for (final error in _list(base['errors'])) error.toString()];
   final thresholds = _map(base['thresholds']);
   return {
     'schemaVersion': 'plum_tohoku_middle_gap_transition_zone_diagnostic_v1',
@@ -84,10 +83,8 @@ Map<String, Object?> buildPlumTohokuMiddleGapTransitionZoneDiagnosticJson({
     'zoneDefinitions': {
       'middle_transition_zone':
           'actual gap in [-1.0, +1.0) and evidence gap in [1.0, 3.0)',
-      'extreme_false_zone':
-          'actual gap < -1.0 and evidence gap >= 3.0',
-      'extreme_true_zone':
-          'actual gap >= 0.0 and evidence gap < 1.0',
+      'extreme_false_zone': 'actual gap < -1.0 and evidence gap >= 3.0',
+      'extreme_true_zone': 'actual gap >= 0.0 and evidence gap < 1.0',
       'other_mismatch_zone':
           'all remaining mismatch cells outside the three comparison zones',
     },
@@ -108,8 +105,9 @@ Map<String, Object?> _buildThresholdJson(Map<String, Object?> threshold) {
   final testSummary = _map(test['summary']);
   final validationCells = _indexCells(validation['cells']);
   final testCells = _indexCells(test['cells']);
-  final validationMismatchCount =
-      _int(validationSummary['mismatchSampleCount']);
+  final validationMismatchCount = _int(
+    validationSummary['mismatchSampleCount'],
+  );
   final testMismatchCount = _int(testSummary['mismatchSampleCount']);
 
   final zoneRows = [
@@ -151,15 +149,15 @@ Map<String, Object?> _buildThresholdJson(Map<String, Object?> threshold) {
       'middleTransitionZonePrecisionDelta': middleRow['precisionDelta'],
       'middleTransitionLikelyFrozenSignature':
           dominantRow['zone'] == 'middle_transition_zone' &&
-              _number(middleRow['shareDelta']) > 0,
+          _number(middleRow['shareDelta']) > 0,
     },
   };
 }
 
 Map<String, Map<String, Object?>> _indexCells(Object? rawRows) => {
-      for (final raw in _list(rawRows))
-        '${_map(raw)['actualGapBand']}|${_map(raw)['evidenceGapBand']}': _map(raw),
-    };
+  for (final raw in _list(rawRows))
+    '${_map(raw)['actualGapBand']}|${_map(raw)['evidenceGapBand']}': _map(raw),
+};
 
 Map<String, Object?> _buildZoneTransferRow({
   required String label,

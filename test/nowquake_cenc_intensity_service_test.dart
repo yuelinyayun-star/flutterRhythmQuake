@@ -1,6 +1,11 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutterrhythmquake/models/cenc_ir_data.dart';
+import 'package:flutterrhythmquake/models/unified_quake_data.dart';
 import 'package:flutterrhythmquake/services/sources/nowquake_cenc_intensity_service.dart';
+import 'package:flutterrhythmquake/widgets/map/cenc_ir_focus.dart';
 import 'package:flutterrhythmquake/widgets/map/cenc_ir_layer.dart';
 import 'package:flutterrhythmquake/widgets/ui/unified_intensity_format.dart';
 
@@ -49,6 +54,113 @@ void main() {
     expect(data.instrumentIntensities.single.intensity, 3.8);
     expect(data.instrumentIntensities.single.pga, 12.4);
     expect(data.instrumentIntensities.single.pgv, 0.8);
+    expect(data.instrumentIntensities.single.hasUsableCoordinate, isTrue);
+  });
+
+  test('repaints when the same report receives updated station data', () {
+    final first = CencIrData.fromNowQuakeJson(sample);
+    final updatedJson = Map<String, dynamic>.from(sample)
+      ..['stations'] = <Object?>[
+        ...sample['stations']! as List<Object?>,
+        <String, dynamic>{
+          'stationid': 'XJ_N0024',
+          'name': 'N0024',
+          'latitude': 41.81,
+          'longitude': 81.42,
+          'int': 2.9,
+        },
+      ];
+    final updated = CencIrData.fromNowQuakeJson(updatedJson);
+
+    expect(updated.reportId, first.reportId);
+    expect(updated.gmtCreate, first.gmtCreate);
+    expect(updated.instrumentIntensities, hasLength(2));
+    expect(cencIrLayerDataChanged(first, updated), isTrue);
+  });
+
+  test('marks unlocated station rows as not drawable', () {
+    final invalidJson = Map<String, dynamic>.from(sample)
+      ..['stations'] = const <Object?>[
+        <String, dynamic>{'name': 'missing-position', 'int': 3.1},
+      ];
+    final data = CencIrData.fromNowQuakeJson(invalidJson);
+
+    expect(data.instrumentIntensities, hasLength(1));
+    expect(data.instrumentIntensities.single.hasUsableCoordinate, isFalse);
+  });
+
+  test(
+    'automatic websocket packet emits map data and unified UI together',
+    () async {
+      final service = NowQuakeCencIntensityService();
+      addTearDown(service.dispose);
+      final dataCompleter = Completer<CencIrData>();
+      final eventCompleter = Completer<UnifiedQuakeData>();
+      service.onCencIrData = dataCompleter.complete;
+      final subscription = service.onUnifiedEvent.listen(
+        eventCompleter.complete,
+      );
+      addTearDown(subscription.cancel);
+
+      service.handleSocketMessageForTest(jsonEncode(sample));
+
+      final data = await dataCompleter.future.timeout(
+        const Duration(seconds: 1),
+      );
+      final event = await eventCompleter.future.timeout(
+        const Duration(seconds: 1),
+      );
+      expect(data.reportId, sample['eq_id']);
+      expect(data.instrumentIntensities, hasLength(1));
+      expect(event.source, 'nowQuakeCencIr');
+      expect(event.eventId, data.reportId);
+    },
+  );
+
+  test(
+    'automatic websocket packet rejects stations without coordinates',
+    () async {
+      final service = NowQuakeCencIntensityService();
+      addTearDown(service.dispose);
+      var mapDataCount = 0;
+      var unifiedCount = 0;
+      service.onCencIrData = (_) => mapDataCount++;
+      final subscription = service.onUnifiedEvent.listen((_) => unifiedCount++);
+      addTearDown(subscription.cancel);
+      final invalidJson = Map<String, dynamic>.from(sample)
+        ..['stations'] = const <Object?>[
+          <String, dynamic>{'name': 'missing-position', 'int': 3.1},
+        ];
+
+      service.handleSocketMessageForTest(jsonEncode(invalidJson));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(mapDataCount, 0);
+      expect(unifiedCount, 0);
+    },
+  );
+
+  test('focus includes epicenter and every drawable station', () {
+    final data = CencIrData.fromNowQuakeJson(sample);
+    final points = cencIrFocusPoints(
+      data: data,
+      eventId: '20260711234053',
+      epicenterLatitude: 41.740002,
+      epicenterLongitude: 81.199997,
+    );
+
+    expect(points, hasLength(2));
+    expect(points.first.latitude, closeTo(41.740002, 0.000001));
+    expect(points.last.latitude, closeTo(41.72, 0.000001));
+    expect(
+      cencIrFocusPoints(
+        data: data,
+        eventId: 'different-event',
+        epicenterLatitude: 41.740002,
+        epicenterLongitude: 81.199997,
+      ),
+      isEmpty,
+    );
   });
 
   test('normalizes a NowQuake summary for the existing CENC IR list', () {

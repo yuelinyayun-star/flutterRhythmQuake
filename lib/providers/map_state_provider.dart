@@ -86,13 +86,24 @@ class MapStateProvider with ChangeNotifier {
     'windLayer': false,
     'rainLayer': false,
     'radarChinaLayer': false,
+    'jmaRadarLayer': false,
     'satelliteCloudLayer': false,
     'cnContour': false,
     'volcanoLayer': false,
     'typhoonLayer': false,
+    'weatherStationLayer': false,
     'fdsnEarthScope': false,
     'fdsnGeofon': false,
   };
+
+  String _weatherStationMode = 'auto';
+  String get weatherStationMode => _weatherStationMode;
+
+  void setWeatherStationMode(String mode) {
+    if (_weatherStationMode == mode) return;
+    _weatherStationMode = mode;
+    notifyListeners();
+  }
 
   bool _showEstimatedEpicenter = false;
   bool get showEstimatedEpicenter => _showEstimatedEpicenter;
@@ -101,6 +112,14 @@ class MapStateProvider with ChangeNotifier {
   // EEW wave targets arrive about once per second. Keep continuous follow at
   // 25fps so average move cost stays the same as before.
   static const int _continuousCameraAnimationFps = 25;
+
+  /// Wave radius may span a hemisphere. Using those edges in the wrap-cluster
+  /// would put the camera on the antipode (e.g. Africa for a California EEW).
+  static const double _maxCameraWaveSpanDeg = 30;
+
+  /// Beyond this, fly to the epicenter first; wave-follow starts after arrival.
+  static const double _longHaulLngDeg = 50;
+  static const double _longHaulLatDeg = 40;
 
   bool _isAutoZoom = true;
   Timer? _autoZoomResumeTimer;
@@ -355,14 +374,17 @@ class MapStateProvider with ChangeNotifier {
     void tick() {
       final rawT = stopwatch.elapsedMicroseconds / duration.inMicroseconds;
       final t = rawT.clamp(0.0, 1.0);
-      // Pan reaches the target earlier than zoom so the epicenter does not
-      // crawl in after the wave framing already looks close.
       final panT = plan.panProgress(t);
       final zoomT = plan.zoomProgress(t);
-      _mapController!.move(
-        LatLng(latTween.transform(panT), lngTween.transform(panT)),
-        zoomTween.transform(zoomT),
-      );
+      final next = LatLng(latTween.transform(panT), lngTween.transform(panT));
+      final nextZoom = zoomTween.transform(zoomT);
+      final cam = _mapController!.camera;
+      // Skip no-op moves so multi-event + dense station layers don't rebuild.
+      if ((cam.center.latitude - next.latitude).abs() > 1e-7 ||
+          (cam.center.longitude - next.longitude).abs() > 1e-7 ||
+          (cam.zoom - nextZoom).abs() > 1e-5) {
+        _mapController!.move(next, nextZoom);
+      }
       if (t >= 1.0) {
         _stopMoveAnimation();
       }
@@ -372,9 +394,10 @@ class MapStateProvider with ChangeNotifier {
     _moveAnimationTimer = Timer.periodic(frame, (_) => tick());
   }
 
-  /// Pick duration/curves from jump size. Same fps budget as before; no extra
-  /// timers. Large acquires ease in/out; tiny continuous tracks finish before
-  /// the next ~1Hz EEW policy tick so the camera can settle on center.
+  /// Pick duration/curves from jump size.
+  ///
+  /// Continuous EEW wave follow must stay on a ~1000ms linear tween so each
+  /// ~1Hz policy retarget handoff has no idle gap (otherwise zoom stutters).
   static _CameraMovePlan _planCameraMove({
     required double latDelta,
     required double lngDelta,
@@ -383,37 +406,27 @@ class MapStateProvider with ChangeNotifier {
   }) {
     final geo = max(latDelta, lngDelta);
     final score = geo + zoomDelta * 0.35;
-    final largeJump = geo >= 2.5 || zoomDelta >= 1.8 || score >= 3.2;
 
     if (continuousFollow) {
-      if (largeJump) {
-        // First EEW framing / big retarget: one smooth acquire, pan ahead.
-        final ms = (520 + score * 55).round().clamp(560, 820);
-        return _CameraMovePlan(
-          duration: Duration(milliseconds: ms),
-          panCurve: Curves.easeInOutCubic,
-          zoomCurve: Curves.easeInOutCubic,
-          panCompleteAt: 0.78,
-        );
-      }
-      // Wave expansion chase: short linear catch-up that completes inside the
-      // ~900ms policy interval instead of a 1000ms ease that keeps restarting.
-      final ms = (240 + score * 110).round().clamp(240, 520);
-      return _CameraMovePlan(
-        duration: Duration(milliseconds: ms),
+      // Match the pre-change wave-follow feel: bridge the second between
+      // policy updates with continuous linear motion at 25fps.
+      return const _CameraMovePlan(
+        duration: Duration(milliseconds: 1000),
         panCurve: Curves.linear,
         zoomCurve: Curves.linear,
         panCompleteAt: 1.0,
       );
     }
 
-    // Discrete event / history / default jumps.
-    final ms = (460 + score * 65).round().clamp(500, 880);
+    // Discrete event / history / station jumps. Pan and zoom share the same
+    // curve and duration so the camera does not finish sliding then keep
+    // zooming in place.
+    final ms = (460 + score * 65).round().clamp(500, 1200);
     return _CameraMovePlan(
       duration: Duration(milliseconds: ms),
       panCurve: Curves.easeInOutCubic,
       zoomCurve: Curves.easeInOutCubic,
-      panCompleteAt: 0.82,
+      panCompleteAt: 1.0,
     );
   }
 
@@ -426,7 +439,9 @@ class MapStateProvider with ChangeNotifier {
 
   LatLngBounds? calcBoundsForEvents(List<QuakeMessage> events) {
     final valid = events
-        .where((e) => e.latitude != 0.0 || e.longitude != 0.0)
+        .where(
+          (e) => QuakeCalculator.isUsableMapCoordinate(e.latitude, e.longitude),
+        )
         .toList();
     if (valid.isEmpty) return null;
 
@@ -462,12 +477,28 @@ class MapStateProvider with ChangeNotifier {
     if (_mapController == null) return null;
     if (events.isEmpty) return null;
 
-    final view = _calcWrappedEventView(events, waveEvents: waveEvents);
-    if (view == null) return null;
+    final epicenterView = _calcWrappedEventView(events);
+    if (epicenterView == null) return null;
 
-    final fittedCamera = waveEvents.isEmpty
-        ? null
-        : _fitWaveViewToViewport(view, minZoom: minZoom, maxZoom: maxZoom);
+    final currCenter = _mapController!.camera.center;
+    final wrappedViewLng = WorldWrap.longitudeClosestTo(
+      epicenterView.center.longitude,
+      currCenter.longitude,
+    );
+    final farAway =
+        (wrappedViewLng - currCenter.longitude).abs() > _longHaulLngDeg ||
+        (epicenterView.center.latitude - currCenter.latitude).abs() >
+            _longHaulLatDeg;
+    final followWaves = waveEvents.isNotEmpty && !farAway;
+    final followContinuously = continuousFollow && !farAway;
+    final view = followWaves
+        ? (_calcWrappedEventView(events, waveEvents: waveEvents) ??
+              epicenterView)
+        : epicenterView;
+
+    final fittedCamera = followWaves
+        ? _fitWaveViewToViewport(view, minZoom: minZoom, maxZoom: maxZoom)
+        : null;
     final center = fittedCamera?.center ?? view.center;
     final zoom =
         fittedCamera?.zoom ??
@@ -478,7 +509,6 @@ class MapStateProvider with ChangeNotifier {
         ? center
         : _centerForScreenOffset(center, zoom, screenOffset);
 
-    final currCenter = _mapController!.camera.center;
     final currZoom = _mapController!.camera.zoom;
     final err = 1 / pow(2, zoom);
     if (currZoom == zoom &&
@@ -497,16 +527,24 @@ class MapStateProvider with ChangeNotifier {
     }
 
     if (screenOffset == Offset.zero) {
-      animatedMove(center, zoom, continuousFollow: continuousFollow);
+      animatedMove(center, zoom, continuousFollow: followContinuously);
     } else {
       animatedMoveWithScreenOffset(
         center,
         zoom,
         screenOffset,
-        continuousFollow: continuousFollow,
+        continuousFollow: followContinuously,
       );
     }
     return zoom;
+  }
+
+  @visibleForTesting
+  LatLng? wrappedEventViewCenterForTest(
+    List<QuakeMessage> events, {
+    List<QuakeMessage> waveEvents = const [],
+  }) {
+    return _calcWrappedEventView(events, waveEvents: waveEvents)?.center;
   }
 
   void smartMoveToPoints(
@@ -568,6 +606,12 @@ class MapStateProvider with ChangeNotifier {
   }) {
     if (!_canApplyAutoMove(respectAutoZoom)) return;
     if (_mapController == null) return;
+    if (!QuakeCalculator.isUsableMapCoordinate(
+      center.latitude,
+      center.longitude,
+    )) {
+      return;
+    }
 
     final targetCenter = screenOffset == Offset.zero
         ? LatLng(
@@ -626,7 +670,9 @@ class MapStateProvider with ChangeNotifier {
     List<QuakeMessage> waveEvents = const [],
   }) {
     final validEvents = events
-        .where((e) => e.latitude != 0.0 || e.longitude != 0.0)
+        .where(
+          (e) => QuakeCalculator.isUsableMapCoordinate(e.latitude, e.longitude),
+        )
         .toList();
     if (validEvents.isEmpty) return null;
 
@@ -639,23 +685,6 @@ class MapStateProvider with ChangeNotifier {
         if (lat < minLat) minLat = lat;
         if (lat > maxLat) maxLat = lat;
       });
-    }
-
-    for (final e in waveEvents) {
-      if (e.latitude == 0.0 && e.longitude == 0.0) continue;
-      final radiusKm = _calcAutoZoomWaveRadiusKm(e);
-      if (radiusKm <= 0) continue;
-
-      final latDelta = radiusKm / 111.32;
-      final minWaveLat = (e.latitude - latDelta).clamp(-85.0, 85.0);
-      final maxWaveLat = (e.latitude + latDelta).clamp(-85.0, 85.0);
-      if (minWaveLat < minLat) minLat = minWaveLat;
-      if (maxWaveLat > maxLat) maxLat = maxWaveLat;
-
-      final cosLat = max(cos(e.latitude * pi / 180).abs(), 0.15);
-      final lngDelta = (radiusKm / (111.32 * cosLat)).clamp(0.0, 180.0);
-      longitudes.add(_toPositiveLongitude(e.longitude - lngDelta));
-      longitudes.add(_toPositiveLongitude(e.longitude + lngDelta));
     }
 
     longitudes.sort();
@@ -680,22 +709,49 @@ class MapStateProvider with ChangeNotifier {
         ? longitudes[largestGapIndex]
         : longitudes[largestGapIndex] + 360;
     final centerLng = (startLng + endLng) / 2;
+    var extraLat = 0.0;
+    var extraLng = 0.0;
+
+    for (final e in waveEvents) {
+      if (!QuakeCalculator.isUsableMapCoordinate(e.latitude, e.longitude)) {
+        continue;
+      }
+      final radiusKm = _calcAutoZoomWaveRadiusKm(e);
+      if (radiusKm <= 0) continue;
+      extraLat = max(
+        extraLat,
+        (radiusKm / 111.32).clamp(0.0, _maxCameraWaveSpanDeg),
+      );
+      final cosLat = max(cos(e.latitude * pi / 180).abs(), 0.15);
+      extraLng = max(
+        extraLng,
+        (radiusKm / (111.32 * cosLat)).clamp(0.0, _maxCameraWaveSpanDeg),
+      );
+    }
 
     return _WrappedEventView(
       center: LatLng((minLat + maxLat) / 2, centerLng),
-      latDiff: maxLat - minLat,
-      lngDiff: endLng - startLng,
+      latDiff: (maxLat - minLat) + extraLat * 2,
+      lngDiff: (endLng - startLng) + extraLng * 2,
     );
   }
 
   _WrappedEventView? _calcWrappedPointView(List<LatLng> points) {
-    if (points.isEmpty) return null;
+    final validPoints = points
+        .where(
+          (point) => QuakeCalculator.isUsableMapCoordinate(
+            point.latitude,
+            point.longitude,
+          ),
+        )
+        .toList();
+    if (validPoints.isEmpty) return null;
 
     double minLat = double.infinity;
     double maxLat = double.negativeInfinity;
     final longitudes = <double>[];
 
-    for (final point in points) {
+    for (final point in validPoints) {
       _addPointToView(point.latitude, point.longitude, longitudes, (lat) {
         if (lat < minLat) minLat = lat;
         if (lat > maxLat) maxLat = lat;
@@ -904,6 +960,7 @@ class _CameraMovePlan {
   final Duration duration;
   final Curve panCurve;
   final Curve zoomCurve;
+
   /// Fraction of [duration] by which pan should finish (zoom may continue).
   final double panCompleteAt;
 

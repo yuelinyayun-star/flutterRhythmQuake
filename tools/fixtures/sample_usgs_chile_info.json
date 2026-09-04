@@ -1,0 +1,13 @@
+{
+  "eventId": "us7000chile_camtest",
+  "source": "usgs",
+  "shockTime": "2026-08-11 20:00:00",
+  "createTime": "2026-08-11 20:05:00",
+  "placeName": "Near Coast of Central Chile",
+  "location": "智利中部近海",
+  "magnitude": 7.2,
+  "depth": 25,
+  "latitude": -32.5,
+  "longitude": -71.6,
+  "updates": 1
+}

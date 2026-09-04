@@ -61,7 +61,9 @@ void main() {
         }
       }
 
-      final markdown = plumTohokuFocusRegionSiteFrozenDiagnosticMarkdown(report);
+      final markdown = plumTohokuFocusRegionSiteFrozenDiagnosticMarkdown(
+        report,
+      );
       expect(
         markdown,
         contains('# PLUM Tohoku Focus Region/Site Frozen Diagnostic'),

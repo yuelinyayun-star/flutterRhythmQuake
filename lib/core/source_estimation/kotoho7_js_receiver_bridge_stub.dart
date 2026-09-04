@@ -19,3 +19,7 @@ Kotoho7ReceiverBridgeQueueStatus kotoho7JsReceiverBridgeQueueStatus() {
     sessionCount: 0,
   );
 }
+
+void kotoho7JsReceiverBridgeClearSessions() {}
+
+Future<void> kotoho7JsReceiverBridgeDisposePersistent() async {}

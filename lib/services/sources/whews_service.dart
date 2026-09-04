@@ -25,8 +25,17 @@ class WhewsService extends BaseSourceService {
   static const String apiAuthorizedPreferenceKey =
       'api_source_whews_authorized';
   static const String aggregateUrl = 'wss://api.beecld.com/ws/all';
+  // CEA/CEA-PR are not included in the overseas /ws/all aggregate; connect
+  // the domestic node separately per https://api.beecld.com/#overview.
   static const String ceaAggregateUrl = 'wss://api.2v8.cn/ws/cea_all';
   static const int adapterOrigin = 3;
+  static const Set<String> tsunamiSources = {
+    'tsunami',
+    'jma_tsunami',
+    'ptwc',
+    'ntwc',
+    'incois',
+  };
 
   String _apiToken;
   WhewsSocketClient? _aggregateClient;
@@ -39,6 +48,7 @@ class WhewsService extends BaseSourceService {
   final Map<String, Future<void>> _ashfallFetches = {};
   bool _connectionRequested = false;
   bool _running = false;
+  int _connectionGeneration = 0;
 
   void Function(WeatherAlarm alarm)? onWeatherAlarm;
 
@@ -77,6 +87,11 @@ class WhewsService extends BaseSourceService {
   void _openClients() {
     if (_running || _apiToken.isEmpty) return;
     _running = true;
+    _connectionGeneration++;
+    _states
+      ..clear()
+      ..[aggregateUrl] = WhewsSocketState.connecting
+      ..[ceaAggregateUrl] = WhewsSocketState.connecting;
     onStatusChanged?.call(SourceStatus.connecting);
     _aggregateClient = _createClient(aggregateUrl);
     _ceaClient = _createClient(ceaAggregateUrl);
@@ -96,24 +111,12 @@ class WhewsService extends BaseSourceService {
   void _handleState(String url, WhewsSocketState state) {
     _states[url] = state;
     if (!_running) return;
-    if (_states.values.any((item) => item == WhewsSocketState.connected)) {
-      onStatusChanged?.call(SourceStatus.connected);
-    } else if (_states.values.any(
-      (item) => item == WhewsSocketState.connecting,
-    )) {
-      onStatusChanged?.call(SourceStatus.connecting);
-    } else {
-      onStatusChanged?.call(SourceStatus.error);
-    }
+    onStatusChanged?.call(whewsAggregateStatus(_states.values));
   }
 
-  void _handleMessage(dynamic message) {
+  void _handleMessage(dynamic message, {bool isInitialSnapshot = false}) {
     if (message is List) {
-      for (final item in message) {
-        if (item is Map) {
-          _rememberFrame(Map<String, dynamic>.from(item));
-        }
-      }
+      _handleInitialAggregate(message);
       return;
     }
     if (message is! Map) return;
@@ -121,13 +124,102 @@ class WhewsService extends BaseSourceService {
     final key = _frameKey(frame);
     if (key != null && _seenFrames.contains(key)) return;
     _rememberFrame(frame);
+    _dispatchFrame(frame, isInitialSnapshot: isInitialSnapshot);
+  }
+
+  void _handleInitialAggregate(List<dynamic> message) {
+    final latestTsunamiFrames = <String, Map<String, dynamic>>{};
+    final allTsunamiFrames = <Map<String, dynamic>>[];
+    for (final item in message) {
+      if (item is! Map) continue;
+      final frame = Map<String, dynamic>.from(item);
+      final source = frame['source']?.toString().trim() ?? '';
+      if (!tsunamiSources.contains(source)) {
+        _handleMessage(frame, isInitialSnapshot: true);
+        continue;
+      }
+      allTsunamiFrames.add(frame);
+      final current = latestTsunamiFrames[source];
+      if (current == null || _isLaterTsunamiFrame(frame, current)) {
+        latestTsunamiFrames[source] = frame;
+      }
+    }
+
+    final selectedKeys = latestTsunamiFrames.values
+        .map(_frameKey)
+        .whereType<String>()
+        .toSet();
+    final alreadySeenSelectedKeys = selectedKeys
+        .where(_seenFrames.contains)
+        .toSet();
+    for (final frame in allTsunamiFrames) {
+      _rememberFrame(frame);
+    }
+    for (final frame in latestTsunamiFrames.values) {
+      final key = _frameKey(frame);
+      if (key != null && alreadySeenSelectedKeys.contains(key)) continue;
+      _dispatchFrame(frame, isInitialSnapshot: true);
+    }
+  }
+
+  bool _isLaterTsunamiFrame(
+    Map<String, dynamic> candidate,
+    Map<String, dynamic> current,
+  ) {
+    final candidateTime = _tsunamiFrameInstant(candidate);
+    final currentTime = _tsunamiFrameInstant(current);
+    if (candidateTime != null && currentTime != null) {
+      return !candidateTime.isBefore(currentTime);
+    }
+    if (candidateTime != null) return true;
+    return currentTime == null;
+  }
+
+  DateTime? _tsunamiFrameInstant(Map<String, dynamic> frame) {
+    final source = frame['source']?.toString().trim() ?? '';
+    final rawData = frame['Data'];
+    if (rawData is! Map) return null;
+    final data = Map<String, dynamic>.from(rawData);
+    try {
+      return switch (source) {
+        'tsunami' => TsunamiMessage.parseNmefcTsunami(data).reportInstantUtc,
+        'jma_tsunami' => TsunamiMessage.parseWhewsJmaTsunami(
+          data,
+        ).reportInstantUtc,
+        'ptwc' => TsunamiMessage.parseInternationalTsunami(
+          TsunamiSource.ptwc,
+          data,
+        ).reportInstantUtc,
+        'ntwc' => TsunamiMessage.parseInternationalTsunami(
+          TsunamiSource.ntwc,
+          data,
+        ).reportInstantUtc,
+        'incois' => TsunamiMessage.parseInternationalTsunami(
+          TsunamiSource.incois,
+          data,
+        ).reportInstantUtc,
+        _ => null,
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _dispatchFrame(
+    Map<String, dynamic> frame, {
+    required bool isInitialSnapshot,
+  }) {
     final source = frame['source']?.toString().trim() ?? '';
     final rawData = frame['Data'];
     if (source.isEmpty || rawData is! Map) return;
     final data = Map<String, dynamic>.from(rawData);
     if (source == 'weatheralarm') {
       try {
-        onWeatherAlarm?.call(WeatherAlarm.fromFanJson(data));
+        final alarm = WeatherAlarm.fromFanJson(
+          data,
+          source: WeatherAlarmSource.whews,
+        );
+        if (!alarm.isExpired()) onWeatherAlarm?.call(alarm);
       } catch (_) {
         // Keep malformed weather frames out of the existing alarm pipeline.
       }
@@ -135,7 +227,11 @@ class WhewsService extends BaseSourceService {
     }
     if (source == 'tsunami') {
       try {
-        emitTsunami(TsunamiMessage.parseNmefcTsunami(data));
+        emitTsunami(
+          TsunamiMessage.parseNmefcTsunami(
+            data,
+          ).copyWith(isInitialSnapshot: isInitialSnapshot),
+        );
       } catch (_) {
         // Keep malformed tsunami frames out of the existing tsunami pipeline.
       }
@@ -143,9 +239,32 @@ class WhewsService extends BaseSourceService {
     }
     if (source == 'jma_tsunami') {
       try {
-        emitTsunami(TsunamiMessage.parseWhewsJmaTsunami(data));
+        emitTsunami(
+          TsunamiMessage.parseWhewsJmaTsunami(
+            data,
+          ).copyWith(isInitialSnapshot: isInitialSnapshot),
+        );
       } catch (_) {
         // Keep malformed JMA tsunami frames out of the existing pipeline.
+      }
+      return;
+    }
+    final internationalSource = switch (source) {
+      'ptwc' => TsunamiSource.ptwc,
+      'ntwc' => TsunamiSource.ntwc,
+      'incois' => TsunamiSource.incois,
+      _ => null,
+    };
+    if (internationalSource != null) {
+      try {
+        emitTsunami(
+          TsunamiMessage.parseInternationalTsunami(
+            internationalSource,
+            data,
+          ).copyWith(isInitialSnapshot: isInitialSnapshot),
+        );
+      } catch (_) {
+        // Keep malformed international tsunami frames out of the pipeline.
       }
       return;
     }
@@ -175,19 +294,27 @@ class WhewsService extends BaseSourceService {
     // free in QuakeProvider.
     emitUnified(event);
     if (_ashfallFetches.containsKey(revisionKey)) return;
-    final fetch = _enrichAshfall(event, revisionKey);
+    final generation = _connectionGeneration;
+    final fetch = _enrichAshfall(event, revisionKey, generation);
     _ashfallFetches[revisionKey] = fetch;
-    unawaited(fetch.whenComplete(() => _ashfallFetches.remove(revisionKey)));
+    unawaited(
+      fetch.whenComplete(() {
+        if (identical(_ashfallFetches[revisionKey], fetch)) {
+          _ashfallFetches.remove(revisionKey);
+        }
+      }),
+    );
   }
 
   Future<void> _enrichAshfall(
     UnifiedQuakeData event,
     String revisionKey,
+    int generation,
   ) async {
     final volcano = event.volcanoEvent;
     if (volcano == null) return;
     final windows = await _ashfallForecastService.fetchFor(volcano);
-    if (windows.isEmpty) return;
+    if (windows.isEmpty || generation != _connectionGeneration) return;
     _rememberAshfallWindows(revisionKey, windows);
     emitUnified(
       event.copyWith(volcanoEvent: volcano.copyWith(ashfallWindows: windows)),
@@ -258,12 +385,14 @@ class WhewsService extends BaseSourceService {
   }
 
   void _closeClients() {
+    _connectionGeneration++;
     _running = false;
     _aggregateClient?.dispose();
     _ceaClient?.dispose();
     _aggregateClient = null;
     _ceaClient = null;
     _states.clear();
+    _seenFrames.clear();
     _ashfallFetches.clear();
     _ashfallWindowsByRevision.clear();
   }
@@ -273,4 +402,35 @@ class WhewsService extends BaseSourceService {
     disconnect();
     super.dispose();
   }
+}
+
+@visibleForTesting
+SourceStatus whewsAggregateStatus(Iterable<WhewsSocketState> states) {
+  final values = states.toList(growable: false);
+  if (values.isEmpty) return SourceStatus.disconnected;
+  if (values.every((item) => item == WhewsSocketState.connected)) {
+    return SourceStatus.connected;
+  }
+  final hasLiveSocket = values.any(
+    (item) => item == WhewsSocketState.connected,
+  );
+  final hasFailedSocket = values.any(
+    (item) =>
+        item == WhewsSocketState.error ||
+        item == WhewsSocketState.disconnected ||
+        item == WhewsSocketState.unauthorized,
+  );
+  // One endpoint confirmed while a sibling failed: degraded but still usable.
+  if (hasLiveSocket && hasFailedSocket) {
+    return SourceStatus.connecting;
+  }
+  // A slow sibling still handshaking must not flash yellow once the other
+  // socket is already heartbeat-confirmed.
+  if (hasLiveSocket) {
+    return SourceStatus.connected;
+  }
+  if (values.any((item) => item == WhewsSocketState.connecting)) {
+    return SourceStatus.connecting;
+  }
+  return SourceStatus.error;
 }

@@ -121,9 +121,7 @@
 - ArcGIS 地形
 - ArcGIS 山体阴影
 - DEM 高程数据
-- CartoDB 深色
 - Mapbox Dark
-- OpenStreetMap
 
 ### 地图位置
 
@@ -144,6 +142,7 @@
 - 实况风场
 - 实况降水
 - 全国雷达
+- JMA 雷达
 - 东南沿海及西太卫星云图
 - 中国等高线
 - JMA 火山

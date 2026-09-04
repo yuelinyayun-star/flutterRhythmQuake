@@ -1,0 +1,158 @@
+{
+  "meta": {
+    "name": "平成23年東北地方太平洋沖地震 情報 (震度速報→震源→規模更新)",
+    "refs": [
+      "https://www.jma.go.jp/jma/kishou/hyouka/kondankai/kondankai16/shiryou6.pdf",
+      "https://www.jma.go.jp/jma/press/1103/13b/kaisetsu201103131255.pdf"
+    ],
+    "truth": {
+      "originJst": "2011-03-11 14:46:18",
+      "hypocenter": "三陸沖",
+      "latitude": 38.103,
+      "longitude": 142.86,
+      "depthKm": 24,
+      "maxIntensity": "7",
+      "magnitudeTimeline": [
+        { "at": "14:49", "M": 7.9, "note": "紧急检测/津波第1报依据" },
+        { "at": "16:00", "M": 8.4, "note": "气象厅 M 更新" },
+        { "at": "17:30", "Mw": 8.8, "note": "矩震级" },
+        { "at": "03-13 12:55", "Mw": 9.0, "note": "最终 Mw9.0" }
+      ]
+    }
+  },
+  "reports": [
+    {
+      "code": 551,
+      "cancelled": false,
+      "issue": {
+        "source": "気象庁",
+        "time": "2011/03/11 14:48:30",
+        "type": "ScalePrompt",
+        "correct": "None"
+      },
+      "earthquake": {
+        "time": "2011/03/11 14:46:00",
+        "maxScale": 70,
+        "domesticTsunami": "Checking",
+        "foreignTsunami": "Unknown",
+        "hypocenter": {
+          "name": "",
+          "latitude": -200,
+          "longitude": -200,
+          "depth": -1,
+          "magnitude": -1
+        }
+      },
+      "points": [
+        { "pref": "宮城県", "addr": "栗原市", "isArea": false, "scale": 70 },
+        { "pref": "福島県", "addr": "福島県中通り", "isArea": true, "scale": 60 },
+        { "pref": "茨城県", "addr": "茨城県北部", "isArea": true, "scale": 60 },
+        { "pref": "栃木県", "addr": "栃木県北部", "isArea": true, "scale": 60 },
+        { "pref": "岩手県", "addr": "岩手県沿岸南部", "isArea": true, "scale": 55 },
+        { "pref": "宮城県", "addr": "宮城県北部", "isArea": true, "scale": 55 }
+      ]
+    },
+    {
+      "code": 551,
+      "cancelled": false,
+      "issue": {
+        "source": "気象庁",
+        "time": "2011/03/11 14:49:00",
+        "type": "Destination",
+        "correct": "None"
+      },
+      "earthquake": {
+        "time": "2011/03/11 14:46:00",
+        "maxScale": 70,
+        "domesticTsunami": "MajorWarning",
+        "foreignTsunami": "Unknown",
+        "hypocenter": {
+          "name": "三陸沖",
+          "latitude": 38.1,
+          "longitude": 142.9,
+          "depth": 10,
+          "magnitude": 7.9
+        }
+      },
+      "points": []
+    },
+    {
+      "code": 551,
+      "cancelled": false,
+      "issue": {
+        "source": "気象庁",
+        "time": "2011/03/11 16:00:00",
+        "type": "ScaleAndDestination",
+        "correct": "Unknown"
+      },
+      "earthquake": {
+        "time": "2011/03/11 14:46:00",
+        "maxScale": 70,
+        "domesticTsunami": "MajorWarning",
+        "foreignTsunami": "Unknown",
+        "hypocenter": {
+          "name": "三陸沖",
+          "latitude": 38.1,
+          "longitude": 142.9,
+          "depth": 24,
+          "magnitude": 8.4
+        }
+      },
+      "points": [
+        { "pref": "宮城県", "addr": "栗原市", "isArea": false, "scale": 70 }
+      ]
+    },
+    {
+      "code": 551,
+      "cancelled": false,
+      "issue": {
+        "source": "気象庁",
+        "time": "2011/03/11 17:30:00",
+        "type": "ScaleAndDestination",
+        "correct": "Unknown"
+      },
+      "earthquake": {
+        "time": "2011/03/11 14:46:00",
+        "maxScale": 70,
+        "domesticTsunami": "MajorWarning",
+        "foreignTsunami": "Unknown",
+        "hypocenter": {
+          "name": "三陸沖",
+          "latitude": 38.1,
+          "longitude": 142.9,
+          "depth": 24,
+          "magnitude": 8.8
+        }
+      },
+      "points": [
+        { "pref": "宮城県", "addr": "栗原市", "isArea": false, "scale": 70 }
+      ]
+    },
+    {
+      "code": 551,
+      "cancelled": false,
+      "issue": {
+        "source": "気象庁",
+        "time": "2011/03/13 12:55:00",
+        "type": "ScaleAndDestination",
+        "correct": "Unknown"
+      },
+      "earthquake": {
+        "time": "2011/03/11 14:46:00",
+        "maxScale": 70,
+        "domesticTsunami": "MajorWarning",
+        "foreignTsunami": "Unknown",
+        "hypocenter": {
+          "name": "三陸沖",
+          "latitude": 38.103,
+          "longitude": 142.86,
+          "depth": 24,
+          "magnitude": 9.0
+        }
+      },
+      "points": [
+        { "pref": "宮城県", "addr": "栗原市", "isArea": false, "scale": 70 }
+      ]
+    }
+  ]
+}

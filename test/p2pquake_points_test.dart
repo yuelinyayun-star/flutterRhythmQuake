@@ -149,4 +149,56 @@ void main() {
     expect(scaleAndDestination!.titleText, '震度・震源に関する情報');
     expect(scaleAndDestination.maxIntensity, '4');
   });
+
+  test('P2PQuake investigation preserves known fields and rejects 0,0', () {
+    final event = QuakeEventAdapter.convert('jmaEqlist', {
+      '_id': 'p2p-invalid-location',
+      'earthquake': {
+        'hypocenter': {
+          'name': '調査中',
+          'magnitude': -1,
+          'depth': '不明',
+          'latitude': 0,
+          'longitude': 0,
+        },
+        'maxScale': 40,
+        'time': '2026/08/09 14:05:00',
+      },
+      'issue': {'type': 'ScalePrompt', 'time': '2026/08/09 14:05:18'},
+    }, 2);
+
+    expect(event, isNotNull);
+    expect(event!.hypocenter, isEmpty);
+    expect(event.magnitude, -1);
+    expect(event.depth, -1);
+    expect(event.lat, isNull);
+    expect(event.lng, isNull);
+    expect(event.maxIntensity, '4');
+  });
+
+  test('P2PQuake known hypocenter without coordinates keeps text only', () {
+    final event = QuakeEventAdapter.convert('jmaEqlist', {
+      '_id': 'p2p-text-only-location',
+      'earthquake': {
+        'hypocenter': {
+          'name': '千葉県北東部',
+          'magnitude': 4.2,
+          'depth': 'ごく浅い',
+          'latitude': 0,
+          'longitude': 0,
+        },
+        'maxScale': -1,
+        'time': '2026/08/09 14:05:00',
+      },
+      'issue': {'type': 'Destination', 'time': '2026/08/09 14:05:18'},
+    }, 2);
+
+    expect(event, isNotNull);
+    expect(event!.hypocenter, '千葉県北東部');
+    expect(event.magnitude, 4.2);
+    expect(event.depth, 0);
+    expect(event.lat, isNull);
+    expect(event.lng, isNull);
+    expect(event.maxIntensity, '-');
+  });
 }

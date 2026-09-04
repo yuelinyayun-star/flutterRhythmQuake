@@ -21,6 +21,8 @@ import '../widgets/ui/weather_marquee.dart';
 import '../widgets/ui/settings_page.dart';
 import '../widgets/ui/station_dashboard.dart';
 import '../widgets/ui/cmt_sidebar_panel.dart';
+import '../widgets/ui/jma_lpgm_sidebar_panel.dart';
+import '../widgets/ui/jma_megaquake_sidebar_panel.dart';
 import '../widgets/ui/volcano_sidebar_panel.dart';
 import '../widgets/ui/ui_runtime_flags.dart';
 import '../widgets/ui/ui_scale.dart';
@@ -28,12 +30,20 @@ import '../core/source_estimation/source_estimation_models.dart';
 import '../core/source_estimation/station_event_tracker.dart';
 import '../services/sources/shake_detection_service.dart';
 import '../services/sources/global_quake_service.dart';
+import '../core/local_weather_region.dart';
 import '../services/sources/cma_local_weather_service.dart';
+import '../services/sources/jma_local_weather_service.dart';
+import '../services/sources/jma_lpgm_service.dart';
+import '../services/sources/jma_megaquake_advisory_service.dart';
+import '../services/background_service.dart';
+import '../services/foreground_station_payload.dart';
 import '../services/location_service.dart';
 import '../widgets/map/ka_shindo_marker_style.dart';
 import '../models/tsunami_message.dart';
 import '../models/quake_message.dart';
 import '../models/unified_quake_data.dart';
+import '../models/jma_lpgm_bulletin.dart';
+import '../models/jma_megaquake_advisory.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -50,7 +60,13 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   final ValueNotifier<StationSummaryData> _stationDataNotifier =
       ValueNotifier<StationSummaryData>(StationSummaryData());
   final CmaLocalWeatherService _cmaWeatherService = CmaLocalWeatherService();
+  final JmaLocalWeatherService _jmaWeatherService = JmaLocalWeatherService();
+  final JmaLpgmService _jmaLpgmService = JmaLpgmService();
+  final JmaMegaquakeAdvisoryService _jmaMegaquakeService =
+      JmaMegaquakeAdvisoryService();
+  StreamSubscription<Map<String, dynamic>>? _foregroundAuxSubscription;
   CmaLocalWeatherState _cmaWeatherState = const CmaLocalWeatherState();
+  JmaLocalWeatherState _jmaWeatherState = const JmaLocalWeatherState();
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   bool _showInfoDrawer = true;
   bool _cmaWeatherLayoutEnabled = false;
@@ -62,8 +78,14 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   String _lastSnetInfoSignature = '-';
   String _lastJmaTsunamiInfoSignature = '-';
   String _lastNmefcTsunamiInfoSignature = '-';
+  String _lastPtwcTsunamiInfoSignature = '-';
+  String _lastNtwcTsunamiInfoSignature = '-';
+  String _lastIncoisTsunamiInfoSignature = '-';
   String _lastCmtInfoSignature = '-';
   String _lastVolcanoInfoSignature = '-';
+  String _lastJmaLpgmInfoSignature = '-';
+  String _lastJmaLpgmEventId = '';
+  String _lastJmaMegaquakeInfoSignature = '-';
   String? _pendingInfoPageKey;
   int _infoPageIndex = 0;
   Timer? _infoPageCarousel;
@@ -89,8 +111,14 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   static const String _infoPageSnet = 'snet';
   static const String _infoPageJmaTsunami = 'jmaTsunami';
   static const String _infoPageNmefcTsunami = 'nmefcTsunami';
+  static const String _infoPagePtwcTsunami = 'ptwcTsunami';
+  static const String _infoPageNtwcTsunami = 'ntwcTsunami';
+  static const String _infoPageIncoisTsunami = 'incoisTsunami';
   static const String _infoPageCmt = 'cmt';
   static const String _infoPageVolcano = 'volcano';
+  static const String _infoPageJmaLpgm = 'jmaLpgm';
+  static const String _infoPageJmaMegaquakeNankai = 'jmaMegaquakeNankai';
+  static const String _infoPageJmaMegaquakeHokkaido = 'jmaMegaquakeHokkaido';
 
   double _scale(BuildContext c) {
     return UiScale.factor(c, refWidth: _refWidth, min: 0.55);
@@ -100,8 +128,10 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
 
   double _sideS(double v, BuildContext c) => UiScale.sc(c, v);
 
+  double _sideWidthS(double v, BuildContext c) => UiScale.sidePanelWidth(c, v);
+
   double _infoPanelWidth(BuildContext context) {
-    return _sideS(_stationPanelWidth, context);
+    return _sideWidthS(_stationPanelWidth, context);
   }
 
   double _infoPanelHeightForLayout(BuildContext context) {
@@ -136,8 +166,13 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         data.snetTopStations.isNotEmpty ||
         _activeCmtMapEvent(provider) != null ||
         _activeVolcanoEvent(provider) != null ||
+        _activeJmaLpgmBulletin() != null ||
+        _activeJmaMegaquakeAdvisories().isNotEmpty ||
         (provider.jmaTsunami?.isActive == true) ||
-        (provider.nmefcTsunami?.isActive == true);
+        (provider.nmefcTsunami?.isActive == true) ||
+        (provider.ptwcTsunami?.isActive == true) ||
+        (provider.ntwcTsunami?.isActive == true) ||
+        (provider.incoisTsunami?.isActive == true);
   }
 
   @override
@@ -149,9 +184,21 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       _onSideInfoAutoShowSettingChanged,
     );
     _cmaWeatherService.stateNotifier.addListener(_onCmaWeatherStateChanged);
+    _jmaWeatherService.stateNotifier.addListener(_onJmaWeatherStateChanged);
+    _jmaLpgmService.latestNotifier.addListener(_onJmaLpgmChanged);
     LocationService().positionListenable.addListener(
       _onLocalWeatherPositionChanged,
     );
+    _foregroundAuxSubscription = BackgroundService().onForegroundAuxData.listen(
+      _onForegroundAuxData,
+    );
+    BackgroundService().connectionHostingNotifier.addListener(
+      _onConnectionHostingChanged,
+    );
+    if (!BackgroundService().isAndroidConnectionHostedByForegroundService) {
+      _jmaLpgmService.start();
+      _jmaMegaquakeService.start();
+    }
     // 延迟关联控制器，确保 Provider 已准备好
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<MapStateProvider>().setController(_mapController, this);
@@ -168,7 +215,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     final enabled = !UiScale.isPhone(context);
     if (_cmaWeatherLayoutEnabled == enabled) return;
     _cmaWeatherLayoutEnabled = enabled;
-    _syncCmaWeatherActivity();
+    _syncLocalWeatherActivity();
   }
 
   @override
@@ -180,12 +227,40 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       _onLocalWeatherPositionChanged,
     );
     _cmaWeatherService.stateNotifier.removeListener(_onCmaWeatherStateChanged);
+    _jmaWeatherService.stateNotifier.removeListener(_onJmaWeatherStateChanged);
+    _jmaLpgmService.latestNotifier.removeListener(_onJmaLpgmChanged);
     _cmaWeatherService.dispose();
+    _jmaWeatherService.dispose();
+    _jmaLpgmService.dispose();
+    _jmaMegaquakeService.dispose();
+    _foregroundAuxSubscription?.cancel();
+    BackgroundService().connectionHostingNotifier.removeListener(
+      _onConnectionHostingChanged,
+    );
     _infoPageCarousel?.cancel();
     _niedDetectPageCarousel?.cancel();
     _stationDataNotifier.dispose();
     _notificationService?.dispose();
     super.dispose();
+  }
+
+  void _onJmaLpgmChanged() {
+    if (!mounted) return;
+    final bulletin = _jmaLpgmService.latest;
+    final provider = context.read<QuakeProvider>();
+    if (bulletin == null) {
+      if (_lastJmaLpgmEventId.isNotEmpty) {
+        provider.clearJmaLpgm(_lastJmaLpgmEventId);
+        _lastJmaLpgmEventId = '';
+      }
+      return;
+    }
+    _lastJmaLpgmEventId = bulletin.eventId;
+    if (bulletin.isCanceled || !bulletin.isActive()) {
+      provider.clearJmaLpgm(bulletin.eventId);
+      return;
+    }
+    provider.acceptJmaLpgm(bulletin);
   }
 
   @override
@@ -262,8 +337,21 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                     ignoring: !_showInfoDrawer,
                     child: ValueListenableBuilder<StationSummaryData>(
                       valueListenable: _stationDataNotifier,
-                      builder: (context, data, child) =>
-                          _buildRightInfoDrawer(),
+                      builder: (context, data, child) {
+                        return ValueListenableBuilder<JmaLpgmBulletin?>(
+                          valueListenable: _jmaLpgmService.latestNotifier,
+                          builder: (context, _, child) {
+                            return ValueListenableBuilder<
+                              List<JmaMegaquakeAdvisory>
+                            >(
+                              valueListenable:
+                                  _jmaMegaquakeService.activeNotifier,
+                              builder: (context, _, child) =>
+                                  _buildRightInfoDrawer(),
+                            );
+                          },
+                        );
+                      },
                     ),
                   ),
                 ),
@@ -735,6 +823,9 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       selector: (_, qp) {
         final jma = qp.jmaTsunami;
         final nmefc = qp.nmefcTsunami;
+        final ptwc = qp.ptwcTsunami;
+        final ntwc = qp.ntwcTsunami;
+        final incois = qp.incoisTsunami;
         final cmt = _activeCmtMapEvent(qp);
         final volcano = _activeVolcanoEvent(qp);
         return Object.hash(
@@ -744,6 +835,12 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
           jma?.isActive,
           nmefc?.id,
           nmefc?.isActive,
+          ptwc?.id,
+          ptwc?.isActive,
+          ntwc?.id,
+          ntwc?.isActive,
+          incois?.id,
+          incois?.isActive,
           _cmtInfoSignature(cmt),
           _volcanoInfoSignature(volcano),
         );
@@ -758,6 +855,12 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         final hasJmaTsunami = jmaTsunami != null && jmaTsunami.isActive;
         final nmefc = provider.nmefcTsunami;
         final hasNmefc = nmefc != null && nmefc.isActive;
+        final ptwc = provider.ptwcTsunami;
+        final hasPtwc = ptwc != null && ptwc.isActive;
+        final ntwc = provider.ntwcTsunami;
+        final hasNtwc = ntwc != null && ntwc.isActive;
+        final incois = provider.incoisTsunami;
+        final hasIncois = incois != null && incois.isActive;
         final cmt = _activeCmtMapEvent(provider);
         final volcano = _activeVolcanoEvent(provider);
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -782,6 +885,29 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
               key: _infoPageVolcano,
               child: VolcanoSidebarPanel(
                 event: volcano,
+                scale: (value) => _s(value, context),
+              ),
+            ),
+          );
+        }
+        final jmaLpgm = _activeJmaLpgmBulletin();
+        if (jmaLpgm != null) {
+          mainPages.add(
+            _InfoDrawerPage(
+              key: _infoPageJmaLpgm,
+              child: JmaLpgmSidebarPanel(
+                bulletin: jmaLpgm,
+                scale: (value) => _s(value, context),
+              ),
+            ),
+          );
+        }
+        for (final advisory in _activeJmaMegaquakeAdvisories()) {
+          mainPages.add(
+            _InfoDrawerPage(
+              key: _infoPageKeyForMegaquake(advisory),
+              child: JmaMegaquakeSidebarPanel(
+                advisory: advisory,
                 scale: (value) => _s(value, context),
               ),
             ),
@@ -816,6 +942,30 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
             _InfoDrawerPage(
               key: _infoPageNmefcTsunami,
               child: _buildTsunamiSection(context, nmefc, 'NMEFC'),
+            ),
+          );
+        }
+        if (hasPtwc) {
+          mainPages.add(
+            _InfoDrawerPage(
+              key: _infoPagePtwcTsunami,
+              child: _buildTsunamiSection(context, ptwc!, 'PTWC'),
+            ),
+          );
+        }
+        if (hasNtwc) {
+          mainPages.add(
+            _InfoDrawerPage(
+              key: _infoPageNtwcTsunami,
+              child: _buildTsunamiSection(context, ntwc!, 'NTWC'),
+            ),
+          );
+        }
+        if (hasIncois) {
+          mainPages.add(
+            _InfoDrawerPage(
+              key: _infoPageIncoisTsunami,
+              child: _buildTsunamiSection(context, incois!, 'INCOIS'),
             ),
           );
         }
@@ -1145,7 +1295,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
             '长周期地震动观测 (beta)',
             style: TextStyle(
               color: Colors.white70,
-              fontSize: _s(12, context),
+              fontSize: _s(13, context),
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -1157,9 +1307,9 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
               '最大 SVA: $svaText    最大阶级: $classText',
               style: TextStyle(
                 color: Colors.white.withValues(alpha: 0.9),
-                fontSize: _s(10.5, context),
+                fontSize: _s(11.5, context),
                 fontWeight: FontWeight.w600,
-                height: 1.2,
+                height: 1.22,
               ),
               maxLines: 1,
               overflow: TextOverflow.visible,
@@ -1171,6 +1321,47 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildWeatherPlaceholder(BuildContext context) {
+    final position = LocationService().currentPosition;
+    if (position == null) {
+      return _buildWeatherStatus(context, '等待定位信息');
+    }
+    if (LocalWeatherRegion.usesJapan(position.latitude, position.longitude)) {
+      return _buildJmaWeatherPanel(context);
+    }
+    if (LocalWeatherRegion.usesChina(position.latitude, position.longitude)) {
+      return _buildCmaWeatherPanel(context);
+    }
+    return _buildWeatherStatus(context, '当地气象暂未覆盖');
+  }
+
+  Widget _buildWeatherStatus(BuildContext context, String message) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          '气象实况',
+          style: TextStyle(
+            color: Colors.white70,
+            fontSize: _s(13, context),
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        SizedBox(height: _s(4, context)),
+        Text(
+          message,
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.55),
+            fontSize: _s(11.5, context),
+            fontWeight: FontWeight.w600,
+            height: 1.2,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCmaWeatherPanel(BuildContext context) {
     final observation = _cmaWeatherState.observation;
     if (observation == null) {
       final message = switch (_cmaWeatherState.status) {
@@ -1180,30 +1371,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         CmaLocalWeatherStatus.failed => '气象实况暂不可用',
         CmaLocalWeatherStatus.idle || CmaLocalWeatherStatus.ready => '等待气象实况',
       };
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            '气象实况',
-            style: TextStyle(
-              color: Colors.white70,
-              fontSize: _s(12, context),
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          SizedBox(height: _s(4, context)),
-          Text(
-            message,
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.55),
-              fontSize: _s(10.5, context),
-              fontWeight: FontWeight.w600,
-              height: 1.2,
-            ),
-          ),
-        ],
-      );
+      return _buildWeatherStatus(context, message);
     }
 
     final stationText = _cmaWeatherStationText(observation);
@@ -1217,81 +1385,198 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
             color: Colors.white.withValues(alpha: 0.96),
-            fontSize: _s(10.8, context),
+            fontSize: _s(11.8, context),
             fontWeight: FontWeight.w800,
           ),
         ),
         SizedBox(height: _s(3, context)),
         Text(
-          '实况：',
+          observation.observedAt == null
+              ? '实况：'
+              : '实况：${_cmaWeatherTime(observation.observedAt)}',
           style: TextStyle(
             color: Colors.white.withValues(alpha: 0.9),
-            fontSize: _s(10.5, context),
+            fontSize: _s(11.5, context),
             fontWeight: FontWeight.w700,
-            height: 1.18,
+            height: 1.2,
           ),
         ),
         if (_cmaHasNumber(observation.temperature))
           _buildCmaWeatherRow(
             context,
             '瞬时温度',
-            _cmaWeatherTimedNumber(
-              observation.temperature,
-              '℃',
-              observation.observedAt,
-            ),
+            _cmaWeatherNumber(observation.temperature, '℃'),
+          ),
+        if (_cmaHasNumber(observation.feelsLike))
+          _buildCmaWeatherRow(
+            context,
+            '体感温度',
+            _cmaWeatherNumber(observation.feelsLike, '℃'),
           ),
         if (_cmaHasNumber(observation.pressure))
           _buildCmaWeatherRow(
             context,
             '地面气压',
-            _cmaWeatherTimedNumber(
-              observation.pressure,
-              'hPa',
-              observation.observedAt,
-            ),
+            _cmaWeatherNumber(observation.pressure, 'hPa'),
           ),
         if (_cmaHasNumber(observation.humidity))
           _buildCmaWeatherRow(
             context,
             '相对湿度',
-            _cmaWeatherTimedNumber(
-              observation.humidity,
-              '%',
-              observation.observedAt,
-              digits: 0,
-            ),
+            _cmaWeatherNumber(observation.humidity, '%', digits: 0),
           ),
         if (_cmaHasWindDirection(observation))
           _buildCmaWeatherRow(
             context,
             '2分钟平均风向',
-            _cmaTimedText(
-              _cmaWindDirectionText(observation),
-              observation.observedAt,
-            ),
+            _cmaWindDirectionText(observation),
           ),
-        if (_cmaHasNumber(observation.windSpeed))
+        if (_cmaHasNumber(observation.windSpeed) ||
+            observation.windScale.trim().isNotEmpty)
           _buildCmaWeatherRow(
             context,
             '2分钟平均风速',
-            _cmaWeatherTimedNumber(
-              observation.windSpeed,
-              'm/s',
-              observation.observedAt,
-            ),
+            _cmaWindSpeedText(observation),
           ),
         if (_cmaHasNumber(observation.precipitation))
           _buildCmaWeatherRow(
             context,
             '1小时降水',
-            _cmaWeatherTimedNumber(
-              observation.precipitation,
-              'mm',
-              observation.observedAt,
-            ),
+            _cmaWeatherNumber(observation.precipitation, 'mm'),
           ),
+        for (final alarm in observation.alarms)
+          _buildCmaAlarmRow(context, alarm.displayText, _cmaAlarmColor(alarm)),
       ],
+    );
+  }
+
+  Widget _buildJmaWeatherPanel(BuildContext context) {
+    final observation = _jmaWeatherState.observation;
+    if (observation == null) {
+      final message = switch (_jmaWeatherState.status) {
+        JmaLocalWeatherStatus.noLocation => '等待定位信息',
+        JmaLocalWeatherStatus.resolvingStation => '正在查找附近观测站...',
+        JmaLocalWeatherStatus.loading => '正在获取气象实况...',
+        JmaLocalWeatherStatus.failed => '气象实况暂不可用',
+        JmaLocalWeatherStatus.idle || JmaLocalWeatherStatus.ready => '等待气象实况',
+      };
+      return _buildWeatherStatus(context, message);
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          '站点：${observation.station.name}（${observation.station.id}）',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.96),
+            fontSize: _s(11.8, context),
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        SizedBox(height: _s(3, context)),
+        Text(
+          observation.observedAt == null
+              ? '实况：'
+              : '实况：${_cmaWeatherTime(observation.observedAt)} JST',
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.9),
+            fontSize: _s(11.5, context),
+            fontWeight: FontWeight.w700,
+            height: 1.2,
+          ),
+        ),
+        if (_cmaHasNumber(observation.temperature))
+          _buildCmaWeatherRow(
+            context,
+            '瞬时温度',
+            _cmaWeatherNumber(observation.temperature, '℃'),
+          ),
+        if (_cmaHasNumber(observation.pressure))
+          _buildCmaWeatherRow(
+            context,
+            '地面气压',
+            _cmaWeatherNumber(observation.pressure, 'hPa'),
+          ),
+        if (_cmaHasNumber(observation.humidity))
+          _buildCmaWeatherRow(
+            context,
+            '相对湿度',
+            _cmaWeatherNumber(observation.humidity, '%', digits: 0),
+          ),
+        if (observation.windDirection.trim().isNotEmpty ||
+            _cmaHasNumber(observation.windDirectionDegree))
+          _buildCmaWeatherRow(
+            context,
+            '风向',
+            _jmaWindDirectionText(observation),
+          ),
+        if (_cmaHasNumber(observation.windSpeed))
+          _buildCmaWeatherRow(
+            context,
+            '风速',
+            _cmaWeatherNumber(observation.windSpeed, 'm/s'),
+          ),
+        if (_cmaHasNumber(observation.precipitation))
+          _buildCmaWeatherRow(
+            context,
+            '1小时降水',
+            _cmaWeatherNumber(observation.precipitation, 'mm'),
+          ),
+        if (_cmaHasNumber(observation.precipitation10m) &&
+            observation.precipitation10m! > 0)
+          _buildCmaWeatherRow(
+            context,
+            '10分钟降水',
+            _cmaWeatherNumber(observation.precipitation10m, 'mm'),
+          ),
+        if (_cmaHasNumber(observation.visibility))
+          _buildCmaWeatherRow(
+            context,
+            '能见度',
+            _cmaWeatherNumber(observation.visibility, 'km'),
+          ),
+        if (observation.forecastSummary.trim().isNotEmpty)
+          _buildCmaWeatherRow(context, '预报', observation.forecastSummary),
+        for (final alarm in observation.alarms)
+          _buildCmaAlarmRow(context, alarm.displayText, _jmaAlarmColor(alarm)),
+      ],
+    );
+  }
+
+  Widget _buildCmaAlarmRow(
+    BuildContext context,
+    String value,
+    Color valueColor,
+  ) {
+    final baseStyle = TextStyle(
+      fontSize: _s(11.3, context),
+      fontWeight: FontWeight.w600,
+      height: 1.22,
+    );
+    return Padding(
+      padding: EdgeInsets.only(top: _s(2, context)),
+      child: Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(
+              text: '预警：',
+              style: baseStyle.copyWith(
+                color: Colors.white.withValues(alpha: 0.86),
+              ),
+            ),
+            TextSpan(
+              text: value,
+              style: baseStyle.copyWith(color: valueColor),
+            ),
+          ],
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
     );
   }
 
@@ -1302,7 +1587,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     bool muted = false,
   }) {
     return Padding(
-      padding: EdgeInsets.only(top: _s(1.5, context)),
+      padding: EdgeInsets.only(top: _s(2, context)),
       child: Text(
         '$label：$value',
         maxLines: 1,
@@ -1311,12 +1596,50 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
           color: muted
               ? Colors.white.withValues(alpha: 0.55)
               : Colors.white.withValues(alpha: 0.86),
-          fontSize: _s(10.3, context),
+          fontSize: _s(11.3, context),
           fontWeight: FontWeight.w600,
-          height: 1.18,
+          height: 1.22,
         ),
       ),
     );
+  }
+
+  Color _cmaAlarmColor(CmaWeatherAlarm alarm) {
+    switch (alarm.severity.trim().toUpperCase()) {
+      case 'RED':
+        return const Color(0xFFE74C3C);
+      case 'ORANGE':
+        return const Color(0xFFE67E22);
+      case 'YELLOW':
+        return const Color(0xFFEBC033);
+      case 'BLUE':
+        return const Color(0xFF3498DB);
+    }
+    switch (alarm.signalLevel.trim()) {
+      case '红色':
+        return const Color(0xFFE74C3C);
+      case '橙色':
+        return const Color(0xFFE67E22);
+      case '黄色':
+        return const Color(0xFFEBC033);
+      case '蓝色':
+        return const Color(0xFF3498DB);
+      default:
+        return Colors.white.withValues(alpha: 0.86);
+    }
+  }
+
+  Color _jmaAlarmColor(JmaWeatherAlarm alarm) {
+    switch (alarm.severityRank) {
+      case 4:
+        return const Color(0xFFAF0000);
+      case 3:
+        return const Color(0xFFE74C3C);
+      case 2:
+        return const Color(0xFFEBC033);
+      default:
+        return Colors.white.withValues(alpha: 0.86);
+    }
   }
 
   String _cmaWeatherStationText(CmaLocalWeatherObservation observation) {
@@ -1340,19 +1663,14 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     return '${value.toStringAsFixed(digits)} $unit';
   }
 
-  String _cmaWeatherTimedNumber(
-    double? value,
-    String unit,
-    DateTime? time, {
-    int digits = 1,
-  }) {
-    if (value == null || !value.isFinite) return '--';
-    return _cmaTimedText(_cmaWeatherNumber(value, unit, digits: digits), time);
-  }
-
-  String _cmaTimedText(String value, DateTime? time) {
-    if (value == '--' || time == null) return value;
-    return '$value（${_cmaWeatherTime(time)}）';
+  String _cmaWindSpeedText(CmaLocalWeatherObservation observation) {
+    final speed = _cmaHasNumber(observation.windSpeed)
+        ? _cmaWeatherNumber(observation.windSpeed, 'm/s')
+        : '';
+    final scale = observation.windScale.trim();
+    if (speed.isEmpty) return scale;
+    if (scale.isEmpty) return speed;
+    return '$speed（$scale）';
   }
 
   String _cmaWindDirectionText(CmaLocalWeatherObservation observation) {
@@ -1363,6 +1681,37 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     final degree = observation.windDirectionDegree;
     if (degree == null || !degree.isFinite) return label;
     return '$label(${_cmaWindAbbreviationFromDegree(degree)})';
+  }
+
+  String _jmaWindDirectionText(JmaLocalWeatherObservation observation) {
+    final direction = observation.windDirection.trim();
+    final label = direction.isEmpty ? '--' : direction;
+    final abbreviation = _jmaWindDirectionAbbreviation(direction);
+    if (abbreviation != null) return '$label($abbreviation)';
+    final degree = observation.windDirectionDegree;
+    if (degree == null || !degree.isFinite) return label;
+    return '$label(${_cmaWindAbbreviationFromDegree(degree)})';
+  }
+
+  String? _jmaWindDirectionAbbreviation(String direction) {
+    return const {
+      '北': 'N',
+      '北北东': 'NNE',
+      '北东': 'NE',
+      '东北东': 'ENE',
+      '东': 'E',
+      '东南东': 'ESE',
+      '南东': 'SE',
+      '南南东': 'SSE',
+      '南': 'S',
+      '南南西': 'SSW',
+      '南西': 'SW',
+      '西南西': 'WSW',
+      '西': 'W',
+      '西北西': 'WNW',
+      '北西': 'NW',
+      '北北西': 'NNW',
+    }[direction];
   }
 
   String? _cmaWindDirectionAbbreviation(String direction) {
@@ -1688,7 +2037,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       _sideInfoAutoShowBeta = enabled;
       _showInfoDrawer = enabled;
     });
-    _syncCmaWeatherActivity();
+    _syncLocalWeatherActivity();
     UiRuntimeFlags.sideInfoAutoShowBetaNotifier.value = enabled;
   }
 
@@ -1700,14 +2049,80 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       _sideInfoAutoShowBeta = enabled;
       _showInfoDrawer = enabled;
     });
-    _syncCmaWeatherActivity();
+    _syncLocalWeatherActivity();
   }
 
   void _onCmaWeatherStateChanged() {
     if (!mounted) return;
+    final state = _cmaWeatherService.stateNotifier.value;
     setState(() {
-      _cmaWeatherState = _cmaWeatherService.stateNotifier.value;
+      _cmaWeatherState = state;
     });
+    context.read<QuakeProvider>().syncCmaStationWeatherAlarms(
+      state.observation,
+    );
+  }
+
+  void _onForegroundAuxData(Map<String, dynamic> payload) {
+    if (!mounted ||
+        !BackgroundService().isAndroidConnectionHostedByForegroundService) {
+      return;
+    }
+    switch (payload['kind']) {
+      case 'cmaWeather':
+        _cmaWeatherService.ingestExternalState(
+          ForegroundStationPayload.decodeCmaWeather(payload),
+        );
+      case 'jmaWeather':
+        _jmaWeatherService.ingestExternalState(
+          ForegroundStationPayload.decodeJmaWeather(payload),
+        );
+      case 'jmaLpgm':
+        final raw = payload['bulletin'];
+        _jmaLpgmService.ingestExternal(
+          raw is Map
+              ? JmaLpgmBulletin.fromMap(Map<dynamic, dynamic>.from(raw))
+              : null,
+        );
+      case 'jmaMegaquake':
+        final raw = payload['items'];
+        if (raw is! List) return;
+        _jmaMegaquakeService.ingestExternal(
+          raw
+              .whereType<Map>()
+              .map(
+                (item) => JmaMegaquakeAdvisory.fromMap(
+                  Map<dynamic, dynamic>.from(item),
+                ),
+              )
+              .toList(growable: false),
+        );
+    }
+  }
+
+  void _onConnectionHostingChanged() {
+    if (!mounted) return;
+    final hosted =
+        BackgroundService().isAndroidConnectionHostedByForegroundService;
+    if (hosted) {
+      _jmaLpgmService.stop();
+      _jmaMegaquakeService.stop();
+    } else {
+      _jmaLpgmService.start();
+      _jmaMegaquakeService.start();
+    }
+    _syncLocalWeatherActivity();
+  }
+
+  void _onJmaWeatherStateChanged() {
+    if (!mounted) return;
+    final state = _jmaWeatherService.stateNotifier.value;
+    setState(() {
+      _jmaWeatherState = state;
+    });
+    context.read<QuakeProvider>().syncJmaStationWeatherAlarms(
+      state.observation,
+    );
   }
 
   void _onLocalWeatherPositionChanged() {
@@ -1715,21 +2130,36 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     final position = LocationService().currentPosition;
     if (position == null) {
       _cmaWeatherService.clearLocation();
+      _jmaWeatherService.clearLocation();
       return;
     }
-    unawaited(
-      _cmaWeatherService.startForLocation(
-        position.latitude,
-        position.longitude,
-      ),
-    );
+    final lat = position.latitude;
+    final lng = position.longitude;
+    if (LocalWeatherRegion.usesJapan(lat, lng)) {
+      _cmaWeatherService.pause();
+      unawaited(_jmaWeatherService.startForLocation(lat, lng));
+      return;
+    }
+    if (LocalWeatherRegion.usesChina(lat, lng)) {
+      _jmaWeatherService.pause();
+      unawaited(_cmaWeatherService.startForLocation(lat, lng));
+      return;
+    }
+    _cmaWeatherService.pause();
+    _jmaWeatherService.pause();
   }
 
-  void _syncCmaWeatherActivity() {
+  void _syncLocalWeatherActivity() {
+    if (BackgroundService().isAndroidConnectionHostedByForegroundService) {
+      _cmaWeatherService.pause();
+      _jmaWeatherService.pause();
+      return;
+    }
     if (!_sideInfoSettingLoaded ||
         !_cmaWeatherLayoutEnabled ||
         !_showInfoDrawer) {
       _cmaWeatherService.pause();
+      _jmaWeatherService.pause();
       return;
     }
     _onLocalWeatherPositionChanged();
@@ -1888,6 +2318,34 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     ].join('|');
   }
 
+  JmaLpgmBulletin? _activeJmaLpgmBulletin() {
+    final bulletin = _jmaLpgmService.latest;
+    if (bulletin == null || !bulletin.isActive()) return null;
+    return bulletin;
+  }
+
+  String _jmaLpgmInfoSignature(JmaLpgmBulletin? bulletin) {
+    return bulletin?.signature ?? '-';
+  }
+
+  List<JmaMegaquakeAdvisory> _activeJmaMegaquakeAdvisories() {
+    return _jmaMegaquakeService.active
+        .where((advisory) => advisory.isActive())
+        .toList();
+  }
+
+  String _jmaMegaquakeInfoSignature(List<JmaMegaquakeAdvisory> advisories) {
+    if (advisories.isEmpty) return '-';
+    return advisories.map((advisory) => advisory.signature).join('||');
+  }
+
+  String _infoPageKeyForMegaquake(JmaMegaquakeAdvisory advisory) {
+    return switch (advisory.family) {
+      JmaMegaquakeFamily.nankai => _infoPageJmaMegaquakeNankai,
+      JmaMegaquakeFamily.hokkaidoSanriku => _infoPageJmaMegaquakeHokkaido,
+    };
+  }
+
   void _syncInfoCarouselPages(List<_InfoDrawerPage> pages) {
     final pageKeys = pages.map((p) => p.key).toList();
     final keysSignature = pageKeys.join('|');
@@ -1979,14 +2437,26 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     final snetTriggered = data.snetTopStations.isNotEmpty;
     final jmaTsunami = provider.jmaTsunami;
     final nmefcTsunami = provider.nmefcTsunami;
+    final ptwcTsunami = provider.ptwcTsunami;
+    final ntwcTsunami = provider.ntwcTsunami;
+    final incoisTsunami = provider.incoisTsunami;
     final jmaTsunamiTriggered = jmaTsunami != null && jmaTsunami.isActive;
     final nmefcTsunamiTriggered = nmefcTsunami?.isActive == true;
+    final ptwcTsunamiTriggered = ptwcTsunami?.isActive == true;
+    final ntwcTsunamiTriggered = ntwcTsunami?.isActive == true;
+    final incoisTsunamiTriggered = incoisTsunami?.isActive == true;
     final cmt = _activeCmtMapEvent(provider);
     final cmtSignature = _cmtInfoSignature(cmt);
     final cmtTriggered = cmt != null;
     final volcano = _activeVolcanoEvent(provider);
     final volcanoSignature = _volcanoInfoSignature(volcano);
     final volcanoTriggered = volcano != null;
+    final jmaLpgm = _activeJmaLpgmBulletin();
+    final jmaLpgmSignature = _jmaLpgmInfoSignature(jmaLpgm);
+    final jmaLpgmTriggered = jmaLpgm != null;
+    final megaquakeAdvisories = _activeJmaMegaquakeAdvisories();
+    final megaquakeSignature = _jmaMegaquakeInfoSignature(megaquakeAdvisories);
+    final megaquakeTriggered = megaquakeAdvisories.isNotEmpty;
     final shouldShow = _hasAutoInfoContent(data, provider);
 
     if (!shouldShow) {
@@ -1995,8 +2465,13 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       _lastSnetInfoSignature = '-';
       _lastJmaTsunamiInfoSignature = '-';
       _lastNmefcTsunamiInfoSignature = '-';
+      _lastPtwcTsunamiInfoSignature = '-';
+      _lastNtwcTsunamiInfoSignature = '-';
+      _lastIncoisTsunamiInfoSignature = '-';
       _lastCmtInfoSignature = '-';
       _lastVolcanoInfoSignature = '-';
+      _lastJmaLpgmInfoSignature = '-';
+      _lastJmaMegaquakeInfoSignature = '-';
       _pendingInfoPageKey = null;
       return;
     }
@@ -2019,8 +2494,17 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     final nmefcTsunamiSignature = nmefcTsunamiTriggered
         ? '${nmefcTsunami!.id}|${nmefcTsunami.status}|${nmefcTsunami.areas.length}'
         : '-';
+    final ptwcTsunamiSignature = ptwcTsunamiTriggered
+        ? '${ptwcTsunami!.id}|${ptwcTsunami.status}|${ptwcTsunami.grade.name}'
+        : '-';
+    final ntwcTsunamiSignature = ntwcTsunamiTriggered
+        ? '${ntwcTsunami!.id}|${ntwcTsunami.status}|${ntwcTsunami.grade.name}'
+        : '-';
+    final incoisTsunamiSignature = incoisTsunamiTriggered
+        ? '${incoisTsunami!.id}|${incoisTsunami.status}|${incoisTsunami.grade.name}'
+        : '-';
     final signature =
-        '$niedSignature|$snetSignature|$jmaTsunamiSignature|$nmefcTsunamiSignature|$cmtSignature|$volcanoSignature';
+        '$niedSignature|$snetSignature|$jmaTsunamiSignature|$nmefcTsunamiSignature|$ptwcTsunamiSignature|$ntwcTsunamiSignature|$incoisTsunamiSignature|$cmtSignature|$volcanoSignature|$jmaLpgmSignature|$megaquakeSignature';
     if (signature == _lastAutoTriggerSignature) {
       return;
     }
@@ -2041,18 +2525,42 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         nmefcTsunamiSignature != _lastNmefcTsunamiInfoSignature) {
       focusPageKey = _infoPageNmefcTsunami;
     }
+    if (ptwcTsunamiTriggered &&
+        ptwcTsunamiSignature != _lastPtwcTsunamiInfoSignature) {
+      focusPageKey = _infoPagePtwcTsunami;
+    }
+    if (ntwcTsunamiTriggered &&
+        ntwcTsunamiSignature != _lastNtwcTsunamiInfoSignature) {
+      focusPageKey = _infoPageNtwcTsunami;
+    }
+    if (incoisTsunamiTriggered &&
+        incoisTsunamiSignature != _lastIncoisTsunamiInfoSignature) {
+      focusPageKey = _infoPageIncoisTsunami;
+    }
     if (cmtTriggered && cmtSignature != _lastCmtInfoSignature) {
       focusPageKey = _infoPageCmt;
     }
     if (volcanoTriggered && volcanoSignature != _lastVolcanoInfoSignature) {
       focusPageKey = _infoPageVolcano;
     }
+    if (jmaLpgmTriggered && jmaLpgmSignature != _lastJmaLpgmInfoSignature) {
+      focusPageKey = _infoPageJmaLpgm;
+    }
+    if (megaquakeTriggered &&
+        megaquakeSignature != _lastJmaMegaquakeInfoSignature) {
+      focusPageKey = _infoPageKeyForMegaquake(megaquakeAdvisories.first);
+    }
     _lastNiedInfoSignature = niedSignature;
     _lastSnetInfoSignature = snetSignature;
     _lastJmaTsunamiInfoSignature = jmaTsunamiSignature;
     _lastNmefcTsunamiInfoSignature = nmefcTsunamiSignature;
+    _lastPtwcTsunamiInfoSignature = ptwcTsunamiSignature;
+    _lastNtwcTsunamiInfoSignature = ntwcTsunamiSignature;
+    _lastIncoisTsunamiInfoSignature = incoisTsunamiSignature;
     _lastCmtInfoSignature = cmtSignature;
     _lastVolcanoInfoSignature = volcanoSignature;
+    _lastJmaLpgmInfoSignature = jmaLpgmSignature;
+    _lastJmaMegaquakeInfoSignature = megaquakeSignature;
 
     if (focusPageKey != null && _pendingInfoPageKey != focusPageKey) {
       setState(() {
@@ -2324,21 +2832,28 @@ class _NiedHypCurveOverlayState extends State<_NiedHypCurveOverlay> {
   String _signature = '';
   int _requestSerial = 0;
   bool _isActive = true;
+  bool _trackingEventUpdates = false;
+
+  bool get _isPanelVisible =>
+      UiRuntimeFlags.niedHypCurvePanelVisibleNotifier.value;
 
   @override
   void initState() {
     super.initState();
-    StationEventTracker.instance.currentNiedEvent.addListener(_scheduleUpdate);
     UiRuntimeFlags.niedHypCurvePanelVisibleNotifier.addListener(
       _onVisibilityChanged,
     );
-    _scheduleUpdate();
+    _syncEventTracking();
+    if (_isPanelVisible) {
+      _scheduleUpdate();
+    }
   }
 
   @override
   void deactivate() {
     _isActive = false;
     _requestSerial++;
+    _syncEventTracking();
     super.deactivate();
   }
 
@@ -2346,39 +2861,56 @@ class _NiedHypCurveOverlayState extends State<_NiedHypCurveOverlay> {
   void activate() {
     super.activate();
     _isActive = true;
-    _signature = '';
-    _scheduleUpdate();
+    _syncEventTracking();
+    if (_isPanelVisible) {
+      _signature = '';
+      _scheduleUpdate();
+    }
   }
 
   @override
   void dispose() {
     _isActive = false;
     _requestSerial++;
-    StationEventTracker.instance.currentNiedEvent.removeListener(
-      _scheduleUpdate,
-    );
+    _syncEventTracking();
     UiRuntimeFlags.niedHypCurvePanelVisibleNotifier.removeListener(
       _onVisibilityChanged,
     );
     super.dispose();
   }
 
+  void _syncEventTracking() {
+    final shouldTrack = mounted && _isActive && _isPanelVisible;
+    if (shouldTrack && !_trackingEventUpdates) {
+      StationEventTracker.instance.currentNiedEvent.addListener(
+        _scheduleUpdate,
+      );
+      _trackingEventUpdates = true;
+    } else if (!shouldTrack && _trackingEventUpdates) {
+      StationEventTracker.instance.currentNiedEvent.removeListener(
+        _scheduleUpdate,
+      );
+      _trackingEventUpdates = false;
+    }
+  }
+
   void _onVisibilityChanged() {
-    if (!mounted || !_isActive) return;
+    if (!mounted) return;
     _requestSerial++;
-    if (UiRuntimeFlags.niedHypCurvePanelVisibleNotifier.value) {
+    _syncEventTracking();
+    if (_isPanelVisible) {
       _signature = '';
       setState(() {});
       _scheduleUpdate();
       return;
     }
-    setState(() {});
+    if (_panels.isNotEmpty) {
+      setState(() => _panels = const []);
+    }
   }
 
   void _scheduleUpdate() {
-    if (!mounted ||
-        !_isActive ||
-        !UiRuntimeFlags.niedHypCurvePanelVisibleNotifier.value) {
+    if (!mounted || !_isActive || !_isPanelVisible) {
       return;
     }
     final event = StationEventTracker.instance.currentNiedEvent.value;
@@ -2404,14 +2936,25 @@ class _NiedHypCurveOverlayState extends State<_NiedHypCurveOverlay> {
       return;
     }
     compute<List<Object?>, List<Map<String, Object?>>>(
-      _prepareNiedHypCurvePayload,
-      rawPayload,
-    ).then((payload) {
-      if (!mounted || !_isActive || serial != _requestSerial) return;
-      setState(() {
-        _panels = _NiedHypCurvePanelData.fromPrepared(payload);
-      });
-    });
+          _prepareNiedHypCurvePayload,
+          rawPayload,
+        )
+        .then((payload) {
+          if (!mounted || !_isActive || serial != _requestSerial) return;
+          setState(() {
+            _panels = _NiedHypCurvePanelData.fromPrepared(payload);
+          });
+        })
+        .catchError((Object error, StackTrace stack) {
+          FlutterError.reportError(
+            FlutterErrorDetails(
+              exception: error,
+              stack: stack,
+              library: 'NiedHypCurveOverlay',
+              context: ErrorDescription('while preparing curve payload'),
+            ),
+          );
+        });
   }
 
   static String _curveSignature(SeismicActiveEvent? event) {
@@ -2449,8 +2992,7 @@ class _NiedHypCurveOverlayState extends State<_NiedHypCurveOverlay> {
 
   @override
   Widget build(BuildContext context) {
-    if (!UiRuntimeFlags.niedHypCurvePanelVisibleNotifier.value ||
-        _panels.isEmpty) {
+    if (!_isPanelVisible || _panels.isEmpty) {
       return const SizedBox.shrink();
     }
     final scale = UiScale.compact(context);

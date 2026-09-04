@@ -25,18 +25,18 @@ void main() {
       expect(policy['parametersTuned'], isFalse);
       expect(policy['suppressionApplied'], isFalse);
 
-      final scoreDef =
-          (report['scoreDefinition'] as Map).cast<String, Object?>();
+      final scoreDef = (report['scoreDefinition'] as Map)
+          .cast<String, Object?>();
       expect(scoreDef['localMismatchRamp'], isA<String>());
       expect(scoreDef['adjustedScore'], isA<String>());
 
-      final transfer =
-          (report['validationAnchoredBandTransfer'] as Map).cast<String, Object?>();
+      final transfer = (report['validationAnchoredBandTransfer'] as Map)
+          .cast<String, Object?>();
       expect(transfer['base'], isA<Map>());
       expect(transfer['adjusted'], isA<Map>());
 
-      final monotonicity =
-          (report['monotonicitySummary'] as Map).cast<String, Object?>();
+      final monotonicity = (report['monotonicitySummary'] as Map)
+          .cast<String, Object?>();
       expect(monotonicity['base'], isA<Map>());
       expect(monotonicity['adjusted'], isA<Map>());
       expect(report['comparisonSummary'], isA<Map>());
@@ -59,4 +59,3 @@ void main() {
     timeout: const Timeout(Duration(minutes: 8)),
   );
 }
-

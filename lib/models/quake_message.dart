@@ -169,6 +169,15 @@ enum QuakeSourceType {
   /// PHIVOLCS - 菲律宾火山与地震研究所
   phivolcs,
 
+  /// SGC - 哥伦比亚地质局
+  sgc,
+
+  /// GA - 澳大利亚地质局 (Geoscience Australia)
+  ga,
+
+  /// CENAIS - 古巴国家地震研究中心
+  cenais,
+
   /// CENC 烈度速报
   ///
   /// 中国地震台网中心发布的仪器烈度速报数据。
@@ -207,6 +216,12 @@ enum QuakeSourceType {
   /// 防災科学技術研究所 Hi-net AQUA 系统，震后约100-600秒自动发布。
   /// 目录页包含完整 CMT 参数（断层面参数、矩心深度、Mw）。
   hinetAquaCmt,
+
+  /// 尚未做专门适配的聚合源。
+  ///
+  /// 标题和角标直接使用报文里的机构字段与 API 字段，
+  /// 不再回落到中国地震台网 / FAN 等默认文案。
+  unadapted,
 }
 
 /// QuakeSourceType 扩展方法
@@ -224,7 +239,7 @@ extension QuakeSourceTypeExtension on QuakeSourceType {
       case QuakeSourceType.nied:
         return 'NIED (日本)';
       case QuakeSourceType.p2p:
-        return 'P2P 预警网';
+        return 'P2PQuake';
       case QuakeSourceType.cenc:
         return '中国地震台网 (CENC)';
       case QuakeSourceType.usgs:
@@ -276,7 +291,7 @@ extension QuakeSourceTypeExtension on QuakeSourceType {
       case QuakeSourceType.bmkg:
         return '印度尼西亚气象气候与地球物理局';
       case QuakeSourceType.geonet:
-        return '新西兰 GeoNet';
+        return '新西兰地球科学局';
       case QuakeSourceType.tmd:
         return '泰国气象局';
       case QuakeSourceType.ingv:
@@ -287,6 +302,12 @@ extension QuakeSourceTypeExtension on QuakeSourceType {
         return '马来西亚气象局';
       case QuakeSourceType.phivolcs:
         return '菲律宾火山与地震研究所';
+      case QuakeSourceType.sgc:
+        return '哥伦比亚地质局';
+      case QuakeSourceType.ga:
+        return '澳大利亚地质局';
+      case QuakeSourceType.cenais:
+        return '古巴国家地震研究中心';
       case QuakeSourceType.cencIr:
         return '中国地震台网烈度速报';
       case QuakeSourceType.fssnCmt:
@@ -301,6 +322,8 @@ extension QuakeSourceTypeExtension on QuakeSourceType {
         return 'F-net 震源机制解';
       case QuakeSourceType.hinetAquaCmt:
         return 'Hi-net AQUA 震源机制解';
+      case QuakeSourceType.unadapted:
+        return '地震信息';
     }
   }
 
@@ -367,7 +390,7 @@ extension QuakeSourceTypeExtension on QuakeSourceType {
       case QuakeSourceType.bmkg:
         return '印度尼西亚气象气候与地球物理局 地震情报';
       case QuakeSourceType.geonet:
-        return '新西兰 GeoNet 地震情报';
+        return '新西兰地球科学局地震信息';
       case QuakeSourceType.tmd:
         return '泰国气象局 地震情报';
       case QuakeSourceType.ingv:
@@ -378,6 +401,12 @@ extension QuakeSourceTypeExtension on QuakeSourceType {
         return '马来西亚气象局 地震情报';
       case QuakeSourceType.phivolcs:
         return '菲律宾火山与地震研究所 地震情报';
+      case QuakeSourceType.sgc:
+        return '哥伦比亚地质局 地震情报';
+      case QuakeSourceType.ga:
+        return '澳大利亚地质局 地震情报';
+      case QuakeSourceType.cenais:
+        return '古巴国家地震研究中心 地震情报';
       case QuakeSourceType.cencIr:
         return '中国地震台网烈度速报';
       case QuakeSourceType.fssnCmt:
@@ -392,6 +421,8 @@ extension QuakeSourceTypeExtension on QuakeSourceType {
         return 'F-net 震源机制解';
       case QuakeSourceType.hinetAquaCmt:
         return 'Hi-net AQUA 震源机制解';
+      case QuakeSourceType.unadapted:
+        return '地震信息';
     }
   }
 }
@@ -543,6 +574,10 @@ class QuakeMessage {
   /// 机构发布此报告的时间，通常晚于发震时间。
   final DateTime? reportTime;
 
+  /// 无时区时间字段对应的来源/存储墙上时钟偏移。
+  /// 为空时由 QuakeTime 按来源兼容推断。
+  final int? timeZone;
+
   /// 省份信息
   ///
   /// 震中所在省份，用于国内地震。
@@ -603,6 +638,10 @@ class QuakeMessage {
   /// 如 "第1报"、"第3报"、"キャンセル報"。
   final String? reportNumText;
 
+  /// 事件实际经过的 API/传输来源标签，如 FAN、WHEWS、Wolfx。
+  /// 机构来源可能同时由多个 API 提供，不能仅通过 [source] 推断。
+  final String? apiTypeLabel;
+
   /// 构造函数
   ///
   /// 创建一个地震消息实例。
@@ -628,6 +667,7 @@ class QuakeMessage {
     this.isInfoEvent = false,
     this.reportNumber,
     this.reportTime,
+    this.timeZone,
     this.province,
     this.nodalPlane1,
     this.nodalPlane2,
@@ -639,6 +679,7 @@ class QuakeMessage {
     this.isCanceled = false,
     this.isAssumption = false,
     this.reportNumText,
+    this.apiTypeLabel,
   });
 
   /// 创建一个副本并更新指定字段
@@ -665,6 +706,7 @@ class QuakeMessage {
     bool? isInfoEvent,
     int? reportNumber,
     DateTime? reportTime,
+    int? timeZone,
     String? province,
     String? nodalPlane1,
     String? nodalPlane2,
@@ -676,6 +718,7 @@ class QuakeMessage {
     bool? isCanceled,
     bool? isAssumption,
     String? reportNumText,
+    String? apiTypeLabel,
   }) {
     return QuakeMessage(
       source: source,
@@ -698,6 +741,7 @@ class QuakeMessage {
       isInfoEvent: isInfoEvent ?? this.isInfoEvent,
       reportNumber: reportNumber ?? this.reportNumber,
       reportTime: reportTime ?? this.reportTime,
+      timeZone: timeZone ?? this.timeZone,
       province: province ?? this.province,
       nodalPlane1: nodalPlane1 ?? this.nodalPlane1,
       nodalPlane2: nodalPlane2 ?? this.nodalPlane2,
@@ -709,6 +753,7 @@ class QuakeMessage {
       isCanceled: isCanceled ?? this.isCanceled,
       isAssumption: isAssumption ?? this.isAssumption,
       reportNumText: reportNumText ?? this.reportNumText,
+      apiTypeLabel: apiTypeLabel ?? this.apiTypeLabel,
     );
   }
 
@@ -740,6 +785,7 @@ class QuakeMessage {
       'isInfoEvent': isInfoEvent ? 1 : 0,
       'reportNumber': reportNumber,
       'reportTime': reportTime?.toIso8601String(),
+      'timeZone': timeZone,
       'province': province,
       'nodalPlane1': nodalPlane1,
       'nodalPlane2': nodalPlane2,
@@ -751,6 +797,7 @@ class QuakeMessage {
       'isCanceled': isCanceled ? 1 : 0,
       'isAssumption': isAssumption ? 1 : 0,
       'reportNumText': reportNumText,
+      'apiTypeLabel': apiTypeLabel,
     };
   }
 
@@ -790,6 +837,7 @@ class QuakeMessage {
       reportTime: map['reportTime'] != null
           ? DateTime.parse(map['reportTime'])
           : null,
+      timeZone: _optionalInt(map['timeZone']),
       province: map['province'],
       nodalPlane1: map['nodalPlane1'],
       nodalPlane2: map['nodalPlane2'],
@@ -805,6 +853,13 @@ class QuakeMessage {
       isCanceled: map['isCanceled'] == 1,
       isAssumption: map['isAssumption'] == 1,
       reportNumText: map['reportNumText'],
+      apiTypeLabel: map['apiTypeLabel'],
     );
+  }
+
+  static int? _optionalInt(Object? value) {
+    if (value is num) return value.toInt();
+    final text = value?.toString().trim() ?? '';
+    return text.isEmpty ? null : int.tryParse(text);
   }
 }

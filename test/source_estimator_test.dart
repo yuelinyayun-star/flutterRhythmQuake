@@ -7,6 +7,7 @@ import 'package:flutterrhythmquake/core/source_estimation/jma2001_travel_time_ap
 import 'package:flutterrhythmquake/core/source_estimation/kanameishi_jma2001_travel_time_table.dart';
 import 'package:flutterrhythmquake/core/source_estimation/source_estimation_models.dart';
 import 'package:flutterrhythmquake/core/source_estimation/source_estimator.dart';
+import 'package:flutterrhythmquake/core/source_estimation/srev_kaizou_magnitude.dart';
 import 'package:flutterrhythmquake/models/nied_station_db.dart';
 import 'package:flutterrhythmquake/screens/main_screen.dart';
 
@@ -754,6 +755,7 @@ void main() {
         'updateStamp': triggerAt.millisecondsSinceEpoch,
         'ascend': 4,
         'level': 12,
+        'shindo': 3.5,
         'isActive': true,
       };
     }
@@ -791,6 +793,7 @@ void main() {
       'updateStamp': farTriggerAt.millisecondsSinceEpoch,
       'ascend': 4,
       'level': 12,
+      'shindo': 3.5,
       'isActive': true,
     });
     final request = SourceEstimationRequest(
@@ -816,6 +819,19 @@ void main() {
     expect(estimate, isNotNull);
     expect(estimate!.method, 'nied_dart_hyp_v1');
     expect(estimate.supportingStationCount, activeStations.length);
+    final expectedMagnitude = calculateSrevKaizouMagnitude(
+      sourceLatitude: estimate.latitude,
+      sourceLongitude: estimate.longitude,
+      inputIntensity: 3.5,
+      multipleSources: false,
+    );
+    expect(expectedMagnitude, isNotNull);
+    expect(estimate.magnitude, closeTo(expectedMagnitude!.magnitude, 1e-12));
+    expect(estimate.diagnostics['srev_kaizou_magnitude_supported'], isTrue);
+    expect(
+      estimate.diagnostics['srev_kaizou_magnitude_branch'],
+      'single_source_global_max',
+    );
     expect(estimate.diagnostics['input_format'], 'ka_nied_station_snapshot_v1');
     expect(
       estimate.diagnostics['score_model'],
@@ -1222,9 +1238,45 @@ void main() {
       everyElement(allOf(greaterThanOrEqualTo(10.0), lessThanOrEqualTo(700.0))),
     );
     expect(panels.map((panel) => panel['label']), ['current']);
+
+    final strongerStations = activeStations
+        .map(
+          (station) => <String, Object?>{
+            ...station,
+            'shindo': 4.5,
+            'updateStamp': request.observedAt
+                .add(const Duration(seconds: 1))
+                .millisecondsSinceEpoch,
+          },
+        )
+        .toList(growable: false);
+    final strongerRequest = SourceEstimationRequest(
+      sourceId: request.sourceId,
+      eventId: request.eventId,
+      observedAt: request.observedAt.add(const Duration(seconds: 1)),
+      stageName: request.stageName,
+      maxShindo: request.maxShindo,
+      stations: request.stations,
+      metadata: {
+        'nied_input_kind': 'gif',
+        'nied_hypocenter_input_format': 'nied_station_hypocenter_snapshot_v1',
+        'nied_hypocenter_new_active_stations': const <Map<String, Object?>>[],
+        'nied_hypocenter_active_stations': strongerStations,
+        'nied_hypocenter_inactive_stations': const [],
+        'nied_hypocenter_adj_station_ids': const <String, List<int>>{},
+        'kotoho7_scratch_runtime_timer_s': 1.0,
+      },
+    );
+    final strongerEstimate = estimator.estimate(strongerRequest);
+    expect(strongerEstimate, isNotNull);
+    expect(strongerEstimate!.magnitude, greaterThan(estimate.magnitude!));
+    expect(
+      strongerEstimate.diagnostics['srev_kaizou_magnitude_input_intensity'],
+      4.5,
+    );
   });
 
-  test('NIED Dart HYP never falls back when KA has fewer than five times', () {
+  test('NIED Dart HYP keeps early KA stations without falling back', () {
     final estimator = NiedDartHypSourceEstimator();
     final observedAt = DateTime(2026, 6, 22, 11, 27, 10);
     final activeStations = List.generate(4, (index) {
@@ -1238,6 +1290,7 @@ void main() {
         'updateStamp': observedAt.millisecondsSinceEpoch,
         'ascend': 4,
         'level': 12,
+        'shindo': 3.5,
         'isActive': true,
       };
     });
@@ -1254,8 +1307,17 @@ void main() {
       },
     );
 
-    expect(estimator.supports(request), isFalse);
+    // KA dispatches the worker before the five-station publish threshold.
+    // The estimator must retain the early cluster but still publish nothing.
+    expect(estimator.supports(request), isTrue);
     expect(estimator.estimate(request), isNull);
+    expect(
+      request.metadata['nied_dart_hyp_source_clear_reason'],
+      anyOf(
+        'scratch_active_detection_id_has_no_published_source',
+        'scratch_selected_detection_id_has_no_published_source',
+      ),
+    );
   });
 
   test(
@@ -1821,6 +1883,11 @@ void main() {
         ids.singleWhere((item) => item['id'] == 2)['assigned_station_count'],
         5,
       );
+      final publishedSources =
+          (secondRequest.metadata['nied_dart_hyp_sources'] as List)
+              .cast<Map<String, Object?>>();
+      expect(publishedSources.single['detection_id'], 2);
+      expect(publishedSources.single['selected'], isTrue);
 
       final thirdRowRequest = request(
         secondOrigin.add(const Duration(seconds: 30)),
@@ -2016,6 +2083,124 @@ void main() {
     },
   );
 
+  test(
+    'reference NIED HYP reports and stabilizes after 15 identical recalculations',
+    () {
+      final estimator = NiedDartHypSourceEstimator(
+        searchSchedule: NiedHypSearchSchedule.referenceBroadFourStage,
+      );
+      final base = DateTime(2026, 8, 10, 12);
+
+      Map<String, Object?> station(String code, int index) => <String, Object?>{
+        'id': code,
+        'code': code,
+        'latLng': [35.0 + index * 0.01, 140.0 + index * 0.01],
+        'triggerStamp': base
+            .add(Duration(milliseconds: index * 200))
+            .millisecondsSinceEpoch,
+        'updateStamp': base
+            .add(const Duration(seconds: 5))
+            .millisecondsSinceEpoch,
+        'ascend': 4,
+        'level': 12,
+        'isActive': true,
+      };
+      final active = <Map<String, Object?>>[
+        for (var index = 0; index < 5; index++) station('STABLE$index', index),
+      ];
+      final adjacency = <String, List<String>>{
+        for (final current in active)
+          current['id']! as String: [
+            for (final neighbor in active)
+              if (neighbor['id'] != current['id']) neighbor['id']! as String,
+          ],
+      };
+      final ignoredInactive = <String, Object?>{
+        'id': 'IGNORED_INACTIVE',
+        'code': 'IGNORED_INACTIVE',
+        'latLng': const [34.0, 139.0],
+        'updateStamp': base.millisecondsSinceEpoch,
+        'ascend': 0,
+        'level': 12,
+        'isActive': false,
+      };
+
+      SourceEstimationRequest request(
+        int index, {
+        required bool dirty,
+        double shindo = 3.5,
+      }) {
+        final currentActive = <Map<String, Object?>>[
+          for (final station in active) {...station, 'shindo': shindo},
+        ];
+        return SourceEstimationRequest(
+          sourceId: 'nied',
+          eventId: 'reference-stable-hypocenter',
+          observedAt: base.add(Duration(milliseconds: 5000 + index * 100)),
+          stageName: 'confirmed',
+          maxShindo: 2,
+          stations: const [],
+          metadata: {
+            'nied_hypocenter_input_format':
+                'nied_station_hypocenter_snapshot_v1',
+            'nied_hypocenter_new_active_stations': index == 0
+                ? currentActive
+                : const <Map<String, Object?>>[],
+            'nied_hypocenter_active_stations': currentActive,
+            'nied_hypocenter_inactive_stations': dirty && index.isOdd
+                ? [ignoredInactive]
+                : const <Map<String, Object?>>[],
+            'nied_hypocenter_adj_station_ids': adjacency,
+          },
+        );
+      }
+
+      final first = estimator.estimate(request(0, dirty: true));
+      expect(first, isNotNull);
+      expect(first!.diagnostics['nied_dart_hyp_report_num'], 1);
+      expect(first.diagnostics['nied_dart_hyp_stable'], isFalse);
+      expect(first.diagnostics['nied_dart_hyp_stable_update_count'], 1);
+      expect(first.diagnostics['nied_dart_hyp_calculation_complete'], isTrue);
+
+      final unchanged = estimator.estimate(request(1, dirty: false));
+      expect(unchanged, isNotNull);
+      expect(unchanged!.diagnostics['nied_dart_hyp_stable_update_count'], 1);
+
+      SourceEstimate latest = unchanged;
+      for (var index = 1; index < 15; index++) {
+        latest = estimator.estimate(request(index, dirty: true))!;
+      }
+      expect(latest.diagnostics['nied_dart_hyp_report_num'], 1);
+      expect(latest.diagnostics['nied_dart_hyp_stable_update_count'], 15);
+      expect(latest.diagnostics['nied_dart_hyp_stable'], isTrue);
+      expect(
+        latest.diagnostics['nied_dart_hyp_stable_update_threshold'],
+        NiedDartHypSourceEstimator.stableHypocenterUpdateThreshold,
+      );
+
+      final stronger = estimator.estimate(
+        request(15, dirty: true, shindo: 4.5),
+      );
+      expect(stronger, isNotNull);
+      expect(stronger!.diagnostics['nied_dart_hyp_stable'], isTrue);
+      expect(stronger.diagnostics['nied_dart_hyp_stable_update_count'], 16);
+      expect(stronger.magnitude, latest.magnitude);
+      expect(stronger.diagnostics['srev_kaizou_magnitude_locked'], isTrue);
+      expect(
+        stronger.diagnostics['srev_kaizou_magnitude_locked_report_num'],
+        1,
+      );
+      expect(
+        stronger.diagnostics['srev_kaizou_magnitude_published_report_num'],
+        1,
+      );
+      expect(
+        stronger.diagnostics['srev_kaizou_magnitude_input_intensity'],
+        3.5,
+      );
+    },
+  );
+
   test('reference NIED HYP resets its cluster after an empty active frame', () {
     final estimator = NiedDartHypSourceEstimator(
       searchSchedule: NiedHypSearchSchedule.referenceBroadFourStage,
@@ -2084,7 +2269,9 @@ void main() {
       observedAt: base.add(const Duration(seconds: 7)),
       active: laterSegment,
     );
-    expect(estimator.supports(laterRequest), isFalse);
+    // KA dispatches every non-empty active frame, including a new segment
+    // before it reaches the five-station publish threshold.
+    expect(estimator.supports(laterRequest), isTrue);
   });
 
   test('reference NIED HYP does not publish a zero-support candidate', () {
@@ -2215,6 +2402,14 @@ void main() {
         adjacency: initialAdjacency,
       );
       expect(estimator.estimate(initial), isNotNull);
+      final initialPublishedSources =
+          (initial.metadata['nied_dart_hyp_sources'] as List)
+              .cast<Map<String, Object?>>();
+      expect(initialPublishedSources, hasLength(2));
+      expect(
+        initialPublishedSources.where((item) => item['selected'] == true),
+        hasLength(1),
+      );
 
       final bridge = snapshot(
         code: 'BRIDGE',
@@ -2252,6 +2447,56 @@ void main() {
           'BRIDGE',
         ]),
       );
+    },
+  );
+
+  test(
+    'reference NIED HYP does not register an active station without a trigger',
+    () {
+      final estimator = NiedDartHypSourceEstimator(
+        searchSchedule: NiedHypSearchSchedule.referenceBroadFourStage,
+      );
+      final observedAt = DateTime(2026, 8, 4, 12);
+      Map<String, Object?> snapshot(String code, {int? triggerStamp}) =>
+          <String, Object?>{
+            'id': code,
+            'code': code,
+            'latLng': const [35.0, 140.0],
+            'triggerStamp': ?triggerStamp,
+            'updateStamp': observedAt.millisecondsSinceEpoch,
+            'ascend': 4,
+            'level': 12,
+            'isActive': true,
+          };
+      SourceEstimationRequest request(List<Map<String, Object?>> active) =>
+          SourceEstimationRequest(
+            sourceId: 'nied',
+            eventId: 'reference-invalid-trigger-station',
+            observedAt: observedAt,
+            stageName: 'confirmed',
+            maxShindo: 2,
+            stations: const [],
+            metadata: {
+              'nied_hypocenter_input_format':
+                  'nied_station_hypocenter_snapshot_v1',
+              'nied_hypocenter_active_stations': active,
+              'nied_hypocenter_new_active_stations': active,
+              'nied_hypocenter_inactive_stations': const [],
+              'nied_hypocenter_adj_station_ids': const <String, List<String>>{},
+            },
+          );
+
+      final input = request([
+        snapshot('VALID', triggerStamp: observedAt.millisecondsSinceEpoch),
+        snapshot('INVALID'),
+      ]);
+      expect(estimator.supports(input), isTrue);
+      expect(estimator.estimate(input), isNull);
+      final states = (input.metadata['nied_dart_hyp_detection_ids'] as List)
+          .cast<Map<String, Object?>>();
+      expect(states, hasLength(1));
+      expect(states.single['assigned_station_count'], 1);
+      expect(states.single['assigned_station_codes'], ['VALID']);
     },
   );
 

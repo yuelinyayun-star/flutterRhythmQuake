@@ -125,8 +125,9 @@ Map<String, Object?> buildPlumTohokuMismatchOneSidedCompactSubregimeAuditJson({
 
   for (final splitName in const ['validation', 'test']) {
     final dataset = synthetic.datasetsBySplit[splitName]!;
-    final splitAccumulator =
-        splitName == 'validation' ? validationAccumulator : testAccumulator;
+    final splitAccumulator = splitName == 'validation'
+        ? validationAccumulator
+        : testAccumulator;
     for (final rawEvent in _list(dataset['events'])) {
       final event = StaticIntensityEvent.fromJson(_map(rawEvent));
       final magnitude = event.magnitude;
@@ -264,7 +265,9 @@ Map<String, Object?> buildPlumTohokuMismatchOneSidedCompactSubregimeAuditJson({
     'summaries': {
       'validationFamily': _summaryJson(validationFamilySamples),
       'remainderFamily': _summaryJson(remainderFamilySamples),
-      'remainderFamilyFalsePositives': _summaryJson(remainderFamilyFalsePositives),
+      'remainderFamilyFalsePositives': _summaryJson(
+        remainderFamilyFalsePositives,
+      ),
     },
     'subRegimeDefinitions': const {
       'middleTransitionLabel':
@@ -368,9 +371,13 @@ List<Map<String, Object?>> _buildBandRows(
     for (final label in labels)
       _rowForSlice(
         label: label,
-        validation: validation.where((sample) => selector(sample) == label).toList(),
+        validation: validation
+            .where((sample) => selector(sample) == label)
+            .toList(),
         validationTotal: validation.length,
-        remainder: remainder.where((sample) => selector(sample) == label).toList(),
+        remainder: remainder
+            .where((sample) => selector(sample) == label)
+            .toList(),
         remainderTotal: remainder.length,
       ),
   ];
@@ -404,19 +411,23 @@ List<Map<String, Object?>> _buildGapCellRows(
         'validation': _sliceJson(validationRows, validation.length),
         'remainder': _sliceJson(remainderRows, remainder.length),
         'deltaShare':
-            (remainder.isEmpty ? 0.0 : remainderRows.length / remainder.length) -
-            (validation.isEmpty ? 0.0 : validationRows.length / validation.length),
+            (remainder.isEmpty
+                ? 0.0
+                : remainderRows.length / remainder.length) -
+            (validation.isEmpty
+                ? 0.0
+                : validationRows.length / validation.length),
       });
     }
   }
   rows.sort((left, right) {
-    final byRemainder = _number(_map(right['remainder'])['count']).compareTo(
-      _number(_map(left['remainder'])['count']),
-    );
+    final byRemainder = _number(
+      _map(right['remainder'])['count'],
+    ).compareTo(_number(_map(left['remainder'])['count']));
     if (byRemainder != 0) return byRemainder;
-    return _number(_map(right['validation'])['count']).compareTo(
-      _number(_map(left['validation'])['count']),
-    );
+    return _number(
+      _map(right['validation'])['count'],
+    ).compareTo(_number(_map(left['validation'])['count']));
   });
   return rows;
 }
@@ -432,10 +443,12 @@ List<Map<String, Object?>> _buildJointSubRegimeRows(
   final rows = <Map<String, Object?>>[];
   final ordered = keys.toList()..sort();
   for (final key in ordered) {
-    final validationRows =
-        validation.where((sample) => sample.jointSubRegimeLabel == key).toList();
-    final remainderRows =
-        remainder.where((sample) => sample.jointSubRegimeLabel == key).toList();
+    final validationRows = validation
+        .where((sample) => sample.jointSubRegimeLabel == key)
+        .toList();
+    final remainderRows = remainder
+        .where((sample) => sample.jointSubRegimeLabel == key)
+        .toList();
     if (validationRows.isEmpty && remainderRows.isEmpty) continue;
     rows.add(
       _rowForSlice(
@@ -448,13 +461,13 @@ List<Map<String, Object?>> _buildJointSubRegimeRows(
     );
   }
   rows.sort((left, right) {
-    final byRemainder = _number(_map(right['remainder'])['count']).compareTo(
-      _number(_map(left['remainder'])['count']),
-    );
+    final byRemainder = _number(
+      _map(right['remainder'])['count'],
+    ).compareTo(_number(_map(left['remainder'])['count']));
     if (byRemainder != 0) return byRemainder;
-    return _number(_map(right['validation'])['count']).compareTo(
-      _number(_map(left['validation'])['count']),
-    );
+    return _number(
+      _map(right['validation'])['count'],
+    ).compareTo(_number(_map(left['validation'])['count']));
   });
   return rows;
 }
@@ -472,7 +485,8 @@ Map<String, Object?> _rowForSlice({
     'label': label,
     'validation': validationJson,
     'remainder': remainderJson,
-    'deltaShare': _number(remainderJson['share']) - _number(validationJson['share']),
+    'deltaShare':
+        _number(remainderJson['share']) - _number(validationJson['share']),
     'deltaMiddleTransitionShare':
         _number(remainderJson['middleTransitionShare']) -
         _number(validationJson['middleTransitionShare']),
@@ -483,18 +497,21 @@ Map<String, Object?> _rowForSlice({
 }
 
 Map<String, Object?> _sliceJson(List<_Sample> samples, int total) {
-  final truePositiveCount =
-      samples.where((sample) => sample.actualPositive).length;
-  final middleTransitionCount =
-      samples.where((sample) => sample.isMiddleTransitionZone).length;
-  final plumOnlyFalsePositiveCount =
-      samples.where((sample) => sample.plumOnlyFalsePositive).length;
+  final truePositiveCount = samples
+      .where((sample) => sample.actualPositive)
+      .length;
+  final middleTransitionCount = samples
+      .where((sample) => sample.isMiddleTransitionZone)
+      .length;
+  final plumOnlyFalsePositiveCount = samples
+      .where((sample) => sample.plumOnlyFalsePositive)
+      .length;
   final meanLocalMismatch = samples.isEmpty
       ? 0.0
       : samples
-              .map((sample) => sample.localBelowThresholdShare10Km)
-              .fold<double>(0.0, (sum, value) => sum + value) /
-          samples.length;
+                .map((sample) => sample.localBelowThresholdShare10Km)
+                .fold<double>(0.0, (sum, value) => sum + value) /
+            samples.length;
   return {
     'count': samples.length,
     'share': total == 0 ? 0.0 : samples.length / total,
@@ -502,32 +519,35 @@ Map<String, Object?> _sliceJson(List<_Sample> samples, int total) {
     'falsePositiveCount': samples.length - truePositiveCount,
     'precision': samples.isEmpty ? 0.0 : truePositiveCount / samples.length,
     'middleTransitionCount': middleTransitionCount,
-    'middleTransitionShare':
-        samples.isEmpty ? 0.0 : middleTransitionCount / samples.length,
+    'middleTransitionShare': samples.isEmpty
+        ? 0.0
+        : middleTransitionCount / samples.length,
     'plumOnlyFalsePositiveCount': plumOnlyFalsePositiveCount,
     'meanLocalMismatch': meanLocalMismatch,
   };
 }
 
 Map<String, Object?> _summaryJson(List<_Sample> samples) => {
-      'focusSampleCount': samples.length,
-      'truePositiveCount':
-          samples.where((sample) => sample.actualPositive).length,
-      'falsePositiveCount':
-          samples.where((sample) => !sample.actualPositive).length,
-      'precision': samples.isEmpty
-          ? 0.0
-          : samples.where((sample) => sample.actualPositive).length /
-              samples.length,
-      'middleTransitionCount':
-          samples.where((sample) => sample.isMiddleTransitionZone).length,
-      'middleTransitionShare': samples.isEmpty
-          ? 0.0
-          : samples.where((sample) => sample.isMiddleTransitionZone).length /
-              samples.length,
-      'plumOnlyFalsePositiveCount':
-          samples.where((sample) => sample.plumOnlyFalsePositive).length,
-    };
+  'focusSampleCount': samples.length,
+  'truePositiveCount': samples.where((sample) => sample.actualPositive).length,
+  'falsePositiveCount': samples
+      .where((sample) => !sample.actualPositive)
+      .length,
+  'precision': samples.isEmpty
+      ? 0.0
+      : samples.where((sample) => sample.actualPositive).length /
+            samples.length,
+  'middleTransitionCount': samples
+      .where((sample) => sample.isMiddleTransitionZone)
+      .length,
+  'middleTransitionShare': samples.isEmpty
+      ? 0.0
+      : samples.where((sample) => sample.isMiddleTransitionZone).length /
+            samples.length,
+  'plumOnlyFalsePositiveCount': samples
+      .where((sample) => sample.plumOnlyFalsePositive)
+      .length,
+};
 
 String _dominantEventId(List<_Sample> samples) {
   if (samples.isEmpty) return 'none';
@@ -552,12 +572,11 @@ List<Map<String, Object?>> _buildEventRows(List<_Sample> samples) {
     for (final entry in byEvent.entries) entry.value.toJson(eventId: entry.key),
   ];
   rows.sort((left, right) {
-    final byCount =
-        _number(right['count']).compareTo(_number(left['count']));
+    final byCount = _number(right['count']).compareTo(_number(left['count']));
     if (byCount != 0) return byCount;
-    return _number(right['middleTransitionCount']).compareTo(
-      _number(left['middleTransitionCount']),
-    );
+    return _number(
+      right['middleTransitionCount'],
+    ).compareTo(_number(left['middleTransitionCount']));
   });
   return rows;
 }
@@ -577,8 +596,8 @@ List<_EvidenceStation> _supportingEvidence({
       observed.longitude,
     );
     if (distance > _plumRadiusKm) continue;
-    final propagated = observed.intensity -
-        _plumDampingPer10Km * (distance / 10.0);
+    final propagated =
+        observed.intensity - _plumDampingPer10Km * (distance / 10.0);
     if (propagated >= threshold) {
       supportingEvidence.add(
         _EvidenceStation(
@@ -673,47 +692,46 @@ Map<String, Object?> _emptyReport({
   required String dataDirectory,
   required String modelPath,
 }) => {
-        'schemaVersion':
-            'plum_tohoku_mismatch_one_sided_compact_subregime_audit_v1',
-        'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
-        'status': 'fail',
-        'policy': {
-          'method': 'PLUM Tohoku mismatch/one_sided/compact sub-regime audit',
-          'rawPredictedIntensityMutated': false,
-          'frozenTestEvaluated': true,
-          'productionReady': false,
-          'productionUiConnected': false,
-          'diagnosticOnly': true,
-          'parametersTuned': false,
-          'suppressionApplied': false,
-          'plumRadiusKm': _plumRadiusKm,
-          'plumDampingPer10Km': _plumDampingPer10Km,
-        },
-        'inputs': {
-          'dataDirectory': dataDirectory,
-          'modelPath': modelPath,
-          'splits': ['validation', 'test'],
-          'threshold': _threshold.label,
-          'family': _focusFamily,
-        },
-        'scope': {
-          'removedDominantEvent': 'none',
-          'estimatedSourceRegion': _focusRegion,
-        },
-        'coverage': const {
-          'validationFamilySamples': 0,
-          'remainderFamilySamples': 0,
-          'remainderFamilyFalsePositives': 0,
-        },
-        'summaries': const {},
-        'subRegimeDefinitions': const {},
-        'transitionRows': const [],
-        'localMismatchRows': const [],
-        'gapCellRows': const [],
-        'jointSubRegimeRows': const [],
-        'remainderEventRows': const [],
-        'errors': errors,
-      };
+  'schemaVersion': 'plum_tohoku_mismatch_one_sided_compact_subregime_audit_v1',
+  'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
+  'status': 'fail',
+  'policy': {
+    'method': 'PLUM Tohoku mismatch/one_sided/compact sub-regime audit',
+    'rawPredictedIntensityMutated': false,
+    'frozenTestEvaluated': true,
+    'productionReady': false,
+    'productionUiConnected': false,
+    'diagnosticOnly': true,
+    'parametersTuned': false,
+    'suppressionApplied': false,
+    'plumRadiusKm': _plumRadiusKm,
+    'plumDampingPer10Km': _plumDampingPer10Km,
+  },
+  'inputs': {
+    'dataDirectory': dataDirectory,
+    'modelPath': modelPath,
+    'splits': ['validation', 'test'],
+    'threshold': _threshold.label,
+    'family': _focusFamily,
+  },
+  'scope': {
+    'removedDominantEvent': 'none',
+    'estimatedSourceRegion': _focusRegion,
+  },
+  'coverage': const {
+    'validationFamilySamples': 0,
+    'remainderFamilySamples': 0,
+    'remainderFamilyFalsePositives': 0,
+  },
+  'summaries': const {},
+  'subRegimeDefinitions': const {},
+  'transitionRows': const [],
+  'localMismatchRows': const [],
+  'gapCellRows': const [],
+  'jointSubRegimeRows': const [],
+  'remainderEventRows': const [],
+  'errors': errors,
+};
 
 String plumTohokuMismatchOneSidedCompactSubregimeAuditMarkdown(
   Map<String, Object?> report,
@@ -823,7 +841,10 @@ String plumTohokuMismatchOneSidedCompactSubregimeAuditMarkdown(
     );
   }
 
-  writeSliceSection('Joint Sub-Regime Rows', jointSubRegimeRows.take(12).toList());
+  writeSliceSection(
+    'Joint Sub-Regime Rows',
+    jointSubRegimeRows.take(12).toList(),
+  );
 
   buffer
     ..writeln()
@@ -868,7 +889,9 @@ String _sliceCell(Map<String, Object?> row) {
 
 String _mixCell(Map<String, Object?> mix) {
   final entries = mix.entries.toList()
-    ..sort((left, right) => _number(right.value).compareTo(_number(left.value)));
+    ..sort(
+      (left, right) => _number(right.value).compareTo(_number(left.value)),
+    );
   return entries
       .where((entry) => _number(entry.value) > 0)
       .map((entry) => '${entry.key}:${entry.value}')
@@ -901,16 +924,16 @@ class _EventAccumulator {
   }
 
   Map<String, Object?> toJson({required String eventId}) => {
-        'eventId': eventId,
-        'count': count,
-        'truePositiveCount': truePositiveCount,
-        'falsePositiveCount': count - truePositiveCount,
-        'precision': count == 0 ? 0.0 : truePositiveCount / count,
-        'middleTransitionCount': middleTransitionCount,
-        'middleTransitionShare': count == 0 ? 0.0 : middleTransitionCount / count,
-        'dominantWinnerFamily': _maxKey(sourceWinnerCounts),
-        'sourceTriggerCounts': sourceTriggerCounts,
-      };
+    'eventId': eventId,
+    'count': count,
+    'truePositiveCount': truePositiveCount,
+    'falsePositiveCount': count - truePositiveCount,
+    'precision': count == 0 ? 0.0 : truePositiveCount / count,
+    'middleTransitionCount': middleTransitionCount,
+    'middleTransitionShare': count == 0 ? 0.0 : middleTransitionCount / count,
+    'dominantWinnerFamily': _maxKey(sourceWinnerCounts),
+    'sourceTriggerCounts': sourceTriggerCounts,
+  };
 }
 
 String _maxKey(Map<String, int> counts) {
@@ -1015,8 +1038,9 @@ class _Sample {
       const ['-1.0_to_0.0', '0.0_to_1.0'].contains(actualGapBand) &&
       const ['1.0_to_2.0', '2.0_to_3.0'].contains(evidenceGapBand);
 
-  String get subRegimeTransitionLabel =>
-      isMiddleTransitionZone ? 'middle_transition_zone' : 'other_family_samples';
+  String get subRegimeTransitionLabel => isMiddleTransitionZone
+      ? 'middle_transition_zone'
+      : 'other_family_samples';
 
   String get localMismatchBand {
     final share = localBelowThresholdShare10Km;
@@ -1045,7 +1069,10 @@ class _NeighborSummary {
   final int count;
   final double belowThresholdShare;
 
-  const _NeighborSummary({required this.count, required this.belowThresholdShare});
+  const _NeighborSummary({
+    required this.count,
+    required this.belowThresholdShare,
+  });
 }
 
 class _SupportShape {

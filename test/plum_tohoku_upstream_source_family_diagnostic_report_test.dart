@@ -31,14 +31,14 @@ void main() {
       expect(focus['baselineThresholdCrossingRequired'], isTrue);
       expect(focus['plumMarginGateApplied'], isFalse);
 
-      final definitions =
-          (report['familyDefinitions'] as Map).cast<String, Object?>();
+      final definitions = (report['familyDefinitions'] as Map)
+          .cast<String, Object?>();
       expect(definitions['sourceTriggerFamily'], isA<Map>());
       expect(definitions['sourceWinnerFamily'], isA<Map>());
       expect(definitions['eventFamily'], isA<Map>());
 
-      final splitSummaries =
-          (report['splitSummaries'] as Map).cast<String, Object?>();
+      final splitSummaries = (report['splitSummaries'] as Map)
+          .cast<String, Object?>();
       expect(splitSummaries['validation'], isA<Map>());
       expect(splitSummaries['test'], isA<Map>());
 
@@ -48,8 +48,7 @@ void main() {
       expect(report['sourceWinnerEventFamilyTransfer'], isA<List>());
       expect(report['dominantTestEvents'], isA<List>());
 
-      final markdown =
-          plumTohokuUpstreamSourceFamilyDiagnosticMarkdown(report);
+      final markdown = plumTohokuUpstreamSourceFamilyDiagnosticMarkdown(report);
       expect(
         markdown,
         contains('# PLUM Tohoku Upstream Source-Family Diagnostic'),

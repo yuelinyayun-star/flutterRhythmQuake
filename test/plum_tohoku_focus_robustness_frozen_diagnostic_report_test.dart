@@ -61,7 +61,9 @@ void main() {
         }
       }
 
-      final markdown = plumTohokuFocusRobustnessFrozenDiagnosticMarkdown(report);
+      final markdown = plumTohokuFocusRobustnessFrozenDiagnosticMarkdown(
+        report,
+      );
       expect(
         markdown,
         contains('# PLUM Tohoku Focus Robustness Frozen Diagnostic'),

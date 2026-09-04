@@ -1,0 +1,1107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RhythmQuake · Debug（UI 原型）</title>
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #020208;
+      --content: rgba(36, 36, 38, 0.40);
+      --field: rgba(255, 255, 255, 0.09);
+      --border: rgba(255, 255, 255, 0.16);
+      --divider: rgba(255, 255, 255, 0.10);
+      --muted: rgba(255, 255, 255, 0.58);
+      --accent: #82b1ff;
+      --text: #fff;
+      --text70: rgba(255, 255, 255, 0.7);
+      --text60: rgba(255, 255, 255, 0.6);
+      --ok: #3aff6f;
+      --warn: #ffc66d;
+      --err: #ff6673;
+      --cat-mapbox: #62c6ff;
+      --cat-lpgm: #d6a5ff;
+      --cat-nied: #72d6b1;
+      --cat-estimate: #ffc66d;
+      --cat-tools: #aeb8cc;
+      --cat-snet: #82b1ff;
+      --cat-runtime: #9ad0ff;
+      --glass-blur: blur(22px) saturate(1);
+      --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.28);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      overflow: hidden;
+    }
+    .material-icons-outlined {
+      font-size: 18px;
+      line-height: 1;
+      user-select: none;
+    }
+
+    .app {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      background: var(--bg);
+      overflow: hidden;
+    }
+    .app-bg {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      background: var(--bg);
+    }
+    .app-bg img {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: center;
+      opacity: 0.35;
+    }
+    .app > *:not(.app-bg) { position: relative; z-index: 1; }
+
+    .app > .shell {
+      flex: 0 1 auto;
+      width: min(calc(100% - 88px), calc((100vh - 88px) * 1180 / 660));
+      aspect-ratio: 1180 / 660;
+      max-height: calc(100% - 88px);
+      margin: auto;
+      display: flex;
+      flex-direction: column;
+      box-sizing: border-box;
+    }
+
+    .panel {
+      flex: 1;
+      min-width: 0;
+      min-height: 0;
+      background: var(--content);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      display: flex;
+      overflow: hidden;
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      box-shadow: var(--glass-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+
+    .panel-nav {
+      width: 228px;
+      flex-shrink: 0;
+      border-right: 1px solid var(--divider);
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .panel-nav-head {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      height: 78px;
+      padding: 0 10px 1px;
+      flex-shrink: 0;
+      position: relative;
+      box-sizing: border-box;
+    }
+    .panel-nav-head::after,
+    .content-head::after {
+      content: "";
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      bottom: 0;
+      height: 1px;
+      background: linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0) 0%,
+        rgba(255, 255, 255, 0.12) 18%,
+        rgba(255, 255, 255, 0.12) 82%,
+        rgba(255, 255, 255, 0) 100%
+      );
+      pointer-events: none;
+    }
+    .content-head::after { left: 14px; right: 14px; }
+    .panel-nav-head .back {
+      width: 32px; height: 32px;
+      border: none; background: transparent; color: var(--accent);
+      border-radius: 8px; cursor: pointer;
+      display: grid; place-items: center;
+      text-decoration: none;
+    }
+    .panel-nav-head .back:hover { background: rgba(130,177,255,0.12); }
+    .panel-nav-head .back .material-icons-outlined { font-size: 20px; }
+    .panel-nav-head .label {
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .nav-btn {
+      width: calc(100% - 20px);
+      margin: 0 10px;
+      height: 58px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--text70);
+      border-radius: 10px;
+      cursor: pointer;
+      text-align: left;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 12px;
+      transition: background .16s, border-color .16s, color .16s, box-shadow .16s;
+      font-family: inherit;
+    }
+    .panel-nav > .nav-btn:first-of-type { margin-top: 8px; }
+    .panel-nav > .nav-btn:last-of-type { margin-bottom: 10px; }
+    .nav-btn .icon { font-size: 19px; color: var(--text60); flex-shrink: 0; }
+    .nav-btn .meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .nav-btn .title {
+      font-size: 13.5px; font-weight: 500;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .nav-btn .subtitle {
+      font-size: 10.5px; color: var(--muted);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .nav-btn.active {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.10);
+      border-color: rgba(255, 255, 255, 0.22);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.18),
+        0 4px 16px rgba(0, 0, 0, 0.18);
+    }
+    .nav-btn.active .title { font-weight: 700; color: #fff; }
+    .nav-btn[data-cat="mapbox"].active {
+      background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(98,198,255,0.14));
+      border-color: rgba(98,198,255,0.42);
+    }
+    .nav-btn[data-cat="mapbox"].active .icon { color: var(--cat-mapbox); }
+    .nav-btn[data-cat="lpgm"].active {
+      background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(214,165,255,0.14));
+      border-color: rgba(214,165,255,0.42);
+    }
+    .nav-btn[data-cat="lpgm"].active .icon { color: var(--cat-lpgm); }
+    .nav-btn[data-cat="nied"].active {
+      background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(114,214,177,0.14));
+      border-color: rgba(114,214,177,0.42);
+    }
+    .nav-btn[data-cat="nied"].active .icon { color: var(--cat-nied); }
+    .nav-btn[data-cat="estimate"].active {
+      background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,198,109,0.14));
+      border-color: rgba(255,198,109,0.42);
+    }
+    .nav-btn[data-cat="estimate"].active .icon { color: var(--cat-estimate); }
+    .nav-btn[data-cat="tools"].active {
+      background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(174,184,204,0.14));
+      border-color: rgba(174,184,204,0.42);
+    }
+    .nav-btn[data-cat="tools"].active .icon { color: var(--cat-tools); }
+    .nav-btn[data-cat="snet"].active {
+      background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(130,177,255,0.14));
+      border-color: rgba(130,177,255,0.42);
+    }
+    .nav-btn[data-cat="snet"].active .icon { color: var(--cat-snet); }
+    .nav-btn[data-cat="runtime"].active {
+      background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(154,208,255,0.14));
+      border-color: rgba(154,208,255,0.42);
+    }
+    .nav-btn[data-cat="runtime"].active .icon { color: var(--cat-runtime); }
+
+    .panel-main {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .content-head {
+      height: 78px;
+      padding: 0 18px 1px;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      flex-shrink: 0;
+      position: relative;
+      box-sizing: border-box;
+    }
+    .content-icon {
+      width: 36px; height: 36px;
+      border-radius: 8px;
+      display: grid; place-items: center;
+      background: rgba(98,198,255,0.13);
+      border: 1px solid rgba(130,177,255,0.22);
+    }
+    .content-icon .material-icons-outlined { font-size: 20px; color: var(--cat-mapbox); }
+    .content-head h3 { font-size: 16px; font-weight: 700; }
+    .content-head p { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+
+    .content-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 16px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .content-body::-webkit-scrollbar { width: 8px; }
+    .content-body::-webkit-scrollbar-thumb {
+      background: rgba(255,255,255,0.12); border-radius: 8px;
+    }
+
+    .category-panel { display: none; flex-direction: column; gap: 12px; }
+    .category-panel.active { display: flex; }
+
+    .section {
+      background: transparent;
+      border: none;
+      padding: 4px 2px 8px;
+    }
+    .section + .section {
+      margin-top: 6px;
+      padding-top: 14px;
+      border-top: 1px solid var(--divider);
+    }
+    .section-title {
+      display: flex; align-items: center; gap: 9px;
+      margin-bottom: 14px;
+    }
+    .section-title .material-icons-outlined { color: var(--accent); font-size: 18px; }
+    .section-title h4 { font-size: 15px; font-weight: 700; }
+    .badge {
+      margin-left: auto;
+      height: 24px;
+      padding: 0 10px;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--ok);
+      background: rgba(58, 255, 111, 0.12);
+      border: 1px solid rgba(58, 255, 111, 0.28);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+    }
+    .badge.warn {
+      color: var(--warn);
+      background: rgba(255, 198, 109, 0.12);
+      border-color: rgba(255, 198, 109, 0.30);
+    }
+    .badge.err {
+      color: var(--err);
+      background: rgba(255, 102, 115, 0.12);
+      border-color: rgba(255, 102, 115, 0.30);
+    }
+    .badge.muted {
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.14);
+    }
+
+    .hint {
+      font-size: 11.5px;
+      color: var(--muted);
+      line-height: 1.45;
+      margin-bottom: 12px;
+    }
+
+    .metric-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .metric {
+      min-height: 58px;
+      min-width: 112px;
+      flex: 1;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(255, 255, 255, 0.07);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+    .metric .label {
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    .metric .value {
+      font-size: 15px;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .divider {
+      height: 1px;
+      margin: 12px 0;
+      background: linear-gradient(
+        90deg,
+        rgba(255,255,255,0) 0%,
+        rgba(255,255,255,0.12) 18%,
+        rgba(255,255,255,0.12) 82%,
+        rgba(255,255,255,0) 100%
+      );
+    }
+
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+    .row-left {
+      flex: 1;
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      min-width: 0;
+    }
+    .leading {
+      width: 34px; height: 34px; flex-shrink: 0;
+      border-radius: 8px;
+      background: rgba(130,177,255,0.14);
+      border: 1px solid rgba(130,177,255,0.28);
+      display: grid; place-items: center;
+      color: var(--accent);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
+    .leading.warn {
+      background: rgba(255,198,109,0.14);
+      border-color: rgba(255,198,109,0.28);
+      color: var(--warn);
+    }
+    .row-text .title { font-size: 14px; font-weight: 600; }
+    .row-text .subtitle { font-size: 11.5px; color: var(--muted); margin-top: 3px; line-height: 1.35; }
+    .row-control {
+      flex-shrink: 0;
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .field-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .field-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .field-wrap label {
+      font-size: 11px;
+      color: rgba(255,255,255,0.54);
+    }
+    .field {
+      height: 40px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      font-size: 13px;
+      padding: 0 12px;
+      outline: none;
+      font-family: inherit;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+    }
+    .field:focus { border-color: var(--accent); }
+    .field.w180 { width: 180px; }
+    .field.w220 { width: 220px; }
+    .field.w360 { width: 360px; max-width: 100%; }
+
+    .btn {
+      height: 40px;
+      border-radius: 10px;
+      border: 1px solid rgba(130, 177, 255, 0.78);
+      background: linear-gradient(135deg, rgba(255,255,255,0.16), rgba(130,177,255,0.34));
+      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 0 14px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      font-family: inherit;
+      white-space: nowrap;
+      text-decoration: none;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.18),
+        0 3px 12px rgba(130, 177, 255, 0.16);
+      transition: background .16s, border-color .16s, box-shadow .16s;
+    }
+    .btn:hover {
+      background: linear-gradient(135deg, rgba(255,255,255,0.18), rgba(130,177,255,0.40));
+    }
+    .btn .material-icons-outlined { font-size: 16px; }
+    .btn.ghost {
+      border-color: rgba(255,255,255,0.24);
+      background: rgba(255, 255, 255, 0.11);
+      font-weight: 500;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+    .btn.ghost:hover {
+      background: rgba(255, 255, 255, 0.15);
+      border-color: rgba(255, 255, 255, 0.34);
+    }
+    .btn-row {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .switch {
+      position: relative;
+      width: 46px; height: 28px;
+      flex-shrink: 0;
+    }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .switch .track {
+      position: absolute; inset: 0;
+      background: rgba(255,255,255,0.15);
+      border-radius: 14px;
+      transition: .2s;
+      cursor: pointer;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+    }
+    .switch .thumb {
+      position: absolute;
+      width: 20px; height: 20px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.7);
+      top: 4px; left: 4px;
+      transition: .2s;
+      pointer-events: none;
+    }
+    .switch input:checked + .track { background: rgba(130,177,255,0.38); }
+    .switch input:checked + .track .thumb {
+      transform: translateX(18px);
+      background: var(--accent);
+    }
+    .switch.amber input:checked + .track { background: rgba(255,198,109,0.38); }
+    .switch.amber input:checked + .track .thumb { background: var(--warn); }
+
+    .preview-row {
+      display: flex;
+      gap: 10px;
+      align-items: stretch;
+    }
+    .preview {
+      flex: 1;
+      height: 220px;
+      border-radius: 12px;
+      background:
+        radial-gradient(ellipse 70% 50% at 50% 40%, rgba(130,177,255,0.08), transparent 70%),
+        rgba(0,0,0,0.28);
+      border: 1px solid rgba(255,255,255,0.12);
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-size: 12.5px;
+      overflow: hidden;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
+    .preview .material-icons-outlined {
+      font-size: 28px;
+      color: rgba(255,255,255,0.28);
+      margin-bottom: 8px;
+      display: block;
+      text-align: center;
+    }
+    .legend {
+      width: 54px;
+      border-radius: 12px;
+      background: linear-gradient(
+        180deg,
+        #ff3b30 0%,
+        #ff9500 25%,
+        #ffcc00 45%,
+        #34c759 65%,
+        #5ac8fa 85%,
+        #5856d6 100%
+      );
+      border: 1px solid rgba(255,255,255,0.16);
+      position: relative;
+      flex-shrink: 0;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.12);
+    }
+    .legend .mark {
+      position: absolute;
+      left: -4px; right: -4px;
+      height: 2px;
+      background: #ffe08a;
+      box-shadow: 0 0 6px rgba(255,224,138,0.8);
+      top: 62%;
+    }
+
+    .chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
+    .chip {
+      min-height: 36px;
+      padding: 8px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      background: rgba(255, 255, 255, 0.11);
+      color: var(--text70);
+      font-size: 12px;
+      line-height: 1.35;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+    .chip strong { color: #fff; font-weight: 700; }
+    .chip.accent {
+      background: linear-gradient(135deg, rgba(255,255,255,0.14), rgba(130,177,255,0.22));
+      border-color: rgba(130, 177, 255, 0.45);
+      color: #fff;
+    }
+
+    .status-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .status-list .item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      min-height: 42px;
+      padding: 8px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.06);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+    }
+    .status-list .name { color: var(--text70); font-size: 13px; }
+    .status-list .val {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--ok);
+      padding: 3px 9px;
+      border-radius: 999px;
+      background: rgba(58,255,111,0.12);
+      border: 1px solid rgba(58,255,111,0.24);
+    }
+    .status-list .val.off {
+      color: var(--muted);
+      background: rgba(255,255,255,0.06);
+      border-color: rgba(255,255,255,0.12);
+    }
+    .status-list .val.warn {
+      color: var(--warn);
+      background: rgba(255,198,109,0.12);
+      border-color: rgba(255,198,109,0.24);
+    }
+
+    .diag-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .diag-card {
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.06);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+    }
+    .diag-card .k {
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    .diag-card .v {
+      font-size: 13px;
+      font-weight: 600;
+      color: #fff;
+      word-break: break-all;
+    }
+
+    .prototype-note {
+      position: fixed;
+      right: 16px;
+      bottom: 14px;
+      z-index: 5;
+      padding: 8px 12px;
+      border-radius: 10px;
+      background: rgba(16, 24, 48, 0.72);
+      border: 1px solid rgba(130,177,255,0.28);
+      color: rgba(255,255,255,0.78);
+      font-size: 11.5px;
+      backdrop-filter: blur(12px);
+      max-width: 380px;
+    }
+    .prototype-note a { color: var(--accent); text-decoration: none; }
+    .prototype-note a:hover { text-decoration: underline; }
+
+    @media (max-width: 600px) {
+      .app > .shell {
+        width: calc(100% - 24px);
+        max-height: calc(100% - 24px);
+        aspect-ratio: auto;
+        height: calc(100% - 24px);
+      }
+      .panel { flex-direction: column; }
+      .panel-nav {
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid var(--divider);
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        align-content: start;
+        overflow: visible;
+        padding: 0 10px 10px;
+        gap: 8px;
+      }
+      .panel-nav-head {
+        grid-column: 1 / -1;
+        margin: 0 -10px;
+      }
+      .nav-btn,
+      .panel-nav > .nav-btn:first-of-type,
+      .panel-nav > .nav-btn:last-of-type {
+        width: 100%;
+        margin: 0;
+        height: 44px;
+      }
+      .nav-btn .meta .subtitle { display: none; }
+      .field.w180, .field.w220, .field.w360 { width: 100%; }
+      .preview-row { flex-direction: column; }
+      .legend {
+        width: 100%; height: 18px;
+        background: linear-gradient(90deg, #5856d6, #5ac8fa, #34c759, #ffcc00, #ff9500, #ff3b30);
+      }
+      .legend .mark { left: 62%; right: auto; top: -4px; bottom: -4px; width: 2px; height: auto; }
+      .diag-grid { grid-template-columns: 1fr; }
+      .row { flex-direction: column; align-items: stretch; gap: 10px; }
+      .row-control { justify-content: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="app-bg" aria-hidden="true">
+      <img src="madoka_bg.png" alt="" />
+    </div>
+    <div class="shell">
+      <section class="panel">
+        <nav class="panel-nav" id="nav" aria-label="Debug 分类">
+          <div class="panel-nav-head">
+            <a class="back" href="settings-page.html?cat=advanced" title="返回设置" aria-label="返回设置">
+              <span class="material-icons-outlined">arrow_back</span>
+            </a>
+            <span class="label">Debug</span>
+          </div>
+        </nav>
+
+        <div class="panel-main">
+          <div class="content-head">
+            <div class="content-icon" id="contentIcon">
+              <span class="material-icons-outlined">map</span>
+            </div>
+            <div>
+              <h3 id="contentTitle">Mapbox 底图</h3>
+              <p id="contentSub">账号、Style、Access Token</p>
+            </div>
+          </div>
+
+          <div class="content-body" id="contentBody">
+            <!-- Mapbox -->
+            <div class="category-panel active" data-cat="mapbox">
+              <div class="section">
+                <div class="section-title">
+                  <span class="material-icons-outlined">map</span>
+                  <h4>Mapbox Base Map</h4>
+                  <span class="badge warn" id="mapboxBadge">token empty</span>
+                </div>
+                <p class="hint">
+                  Default EEWCE-like style: mapbox/dark-v11。未配置 token 时回退 Petal Dark。
+                </p>
+                <div class="field-grid">
+                  <div class="field-wrap">
+                    <label>Account</label>
+                    <input class="field w180" type="text" value="mapbox" />
+                  </div>
+                  <div class="field-wrap">
+                    <label>Style ID</label>
+                    <input class="field w220" type="text" value="dark-v11" />
+                  </div>
+                  <div class="field-wrap">
+                    <label>Access Token</label>
+                    <input class="field w360" type="password" placeholder="pk...." value="" id="mapboxToken" />
+                  </div>
+                </div>
+                <div class="btn-row">
+                  <button class="btn ghost" type="button">Reset</button>
+                  <button class="btn" type="button">
+                    <span class="material-icons-outlined">save</span>
+                    Save
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- LPGM -->
+            <div class="category-panel" data-cat="lpgm">
+              <div class="section">
+                <div class="section-title">
+                  <span class="material-icons-outlined">waves</span>
+                  <h4>長周期地震動モニタ</h4>
+                </div>
+                <div class="metric-row">
+                  <div class="metric"><div class="label">最大 Sva</div><div class="value">--</div></div>
+                  <div class="metric"><div class="label">最大階級</div><div class="value">--</div></div>
+                  <div class="metric"><div class="label">时刻</div><div class="value">--</div></div>
+                </div>
+                <div class="preview-row">
+                  <div class="preview">
+                    <div>
+                      <span class="material-icons-outlined">image</span>
+                      等待长周期图层数据...
+                    </div>
+                  </div>
+                  <div class="legend" aria-hidden="true"><div class="mark"></div></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- NIED -->
+            <div class="category-panel" data-cat="nied">
+              <div class="section">
+                <div class="section-title">
+                  <span class="material-icons-outlined">radar</span>
+                  <h4>NIED 強震モニタ / GIF</h4>
+                  <span class="badge muted">lmoni</span>
+                </div>
+                <div class="metric-row">
+                  <div class="metric"><div class="label">最大震度</div><div class="value">--</div></div>
+                  <div class="metric"><div class="label">时刻</div><div class="value">--</div></div>
+                  <div class="metric"><div class="label">数据源</div><div class="value">lmoni</div></div>
+                </div>
+                <div class="preview-row">
+                  <div class="preview">
+                    <div>
+                      <span class="material-icons-outlined">map</span>
+                      地表图层预览
+                    </div>
+                  </div>
+                  <div class="legend" aria-hidden="true"><div class="mark" style="top:48%"></div></div>
+                </div>
+                <div class="divider"></div>
+                <div class="section-title" style="margin-bottom:10px">
+                  <span class="material-icons-outlined">sensors</span>
+                  <h4>Top stations</h4>
+                </div>
+                <div class="chip-row">
+                  <div class="chip">暂无测站</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Estimate -->
+            <div class="category-panel" data-cat="estimate">
+              <div class="section">
+                <div class="section-title">
+                  <span class="material-icons-outlined">my_location</span>
+                  <h4>NIED 源推算</h4>
+                  <span class="badge muted">idle</span>
+                </div>
+                <div class="diag-grid">
+                  <div class="diag-card"><div class="k">Current Event</div><div class="v">--</div></div>
+                  <div class="diag-card"><div class="k">Stage</div><div class="v">idle</div></div>
+                  <div class="diag-card"><div class="k">Max Shindo</div><div class="v">--</div></div>
+                  <div class="diag-card"><div class="k">Tracked / History</div><div class="v">0 / 0</div></div>
+                  <div class="diag-card"><div class="k">Estimate</div><div class="v">--</div></div>
+                  <div class="diag-card"><div class="k">Depth / Confidence</div><div class="v">-- / --</div></div>
+                </div>
+                <div class="divider"></div>
+                <div class="section-title" style="margin-bottom:10px">
+                  <span class="material-icons-outlined">ssid_chart</span>
+                  <h4>Top timing picks</h4>
+                </div>
+                <div class="chip-row">
+                  <div class="chip">暂无 picks</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Tools -->
+            <div class="category-panel" data-cat="tools">
+              <div class="section">
+                <div class="section-title">
+                  <span class="material-icons-outlined">history</span>
+                  <h4>NIED Replay Logger</h4>
+                </div>
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading warn"><span class="material-icons-outlined">fiber_manual_record</span></div>
+                    <div class="row-text">
+                      <div class="title">录制 Replay</div>
+                      <div class="subtitle">Enable to record GIF→Detect→Epicenter logs</div>
+                    </div>
+                  </div>
+                  <div class="row-control">
+                    <label class="switch amber"><input type="checkbox" /><span class="track"><span class="thumb"></span></span></label>
+                  </div>
+                </div>
+                <div class="divider"></div>
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading warn"><span class="material-icons-outlined">save_alt</span></div>
+                    <div class="row-text">
+                      <div class="title">推算触发自动保存</div>
+                      <div class="subtitle">源推算 confirmed/strong 时自动开启并立即保存</div>
+                    </div>
+                  </div>
+                  <div class="row-control">
+                    <label class="switch amber"><input type="checkbox" checked /><span class="track"><span class="thumb"></span></span></label>
+                  </div>
+                </div>
+              </div>
+
+              <div class="section">
+                <div class="section-title">
+                  <span class="material-icons-outlined">public</span>
+                  <h4>GlobalQuake 地震预警</h4>
+                  <span class="badge muted">disconnected</span>
+                </div>
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">lan</span></div>
+                    <div class="row-text">
+                      <div class="title">直连 TCP 流</div>
+                      <div class="subtitle">Connect directly to the GlobalQuake 地震预警 TCP stream.</div>
+                    </div>
+                  </div>
+                  <div class="row-control">
+                    <label class="switch"><input type="checkbox" id="gqEnable" /><span class="track"><span class="thumb"></span></span></label>
+                  </div>
+                </div>
+                <div class="divider"></div>
+                <div class="field-grid">
+                  <div class="field-wrap">
+                    <label>Primary Host</label>
+                    <input class="field w220" type="text" value="localhost" />
+                  </div>
+                  <div class="field-wrap">
+                    <label>Port</label>
+                    <input class="field w180" type="text" value="8035" />
+                  </div>
+                  <div class="field-wrap">
+                    <label>Secondary Host</label>
+                    <input class="field w220" type="text" value="" placeholder="optional" />
+                  </div>
+                  <div class="field-wrap">
+                    <label>Port</label>
+                    <input class="field w180" type="text" value="" placeholder="optional" />
+                  </div>
+                </div>
+                <div class="btn-row">
+                  <button class="btn" type="button">
+                    <span class="material-icons-outlined">save</span>
+                    Save endpoints
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- S-net -->
+            <div class="category-panel" data-cat="snet">
+              <div class="section">
+                <div class="section-title">
+                  <span class="material-icons-outlined">waterfall_chart</span>
+                  <h4>S-Net モニタ</h4>
+                  <span class="badge muted">OFF</span>
+                </div>
+                <div class="metric-row">
+                  <div class="metric"><div class="label">最大震度</div><div class="value">--</div></div>
+                  <div class="metric"><div class="label">活跃测站</div><div class="value">0 / 0</div></div>
+                  <div class="metric"><div class="label">震度 ≥ 1</div><div class="value">0</div></div>
+                </div>
+                <div class="section-title" style="margin-bottom:10px">
+                  <span class="material-icons-outlined">leaderboard</span>
+                  <h4>Top 5</h4>
+                </div>
+                <div class="chip-row">
+                  <div class="chip">暂无活跃测站</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Runtime -->
+            <div class="category-panel" data-cat="runtime">
+              <div class="section">
+                <div class="section-title">
+                  <span class="material-icons-outlined">memory</span>
+                  <h4>Runtime</h4>
+                </div>
+                <div class="status-list">
+                  <div class="item"><span class="name">Camera AutoFollow</span><span class="val">true</span></div>
+                  <div class="item"><span class="name">Unified Events</span><span class="val">0</span></div>
+                  <div class="item"><span class="name">Warnings</span><span class="val">0</span></div>
+                  <div class="item"><span class="name">Info Events</span><span class="val">0</span></div>
+                  <div class="item"><span class="name">Sources online</span><span class="val">0 / 0</span></div>
+                </div>
+              </div>
+              <div class="section">
+                <div class="section-title">
+                  <span class="material-icons-outlined">hub</span>
+                  <h4>Source Status</h4>
+                </div>
+                <div class="status-list">
+                  <div class="item"><span class="name">FAN Studio</span><span class="val">connected</span></div>
+                  <div class="item"><span class="name">NowQuake</span><span class="val">connected</span></div>
+                  <div class="item"><span class="name">WHEWS</span><span class="val off">disconnected</span></div>
+                  <div class="item"><span class="name">NIED</span><span class="val warn">connecting</span></div>
+                  <div class="item"><span class="name">S-net</span><span class="val off">disconnected</span></div>
+                </div>
+              </div>
+              <div class="section">
+                <div class="section-title">
+                  <span class="material-icons-outlined">settings</span>
+                  <h4>关联设置页</h4>
+                </div>
+                <div class="row">
+                  <div class="row-left">
+                    <div class="leading"><span class="material-icons-outlined">tune</span></div>
+                    <div class="row-text">
+                      <div class="title">应用设置 · 高级</div>
+                      <div class="subtitle">Debug 入口位于设置页「高级 → 开发工具」</div>
+                    </div>
+                  </div>
+                  <div class="row-control">
+                    <a class="btn" href="settings-page.html?cat=advanced">
+                      <span class="material-icons-outlined">arrow_back</span>
+                      返回设置
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div class="prototype-note">
+    <strong>UI 原型</strong> · Debug 已对齐设置页设计语言 ·
+    <a href="settings-page.html?cat=advanced">返回设置</a>
+  </div>
+
+  <script>
+    const CATEGORIES = [
+      { id: 'mapbox', title: 'Mapbox', subtitle: '底图账号与 Token', icon: 'map', accent: '#62c6ff' },
+      { id: 'lpgm', title: '长周期', subtitle: 'LPGM 图层与图例', icon: 'waves', accent: '#d6a5ff' },
+      { id: 'nied', title: 'NIED GIF', subtitle: '強震モニタ预览', icon: 'radar', accent: '#72d6b1' },
+      { id: 'estimate', title: '源推算', subtitle: '事件与估测诊断', icon: 'my_location', accent: '#ffc66d' },
+      { id: 'tools', title: '调试工具', subtitle: 'Replay / GlobalQuake', icon: 'build', accent: '#aeb8cc' },
+      { id: 'snet', title: 'S-Net', subtitle: '海底观测网状态', icon: 'waterfall_chart', accent: '#82b1ff' },
+      { id: 'runtime', title: 'Runtime', subtitle: '运行时与源状态', icon: 'memory', accent: '#9ad0ff' },
+    ];
+
+    let selected = 'mapbox';
+
+    function renderNav() {
+      const nav = document.getElementById('nav');
+      const head = nav.querySelector('.panel-nav-head');
+      nav.querySelectorAll('.nav-btn').forEach((btn) => btn.remove());
+      head.insertAdjacentHTML('afterend', CATEGORIES.map((c) => `
+        <button type="button" class="nav-btn ${c.id === selected ? 'active' : ''}" data-cat="${c.id}">
+          <span class="material-icons-outlined icon">${c.icon}</span>
+          <span class="meta">
+            <span class="title">${c.title}</span>
+            <span class="subtitle">${c.subtitle}</span>
+          </span>
+        </button>
+      `).join(''));
+      nav.querySelectorAll('.nav-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          selected = btn.dataset.cat;
+          updateView();
+        });
+      });
+    }
+
+    function updateView() {
+      const info = CATEGORIES.find((c) => c.id === selected) || CATEGORIES[0];
+      document.getElementById('contentTitle').textContent = ({
+        mapbox: 'Mapbox 底图',
+        lpgm: '長周期地震動モニタ',
+        nied: 'NIED 強震モニタ',
+        estimate: 'NIED 源推算',
+        tools: '调试工具',
+        snet: 'S-Net モニタ',
+        runtime: 'Runtime',
+      })[info.id];
+      document.getElementById('contentSub').textContent = info.subtitle;
+      const icon = document.querySelector('#contentIcon .material-icons-outlined');
+      icon.textContent = info.icon;
+      icon.style.color = info.accent;
+      document.getElementById('contentIcon').style.background = info.accent + '22';
+      document.getElementById('contentIcon').style.borderColor = info.accent + '38';
+
+      document.querySelectorAll('.category-panel').forEach((panel) => {
+        panel.classList.toggle('active', panel.dataset.cat === selected);
+      });
+      document.querySelectorAll('.nav-btn').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.cat === selected);
+      });
+    }
+
+    const tokenInput = document.getElementById('mapboxToken');
+    const badge = document.getElementById('mapboxBadge');
+    function syncMapboxBadge() {
+      const has = tokenInput.value.trim().length > 0;
+      badge.textContent = has ? 'configured' : 'token empty';
+      badge.classList.toggle('warn', !has);
+      badge.classList.toggle('muted', false);
+      if (has) {
+        badge.classList.remove('warn');
+        badge.style.color = '';
+        badge.style.background = '';
+        badge.style.borderColor = '';
+      }
+    }
+    tokenInput.addEventListener('input', syncMapboxBadge);
+
+    const params = new URLSearchParams(location.search);
+    const cat = params.get('cat');
+    if (cat && CATEGORIES.some((c) => c.id === cat)) selected = cat;
+
+    renderNav();
+    updateView();
+    syncMapboxBadge();
+  </script>
+</body>
+</html>

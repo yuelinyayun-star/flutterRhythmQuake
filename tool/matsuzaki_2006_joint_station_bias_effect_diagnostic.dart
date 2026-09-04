@@ -37,6 +37,28 @@ const _magnitudeSearchSpec = Matsuzaki2006ForwardSearchSpec(
 const _neighborhoodRadiusDegrees = 0.25;
 const _neighborhoodStepDegrees = 0.025;
 
+const _jointStages = <Matsuzaki2006JointSearchStage>[
+  Matsuzaki2006JointSearchStage(
+    latitudeStepDegrees: 0.5,
+    longitudeStepDegrees: 0.5,
+    depthStepKm: 20,
+  ),
+  Matsuzaki2006JointSearchStage.refinePreviousCandidates(
+    latitudeStepDegrees: 0.1,
+    longitudeStepDegrees: 0.1,
+    depthStepKm: 10,
+    maximumSeedCount: 6,
+    seedRmsIncrease: 0.10,
+  ),
+  Matsuzaki2006JointSearchStage.refinePreviousCandidates(
+    latitudeStepDegrees: 0.025,
+    longitudeStepDegrees: 0.025,
+    depthStepKm: 5,
+    maximumSeedCount: 6,
+    seedRmsIncrease: 0.05,
+  ),
+];
+
 void main(List<String> arguments) {
   final inputPath = _value(arguments, '--input');
   final noBiasReportPath = _value(arguments, '--no-bias-report');
@@ -51,6 +73,12 @@ void main(List<String> arguments) {
       _value(arguments, '--station-bias-input-dir') ??
       'tmp/jma_intensity_nearfield_expansion';
   final detailedEventId = _value(arguments, '--detailed-event');
+  final traceEventId = _value(arguments, '--trace-event');
+  final scanAllNeighborhoods = arguments.contains('--scan-all-neighborhoods');
+  final traceAllEvents = arguments.contains('--trace-all-events');
+  final compareHardCoarseStart = arguments.contains(
+    '--compare-hard-coarse-start',
+  );
 
   if (inputPath == null ||
       noBiasReportPath == null ||
@@ -65,6 +93,10 @@ void main(List<String> arguments) {
       '[--station-bias-min-events <count>] '
       '[--station-bias-input-dir <directory>] '
       '[--detailed-event <event-id>] '
+      '[--trace-event <event-id>] '
+      '[--scan-all-neighborhoods] '
+      '[--trace-all-events] '
+      '[--compare-hard-coarse-start] '
       '[--output-dir <directory>]',
     );
     exitCode = 64;
@@ -119,6 +151,15 @@ void main(List<String> arguments) {
   final rawEvents = _rawEventsById(annualDataset);
 
   final eventDiagnostics = <Map<String, Object?>>[];
+  final neighborhoodCoverageByModel = <String, List<Map<String, Object?>>>{
+    for (final modelName in _modelNames) modelName: <Map<String, Object?>>[],
+  };
+  final candidateTraceCoverageByModel = <String, List<Map<String, Object?>>>{
+    for (final modelName in _modelNames) modelName: <Map<String, Object?>>[],
+  };
+  final hardCoarseStartByModel = <String, List<Map<String, Object?>>>{
+    for (final modelName in _modelNames) modelName: <Map<String, Object?>>[],
+  };
   for (final eventId in noBiasEvents.keys.toList()..sort()) {
     final rawEvent = rawEvents[eventId];
     if (rawEvent == null) {
@@ -134,7 +175,23 @@ void main(List<String> arguments) {
     final stationBiasEvent = stationBiasEvents[eventId]!;
     final modelDiagnostics = <String, Object?>{};
     for (final modelName in _modelNames) {
-      modelDiagnostics[modelName] = _modelDiagnosticJson(
+      Map<String, Object?>? neighborhoodCoverage;
+      if (scanAllNeighborhoods) {
+        neighborhoodCoverage = _neighborhoodCoverageScan(
+          input: input,
+          model: models[modelName]!,
+          observations: input.observations,
+          stationBiasModel: stationBiasModels[modelName]!,
+          shrinkage: shrinkage,
+          noBiasModel: _modelResult(noBiasEvent, modelName),
+          stationBiasModelResult: _modelResult(stationBiasEvent, modelName),
+        )..['eventId'] = eventId;
+        neighborhoodCoverageByModel[modelName]!.add(neighborhoodCoverage);
+      }
+      final additionalTraceSource = _sourceFromCoverageScan(
+        neighborhoodCoverage,
+      );
+      final modelDiagnostic = _modelDiagnosticJson(
         modelName: modelName,
         model: models[modelName]!,
         input: input,
@@ -144,9 +201,38 @@ void main(List<String> arguments) {
         noBiasModel: _modelResult(noBiasEvent, modelName),
         stationBiasModelResult: _modelResult(stationBiasEvent, modelName),
         includeDetailedResiduals: eventId == detailedEventId,
+        includeCandidateTrace: traceAllEvents || eventId == traceEventId,
+        additionalTraceSource: additionalTraceSource,
       );
+      if (compareHardCoarseStart) {
+        final hardCoarseStart = _hardCoarseStartDiagnostic(
+          input: input,
+          model: models[modelName]!,
+          observations: input.observations,
+          stationBiasModel: stationBiasModels[modelName]!,
+          shrinkage: shrinkage,
+          noBiasModel: _modelResult(noBiasEvent, modelName),
+          stationBiasModelResult: _modelResult(stationBiasEvent, modelName),
+          truth: noBiasEvent['truth'],
+        );
+        modelDiagnostic['hardCoarseStart'] = hardCoarseStart;
+        hardCoarseStartByModel[modelName]!.add(
+          hardCoarseStart..['eventId'] = eventId,
+        );
+      }
+      modelDiagnostics[modelName] = modelDiagnostic;
+      if (traceAllEvents) {
+        candidateTraceCoverageByModel[modelName]!.add(
+          _candidateTraceCoverageRow(
+            eventId: eventId,
+            neighborhoodCoverage: neighborhoodCoverage,
+            modelDiagnostic:
+                modelDiagnostics[modelName]! as Map<String, Object?>,
+          ),
+        );
+      }
     }
-    eventDiagnostics.add({
+    final eventDiagnostic = <String, Object?>{
       'eventId': eventId,
       'originTime': noBiasEvent['originTime'],
       'truth': noBiasEvent['truth'],
@@ -157,11 +243,18 @@ void main(List<String> arguments) {
         'anchorLongitude': input.anchorLongitude,
       },
       'models': modelDiagnostics,
-    });
+    };
+    if (scanAllNeighborhoods) {
+      eventDiagnostic['neighborhoodCoverage'] = {
+        for (final modelName in _modelNames)
+          modelName: neighborhoodCoverageByModel[modelName]!.last,
+      };
+    }
+    eventDiagnostics.add(eventDiagnostic);
   }
 
   final report = <String, Object?>{
-    'schemaVersion': 'matsuzaki_2006_joint_station_bias_effect_diagnostic_v3',
+    'schemaVersion': 'matsuzaki_2006_joint_station_bias_effect_diagnostic_v4',
     'inputPath': inputPath,
     'noBiasReportPath': noBiasReportPath,
     'stationBiasReportPath': stationBiasReportPath,
@@ -185,6 +278,63 @@ void main(List<String> arguments) {
     },
     'events': eventDiagnostics,
   };
+  if (scanAllNeighborhoods) {
+    report['neighborhoodCoverageScan'] = {
+      'scanSpec': {
+        'anchor': 'no-bias best candidate from existing report',
+        'depth': 'fixed at no-bias best candidate depth',
+        'radiusDegrees': _neighborhoodRadiusDegrees,
+        'stepDegrees': _neighborhoodStepDegrees,
+        'domain': 'original hard rectangular bounds and radial constraint',
+        'scoredPath': 'frozen station-bias path only',
+        'interpretation':
+            'A lower local RMS is coverage-risk evidence. It does not prove '
+            'that the production adaptive search failed to evaluate the point '
+            'unless candidate trace is also collected.',
+      },
+      'models': {
+        for (final modelName in _modelNames)
+          modelName: _neighborhoodCoverageSummary(
+            neighborhoodCoverageByModel[modelName]!,
+          ),
+      },
+    };
+  }
+  if (traceAllEvents) {
+    report['candidateTraceCoverage'] = {
+      'interpretation':
+          'This report counts whether watched source coordinates entered the '
+          'existing scoring loop. It is not a replacement search and does not '
+          'measure candidates that were not explicitly watched.',
+      'models': {
+        for (final modelName in _modelNames)
+          modelName: _candidateTraceCoverageSummary(
+            candidateTraceCoverageByModel[modelName]!,
+          ),
+      },
+    };
+  }
+  if (compareHardCoarseStart) {
+    report['hardCoarseStartComparison'] = {
+      'searchSpec': {
+        'strategy':
+            'replace the initial anchor window with the original hard domain',
+        'initialHorizontalBounds': 'original hard horizontal bounds',
+        'hardHorizontalBounds': 'unchanged original hard horizontal bounds',
+        'stages': 'unchanged three-stage search schedule',
+        'radialConstraint': 'unchanged original radial constraint',
+        'magnitudeSearch': 'unchanged magnitude search',
+        'candidateBudget': 30000,
+        'productionImpact': 'diagnostic only; no production search change',
+      },
+      'models': {
+        for (final modelName in _modelNames)
+          modelName: _hardCoarseStartSummary(
+            hardCoarseStartByModel[modelName]!,
+          ),
+      },
+    };
+  }
 
   final outputDirectory = Directory(outputDirectoryPath)
     ..createSync(recursive: true);
@@ -210,6 +360,8 @@ Map<String, Object?> _modelDiagnosticJson({
   required Map<String, Object?> noBiasModel,
   required Map<String, Object?> stationBiasModelResult,
   required bool includeDetailedResiduals,
+  required bool includeCandidateTrace,
+  required Matsuzaki2006CandidateSource? additionalTraceSource,
 }) {
   final correctionSummary = _correctionSummary(
     observations: observations,
@@ -234,6 +386,17 @@ Map<String, Object?> _modelDiagnosticJson({
   final stationBiasMagnitudeError = _number(
     stationBiasModelResult['magnitudeAbsoluteErrorMaximumEquivalent'],
   );
+  final candidateNeighborhoods = includeDetailedResiduals
+      ? _candidateNeighborhoods(
+          input: input,
+          model: model,
+          observations: observations,
+          stationBiasModel: stationBiasModel,
+          shrinkage: shrinkage,
+          noBiasModel: noBiasModel,
+          stationBiasModelResult: stationBiasModelResult,
+        )
+      : null;
   return {
     'stationCorrection': correctionSummary.toJson(),
     'noBias': _compactResult(noBiasModel),
@@ -248,8 +411,11 @@ Map<String, Object?> _modelDiagnosticJson({
       stationBiasModelResult: stationBiasModelResult,
       includeDetailedResiduals: includeDetailedResiduals,
     ),
-    if (includeDetailedResiduals)
-      'candidateNeighborhoods': _candidateNeighborhoods(
+    ...?candidateNeighborhoods == null
+        ? null
+        : {'candidateNeighborhoods': candidateNeighborhoods},
+    if (includeCandidateTrace)
+      'candidateTrace': _candidateTrace(
         input: input,
         model: model,
         observations: observations,
@@ -257,6 +423,8 @@ Map<String, Object?> _modelDiagnosticJson({
         shrinkage: shrinkage,
         noBiasModel: noBiasModel,
         stationBiasModelResult: stationBiasModelResult,
+        candidateNeighborhoods: candidateNeighborhoods,
+        additionalTraceSource: additionalTraceSource,
       ),
     'deltas': {
       'epicentralErrorKm': _difference(
@@ -294,6 +462,532 @@ Map<String, Object?> _modelDiagnosticJson({
   };
 }
 
+Map<String, Object?> _candidateTrace({
+  required Matsuzaki2006ArchiveInversionInput input,
+  required Matsuzaki2006AttenuationModel model,
+  required List<Matsuzaki2006IntensityObservation> observations,
+  required Matsuzaki2006StationBiasModel stationBiasModel,
+  required Matsuzaki2006StationBiasShrinkage shrinkage,
+  required Map<String, Object?> noBiasModel,
+  required Map<String, Object?> stationBiasModelResult,
+  required Map<String, Object?>? candidateNeighborhoods,
+  required Matsuzaki2006CandidateSource? additionalTraceSource,
+}) {
+  final watchedSources = _traceWatchedSources(
+    noBiasModel: noBiasModel,
+    stationBiasModelResult: stationBiasModelResult,
+    candidateNeighborhoods: candidateNeighborhoods,
+    additionalTraceSource: additionalTraceSource,
+  );
+  final searchSpec = _jointSearchSpec(input);
+  return {
+    'watchedSources': [
+      for (final source in watchedSources)
+        {
+          'latitude': source.latitude,
+          'longitude': source.longitude,
+          'depthKm': source.depthKm,
+        },
+    ],
+    'noBias': _tracePath(
+      observations: observations,
+      searchSpec: searchSpec,
+      inverter: Matsuzaki2006JointInverter(model: model),
+      watchedSources: watchedSources,
+    ),
+    'stationBias': _tracePath(
+      observations: observations,
+      searchSpec: searchSpec,
+      inverter: Matsuzaki2006JointInverter(
+        model: model,
+        stationBiasModel: stationBiasModel,
+        stationBiasShrinkage: shrinkage,
+      ),
+      watchedSources: watchedSources,
+    ),
+  };
+}
+
+Matsuzaki2006JointSearchSpec _jointSearchSpec(
+  Matsuzaki2006ArchiveInversionInput input, {
+  bool startFromHardHorizontalBounds = false,
+}) => Matsuzaki2006JointSearchSpec(
+  initialHorizontalBounds: startFromHardHorizontalBounds
+      ? input.hardHorizontalBounds!
+      : input.initialHorizontalBounds!,
+  hardHorizontalBounds: input.hardHorizontalBounds!,
+  minimumDepthKm: _inputSpec.minimumSearchDepthKm,
+  maximumDepthKm: _inputSpec.maximumSearchDepthKm,
+  radialSearchConstraint: input.radialSearchConstraint,
+  stages: _jointStages,
+  horizontalExpansionDegrees: 0.5,
+  maximumHorizontalExpansionRounds: 8,
+  maximumCandidateEvaluations: 30000,
+  minimumObservations: _inputSpec.minimumObservations,
+  equivalentObjectiveTolerance: 1e-8,
+  resolutionRmsIncrease: 0.05,
+  magnitudeSearchSpec: _magnitudeSearchSpec,
+);
+
+Map<String, Object?> _hardCoarseStartDiagnostic({
+  required Matsuzaki2006ArchiveInversionInput input,
+  required Matsuzaki2006AttenuationModel model,
+  required List<Matsuzaki2006IntensityObservation> observations,
+  required Matsuzaki2006StationBiasModel stationBiasModel,
+  required Matsuzaki2006StationBiasShrinkage shrinkage,
+  required Map<String, Object?> noBiasModel,
+  required Map<String, Object?> stationBiasModelResult,
+  required Object? truth,
+}) {
+  final searchSpec = _jointSearchSpec(
+    input,
+    startFromHardHorizontalBounds: true,
+  );
+  final noBiasStopwatch = Stopwatch()..start();
+  final noBiasResult = Matsuzaki2006JointInverter(
+    model: model,
+  ).invert(observations: observations, searchSpec: searchSpec);
+  noBiasStopwatch.stop();
+  final stationBiasStopwatch = Stopwatch()..start();
+  final stationBiasResult = Matsuzaki2006JointInverter(
+    model: model,
+    stationBiasModel: stationBiasModel,
+    stationBiasShrinkage: shrinkage,
+  ).invert(observations: observations, searchSpec: searchSpec);
+  stationBiasStopwatch.stop();
+  return {
+    'noBias': _hardCoarsePathJson(
+      result: noBiasResult,
+      elapsedMilliseconds: noBiasStopwatch.elapsedMilliseconds,
+      baseline: noBiasModel,
+      truth: truth,
+    ),
+    'stationBias': _hardCoarsePathJson(
+      result: stationBiasResult,
+      elapsedMilliseconds: stationBiasStopwatch.elapsedMilliseconds,
+      baseline: stationBiasModelResult,
+      truth: truth,
+    ),
+  };
+}
+
+Map<String, Object?> _hardCoarsePathJson({
+  required Matsuzaki2006JointInversionResult result,
+  required int elapsedMilliseconds,
+  required Map<String, Object?> baseline,
+  required Object? truth,
+}) {
+  final candidate = result.bestCandidates.isEmpty
+      ? null
+      : result.bestCandidates.first;
+  final rms = candidate?.intensityRms;
+  final baselineRms = _number(baseline['minimumIntensityRms']);
+  final postFitErrors = _hardCoarsePostFitErrors(
+    candidate: candidate,
+    truth: truth,
+  );
+  final baselineEpicentralError = _number(
+    baseline['epicentralErrorKmMaximumEquivalent'],
+  );
+  final baselineDepthError = _number(
+    baseline['depthAbsoluteErrorKmMaximumEquivalent'],
+  );
+  final baselineMagnitudeError = _number(
+    baseline['magnitudeAbsoluteErrorMaximumEquivalent'],
+  );
+  final baselineElapsedMilliseconds = _number(baseline['elapsedMilliseconds']);
+  return {
+    'status': result.status.name,
+    'isConverged': result.isConverged,
+    'hardBoundaryContacts': [
+      for (final boundary in result.hardBoundaryContacts) boundary.name,
+    ],
+    'candidateEvaluationCount': result.candidateEvaluationCount,
+    'elapsedMilliseconds': elapsedMilliseconds,
+    'baselineElapsedMilliseconds': baselineElapsedMilliseconds,
+    'elapsedMillisecondsDeltaFromBaseline': _difference(
+      elapsedMilliseconds.toDouble(),
+      baselineElapsedMilliseconds,
+    ),
+    'bestCandidate': candidate == null
+        ? null
+        : {
+            'latitude': candidate.source.latitude,
+            'longitude': candidate.source.longitude,
+            'depthKm': candidate.source.depthKm,
+            'magnitude': candidate.magnitude,
+            'intensityRms': candidate.intensityRms,
+            'meanIntensityResidual': candidate.meanIntensityResidual,
+          },
+    'baselineStatus': baseline['status'],
+    'baselineIntensityRms': baselineRms,
+    'intensityRmsDeltaFromBaseline': _difference(rms, baselineRms),
+    'lowerIntensityRmsThanBaseline':
+        rms != null && baselineRms != null && rms < baselineRms - 1e-10,
+    ...postFitErrors,
+    'epicentralErrorDeltaFromBaseline': _difference(
+      _number(postFitErrors['epicentralErrorKm']),
+      baselineEpicentralError,
+    ),
+    'depthAbsoluteErrorDeltaFromBaseline': _difference(
+      _number(postFitErrors['depthAbsoluteErrorKm']),
+      baselineDepthError,
+    ),
+    'magnitudeAbsoluteErrorDeltaFromBaseline': _difference(
+      _number(postFitErrors['magnitudeAbsoluteError']),
+      baselineMagnitudeError,
+    ),
+    'lowerEpicentralErrorThanBaseline':
+        _number(postFitErrors['epicentralErrorKm']) != null &&
+        baselineEpicentralError != null &&
+        _number(postFitErrors['epicentralErrorKm'])! <
+            baselineEpicentralError - 1e-10,
+  };
+}
+
+Map<String, Object?> _hardCoarsePostFitErrors({
+  required Matsuzaki2006JointCandidate? candidate,
+  required Object? truth,
+}) {
+  if (candidate == null || truth is! Map<String, Object?>) {
+    return {
+      'epicentralErrorKm': null,
+      'depthAbsoluteErrorKm': null,
+      'magnitudeAbsoluteError': null,
+    };
+  }
+  final truthLatitude = _number(truth['latitude']);
+  final truthLongitude = _number(truth['longitude']);
+  final truthDepth = _number(truth['depthKm']);
+  final truthMagnitude = _number(truth['magnitude']);
+  return {
+    'epicentralErrorKm': truthLatitude == null || truthLongitude == null
+        ? null
+        : QuakeCalculator.haversineDistance(
+            candidate.source.latitude,
+            candidate.source.longitude,
+            truthLatitude,
+            truthLongitude,
+          ),
+    'depthAbsoluteErrorKm': truthDepth == null
+        ? null
+        : (candidate.source.depthKm - truthDepth).abs(),
+    'magnitudeAbsoluteError': truthMagnitude == null
+        ? null
+        : (candidate.magnitude - truthMagnitude).abs(),
+  };
+}
+
+Map<String, Object?> _hardCoarseStartSummary(List<Map<String, Object?>> rows) {
+  Map<String, Object?> pathSummary(String pathName) {
+    final paths = rows
+        .map((row) => row[pathName])
+        .whereType<Map<String, Object?>>()
+        .toList();
+    final deltas = paths
+        .map((path) => _number(path['intensityRmsDeltaFromBaseline']))
+        .whereType<double>()
+        .toList();
+    final evaluationCounts = paths
+        .map((path) => _number(path['candidateEvaluationCount']))
+        .whereType<double>()
+        .toList();
+    final elapsedMilliseconds = paths
+        .map((path) => _number(path['elapsedMilliseconds']))
+        .whereType<double>()
+        .toList();
+    final elapsedDeltas = paths
+        .map((path) => _number(path['elapsedMillisecondsDeltaFromBaseline']))
+        .whereType<double>()
+        .toList();
+    final epicentralDeltas = paths
+        .map((path) => _number(path['epicentralErrorDeltaFromBaseline']))
+        .whereType<double>()
+        .toList();
+    return {
+      'eventCount': rows.length,
+      'availableResultCount': paths
+          .where((path) => path['bestCandidate'] != null)
+          .length,
+      'lowerIntensityRmsThanBaselineCount': paths
+          .where((path) => path['lowerIntensityRmsThanBaseline'] == true)
+          .length,
+      'lowerEpicentralErrorThanBaselineCount': paths
+          .where((path) => path['lowerEpicentralErrorThanBaseline'] == true)
+          .length,
+      'sameOrHigherIntensityRmsCount': paths
+          .where((path) => path['lowerIntensityRmsThanBaseline'] != true)
+          .length,
+      'intensityRmsDeltaMedian': _percentile(deltas, 0.5),
+      'intensityRmsDeltaP90': _percentile(deltas, 0.9),
+      'epicentralErrorDeltaMedian': _percentile(epicentralDeltas, 0.5),
+      'epicentralErrorDeltaP90': _percentile(epicentralDeltas, 0.9),
+      'candidateEvaluationCountMedian': _percentile(evaluationCounts, 0.5),
+      'candidateEvaluationCountP90': _percentile(evaluationCounts, 0.9),
+      'elapsedMillisecondsMedian': _percentile(elapsedMilliseconds, 0.5),
+      'elapsedMillisecondsP90': _percentile(elapsedMilliseconds, 0.9),
+      'elapsedMillisecondsDeltaMedian': _percentile(elapsedDeltas, 0.5),
+      'elapsedMillisecondsDeltaP90': _percentile(elapsedDeltas, 0.9),
+      'statusCounts': _sortedCounts({
+        for (final status in paths.map((path) => path['status']).toSet())
+          status as String: paths
+              .where((path) => path['status'] == status)
+              .length,
+      }),
+    };
+  }
+
+  return {
+    'eventCount': rows.length,
+    'noBias': pathSummary('noBias'),
+    'stationBias': pathSummary('stationBias'),
+    'interpretation':
+        'This is a diagnostic rerun with the original hard domain as the '
+        'initial coarse-grid window. It does not change the production '
+        'adaptive search or prove that every hard-domain candidate was '
+        'evaluated at final resolution.',
+  };
+}
+
+List<Matsuzaki2006CandidateSource> _traceWatchedSources({
+  required Map<String, Object?> noBiasModel,
+  required Map<String, Object?> stationBiasModelResult,
+  required Map<String, Object?>? candidateNeighborhoods,
+  required Matsuzaki2006CandidateSource? additionalTraceSource,
+}) {
+  final sources = <Matsuzaki2006CandidateSource>[];
+  void addSource(Matsuzaki2006CandidateSource source) {
+    if (sources.any((existing) => _sameSource(existing, source))) return;
+    sources.add(source);
+  }
+
+  void add(Map<String, Object?>? candidate) {
+    final source = _sourceFromCandidate(candidate);
+    if (source == null) return;
+    addSource(source);
+  }
+
+  add(_firstCandidate(noBiasModel['bestCandidates']));
+  add(_firstCandidate(stationBiasModelResult['bestCandidates']));
+  if (additionalTraceSource != null) addSource(additionalTraceSource);
+  final near = candidateNeighborhoods?['noBiasBestCandidate'];
+  if (near is Map) {
+    final stationBias = near['stationBias'];
+    if (stationBias is Map) {
+      final bestSamples = stationBias['bestSamples'];
+      if (bestSamples is List &&
+          bestSamples.isNotEmpty &&
+          bestSamples.first is Map) {
+        add((bestSamples.first as Map).cast<String, Object?>());
+      }
+    }
+  }
+  return sources;
+}
+
+bool _sameSource(
+  Matsuzaki2006CandidateSource left,
+  Matsuzaki2006CandidateSource right,
+) =>
+    (left.latitude - right.latitude).abs() <= 1e-9 &&
+    (left.longitude - right.longitude).abs() <= 1e-9 &&
+    (left.depthKm - right.depthKm).abs() <= 1e-9;
+
+Map<String, Object?> _tracePath({
+  required List<Matsuzaki2006IntensityObservation> observations,
+  required Matsuzaki2006JointSearchSpec searchSpec,
+  required Matsuzaki2006JointInverter inverter,
+  required List<Matsuzaki2006CandidateSource> watchedSources,
+}) {
+  final entries = <Matsuzaki2006JointCandidateTraceEntry>[];
+  final result = inverter.invert(
+    observations: observations,
+    searchSpec: searchSpec,
+    onCandidateEvaluated: entries.add,
+  );
+  final validEntries = entries.where((entry) => entry.isValid).toList();
+  final stageGroups = <String, List<Matsuzaki2006JointCandidateTraceEntry>>{};
+  for (final entry in entries) {
+    final key = '${entry.stageIndex}:${entry.expansionRound}';
+    stageGroups.putIfAbsent(key, () => []).add(entry);
+  }
+  return {
+    'result': {
+      'status': result.status.name,
+      'candidateEvaluationCount': result.candidateEvaluationCount,
+      'bestCandidates': [
+        for (final candidate in result.bestCandidates.take(8))
+          {
+            'latitude': candidate.source.latitude,
+            'longitude': candidate.source.longitude,
+            'depthKm': candidate.source.depthKm,
+            'magnitude': candidate.magnitude,
+            'intensityRms': candidate.intensityRms,
+          },
+      ],
+    },
+    'traceEntryCount': entries.length,
+    'validTraceEntryCount': validEntries.length,
+    'invalidTraceEntryCount': entries.length - validEntries.length,
+    'stageSummaries': [
+      for (final entry
+          in stageGroups.entries.toList()
+            ..sort((left, right) => left.key.compareTo(right.key)))
+        {
+          'stageAndExpansion': entry.key,
+          'entryCount': entry.value.length,
+          'validEntryCount': entry.value.where((item) => item.isValid).length,
+          'minimumIntensityRms': entry.value
+              .where((item) => item.intensityRms != null)
+              .map((item) => item.intensityRms!)
+              .fold<double?>(null, (minimum, value) {
+                if (minimum == null || value < minimum) return value;
+                return minimum;
+              }),
+        },
+    ],
+    'watchedSourceMatches': [
+      for (final source in watchedSources) _traceSourceMatch(entries, source),
+    ],
+  };
+}
+
+Map<String, Object?> _traceSourceMatch(
+  List<Matsuzaki2006JointCandidateTraceEntry> entries,
+  Matsuzaki2006CandidateSource source,
+) {
+  final matches = entries.where((entry) => _sameSource(entry.source, source));
+  final validMatches = matches.where((entry) => entry.isValid).toList();
+  return {
+    'source': {
+      'latitude': source.latitude,
+      'longitude': source.longitude,
+      'depthKm': source.depthKm,
+    },
+    'evaluated': matches.isNotEmpty,
+    'matchCount': matches.length,
+    'validMatchCount': validMatches.length,
+    'matches': [
+      for (final entry in validMatches)
+        {
+          'stageIndex': entry.stageIndex,
+          'expansionRound': entry.expansionRound,
+          'intensityRms': entry.intensityRms,
+          'magnitude': entry.magnitude,
+        },
+    ],
+  };
+}
+
+Matsuzaki2006CandidateSource? _sourceFromCoverageScan(
+  Map<String, Object?>? coverageScan,
+) {
+  final localMinimum = coverageScan?['localMinimum'];
+  if (localMinimum is! Map) return null;
+  return _sourceFromCandidate(localMinimum.cast<String, Object?>());
+}
+
+Map<String, Object?> _candidateTraceCoverageRow({
+  required String eventId,
+  required Map<String, Object?>? neighborhoodCoverage,
+  required Map<String, Object?> modelDiagnostic,
+}) {
+  final trace = modelDiagnostic['candidateTrace'];
+  final stationBiasTrace = trace is Map<String, Object?>
+      ? trace['stationBias']
+      : null;
+  final stationBiasPath = stationBiasTrace is Map<String, Object?>
+      ? stationBiasTrace
+      : null;
+  final noBiasCompact = modelDiagnostic['noBias'];
+  final stationBiasCompact = modelDiagnostic['stationBias'];
+  final noBiasSource = _sourceFromCandidate(
+    noBiasCompact is Map<String, Object?>
+        ? noBiasCompact['bestCandidate'] as Map<String, Object?>?
+        : null,
+  );
+  final stationBiasSource = _sourceFromCandidate(
+    stationBiasCompact is Map<String, Object?>
+        ? stationBiasCompact['bestCandidate'] as Map<String, Object?>?
+        : null,
+  );
+  final localSource = _sourceFromCoverageScan(neighborhoodCoverage);
+  return {
+    'eventId': eventId,
+    'localMinimumAvailable': localSource != null,
+    'localMinimumEvaluated': localSource == null
+        ? null
+        : _traceEvaluated(stationBiasPath, localSource),
+    'returnedNoBiasEvaluated': noBiasSource == null
+        ? null
+        : _traceEvaluated(stationBiasPath, noBiasSource),
+    'returnedStationBiasEvaluated': stationBiasSource == null
+        ? null
+        : _traceEvaluated(stationBiasPath, stationBiasSource),
+    'candidateEvaluationCount': _traceCandidateEvaluationCount(stationBiasPath),
+  };
+}
+
+int? _traceCandidateEvaluationCount(Map<String, Object?>? stationBiasPath) {
+  final result = stationBiasPath?['result'];
+  if (result is! Map<String, Object?>) return null;
+  final count = result['candidateEvaluationCount'];
+  return count is num ? count.toInt() : null;
+}
+
+bool? _traceEvaluated(
+  Map<String, Object?>? stationBiasPath,
+  Matsuzaki2006CandidateSource source,
+) {
+  final matches = stationBiasPath?['watchedSourceMatches'];
+  if (matches is! List<Object?>) return null;
+  for (final match in matches) {
+    if (match is! Map<String, Object?>) continue;
+    final matchSource = match['source'];
+    if (matchSource is! Map<String, Object?>) continue;
+    final candidateSource = _sourceFromCandidate(matchSource);
+    if (candidateSource != null && _sameSource(candidateSource, source)) {
+      return match['evaluated'] == true;
+    }
+  }
+  return false;
+}
+
+Map<String, Object?> _candidateTraceCoverageSummary(
+  List<Map<String, Object?>> rows,
+) {
+  final withLocalMinimum = rows
+      .where((row) => row['localMinimumAvailable'] == true)
+      .toList();
+  final evaluationCounts = rows
+      .map((row) => _number(row['candidateEvaluationCount']))
+      .whereType<double>()
+      .toList();
+  return {
+    'eventCount': rows.length,
+    'localMinimumAvailableCount': withLocalMinimum.length,
+    'localMinimumEvaluatedCount': withLocalMinimum
+        .where((row) => row['localMinimumEvaluated'] == true)
+        .length,
+    'localMinimumNotEvaluatedCount': withLocalMinimum
+        .where((row) => row['localMinimumEvaluated'] == false)
+        .length,
+    'returnedNoBiasEvaluatedCount': rows
+        .where((row) => row['returnedNoBiasEvaluated'] == true)
+        .length,
+    'returnedStationBiasEvaluatedCount': rows
+        .where((row) => row['returnedStationBiasEvaluated'] == true)
+        .length,
+    'candidateEvaluationCountMedian': _percentile(evaluationCounts, 0.5),
+    'candidateEvaluationCountP90': _percentile(evaluationCounts, 0.9),
+    'interpretation':
+        'Only explicitly watched source coordinates are classified. A false '
+        'localMinimumEvaluated value means that watched coordinate did not '
+        'enter the scorer in this trace; it says nothing about unobserved '
+        'coordinates.',
+  };
+}
+
 Map<String, Object?> _candidateNeighborhoods({
   required Matsuzaki2006ArchiveInversionInput input,
   required Matsuzaki2006AttenuationModel model,
@@ -326,6 +1020,118 @@ Map<String, Object?> _candidateNeighborhoods({
       noBiasScorer: noBiasScorer,
       stationBiasScorer: stationBiasScorer,
     ),
+  };
+}
+
+Map<String, Object?> _neighborhoodCoverageScan({
+  required Matsuzaki2006ArchiveInversionInput input,
+  required Matsuzaki2006AttenuationModel model,
+  required List<Matsuzaki2006IntensityObservation> observations,
+  required Matsuzaki2006StationBiasModel stationBiasModel,
+  required Matsuzaki2006StationBiasShrinkage shrinkage,
+  required Map<String, Object?> noBiasModel,
+  required Map<String, Object?> stationBiasModelResult,
+}) {
+  final anchor = _sourceFromCandidate(
+    _firstCandidate(noBiasModel['bestCandidates']),
+  );
+  final returnedRms = _number(stationBiasModelResult['minimumIntensityRms']);
+  if (anchor == null || returnedRms == null) {
+    return {
+      'available': false,
+      'reason': anchor == null
+          ? 'no numeric no-bias best candidate'
+          : 'station-bias result has no RMS',
+    };
+  }
+  final path = _neighborhoodPath(
+    anchor: anchor,
+    input: input,
+    observations: observations,
+    scorer: Matsuzaki2006ForwardResidualScorer(
+      model: model,
+      stationBiasModel: stationBiasModel,
+      stationBiasShrinkage: shrinkage,
+    ),
+  );
+  final localMinimumRms = _number(path['minimumRms']);
+  final bestSamples = path['bestSamples'];
+  final localMinimum = bestSamples is List<Object?> && bestSamples.isNotEmpty
+      ? bestSamples.first
+      : null;
+  final localMinimumJson = localMinimum is Map<String, Object?>
+      ? {
+          'localMinimum': {
+            'latitude': localMinimum['latitude'],
+            'longitude': localMinimum['longitude'],
+            'depthKm': localMinimum['depthKm'],
+            'magnitude': localMinimum['magnitude'],
+            'intensityRms': localMinimum['intensityRms'],
+          },
+        }
+      : null;
+  return {
+    'available': localMinimumRms != null,
+    'anchor': {
+      'latitude': anchor.latitude,
+      'longitude': anchor.longitude,
+      'depthKm': anchor.depthKm,
+    },
+    'returnedStationBiasRms': returnedRms,
+    'localMinimumRms': localMinimumRms,
+    'localMinimumRmsDeltaFromReturned': _difference(
+      localMinimumRms,
+      returnedRms,
+    ),
+    'localMinimumBelowReturned':
+        localMinimumRms != null && localMinimumRms < returnedRms - 1e-10,
+    'localMinimumAtSampleGridEdge': path['minimumAtSampleGridEdge'],
+    'legalGridPointCount': path['legalGridPointCount'],
+    'validScoreCount': path['validScoreCount'],
+    'invalidScoreCount': path['invalidScoreCount'],
+    ...?localMinimumJson,
+  };
+}
+
+Map<String, Object?> _neighborhoodCoverageSummary(
+  List<Map<String, Object?>> rows,
+) {
+  final available = rows.where((row) => row['available'] == true).toList();
+  final lower = available
+      .where((row) => row['localMinimumBelowReturned'] == true)
+      .toList();
+  final deltas = available
+      .map((row) => _number(row['localMinimumRmsDeltaFromReturned']))
+      .whereType<double>()
+      .toList();
+  return {
+    'eventCount': rows.length,
+    'availableEventCount': available.length,
+    'localLowerThanReturnedCount': lower.length,
+    'localLowerThanReturnedRatio': rows.isEmpty
+        ? null
+        : lower.length / rows.length,
+    'localMinimumAtSampleGridEdgeCount': available
+        .where((row) => row['localMinimumAtSampleGridEdge'] == true)
+        .length,
+    'localMinimumRmsDeltaFromReturnedMedian': _percentile(deltas, 0.5),
+    'localMinimumRmsDeltaFromReturnedP90': _percentile(deltas, 0.9),
+    'totalLegalGridPointCount': available.fold<int>(
+      0,
+      (sum, row) => sum + ((row['legalGridPointCount']! as num).toInt()),
+    ),
+    'totalValidScoreCount': available.fold<int>(
+      0,
+      (sum, row) => sum + ((row['validScoreCount']! as num).toInt()),
+    ),
+    'totalInvalidScoreCount': available.fold<int>(
+      0,
+      (sum, row) => sum + ((row['invalidScoreCount']! as num).toInt()),
+    ),
+    'interpretation':
+        'localLowerThanReturnedCount is a local coverage-risk count, not a '
+        'confirmed unvisited-candidate count; candidate trace is required to '
+        'prove non-evaluation.',
   };
 }
 
@@ -1043,6 +1849,120 @@ String _markdown(Map<String, Object?> report) {
         '${_format(item['magnitudeMotion'])} | '
         '${item['noBiasStatus']} | ${item['stationBiasStatus']} |',
       );
+    }
+    buffer.writeln();
+  }
+  final coverageScan = report['neighborhoodCoverageScan'];
+  if (coverageScan is Map<String, Object?>) {
+    final scanSpec = coverageScan['scanSpec']! as Map<String, Object?>;
+    final modelScans = coverageScan['models']! as Map<String, Object?>;
+    buffer
+      ..writeln('## 全事件局部覆盖扫描')
+      ..writeln()
+      ..writeln(
+        '这是显式开启 `--scan-all-neighborhoods` 后生成的只读诊断。扫描锚点为既有无站项最佳候选，'
+        '深度固定为该候选深度；每个合法网格点只计算冻结站项路径。',
+      )
+      ..writeln()
+      ..writeln('| Scan parameter | Value |')
+      ..writeln('|---|---|')
+      ..writeln('| Anchor | ${scanSpec['anchor']} |')
+      ..writeln('| Depth | ${scanSpec['depth']} |')
+      ..writeln('| Radius (degree) | ${scanSpec['radiusDegrees']} |')
+      ..writeln('| Step (degree) | ${scanSpec['stepDegrees']} |')
+      ..writeln('| Domain | ${scanSpec['domain']} |')
+      ..writeln()
+      ..writeln(
+        '“局部低于已返回 RMS”只表示当前邻域中找到了更低的冻结站项目标值，'
+        '不能单独证明原自适应搜索没有评估该点；需要 `--trace-event` 才能确认具体候选是否进入评分。',
+      )
+      ..writeln()
+      ..writeln(
+        '| Model | Events | Lower local RMS | Ratio | Edge minima | Median delta | P90 delta |',
+      )
+      ..writeln('|---|---:|---:|---:|---:|---:|---:|');
+    for (final modelName in _modelNames) {
+      final summary = modelScans[modelName]! as Map<String, Object?>;
+      buffer.writeln(
+        '| $modelName | ${summary['eventCount']} | '
+        '${summary['localLowerThanReturnedCount']} | '
+        '${_format(summary['localLowerThanReturnedRatio'])} | '
+        '${summary['localMinimumAtSampleGridEdgeCount']} | '
+        '${_format(summary['localMinimumRmsDeltaFromReturnedMedian'])} | '
+        '${_format(summary['localMinimumRmsDeltaFromReturnedP90'])} |',
+      );
+    }
+    buffer.writeln();
+  }
+  final traceCoverage = report['candidateTraceCoverage'];
+  if (traceCoverage is Map<String, Object?>) {
+    final modelTraces = traceCoverage['models']! as Map<String, Object?>;
+    buffer
+      ..writeln('## 全事件候选访问 trace')
+      ..writeln()
+      ..writeln(
+        '这是显式开启 `--trace-all-events` 后生成的只读统计。它只判断被明确监视的坐标是否进入评分器，'
+        '不能推断未监视坐标的覆盖情况。',
+      )
+      ..writeln()
+      ..writeln(
+        '| Model | Events | Local available | Local evaluated | Local not evaluated | Returned station-bias evaluated | Median evaluations | P90 evaluations |',
+      )
+      ..writeln('|---|---:|---:|---:|---:|---:|---:|---:|');
+    for (final modelName in _modelNames) {
+      final summary = modelTraces[modelName]! as Map<String, Object?>;
+      buffer.writeln(
+        '| $modelName | ${summary['eventCount']} | '
+        '${summary['localMinimumAvailableCount']} | '
+        '${summary['localMinimumEvaluatedCount']} | '
+        '${summary['localMinimumNotEvaluatedCount']} | '
+        '${summary['returnedStationBiasEvaluatedCount']} | '
+        '${_format(summary['candidateEvaluationCountMedian'])} | '
+        '${_format(summary['candidateEvaluationCountP90'])} |',
+      );
+    }
+    buffer.writeln();
+  }
+  final coarseComparison = report['hardCoarseStartComparison'];
+  if (coarseComparison is Map<String, Object?>) {
+    final searchSpec = coarseComparison['searchSpec']! as Map<String, Object?>;
+    final modelComparisons =
+        coarseComparison['models']! as Map<String, Object?>;
+    buffer
+      ..writeln('## 硬域粗起点对照')
+      ..writeln()
+      ..writeln(
+        '这是显式开启 `--compare-hard-coarse-start` 后生成的只读重放。第一阶段改用原始硬域粗网格，'
+        '后续阶段、评分函数、径向约束和震级搜索保持不变。',
+      )
+      ..writeln()
+      ..writeln('| Search parameter | Value |')
+      ..writeln('|---|---|')
+      ..writeln('| Strategy | ${searchSpec['strategy']} |')
+      ..writeln('| Stages | ${searchSpec['stages']} |')
+      ..writeln('| Radial constraint | ${searchSpec['radialConstraint']} |')
+      ..writeln('| Candidate budget | ${searchSpec['candidateBudget']} |')
+      ..writeln()
+      ..writeln(
+        '| Model | Path | Events | Lower RMS | Lower epicenter | Median RMS delta | P90 RMS delta | Median epicenter delta | Median runtime delta | Median evaluations | P90 evaluations |',
+      )
+      ..writeln('|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
+    for (final modelName in _modelNames) {
+      final comparison = modelComparisons[modelName]! as Map<String, Object?>;
+      for (final pathName in ['noBias', 'stationBias']) {
+        final path = comparison[pathName]! as Map<String, Object?>;
+        buffer.writeln(
+          '| $modelName | $pathName | ${path['eventCount']} | '
+          '${path['lowerIntensityRmsThanBaselineCount']} | '
+          '${path['lowerEpicentralErrorThanBaselineCount']} | '
+          '${_format(path['intensityRmsDeltaMedian'])} | '
+          '${_format(path['intensityRmsDeltaP90'])} | '
+          '${_format(path['epicentralErrorDeltaMedian'])} | '
+          '${_format(path['elapsedMillisecondsDeltaMedian'])} | '
+          '${_format(path['candidateEvaluationCountMedian'])} | '
+          '${_format(path['candidateEvaluationCountP90'])} |',
+        );
+      }
     }
     buffer.writeln();
   }

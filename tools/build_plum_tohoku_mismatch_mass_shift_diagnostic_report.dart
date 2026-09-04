@@ -268,7 +268,9 @@ Map<String, Object?> buildPlumTohokuMismatchMassShiftDiagnosticJson({
     'thresholds': {
       for (final threshold in _thresholds)
         threshold.label: _buildThresholdJson(
-          validation: splitAccumulators['validation']!.threshold(threshold.label),
+          validation: splitAccumulators['validation']!.threshold(
+            threshold.label,
+          ),
           test: splitAccumulators['test']!.threshold(threshold.label),
         ),
     },
@@ -315,9 +317,8 @@ Map<String, Object?> _buildThresholdJson({
 }
 
 Map<String, Map<String, Object?>> _indexRows(Object? rawRows) => {
-      for (final raw in _list(rawRows))
-        _map(raw)['label'] as String: _map(raw),
-    };
+  for (final raw in _list(rawRows)) _map(raw)['label'] as String: _map(raw),
+};
 
 List<Map<String, Object?>> _buildTransferRows({
   required List<String> labels,
@@ -410,8 +411,8 @@ List<_EvidenceStation> _supportingEvidence({
       observed.longitude,
     );
     if (distance > _plumRadiusKm) continue;
-    final propagated = observed.intensity -
-        _plumDampingPer10Km * (distance / 10.0);
+    final propagated =
+        observed.intensity - _plumDampingPer10Km * (distance / 10.0);
     if (propagated >= threshold) {
       supportingEvidence.add(
         _EvidenceStation(
@@ -482,9 +483,7 @@ String plumTohokuMismatchMassShiftDiagnosticMarkdown(
       '- Baseline threshold crossing required: '
       '`${focusFilter['baselineThresholdCrossingRequired']}`',
     )
-    ..writeln(
-      '- Neighbor windows: `${focusFilter['neighborWindowsKm']}`',
-    )
+    ..writeln('- Neighbor windows: `${focusFilter['neighborWindowsKm']}`')
     ..writeln()
     ..writeln('## Definitions')
     ..writeln();
@@ -611,7 +610,9 @@ class _ThresholdAccumulator {
   void add(_Sample sample) => samples.add(sample);
 
   Map<String, Object?> toJson() {
-    final truePositiveCount = samples.where((sample) => sample.actualPositive).length;
+    final truePositiveCount = samples
+        .where((sample) => sample.actualPositive)
+        .length;
     final falsePositiveCount = samples.length - truePositiveCount;
     final mismatchSamples = [
       for (final sample in samples)
@@ -623,7 +624,9 @@ class _ThresholdAccumulator {
         'truePositiveCount': truePositiveCount,
         'falsePositiveCount': falsePositiveCount,
         'precision': samples.isEmpty ? 0.0 : truePositiveCount / samples.length,
-        'mismatchShare': samples.isEmpty ? 0.0 : mismatchSamples.length / samples.length,
+        'mismatchShare': samples.isEmpty
+            ? 0.0
+            : mismatchSamples.length / samples.length,
       },
       'localConsistency': _bucketRows(
         labels: _localConsistencyLabels,
@@ -660,7 +663,8 @@ List<Map<String, Object?>> _bucketRows({
   required int denominator,
 }) {
   return [
-    for (final label in labels) _bucketRow(label, samples, labelOf, denominator),
+    for (final label in labels)
+      _bucketRow(label, samples, labelOf, denominator),
   ];
 }
 
@@ -674,7 +678,9 @@ Map<String, Object?> _bucketRow(
     for (final sample in samples)
       if (labelOf(sample) == label) sample,
   ];
-  final truePositiveCount = bucket.where((sample) => sample.actualPositive).length;
+  final truePositiveCount = bucket
+      .where((sample) => sample.actualPositive)
+      .length;
   final falsePositiveCount = bucket.length - truePositiveCount;
   return {
     'label': label,
@@ -714,13 +720,14 @@ class _Sample {
   }
 
   String get geometrySpreadLabel {
-    final geometry =
-        supportingEvidenceQuadrantCoverage >= 3 ? 'surrounded' : 'one_sided';
+    final geometry = supportingEvidenceQuadrantCoverage >= 3
+        ? 'surrounded'
+        : 'one_sided';
     final spread = supportingEvidenceMaxSpreadKm < 20.0
         ? 'compact'
         : supportingEvidenceMaxSpreadKm < 40.0
-            ? 'moderate'
-            : 'wide';
+        ? 'moderate'
+        : 'wide';
     return '$geometry/$spread';
   }
 
@@ -760,7 +767,10 @@ class _NeighborSummary {
   final int count;
   final double belowThresholdShare;
 
-  const _NeighborSummary({required this.count, required this.belowThresholdShare});
+  const _NeighborSummary({
+    required this.count,
+    required this.belowThresholdShare,
+  });
 }
 
 _NeighborSummary _localNeighborSummary(
@@ -885,75 +895,74 @@ Map<String, Object?> _emptyReport({
   required String dataDirectory,
   required String modelPath,
 }) => {
-        'schemaVersion': 'plum_tohoku_mismatch_mass_shift_diagnostic_v1',
-        'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
-        'status': 'fail',
-        'policy': {
-          'method': 'PLUM Tohoku mismatch regime mass-shift diagnostic',
-          'rawPredictedIntensityMutated': false,
-          'frozenTestEvaluated': true,
-          'productionReady': false,
-          'productionUiConnected': false,
-          'diagnosticOnly': true,
-          'parametersTuned': false,
-          'suppressionApplied': false,
-          'plumRadiusKm': _plumRadiusKm,
-          'plumDampingPer10Km': _plumDampingPer10Km,
-        },
-        'inputs': {
-          'dataDirectory': dataDirectory,
-          'modelPath': modelPath,
-          'splits': ['validation', 'test'],
-        },
-        'focusFilter': {
-          'estimatedSourceRegion': _focusRegion,
-          'minimumEvidenceCount': _focusMinimumEvidenceCount,
-          'maximumNearestEvidenceDistanceKm':
-              _focusMaximumNearestEvidenceDistanceKm,
-          'minimumPredictionMarginShindo': _focusMinimumMargin,
-          'baselineThresholdCrossingRequired': true,
-          'neighborWindowsKm': [_localNeighbor10Km, _localNeighbor20Km],
-        },
-        'decompositionDefinitions': const {
-          'localConsistencyBand': {
-            'consistent': 'belowThresholdShare10Km < 0.25',
-            'mixed': '0.25 <= belowThresholdShare10Km < 0.50',
-            'mismatch': 'belowThresholdShare10Km >= 0.50',
-          },
-          'geometrySpread': {
-            'one_sided/compact': 'quadrants < 3 and maxSpread < 20 km',
-            'one_sided/moderate': 'quadrants < 3 and 20 <= maxSpread < 40 km',
-            'one_sided/wide': 'quadrants < 3 and maxSpread >= 40 km',
-            'surrounded/compact': 'quadrants >= 3 and maxSpread < 20 km',
-            'surrounded/moderate': 'quadrants >= 3 and 20 <= maxSpread < 40 km',
-            'surrounded/wide': 'quadrants >= 3 and maxSpread >= 40 km',
-          },
-          'actualGapBand': {
-            'lt_-2.0': 'actual - threshold < -2.0',
-            '-2.0_to_-1.0': '-2.0 <= actual - threshold < -1.0',
-            '-1.0_to_0.0': '-1.0 <= actual - threshold < 0.0',
-            '0.0_to_1.0': '0.0 <= actual - threshold < 1.0',
-            'gte_1.0': 'actual - threshold >= 1.0',
-          },
-          'evidenceGapBand': {
-            'lt_1.0': 'strongestEvidence - actual < 1.0',
-            '1.0_to_2.0': '1.0 <= strongestEvidence - actual < 2.0',
-            '2.0_to_3.0': '2.0 <= strongestEvidence - actual < 3.0',
-            'gte_3.0': 'strongestEvidence - actual >= 3.0',
-            'missing': 'no supporting evidence intensity available',
-          },
-        },
-        'coverage': {
-          'validationVariants': 0,
-          'testVariants': 0,
-          'validationStationForecasts': 0,
-          'testStationForecasts': 0,
-          'skippedMissingMagnitudeEvents': 0,
-          'skippedNoSourceEstimateVariants': 0,
-        },
-        'thresholds': const {},
-        'errors': errors,
-      };
+  'schemaVersion': 'plum_tohoku_mismatch_mass_shift_diagnostic_v1',
+  'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
+  'status': 'fail',
+  'policy': {
+    'method': 'PLUM Tohoku mismatch regime mass-shift diagnostic',
+    'rawPredictedIntensityMutated': false,
+    'frozenTestEvaluated': true,
+    'productionReady': false,
+    'productionUiConnected': false,
+    'diagnosticOnly': true,
+    'parametersTuned': false,
+    'suppressionApplied': false,
+    'plumRadiusKm': _plumRadiusKm,
+    'plumDampingPer10Km': _plumDampingPer10Km,
+  },
+  'inputs': {
+    'dataDirectory': dataDirectory,
+    'modelPath': modelPath,
+    'splits': ['validation', 'test'],
+  },
+  'focusFilter': {
+    'estimatedSourceRegion': _focusRegion,
+    'minimumEvidenceCount': _focusMinimumEvidenceCount,
+    'maximumNearestEvidenceDistanceKm': _focusMaximumNearestEvidenceDistanceKm,
+    'minimumPredictionMarginShindo': _focusMinimumMargin,
+    'baselineThresholdCrossingRequired': true,
+    'neighborWindowsKm': [_localNeighbor10Km, _localNeighbor20Km],
+  },
+  'decompositionDefinitions': const {
+    'localConsistencyBand': {
+      'consistent': 'belowThresholdShare10Km < 0.25',
+      'mixed': '0.25 <= belowThresholdShare10Km < 0.50',
+      'mismatch': 'belowThresholdShare10Km >= 0.50',
+    },
+    'geometrySpread': {
+      'one_sided/compact': 'quadrants < 3 and maxSpread < 20 km',
+      'one_sided/moderate': 'quadrants < 3 and 20 <= maxSpread < 40 km',
+      'one_sided/wide': 'quadrants < 3 and maxSpread >= 40 km',
+      'surrounded/compact': 'quadrants >= 3 and maxSpread < 20 km',
+      'surrounded/moderate': 'quadrants >= 3 and 20 <= maxSpread < 40 km',
+      'surrounded/wide': 'quadrants >= 3 and maxSpread >= 40 km',
+    },
+    'actualGapBand': {
+      'lt_-2.0': 'actual - threshold < -2.0',
+      '-2.0_to_-1.0': '-2.0 <= actual - threshold < -1.0',
+      '-1.0_to_0.0': '-1.0 <= actual - threshold < 0.0',
+      '0.0_to_1.0': '0.0 <= actual - threshold < 1.0',
+      'gte_1.0': 'actual - threshold >= 1.0',
+    },
+    'evidenceGapBand': {
+      'lt_1.0': 'strongestEvidence - actual < 1.0',
+      '1.0_to_2.0': '1.0 <= strongestEvidence - actual < 2.0',
+      '2.0_to_3.0': '2.0 <= strongestEvidence - actual < 3.0',
+      'gte_3.0': 'strongestEvidence - actual >= 3.0',
+      'missing': 'no supporting evidence intensity available',
+    },
+  },
+  'coverage': {
+    'validationVariants': 0,
+    'testVariants': 0,
+    'validationStationForecasts': 0,
+    'testStationForecasts': 0,
+    'skippedMissingMagnitudeEvents': 0,
+    'skippedNoSourceEstimateVariants': 0,
+  },
+  'thresholds': const {},
+  'errors': errors,
+};
 
 StaticAttenuationModel _modelFromJson(Map<String, Object?> json) {
   return StaticAttenuationModel(

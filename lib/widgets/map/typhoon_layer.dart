@@ -398,10 +398,13 @@ class TyphoonLayer extends StatelessWidget {
 class _TyphoonAnnotationPainter extends CustomPainter {
   static const double _baseLabelWidth = 230;
   static const double _baseFontSize = 10.2;
+
   /// Design reference: label looks "normal" around this map scale.
   static const double _labelReferencePxPerKm = 1.15;
+
   /// Keep the leader attached just outside the center marker, in map space.
   static const double _labelGapKm = 28;
+
   /// Text stays readable when zoomed out; capped when zoomed in.
   static const double _labelScaleMin = 0.78;
   static const double _labelScaleMax = 1.05;
@@ -409,10 +412,7 @@ class _TyphoonAnnotationPainter extends CustomPainter {
   final List<TyphoonData> typhoons;
   final MapCamera camera;
 
-  _TyphoonAnnotationPainter({
-    required this.typhoons,
-    required this.camera,
-  });
+  _TyphoonAnnotationPainter({required this.typhoons, required this.camera});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -470,12 +470,7 @@ class _TyphoonAnnotationPainter extends CustomPainter {
     }
   }
 
-  void _drawCenter(
-    Canvas canvas,
-    Offset center,
-    LatLng latLng,
-    Color color,
-  ) {
+  void _drawCenter(Canvas canvas, Offset center, LatLng latLng, Color color) {
     // Scale the eye with the map so it shrinks/grows like the track.
     final innerRadius = _kmToPixels(latLng, 12).clamp(3.5, 10.0).toDouble();
     canvas.drawCircle(
@@ -583,10 +578,17 @@ class _TyphoonAnnotationPainter extends CustomPainter {
       stroke: true,
       textAlign: textAlign,
     )..layout(maxWidth: width);
-    final fillPainter = _textPainter(text, fontSize, textAlign: textAlign)
-      ..layout(maxWidth: width);
+    final fillPainter = textAlign == TextAlign.left
+        ? measurePainter
+        : (_textPainter(text, fontSize, textAlign: textAlign)
+            ..layout(maxWidth: width));
     strokePainter.paint(canvas, best.topLeft);
     fillPainter.paint(canvas, best.topLeft);
+    strokePainter.dispose();
+    if (fillPainter != measurePainter) {
+      fillPainter.dispose();
+    }
+    measurePainter.dispose();
     return best.rect;
   }
 

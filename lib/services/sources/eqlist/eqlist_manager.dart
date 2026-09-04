@@ -150,13 +150,35 @@ class EqlistManager {
 
   /// CWA 官方源最新事件回调，用于进入统一 UI。
   void Function(Map<String, dynamic>)? onCwaCurrentUpdated;
+  void Function(bool connected)? onHttpStatusChanged;
+  void Function(bool connected)? onCmtStatusChanged;
+
+  final Map<String, bool> _httpStatusByService = <String, bool>{};
+  final Map<String, bool> _cmtStatusByService = <String, bool>{};
   bool _running = false;
+
+  void _setHttpServiceStatus(String name, bool connected) {
+    _httpStatusByService[name] = connected;
+    final anyConnected = _httpStatusByService.values.any((state) => state);
+    onHttpStatusChanged?.call(anyConnected);
+  }
+
+  void _setCmtServiceStatus(String name, bool connected) {
+    _cmtStatusByService[name] = connected;
+    final anyConnected = _cmtStatusByService.values.any((state) => state);
+    onCmtStatusChanged?.call(anyConnected);
+  }
 
   /// 启动所有HTTP轮询服务
   ///
   /// JMA、USGS、EMSC、CWA通过HTTP轮询获取数据
   /// CENC、FSSN、KMA通过FAN推送获取数据
   void start({
+    bool jmaHttpEnabled = true,
+    bool cencHttpEnabled = true,
+    bool usgsHttpEnabled = true,
+    bool emscHttpEnabled = true,
+    bool cwaHttpEnabled = true,
     bool cencCmtEnabled = true,
     bool usgsCmtEnabled = true,
     bool jmaCmtEnabled = true,
@@ -165,6 +187,56 @@ class EqlistManager {
   }) {
     if (_running) return;
     _running = true;
+    _httpStatusByService
+      ..clear()
+      ..addAll({
+        'JMA': false,
+        'CENC': false,
+        'USGS': false,
+        'EMSC': false,
+        'CWA': false,
+      });
+    _cmtStatusByService
+      ..clear()
+      ..addAll({
+        'CENC_CMT': false,
+        'USGS_CMT': false,
+        'JMA_CMT': false,
+        'FNET_CMT': false,
+        'HINET_AQUA_CMT': false,
+      });
+    onHttpStatusChanged?.call(false);
+    onCmtStatusChanged?.call(false);
+    if (jmaHttpEnabled) {
+      jma.onStatusChanged = (connected) =>
+          _setHttpServiceStatus('JMA', connected);
+    }
+    if (cencHttpEnabled) {
+      cenc.onStatusChanged = (connected) =>
+          _setHttpServiceStatus('CENC', connected);
+    }
+    if (usgsHttpEnabled) {
+      usgs.onStatusChanged = (connected) =>
+          _setHttpServiceStatus('USGS', connected);
+    }
+    if (emscHttpEnabled) {
+      emsc.onStatusChanged = (connected) =>
+          _setHttpServiceStatus('EMSC', connected);
+    }
+    if (cwaHttpEnabled) {
+      cwa.onStatusChanged = (connected) =>
+          _setHttpServiceStatus('CWA', connected);
+    }
+    cencCmt.onStatusChanged = (connected) =>
+        _setCmtServiceStatus('CENC_CMT', connected);
+    usgsCmt.onStatusChanged = (connected) =>
+        _setCmtServiceStatus('USGS_CMT', connected);
+    jmaCmt.onStatusChanged = (connected) =>
+        _setCmtServiceStatus('JMA_CMT', connected);
+    fnetCmt.onStatusChanged = (connected) =>
+        _setCmtServiceStatus('FNET_CMT', connected);
+    hinetAquaCmt.onStatusChanged = (connected) =>
+        _setCmtServiceStatus('HINET_AQUA_CMT', connected);
     jma.onListUpdated = (items) {
       _jmaList
         ..clear()
@@ -203,11 +275,11 @@ class EqlistManager {
       _trim(_emscList);
       onAnyUpdated?.call();
     };
-    jma.start();
-    cenc.start();
-    usgs.start();
-    emsc.start();
-    cwa.start();
+    if (jmaHttpEnabled) jma.start();
+    if (cencHttpEnabled) cenc.start();
+    if (usgsHttpEnabled) usgs.start();
+    if (emscHttpEnabled) emsc.start();
+    if (cwaHttpEnabled) cwa.start();
     if (cencCmtEnabled) cencCmt.start();
     if (usgsCmtEnabled) usgsCmt.start();
     if (jmaCmtEnabled) jmaCmt.start();
@@ -222,6 +294,10 @@ class EqlistManager {
   void stop() {
     if (!_running) return;
     _running = false;
+    _httpStatusByService.clear();
+    _cmtStatusByService.clear();
+    onHttpStatusChanged?.call(false);
+    onCmtStatusChanged?.call(false);
     jma.stop();
     cenc.stop();
     usgs.stop();
@@ -235,6 +311,51 @@ class EqlistManager {
     jmaCmt.stop();
     fnetCmt.stop();
     hinetAquaCmt.stop();
+    jma.onStatusChanged = null;
+    cenc.onStatusChanged = null;
+    usgs.onStatusChanged = null;
+    emsc.onStatusChanged = null;
+    cwa.onStatusChanged = null;
+    cencCmt.onStatusChanged = null;
+    usgsCmt.onStatusChanged = null;
+    jmaCmt.onStatusChanged = null;
+    fnetCmt.onStatusChanged = null;
+    hinetAquaCmt.onStatusChanged = null;
+  }
+
+  /// Android 前台服务关闭后恢复主 isolate 的官方 HTTP 列表连接。
+  void startOfficialHttpServices() {
+    if (!_running) return;
+    jma.onStatusChanged = (connected) =>
+        _setHttpServiceStatus('JMA', connected);
+    usgs.onStatusChanged = (connected) =>
+        _setHttpServiceStatus('USGS', connected);
+    emsc.onStatusChanged = (connected) =>
+        _setHttpServiceStatus('EMSC', connected);
+    cwa.onStatusChanged = (connected) =>
+        _setHttpServiceStatus('CWA', connected);
+    cenc.onStatusChanged = (connected) =>
+        _setHttpServiceStatus('CENC', connected);
+    jma.start();
+    usgs.start();
+    emsc.start();
+    cwa.start();
+    cenc.start();
+  }
+
+  /// Android 前台服务接管官方 HTTP 列表时停止主 isolate 的重复连接。
+  void stopOfficialHttpServices() {
+    if (!_running) return;
+    jma.stop();
+    usgs.stop();
+    emsc.stop();
+    cwa.stop();
+    cenc.stop();
+    _setHttpServiceStatus('USGS', false);
+    _setHttpServiceStatus('JMA', false);
+    _setHttpServiceStatus('EMSC', false);
+    _setHttpServiceStatus('CWA', false);
+    _setHttpServiceStatus('CENC', false);
   }
 
   /// 更新FSSN列表

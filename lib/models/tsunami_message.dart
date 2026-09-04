@@ -1,6 +1,24 @@
 import 'dart:convert';
 
-enum TsunamiSource { jma, nmefc }
+enum TsunamiSource { jma, nmefc, ptwc, ntwc, incois }
+
+extension TsunamiSourceLabels on TsunamiSource {
+  String get displayLabel => switch (this) {
+    TsunamiSource.jma => 'P2P/JMA',
+    TsunamiSource.nmefc => 'NMEFC',
+    TsunamiSource.ptwc => 'PTWC',
+    TsunamiSource.ntwc => 'NTWC',
+    TsunamiSource.incois => 'INCOIS',
+  };
+
+  String get voiceLabel => switch (this) {
+    TsunamiSource.jma => '日本气象厅',
+    TsunamiSource.nmefc => '国家海洋预报台',
+    TsunamiSource.ptwc => '太平洋海啸预警中心',
+    TsunamiSource.ntwc => '美国国家海啸预警中心',
+    TsunamiSource.incois => '印度海啸早期预警中心',
+  };
+}
 
 enum TsunamiGrade { none, watch, warning, majorWarning }
 
@@ -150,6 +168,7 @@ class TsunamiMessage {
   final String amplitudeMapUrl;
   final String coastalMapUrl;
   final String className;
+  final bool isInitialSnapshot;
 
   const TsunamiMessage({
     required this.source,
@@ -172,9 +191,40 @@ class TsunamiMessage {
     this.amplitudeMapUrl = '',
     this.coastalMapUrl = '',
     this.className = 'gray',
+    this.isInitialSnapshot = false,
   });
 
   bool get isActive => grade != TsunamiGrade.none;
+
+  bool get isCancellation =>
+      !isActive &&
+      (title.contains('解除') ||
+          titleText.contains('解除') ||
+          title.contains('なし') ||
+          titleText.contains('なし'));
+
+  DateTime? get reportInstantUtc {
+    final value = reportTime.trim().replaceAll('/', '-');
+    if (value.isEmpty) return null;
+    final parsed = DateTime.tryParse(value);
+    if (parsed == null) return null;
+    if (RegExp(
+      r'(?:Z|[+-]\d{2}:?\d{2})$',
+      caseSensitive: false,
+    ).hasMatch(value)) {
+      return parsed.toUtc();
+    }
+    return DateTime.utc(
+      parsed.year,
+      parsed.month,
+      parsed.day,
+      parsed.hour,
+      parsed.minute,
+      parsed.second,
+      parsed.millisecond,
+      parsed.microsecond,
+    ).subtract(Duration(hours: timeZone));
+  }
 
   String get warnAreaJson => json.encode(areas.map((a) => a.toJson()).toList());
 
@@ -189,6 +239,110 @@ class TsunamiMessage {
       case TsunamiGrade.majorWarning:
         return 3;
     }
+  }
+
+  Map<String, dynamic> toMap() => {
+    'source': source.name,
+    'id': id,
+    'timeZone': timeZone,
+    'reportTime': reportTime,
+    'title': title,
+    'titleText': titleText,
+    'grade': grade.name,
+    'areas': areas.map((area) => area.toJson()).toList(),
+    'epicenterLat': epicenterLat,
+    'epicenterLng': epicenterLng,
+    'magnitude': magnitude,
+    'depth': depth,
+    'epicenterName': epicenterName,
+    'originTime': originTime,
+    'observations': observations
+        .map(
+          (item) => {
+            'stationName': item.stationName,
+            'location': item.location,
+            'latitude': item.latitude,
+            'longitude': item.longitude,
+            'time': item.time,
+            'maxWaveHeight': item.maxWaveHeight,
+            'maxWaveHeightMeters': item.maxWaveHeightMeters,
+          },
+        )
+        .toList(),
+    'htmlUrl': htmlUrl,
+    'earthquakeMapUrl': earthquakeMapUrl,
+    'amplitudeMapUrl': amplitudeMapUrl,
+    'coastalMapUrl': coastalMapUrl,
+    'className': className,
+    'isInitialSnapshot': isInitialSnapshot,
+  };
+
+  factory TsunamiMessage.fromMap(Map<dynamic, dynamic> map) {
+    TsunamiGrade parseGrade(Object? value) {
+      return TsunamiGrade.values.firstWhere(
+        (item) => item.name == value?.toString(),
+        orElse: () => TsunamiGrade.none,
+      );
+    }
+
+    TsunamiSource parseSource(Object? value) {
+      return TsunamiSource.values.firstWhere(
+        (item) => item.name == value?.toString(),
+        orElse: () => TsunamiSource.jma,
+      );
+    }
+
+    double? parseDouble(Object? value) {
+      if (value is num) return value.toDouble();
+      return double.tryParse(value?.toString() ?? '');
+    }
+
+    final rawAreas = map['areas'];
+    final rawObservations = map['observations'];
+    return TsunamiMessage(
+      source: parseSource(map['source']),
+      id: map['id']?.toString() ?? '',
+      timeZone: (map['timeZone'] as num?)?.toInt() ?? 9,
+      reportTime: map['reportTime']?.toString() ?? '',
+      title: map['title']?.toString() ?? '',
+      titleText: map['titleText']?.toString() ?? '',
+      grade: parseGrade(map['grade']),
+      areas: rawAreas is List
+          ? rawAreas
+                .whereType<Map>()
+                .map(
+                  (item) =>
+                      TsunamiAreaInfo.fromJson(Map<String, dynamic>.from(item)),
+                )
+                .toList()
+          : const [],
+      epicenterLat: parseDouble(map['epicenterLat']),
+      epicenterLng: parseDouble(map['epicenterLng']),
+      magnitude: parseDouble(map['magnitude']),
+      depth: parseDouble(map['depth']),
+      epicenterName: map['epicenterName']?.toString() ?? '',
+      originTime: map['originTime']?.toString() ?? '',
+      observations: rawObservations is List
+          ? rawObservations.whereType<Map>().map((item) {
+              final row = Map<dynamic, dynamic>.from(item);
+              return TsunamiObservationInfo(
+                stationName: row['stationName']?.toString() ?? '',
+                location: row['location']?.toString() ?? '',
+                latitude: parseDouble(row['latitude']) ?? double.nan,
+                longitude: parseDouble(row['longitude']) ?? double.nan,
+                time: row['time']?.toString() ?? '',
+                maxWaveHeight: row['maxWaveHeight']?.toString() ?? '',
+                maxWaveHeightMeters: parseDouble(row['maxWaveHeightMeters']),
+              );
+            }).toList()
+          : const [],
+      htmlUrl: map['htmlUrl']?.toString() ?? '',
+      earthquakeMapUrl: map['earthquakeMapUrl']?.toString() ?? '',
+      amplitudeMapUrl: map['amplitudeMapUrl']?.toString() ?? '',
+      coastalMapUrl: map['coastalMapUrl']?.toString() ?? '',
+      className: map['className']?.toString() ?? 'gray',
+      isInitialSnapshot: map['isInitialSnapshot'] == true,
+    );
   }
 
   TsunamiMessage copyWith({
@@ -212,6 +366,7 @@ class TsunamiMessage {
     String? amplitudeMapUrl,
     String? coastalMapUrl,
     String? className,
+    bool? isInitialSnapshot,
   }) {
     return TsunamiMessage(
       source: source ?? this.source,
@@ -234,6 +389,7 @@ class TsunamiMessage {
       amplitudeMapUrl: amplitudeMapUrl ?? this.amplitudeMapUrl,
       coastalMapUrl: coastalMapUrl ?? this.coastalMapUrl,
       className: className ?? this.className,
+      isInitialSnapshot: isInitialSnapshot ?? this.isInitialSnapshot,
     );
   }
 
@@ -390,18 +546,19 @@ class TsunamiMessage {
     final shockInfo = json['shockInfo'] as Map<String, dynamic>?;
     final details = json['details'] as Map<String, dynamic>?;
     final maps = details?['maps'] as Map<String, dynamic>?;
-    final reportTime = timeInfo?['updateDate']?.toString() ?? '';
-    final id = json['id']?.toString().trim().isNotEmpty == true
+    final alarmDate = timeInfo?['alarmDate']?.toString().trim() ?? '';
+    final updateDate = timeInfo?['updateDate']?.toString().trim() ?? '';
+    final reportTime = alarmDate.isNotEmpty ? alarmDate : updateDate;
+    final code = json['code']?.toString().trim() ?? '';
+    final id = code.isNotEmpty
+        ? code
+        : json['id']?.toString().trim().isNotEmpty == true
         ? json['id'].toString()
-        : json['code']?.toString().trim().isNotEmpty == true
-        ? '${json['code']}_${timeInfo?['updateDate']?.toString().replaceAll(RegExp(r'[^0-9]'), '') ?? ''}'
-        : timeInfo?['updateDate']?.toString().replaceAll(
-                RegExp(r'[^0-9]'),
-                '',
-              ) ??
-              '';
+        : updateDate.replaceAll(RegExp(r'[^0-9]'), '');
     final level = warningInfo?['level']?.toString() ?? '';
     final rawTitle = warningInfo?['title']?.toString().trim() ?? '';
+    final subtitle = warningInfo?['subtitle']?.toString().trim() ?? '';
+    final batch = details?['batch']?.toString().trim() ?? '';
 
     TsunamiGrade grade;
     String title;
@@ -413,33 +570,42 @@ class TsunamiMessage {
       case '黄色':
         grade = TsunamiGrade.watch;
         title = '海啸注意报';
-        titleText = '现正发布$title';
+        titleText = subtitle.isNotEmpty ? subtitle : '现正发布$title';
         className = 'yellow';
         break;
       case '橙色':
         grade = TsunamiGrade.warning;
         title = '海啸警报';
-        titleText = '现正发布$title';
+        titleText = subtitle.isNotEmpty ? subtitle : '现正发布$title';
         className = 'red';
         break;
       case '红色':
         grade = TsunamiGrade.majorWarning;
         title = '大海啸警报';
-        titleText = '现正发布$title';
+        titleText = subtitle.isNotEmpty ? subtitle : '现正发布$title';
         className = 'purple';
         break;
       case '信息':
         grade = TsunamiGrade.none;
         title = rawTitle.isNotEmpty ? rawTitle : '海啸信息';
-        titleText = title;
+        titleText = subtitle.isNotEmpty ? subtitle : title;
+        className = 'gray';
+        break;
+      case '解除':
+        grade = TsunamiGrade.none;
+        title = rawTitle.isNotEmpty ? rawTitle : '海啸预警已解除';
+        titleText = subtitle.isNotEmpty ? subtitle : title;
         className = 'gray';
         break;
       default:
         grade = TsunamiGrade.none;
         title = rawTitle.isNotEmpty ? rawTitle : '海啸预警已解除';
-        titleText = title;
+        titleText = subtitle.isNotEmpty ? subtitle : title;
         className = 'gray';
         break;
+    }
+    if (batch.isNotEmpty && grade != TsunamiGrade.none) {
+      title = '$title 第$batch报';
     }
 
     final forecasts = json['forecasts'] as List? ?? [];
@@ -571,6 +737,93 @@ class TsunamiMessage {
       default:
         return null;
     }
+  }
+
+  static TsunamiMessage parseInternationalTsunami(
+    TsunamiSource source,
+    Map<String, dynamic> json,
+  ) {
+    assert(
+      source == TsunamiSource.ptwc ||
+          source == TsunamiSource.ntwc ||
+          source == TsunamiSource.incois,
+    );
+    final level = json['level']?.toString().trim() ?? '';
+    final grade = _parseInternationalLevel(level);
+    final headline = json['headline']?.toString().trim() ?? '';
+    final description = json['description']?.toString().trim() ?? '';
+    final instruction = json['instruction']?.toString().trim() ?? '';
+    final reportTime = json['issueTime']?.toString().trim() ?? '';
+    final originTime = json['shockTime']?.toString().trim() ?? '';
+    final id =
+        json['id']?.toString().trim() ??
+        json['eventId']?.toString().trim() ??
+        '';
+    final maps = json['maps'] as Map<String, dynamic>?;
+    final bulletinUrl = json['bulletinUrl']?.toString().trim() ?? '';
+    final detailUrl = json['detailUrl']?.toString().trim() ?? '';
+    final capUrl = json['capUrl']?.toString().trim() ?? '';
+    final htmlUrl = bulletinUrl.isNotEmpty
+        ? bulletinUrl
+        : detailUrl.isNotEmpty
+        ? detailUrl
+        : capUrl;
+    final title = headline.isNotEmpty
+        ? headline
+        : _internationalLevelTitle(grade, level);
+    final titleText = description.isNotEmpty
+        ? description
+        : instruction.isNotEmpty
+        ? instruction
+        : title;
+
+    return TsunamiMessage(
+      source: source,
+      id: id,
+      timeZone: 8,
+      reportTime: reportTime,
+      originTime: originTime,
+      title: title,
+      titleText: titleText,
+      grade: grade,
+      className: _internationalClassName(grade),
+      epicenterLat: _parseDouble(json['latitude']),
+      epicenterLng: _parseDouble(json['longitude']),
+      magnitude: _parseDouble(json['magnitude']),
+      depth: _parseDouble(json['depth']),
+      epicenterName: json['placeName']?.toString().trim() ?? '',
+      htmlUrl: htmlUrl,
+      earthquakeMapUrl: maps?['energyMapUrl']?.toString().trim() ?? '',
+      amplitudeMapUrl: maps?['travelTimeMapUrl']?.toString().trim() ?? '',
+    );
+  }
+
+  static TsunamiGrade _parseInternationalLevel(String level) {
+    final normalized = level.trim().toLowerCase();
+    if (normalized.contains('warning')) return TsunamiGrade.warning;
+    if (normalized.contains('alert')) return TsunamiGrade.warning;
+    if (normalized.contains('advisory')) return TsunamiGrade.watch;
+    if (normalized.contains('watch')) return TsunamiGrade.watch;
+    return TsunamiGrade.none;
+  }
+
+  static String _internationalLevelTitle(TsunamiGrade grade, String rawLevel) {
+    if (rawLevel.trim().isNotEmpty) return rawLevel.trim();
+    return switch (grade) {
+      TsunamiGrade.majorWarning => 'Tsunami Warning',
+      TsunamiGrade.warning => 'Tsunami Warning',
+      TsunamiGrade.watch => 'Tsunami Watch',
+      TsunamiGrade.none => 'Tsunami Information',
+    };
+  }
+
+  static String _internationalClassName(TsunamiGrade grade) {
+    return switch (grade) {
+      TsunamiGrade.majorWarning => 'purple',
+      TsunamiGrade.warning => 'red',
+      TsunamiGrade.watch => 'yellow',
+      TsunamiGrade.none => 'gray',
+    };
   }
 
   static double? _parseNmefcWaveHeightMeters(String value) {

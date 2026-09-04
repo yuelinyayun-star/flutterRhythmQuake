@@ -6,6 +6,8 @@ import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'wauth_credential_store.dart';
+
 /// WAuth OAuth/OIDC integration primitives.
 ///
 /// The AppSecret must only be supplied by a trusted server when exchanging a
@@ -26,8 +28,10 @@ class WAuthService {
   static const String verifyApiTokenPath = '/api/token/verify';
   static const String gatewaySessionPath = '/wauth/session';
   static const String gatewayResultPath = '/wauth/result';
-  static const String accessTokenPreferenceKey = 'wauth_access_token';
-  static const String apiTokenPreferenceKey = 'wauth_api_token';
+  static const String accessTokenPreferenceKey =
+      WAuthCredentialStore.legacyAccessTokenPreferenceKey;
+  static const String apiTokenPreferenceKey =
+      WAuthCredentialStore.legacyApiTokenPreferenceKey;
   static const String legacySessionTokenPreferenceKey =
       'wauth_gateway_session_token';
   static const String userInfoPreferenceKey = 'wauth_user_info';
@@ -36,13 +40,16 @@ class WAuthService {
   final String clientId;
   final String gatewayBaseUrlValue;
   final Duration requestTimeout;
+  final WAuthCredentialStore credentialStore;
 
   WAuthService({
     http.Client? client,
     this.clientId = defaultClientId,
     String? gatewayBaseUrl,
     this.requestTimeout = const Duration(seconds: 12),
+    WAuthCredentialStore? credentialStore,
   }) : _client = client ?? http.Client(),
+       credentialStore = credentialStore ?? WAuthCredentialStore(),
        gatewayBaseUrlValue = gatewayBaseUrl ?? WAuthService.gatewayBaseUrl;
 
   void close() => _client.close();
@@ -181,8 +188,62 @@ class WAuthService {
   /// Canonical enable guard for future WAuth-protected data sources.
   Future<WAuthAuthorizedSession> requireStoredAuthorizedAccessToken() async {
     final prefs = await SharedPreferences.getInstance();
-    return requireAuthorizedAccessToken(
-      prefs.getString(accessTokenPreferenceKey),
+    final credentials = await credentialStore.readAndMigrate(
+      preferences: prefs,
+    );
+    return requireAuthorizedAccessToken(credentials.accessToken);
+  }
+
+  /// Inspects saved credentials without deciding UI wipe policy.
+  ///
+  /// Access-token userinfo and API-token verify are checked independently.
+  /// An expired access token must not imply the longer-lived API token is dead.
+  Future<WAuthStoredAuthorization> inspectStoredAuthorization({
+    SharedPreferences? preferences,
+  }) async {
+    final prefs = preferences ?? await SharedPreferences.getInstance();
+    final credentials = await credentialStore.readAndMigrate(
+      preferences: prefs,
+    );
+    if (!credentials.isComplete) {
+      return const WAuthStoredAuthorization(
+        credentials: WAuthCredentials(),
+        accessAuthorized: false,
+        apiAuthorized: false,
+        accessRejected: false,
+        apiRejected: false,
+      );
+    }
+
+    Map<String, dynamic>? userInfo;
+    var accessAuthorized = false;
+    var accessRejected = false;
+    try {
+      final authorized = await requireAuthorizedAccessToken(
+        credentials.accessToken,
+      );
+      userInfo = authorized.userInfo;
+      accessAuthorized = true;
+    } on WAuthApiException catch (error) {
+      accessRejected = error.statusCode == 401 || error.statusCode == 403;
+    }
+
+    var apiAuthorized = false;
+    var apiRejected = false;
+    try {
+      await requireAuthorizedApiToken(credentials.apiToken);
+      apiAuthorized = true;
+    } on WAuthApiException catch (error) {
+      apiRejected = error.statusCode == 401 || error.statusCode == 403;
+    }
+
+    return WAuthStoredAuthorization(
+      credentials: credentials,
+      accessAuthorized: accessAuthorized,
+      apiAuthorized: apiAuthorized,
+      accessRejected: accessRejected,
+      apiRejected: apiRejected,
+      userInfo: userInfo,
     );
   }
 
@@ -337,7 +398,10 @@ class WAuthService {
   /// Canonical guard for WAuth-protected data sources.
   Future<WAuthApiTokenVerification> requireStoredAuthorizedApiToken() async {
     final prefs = await SharedPreferences.getInstance();
-    return requireAuthorizedApiToken(prefs.getString(apiTokenPreferenceKey));
+    final credentials = await credentialStore.readAndMigrate(
+      preferences: prefs,
+    );
+    return requireAuthorizedApiToken(credentials.apiToken);
   }
 
   Map<String, dynamic> _decodeObject(http.Response response) {
@@ -473,6 +537,37 @@ class WAuthApiTokenVerification {
     required this.apiToken,
     required this.claims,
   });
+}
+
+class WAuthStoredAuthorization {
+  final WAuthCredentials credentials;
+  final bool accessAuthorized;
+  final bool apiAuthorized;
+  final bool accessRejected;
+  final bool apiRejected;
+  final Map<String, dynamic>? userInfo;
+
+  const WAuthStoredAuthorization({
+    required this.credentials,
+    required this.accessAuthorized,
+    required this.apiAuthorized,
+    required this.accessRejected,
+    required this.apiRejected,
+    this.userInfo,
+  });
+
+  bool get hasCredentials => credentials.isComplete;
+
+  /// Forget saved login only when the business API credential is rejected, or
+  /// both the account session and API credential are rejected.
+  bool get shouldForgetLogin =>
+      hasCredentials && (apiRejected || (accessRejected && !apiAuthorized));
+
+  /// Network/timeouts and other non-auth failures should keep cached login UI.
+  bool get hasTransientVerificationFailure =>
+      hasCredentials && !apiAuthorized && !apiRejected;
+
+  bool get keepsCachedLoginPresentation => hasCredentials && !shouldForgetLogin;
 }
 
 class WAuthCallbackResult {

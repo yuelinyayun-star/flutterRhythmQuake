@@ -16,6 +16,8 @@ class GlobalQuakeService extends BaseSourceService {
   static const primaryPortPreferenceKey = 'global_quake_primary_port';
   static const secondaryHostPreferenceKey = 'global_quake_secondary_host';
   static const secondaryPortPreferenceKey = 'global_quake_secondary_port';
+  static const firstReportMagnitudeThresholdPreferenceKey =
+      'global_quake_first_report_magnitude_threshold';
   static const defaultPrimaryHost = 'server.globalquake.net';
   static const defaultSecondaryHost = 'server-backup.globalquake.net';
   static const defaultPort = 38000;
@@ -37,6 +39,7 @@ class GlobalQuakeService extends BaseSourceService {
   int? get processId => null;
   String get localWsUrl => 'ws://127.0.0.1:4550';
   bool get isSupported => false;
+  double get firstReportMagnitudeThreshold => 0;
 
   void configureServers({
     required String primaryHost,
@@ -44,6 +47,8 @@ class GlobalQuakeService extends BaseSourceService {
     required String secondaryHost,
     required int secondaryPort,
   }) {}
+
+  void configureFirstReportMagnitudeFilter(double threshold) {}
 
   @override
   void connect() {

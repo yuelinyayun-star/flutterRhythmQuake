@@ -46,9 +46,7 @@ void main(List<String> args) {
     plumTohokuValidationEventFamilyDiagnosticMarkdown(report),
   );
 
-  stdout.writeln(
-    'wrote PLUM Tohoku validation event-family diagnostic report',
-  );
+  stdout.writeln('wrote PLUM Tohoku validation event-family diagnostic report');
   stdout.writeln('json: ${output.path}');
   stdout.writeln('markdown: ${markdown.path}');
 
@@ -228,7 +226,9 @@ Map<String, Object?> buildPlumTohokuValidationEventFamilyDiagnosticJson({
     },
     'thresholds': {
       for (final threshold in _thresholds)
-        threshold.label: validationAccumulator.threshold(threshold.label).toJson(),
+        threshold.label: validationAccumulator
+            .threshold(threshold.label)
+            .toJson(),
     },
     'errors': errors,
   };
@@ -253,8 +253,8 @@ _ShapeSample _buildShapeSample({
       observed.longitude,
     );
     if (distance > _plumRadiusKm) continue;
-    final propagated = observed.intensity -
-        _plumDampingPer10Km * (distance / 10.0);
+    final propagated =
+        observed.intensity - _plumDampingPer10Km * (distance / 10.0);
     if (propagated >= threshold.value) {
       supportingEvidence.add(
         _EvidenceStation(
@@ -373,9 +373,7 @@ String plumTohokuValidationEventFamilyDiagnosticMarkdown(
       '- Baseline threshold crossing required: '
       '`${focusFilter['baselineThresholdCrossingRequired']}`',
     )
-    ..writeln(
-      '- Neighbor windows: `${focusFilter['neighborWindowsKm']}`',
-    )
+    ..writeln('- Neighbor windows: `${focusFilter['neighborWindowsKm']}`')
     ..writeln()
     ..writeln('## Family Definitions')
     ..writeln();
@@ -485,35 +483,42 @@ class _ThresholdAccumulator {
     for (final sample in samples) {
       byEvent.putIfAbsent(sample.eventId, _EventAccumulator.new).add(sample);
     }
-    final eventSignatures = [
-      for (final entry in byEvent.entries)
-        entry.value.toJson(eventId: entry.key),
-    ]..sort((left, right) {
-        final rightSamples = right['focusSampleCount'] as int;
-        final leftSamples = left['focusSampleCount'] as int;
-        final bySamples = rightSamples.compareTo(leftSamples);
-        if (bySamples != 0) return bySamples;
-        return (right['falsePositiveCount'] as int).compareTo(
-          left['falsePositiveCount'] as int,
-        );
-      });
+    final eventSignatures =
+        [
+          for (final entry in byEvent.entries)
+            entry.value.toJson(eventId: entry.key),
+        ]..sort((left, right) {
+          final rightSamples = right['focusSampleCount'] as int;
+          final leftSamples = left['focusSampleCount'] as int;
+          final bySamples = rightSamples.compareTo(leftSamples);
+          if (bySamples != 0) return bySamples;
+          return (right['falsePositiveCount'] as int).compareTo(
+            left['falsePositiveCount'] as int,
+          );
+        });
     final familyAggregates = <String, _FamilyAccumulator>{};
     for (final raw in eventSignatures) {
       final familyLabel = raw['familyLabel'] as String;
-      familyAggregates.putIfAbsent(familyLabel, _FamilyAccumulator.new).add(raw);
+      familyAggregates
+          .putIfAbsent(familyLabel, _FamilyAccumulator.new)
+          .add(raw);
     }
-    final familyRows = [
-      for (final entry in familyAggregates.entries)
-        entry.value.toJson(familyLabel: entry.key),
-    ]..sort((left, right) {
-        final bySamples =
-            (right['focusSampleCount'] as int).compareTo(left['focusSampleCount'] as int);
-        if (bySamples != 0) return bySamples;
-        return (right['falsePositiveCount'] as int).compareTo(
-          left['falsePositiveCount'] as int,
-        );
-      });
-    final truePositiveCount = samples.where((sample) => sample.actualPositive).length;
+    final familyRows =
+        [
+          for (final entry in familyAggregates.entries)
+            entry.value.toJson(familyLabel: entry.key),
+        ]..sort((left, right) {
+          final bySamples = (right['focusSampleCount'] as int).compareTo(
+            left['focusSampleCount'] as int,
+          );
+          if (bySamples != 0) return bySamples;
+          return (right['falsePositiveCount'] as int).compareTo(
+            left['falsePositiveCount'] as int,
+          );
+        });
+    final truePositiveCount = samples
+        .where((sample) => sample.actualPositive)
+        .length;
     final falsePositiveCount = samples.length - truePositiveCount;
     final plumOnlyFalsePositiveCount = samples
         .where((sample) => sample.plumOnlyFalsePositive)
@@ -538,7 +543,9 @@ class _EventAccumulator {
   void add(_ShapeSample sample) => samples.add(sample);
 
   Map<String, Object?> toJson({required String eventId}) {
-    final truePositiveCount = samples.where((sample) => sample.actualPositive).length;
+    final truePositiveCount = samples
+        .where((sample) => sample.actualPositive)
+        .length;
     final falsePositiveCount = samples.length - truePositiveCount;
     final plumOnlyFalsePositiveCount = samples
         .where((sample) => sample.plumOnlyFalsePositive)
@@ -547,7 +554,9 @@ class _EventAccumulator {
       samples.map((sample) => sample.localBelowThresholdShare10Km),
     );
     final medianQuadrants = _median(
-      samples.map((sample) => sample.supportingEvidenceQuadrantCoverage.toDouble()),
+      samples.map(
+        (sample) => sample.supportingEvidenceQuadrantCoverage.toDouble(),
+      ),
     );
     final medianMaxSpread = _median(
       samples.map((sample) => sample.supportingEvidenceMaxSpreadKm),
@@ -606,16 +615,16 @@ class _FamilyAccumulator {
   }
 
   Map<String, Object?> toJson({required String familyLabel}) => {
-        'familyLabel': familyLabel,
-        'eventCount': eventCount,
-        'focusSampleCount': focusSampleCount,
-        'truePositiveCount': truePositiveCount,
-        'falsePositiveCount': falsePositiveCount,
-        'precision': focusSampleCount == 0
-            ? 0.0
-            : truePositiveCount / focusSampleCount,
-        'plumOnlyFalsePositiveCount': plumOnlyFalsePositiveCount,
-      };
+    'familyLabel': familyLabel,
+    'eventCount': eventCount,
+    'focusSampleCount': focusSampleCount,
+    'truePositiveCount': truePositiveCount,
+    'falsePositiveCount': falsePositiveCount,
+    'precision': focusSampleCount == 0
+        ? 0.0
+        : truePositiveCount / focusSampleCount,
+    'plumOnlyFalsePositiveCount': plumOnlyFalsePositiveCount,
+  };
 }
 
 class _ShapeSample {
@@ -681,7 +690,10 @@ class _NeighborSummary {
   final int count;
   final double belowThresholdShare;
 
-  const _NeighborSummary({required this.count, required this.belowThresholdShare});
+  const _NeighborSummary({
+    required this.count,
+    required this.belowThresholdShare,
+  });
 }
 
 _NeighborSummary _localNeighborSummary(
@@ -804,8 +816,9 @@ String _familyLabel({
       : medianLocalBelowThresholdShare10Km < 0.50
       ? 'mixed'
       : 'mismatch';
-  final geometry =
-      medianSupportingEvidenceQuadrantCoverage >= 3.0 ? 'surrounded' : 'one_sided';
+  final geometry = medianSupportingEvidenceQuadrantCoverage >= 3.0
+      ? 'surrounded'
+      : 'one_sided';
   final spread = medianSupportingEvidenceMaxSpreadKm < 20.0
       ? 'compact'
       : medianSupportingEvidenceMaxSpreadKm < 40.0
@@ -826,61 +839,60 @@ Map<String, Object?> _emptyReport({
   required String dataDirectory,
   required String modelPath,
 }) => {
-        'schemaVersion': 'plum_tohoku_validation_event_family_diagnostic_v1',
-        'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
-        'status': 'fail',
-        'policy': {
-          'method': 'PLUM Tohoku validation event/propagation-family diagnostic',
-          'rawPredictedIntensityMutated': false,
-          'frozenTestEvaluated': false,
-          'validationOnly': true,
-          'productionReady': false,
-          'productionUiConnected': false,
-          'diagnosticOnly': true,
-          'parametersTuned': false,
-          'suppressionApplied': false,
-          'plumRadiusKm': _plumRadiusKm,
-          'plumDampingPer10Km': _plumDampingPer10Km,
-        },
-        'inputs': {
-          'dataDirectory': dataDirectory,
-          'modelPath': modelPath,
-          'splits': ['validation'],
-        },
-        'focusFilter': {
-          'estimatedSourceRegion': _focusRegion,
-          'minimumEvidenceCount': _focusMinimumEvidenceCount,
-          'maximumNearestEvidenceDistanceKm':
-              _focusMaximumNearestEvidenceDistanceKm,
-          'minimumPredictionMarginShindo': _focusMinimumMargin,
-          'baselineThresholdCrossingRequired': true,
-          'neighborWindowsKm': [_localNeighbor10Km, _localNeighbor20Km],
-        },
-        'familyDefinitions': const {
-          'localConsistencyBand': {
-            'consistent': 'median belowThresholdShare10Km < 0.25',
-            'mixed': '0.25 <= median belowThresholdShare10Km < 0.50',
-            'mismatch': 'median belowThresholdShare10Km >= 0.50',
-          },
-          'geometryBand': {
-            'surrounded': 'median quadrant coverage >= 3.0',
-            'one_sided': 'median quadrant coverage < 3.0',
-          },
-          'spreadBand': {
-            'compact': 'median max spread < 20 km',
-            'moderate': '20 <= median max spread < 40 km',
-            'wide': 'median max spread >= 40 km',
-          },
-        },
-        'coverage': {
-          'validationVariants': 0,
-          'validationStationForecasts': 0,
-          'skippedMissingMagnitudeEvents': 0,
-          'skippedNoSourceEstimateVariants': 0,
-        },
-        'thresholds': const {},
-        'errors': errors,
-      };
+  'schemaVersion': 'plum_tohoku_validation_event_family_diagnostic_v1',
+  'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
+  'status': 'fail',
+  'policy': {
+    'method': 'PLUM Tohoku validation event/propagation-family diagnostic',
+    'rawPredictedIntensityMutated': false,
+    'frozenTestEvaluated': false,
+    'validationOnly': true,
+    'productionReady': false,
+    'productionUiConnected': false,
+    'diagnosticOnly': true,
+    'parametersTuned': false,
+    'suppressionApplied': false,
+    'plumRadiusKm': _plumRadiusKm,
+    'plumDampingPer10Km': _plumDampingPer10Km,
+  },
+  'inputs': {
+    'dataDirectory': dataDirectory,
+    'modelPath': modelPath,
+    'splits': ['validation'],
+  },
+  'focusFilter': {
+    'estimatedSourceRegion': _focusRegion,
+    'minimumEvidenceCount': _focusMinimumEvidenceCount,
+    'maximumNearestEvidenceDistanceKm': _focusMaximumNearestEvidenceDistanceKm,
+    'minimumPredictionMarginShindo': _focusMinimumMargin,
+    'baselineThresholdCrossingRequired': true,
+    'neighborWindowsKm': [_localNeighbor10Km, _localNeighbor20Km],
+  },
+  'familyDefinitions': const {
+    'localConsistencyBand': {
+      'consistent': 'median belowThresholdShare10Km < 0.25',
+      'mixed': '0.25 <= median belowThresholdShare10Km < 0.50',
+      'mismatch': 'median belowThresholdShare10Km >= 0.50',
+    },
+    'geometryBand': {
+      'surrounded': 'median quadrant coverage >= 3.0',
+      'one_sided': 'median quadrant coverage < 3.0',
+    },
+    'spreadBand': {
+      'compact': 'median max spread < 20 km',
+      'moderate': '20 <= median max spread < 40 km',
+      'wide': 'median max spread >= 40 km',
+    },
+  },
+  'coverage': {
+    'validationVariants': 0,
+    'validationStationForecasts': 0,
+    'skippedMissingMagnitudeEvents': 0,
+    'skippedNoSourceEstimateVariants': 0,
+  },
+  'thresholds': const {},
+  'errors': errors,
+};
 
 StaticAttenuationModel _modelFromJson(Map<String, Object?> json) {
   return StaticAttenuationModel(

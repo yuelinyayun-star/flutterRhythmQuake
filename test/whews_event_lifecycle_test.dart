@@ -342,6 +342,117 @@ void main() {
     },
   );
 
+  test('FAN and WHEWS same event retain complementary information fields', () {
+    final provider = QuakeProvider();
+    addTearDown(() => provider.dispose());
+    final fan = _kmaInfo(origin: 1, apiTypeLabel: 'FAN');
+    final now = fan.reportTime!.add(const Duration(seconds: 1));
+    final whews = UnifiedQuakeData(
+      source: 'kmaEqlist',
+      origin: WhewsService.adapterOrigin,
+      eventId: fan.eventId,
+      isEew: false,
+      timeZone: 8,
+      titleText: fan.titleText,
+      reportNumText: '',
+      useShindo: false,
+      maxIntensity: '-',
+      className: 'gray',
+      hypocenter: '',
+      originTime: fan.originTime,
+      reportTime: now,
+      magnitude: -1,
+      depth: -1,
+      depthText: '',
+      lat: null,
+      lng: null,
+      apiTypeLabel: 'WHEWS',
+    );
+
+    provider.handleUnifiedEventForTest(fan);
+    provider.handleUnifiedEventForTest(whews);
+
+    expect(provider.unifiedEvents, hasLength(1));
+    final merged = provider.unifiedEvents.single;
+    expect(merged.apiTypeLabel, 'WHEWS');
+    expect(merged.magnitude, fan.magnitude);
+    expect(merged.depth, fan.depth);
+    expect(merged.hypocenter, fan.hypocenter);
+    expect(merged.lat, fan.lat);
+    expect(merged.lng, fan.lng);
+  });
+
+  test(
+    'WHEWS and FAN different IDs for one JMA warning merge by source event',
+    () {
+      final provider = QuakeProvider();
+      addTearDown(() => provider.dispose());
+      final originTime = _sourceLocalNow(
+        9,
+      ).subtract(const Duration(seconds: 5));
+      final fan = QuakeEventAdapter.convert('jmaEew', {
+        'eventId': 'FAN-JMA-DIFFERENT-ID',
+        'updates': 1,
+        'infoTypeName': '警報',
+        'originTime': originTime.toIso8601String(),
+        'location': '熊本県熊本地方',
+        'magnitude': 5.2,
+        'depth': 10,
+        'latitude': 32.60,
+        'longitude': 130.70,
+        'jmaShindo': '5強',
+        'isWarn': true,
+      }, 1);
+      final whews = QuakeEventAdapter.convertWhews('jma_eew', {
+        'id': 'WHEWS-JMA-DIFFERENT-ID',
+        'updates': 2,
+        'infoTypeName': '警報',
+        'shockTime': originTime.toIso8601String(),
+        'createTime': _sourceLocalNow(9).toIso8601String(),
+        'placeName': '熊本県熊本地方',
+        'magnitude': 5.4,
+        'depth': 12,
+        'latitude': 32.61,
+        'longitude': 130.71,
+        'epiIntensity': '6弱',
+        'isWarn': true,
+      });
+      final processor = BackgroundEventProcessor(
+        sourceInfoMagFilters: const {},
+      );
+
+      expect(fan, isNotNull);
+      expect(whews, isNotNull);
+      final fanEvent = fan!;
+      final whewsEvent = whews!;
+      expect(whewsEvent.origin, WhewsService.adapterOrigin);
+      expect(whewsEvent.apiTypeLabel, 'WHEWS');
+
+      provider.handleUnifiedEventForTest(fanEvent);
+      provider.handleUnifiedEventForTest(whewsEvent);
+      provider.handleUnifiedEventForTest(fanEvent);
+
+      expect(provider.unifiedEvents, hasLength(1));
+      expect(provider.unifiedEvents.single.apiTypeLabel, 'WHEWS');
+      expect(provider.unifiedEvents.single.reportNumText, '第2報');
+      expect(provider.eewHistory, hasLength(1));
+      expect(provider.eewHistory.single.reportCount, 2);
+
+      expect(
+        processor.process(fanEvent).type,
+        BackgroundEventResultType.newEvent,
+      );
+      expect(
+        processor.process(whewsEvent).type,
+        BackgroundEventResultType.update,
+      );
+      expect(
+        processor.process(fanEvent).type,
+        BackgroundEventResultType.dropped,
+      );
+    },
+  );
+
   test('background accepts one changed WHEWS revision only', () {
     final processor = BackgroundEventProcessor(sourceInfoMagFilters: const {});
     final now = _sourceLocalNow(8);
@@ -458,6 +569,58 @@ void main() {
     expect(processor.process(revision).type, BackgroundEventResultType.dropped);
     await Future<void>.delayed(Duration.zero);
   });
+
+  test('WHEWS ShakeAlert same-report body revision updates in place', () async {
+    final provider = QuakeProvider();
+    addTearDown(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      provider.dispose();
+    });
+    final processor = BackgroundEventProcessor(sourceInfoMagFilters: const {});
+    final reportTime = _sourceLocalNow(8);
+    final originTime = reportTime.subtract(const Duration(seconds: 5));
+    final first = QuakeEventAdapter.convertWhews('sa_eew', {
+      'id': 'whews-sa-same-report',
+      'shockTime': originTime.toIso8601String(),
+      'createTime': reportTime.toIso8601String(),
+      'placeName': 'California',
+      'latitude': 35.0,
+      'longitude': -118.0,
+      'depth': 10,
+      'magnitude': 4.5,
+      'maxMmi': 5.0,
+    });
+    final revision = QuakeEventAdapter.convertWhews('sa_eew', {
+      'id': 'whews-sa-same-report',
+      'shockTime': originTime.toIso8601String(),
+      'createTime': reportTime
+          .add(const Duration(seconds: 2))
+          .toIso8601String(),
+      'placeName': 'California',
+      'latitude': 35.02,
+      'longitude': -118.01,
+      'depth': 12,
+      'magnitude': 4.8,
+      'maxMmi': 6.0,
+    });
+
+    expect(first, isNotNull);
+    expect(revision, isNotNull);
+    expect(first!.reportNumText, '第1報');
+    expect(first.reportTime, reportTime);
+
+    provider.handleUnifiedEventForTest(first);
+    provider.handleUnifiedEventForTest(revision!);
+    provider.handleUnifiedEventForTest(revision);
+
+    expect(provider.unifiedEvents, hasLength(1));
+    expect(provider.unifiedEvents.single.magnitude, 4.8);
+    expect(provider.eewHistory, hasLength(1));
+    expect(provider.eewHistory.single.reportCount, 1);
+    expect(processor.process(first).type, BackgroundEventResultType.newEvent);
+    expect(processor.process(revision).type, BackgroundEventResultType.update);
+    expect(processor.process(revision).type, BackgroundEventResultType.dropped);
+  });
 }
 
 UnifiedQuakeData _whewsInfo({
@@ -543,14 +706,15 @@ UnifiedQuakeData _whewsCencInfo({
 
 DateTime _sourceLocalNow(int timeZone) {
   final utc = DateTime.now().toUtc();
-  return DateTime.utc(
-    utc.year,
-    utc.month,
-    utc.day,
-    utc.hour,
-    utc.minute,
-    utc.second,
-    utc.millisecond,
-    utc.microsecond,
-  ).add(Duration(hours: timeZone));
+  final source = utc.add(Duration(hours: timeZone));
+  return DateTime(
+    source.year,
+    source.month,
+    source.day,
+    source.hour,
+    source.minute,
+    source.second,
+    source.millisecond,
+    0,
+  );
 }

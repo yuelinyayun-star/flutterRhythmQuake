@@ -138,10 +138,8 @@ class _TsunamiLayerState extends State<TsunamiLayer> {
     return ValueListenableBuilder<int>(
       valueListenable: EventAnimationClock.instance.blink2Fps,
       child: PolylineLayer(polylines: polylines),
-      builder: (context, tick, child) => Opacity(
-        opacity: tick % 6 != 0 ? 1.0 : 0.0,
-        child: child,
-      ),
+      builder: (context, tick, child) =>
+          Opacity(opacity: tick % 6 != 0 ? 1.0 : 0.0, child: child),
     );
   }
 }

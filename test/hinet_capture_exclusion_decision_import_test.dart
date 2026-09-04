@@ -81,11 +81,11 @@ void main() {
 Map<String, Object?> _pendingDecisionsCopy() {
   final decisions =
       jsonDecode(
-        File(
-          'docs/data/hinet_capture_provenance_review_decisions.json',
-        ).readAsStringSync(),
-      )
-      as Map<String, Object?>;
+            File(
+              'docs/data/hinet_capture_provenance_review_decisions.json',
+            ).readAsStringSync(),
+          )
+          as Map<String, Object?>;
   final cases = (decisions['cases'] as List)
       .map((entry) => (entry as Map).cast<String, Object?>())
       .toList(growable: true);

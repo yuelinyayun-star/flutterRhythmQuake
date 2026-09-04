@@ -309,6 +309,30 @@ class Matsuzaki2006JointCandidate {
   final double meanIntensityResidual;
 }
 
+/// One candidate-source evaluation emitted only when an inversion caller
+/// explicitly requests a diagnostic trace.
+class Matsuzaki2006JointCandidateTraceEntry {
+  const Matsuzaki2006JointCandidateTraceEntry({
+    required this.stageIndex,
+    required this.expansionRound,
+    required this.source,
+    required this.isValid,
+    required this.invalidReason,
+    required this.intensityRms,
+    required this.magnitude,
+    required this.meanIntensityResidual,
+  });
+
+  final int stageIndex;
+  final int expansionRound;
+  final Matsuzaki2006CandidateSource source;
+  final bool isValid;
+  final Matsuzaki2006CandidateInvalidReason? invalidReason;
+  final double? intensityRms;
+  final double? magnitude;
+  final double? meanIntensityResidual;
+}
+
 class Matsuzaki2006JointSearchStageResult {
   const Matsuzaki2006JointSearchStageResult({
     required this.stageIndex,
@@ -401,6 +425,8 @@ class Matsuzaki2006JointInverter {
   Matsuzaki2006JointInversionResult invert({
     required List<Matsuzaki2006IntensityObservation> observations,
     required Matsuzaki2006JointSearchSpec searchSpec,
+    void Function(Matsuzaki2006JointCandidateTraceEntry entry)?
+    onCandidateEvaluated,
   }) {
     searchSpec.validate();
     _validateObservations(observations);
@@ -469,6 +495,9 @@ class Matsuzaki2006JointInverter {
         scorer: scorer,
         observations: observations,
         searchSpec: searchSpec,
+        stageIndex: stageIndex,
+        expansionRound: expansionRounds,
+        onCandidateEvaluated: onCandidateEvaluated,
       );
       totalEvaluations += requiredEvaluations;
       finalCandidates = evaluated;
@@ -569,6 +598,10 @@ class Matsuzaki2006JointInverter {
     required Matsuzaki2006ForwardResidualScorer scorer,
     required List<Matsuzaki2006IntensityObservation> observations,
     required Matsuzaki2006JointSearchSpec searchSpec,
+    required int stageIndex,
+    required int expansionRound,
+    required void Function(Matsuzaki2006JointCandidateTraceEntry entry)?
+    onCandidateEvaluated,
   }) {
     final candidates = <Matsuzaki2006JointCandidate>[];
     for (final source in sources) {
@@ -578,7 +611,34 @@ class Matsuzaki2006JointInverter {
         minimumObservations: searchSpec.minimumObservations,
         searchSpec: searchSpec.magnitudeSearchSpec,
       );
-      if (!score.isValid) continue;
+      if (!score.isValid || score.solutions.isEmpty) {
+        onCandidateEvaluated?.call(
+          Matsuzaki2006JointCandidateTraceEntry(
+            stageIndex: stageIndex,
+            expansionRound: expansionRound,
+            source: source,
+            isValid: false,
+            invalidReason: score.invalidReason,
+            intensityRms: null,
+            magnitude: null,
+            meanIntensityResidual: null,
+          ),
+        );
+        continue;
+      }
+      final firstSolution = score.solutions.first;
+      onCandidateEvaluated?.call(
+        Matsuzaki2006JointCandidateTraceEntry(
+          stageIndex: stageIndex,
+          expansionRound: expansionRound,
+          source: source,
+          isValid: true,
+          invalidReason: null,
+          intensityRms: firstSolution.intensityRms,
+          magnitude: firstSolution.magnitude,
+          meanIntensityResidual: firstSolution.meanIntensityResidual,
+        ),
+      );
       for (final solution in score.solutions) {
         candidates.add(
           Matsuzaki2006JointCandidate(

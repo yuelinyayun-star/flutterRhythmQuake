@@ -38,18 +38,20 @@ void main() {
       expect(thresholds.keys, containsAll(<String>['shindo4', 'shindo5-']));
 
       for (final thresholdLabel in <String>['shindo4', 'shindo5-']) {
-        final threshold =
-            (thresholds[thresholdLabel]! as Map).cast<String, Object?>();
+        final threshold = (thresholds[thresholdLabel]! as Map)
+            .cast<String, Object?>();
         // 每个 threshold 的 splits 含 validation 和 test。
         final splits = (threshold['splits']! as Map).cast<String, Object?>();
         expect(splits.keys, containsAll(<String>['validation', 'test']));
         for (final splitName in <String>['validation', 'test']) {
           final split = (splits[splitName]! as Map).cast<String, Object?>();
           // 每个 split 含三组件,每组件有 P/R/F1。
-          for (final component
-              in <String>['jmaStyle', 'plumR30D050', 'baselineMax']) {
-            final metrics =
-                (split[component]! as Map).cast<String, Object?>();
+          for (final component in <String>[
+            'jmaStyle',
+            'plumR30D050',
+            'baselineMax',
+          ]) {
+            final metrics = (split[component]! as Map).cast<String, Object?>();
             expect(metrics['precision'], isA<double>());
             expect(metrics['recall'], isA<double>());
             expect(metrics['f1'], isA<double>());
@@ -57,10 +59,13 @@ void main() {
         }
 
         // precisionDelta 含三组件。
-        final precisionDelta =
-            (threshold['precisionDelta']! as Map).cast<String, Object?>();
-        for (final component
-            in <String>['jmaStyle', 'plumR30D050', 'baselineMax']) {
+        final precisionDelta = (threshold['precisionDelta']! as Map)
+            .cast<String, Object?>();
+        for (final component in <String>[
+          'jmaStyle',
+          'plumR30D050',
+          'baselineMax',
+        ]) {
           expect(precisionDelta[component], isA<double>());
         }
         // largestDropComponent 是三组件之一。
@@ -70,23 +75,26 @@ void main() {
         );
 
         // regionBuckets/distanceBuckets 含 validation 和 test。
-        final regionBuckets =
-            (threshold['regionBuckets']! as Map).cast<String, Object?>();
+        final regionBuckets = (threshold['regionBuckets']! as Map)
+            .cast<String, Object?>();
         expect(regionBuckets.keys, containsAll(<String>['validation', 'test']));
-        final distanceBuckets =
-            (threshold['distanceBuckets']! as Map).cast<String, Object?>();
+        final distanceBuckets = (threshold['distanceBuckets']! as Map)
+            .cast<String, Object?>();
         expect(
           distanceBuckets.keys,
           containsAll(<String>['validation', 'test']),
         );
 
         // FP 触发源:validation 和 test 都含 jma_only/plum_only/both。
-        final fpTriggerSource =
-            (threshold['fpTriggerSource']! as Map).cast<String, Object?>();
+        final fpTriggerSource = (threshold['fpTriggerSource']! as Map)
+            .cast<String, Object?>();
         for (final splitName in <String>['validation', 'test']) {
-          final fpTrigger =
-              (fpTriggerSource[splitName]! as Map).cast<String, Object?>();
-          expect(fpTrigger.keys, containsAll(<String>['jma_only', 'plum_only', 'both']));
+          final fpTrigger = (fpTriggerSource[splitName]! as Map)
+              .cast<String, Object?>();
+          expect(
+            fpTrigger.keys,
+            containsAll(<String>['jma_only', 'plum_only', 'both']),
+          );
         }
       }
 

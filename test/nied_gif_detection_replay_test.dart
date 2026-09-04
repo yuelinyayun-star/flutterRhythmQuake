@@ -47,12 +47,13 @@ void main() {
       return;
     }
 
-    final files = dir
-        .listSync()
-        .whereType<File>()
-        .where((f) => f.path.endsWith('.gif'))
-        .toList()
-      ..sort((a, b) => a.path.compareTo(b.path));
+    final files =
+        dir
+            .listSync()
+            .whereType<File>()
+            .where((f) => f.path.endsWith('.gif'))
+            .toList()
+          ..sort((a, b) => a.path.compareTo(b.path));
 
     final service = LmoniImageService()..start();
     final detector = ShakeDetectionService()..setSensitivity(2);

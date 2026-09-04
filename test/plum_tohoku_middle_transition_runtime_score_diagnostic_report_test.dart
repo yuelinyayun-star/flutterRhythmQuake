@@ -32,26 +32,27 @@ void main() {
       expect(focus['minimumPredictionMarginShindo'], 1.0);
       expect(focus['baselineThresholdCrossingRequired'], isTrue);
 
-      final scoreDef =
-          (report['scoreDefinition'] as Map).cast<String, Object?>();
+      final scoreDef = (report['scoreDefinition'] as Map)
+          .cast<String, Object?>();
       expect(scoreDef['weights'], isA<Map>());
 
-      final means =
-          (report['testOutcomeScoreMeans'] as Map).cast<String, Object?>();
+      final means = (report['testOutcomeScoreMeans'] as Map)
+          .cast<String, Object?>();
       expect(
         means.keys,
         containsAll(<String>['middleTransitionZone', 'otherFocusSamples']),
       );
 
-      final transfer =
-          (report['validationAnchoredBandTransfer'] as Map).cast<String, Object?>();
+      final transfer = (report['validationAnchoredBandTransfer'] as Map)
+          .cast<String, Object?>();
       expect(transfer['validation'], isA<List>());
       expect(transfer['test'], isA<List>());
       expect(report['testDeciles'], isA<List>());
       expect(report['monotonicitySummary'], isA<Map>());
 
-      final markdown =
-          plumTohokuMiddleTransitionRuntimeScoreDiagnosticMarkdown(report);
+      final markdown = plumTohokuMiddleTransitionRuntimeScoreDiagnosticMarkdown(
+        report,
+      );
       expect(
         markdown,
         contains('# PLUM Tohoku Middle-Transition Runtime-Score Diagnostic'),
@@ -63,4 +64,3 @@ void main() {
     timeout: const Timeout(Duration(minutes: 8)),
   );
 }
-

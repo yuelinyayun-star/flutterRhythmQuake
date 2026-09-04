@@ -58,6 +58,25 @@ class TyphoonData {
     ].join('|');
   }
 
+  Map<String, dynamic> toMap() => {
+    'tfid': tfid,
+    'name': name,
+    'enname': enname,
+    'isactive': isActive ? '1' : '0',
+    'starttime': startTime,
+    'endtime': endTime,
+    'warnlevel': warnLevel,
+    'centerlng': centerLng,
+    'centerlat': centerLat,
+    'land': land,
+    'points': points.map((point) => point.toMap()).toList(growable: false),
+    'ckposition': ckposition,
+    'jl': jl,
+  };
+
+  static TyphoonData? fromMap(Map<dynamic, dynamic> value) =>
+      _fromAny(Map<String, dynamic>.from(value));
+
   static List<TyphoonData> listFromJson(dynamic decoded) {
     if (decoded is Map) {
       if (decoded.containsKey('msg')) return const [];
@@ -143,6 +162,24 @@ class TyphoonPoint {
   String get speedText => speed == null ? '' : _formatNumber(speed!);
   String get pressureText => pressure?.toString() ?? '';
 
+  Map<String, dynamic> toMap() => {
+    'time': time,
+    'lng': lng,
+    'lat': lat,
+    'strong': strong,
+    'power': power,
+    'speed': speed,
+    'pressure': pressure,
+    'movespeed': movespeed,
+    'movedirection': movedirection,
+    'radius7': radius7.join('|'),
+    'radius10': radius10.join('|'),
+    'radius12': radius12.join('|'),
+    'forecast': forecast.map((item) => item.toMap()).toList(growable: false),
+    'ckposition': ckposition,
+    'jl': jl,
+  };
+
   static TyphoonPoint? fromJson(dynamic value) {
     if (value is! Map) return null;
     final forecastRaw = value['forecast'];
@@ -178,6 +215,13 @@ class TyphoonForecast {
   final List<TyphoonForecastPoint> points;
 
   const TyphoonForecast({required this.agency, required this.points});
+
+  Map<String, dynamic> toMap() => {
+    'tm': agency,
+    'forecastpoints': points
+        .map((point) => point.toMap())
+        .toList(growable: false),
+  };
 
   static TyphoonForecast? fromJson(dynamic value) {
     if (value is! Map) return null;
@@ -215,6 +259,16 @@ class TyphoonForecastPoint {
   });
 
   bool get hasLocation => lat != null && lng != null;
+
+  Map<String, dynamic> toMap() => {
+    'time': time,
+    'lng': lng,
+    'lat': lat,
+    'strong': strong,
+    'power': power,
+    'speed': speed,
+    'pressure': pressure,
+  };
 
   static TyphoonForecastPoint? fromJson(dynamic value) {
     if (value is! Map) return null;

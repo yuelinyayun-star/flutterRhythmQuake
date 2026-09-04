@@ -44,6 +44,12 @@ class JmaEqlistService {
   /// 列表更新回调
   void Function(List<QuakeMessage>)? onListUpdated;
 
+  /// HTTP 轮询状态回调
+  ///
+  /// - true: 最近一次拉取成功（HTTP 200 且解析流程未抛异常）
+  /// - false: 最近一次拉取失败（HTTP 非 200 / 解析异常）
+  void Function(bool connected)? onStatusChanged;
+
   final EqlistHttpPollGate _pushGate = EqlistHttpPollGate();
 
   /// Wolfx already refreshed the JMA list — skip HTTP briefly.
@@ -71,9 +77,13 @@ class JmaEqlistService {
       final resp = await http
           .get(Uri.parse(_url))
           .timeout(const Duration(seconds: 15));
-      if (resp.statusCode != 200) return;
+      if (resp.statusCode != 200) {
+        onStatusChanged?.call(false);
+        return;
+      }
 
       final list = json.decode(resp.body) as List?;
+      onStatusChanged?.call(true);
       if (list == null || list.isEmpty) return;
 
       final items = <QuakeMessage>[];
@@ -86,6 +96,7 @@ class JmaEqlistService {
       if (items.isNotEmpty) onListUpdated?.call(items);
     } catch (e) {
       debugPrint('JMA Eqlist fetch error: $e');
+      onStatusChanged?.call(false);
     }
   }
 
@@ -166,7 +177,7 @@ class JmaEqlistService {
       case 'DetailScale':
         return '各地の震度情報';
       case 'Foreign':
-        return '遠地地震情報';
+        return '遠地地震に関する情報';
       case 'Other':
         return 'その他の情報';
       default:

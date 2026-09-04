@@ -977,7 +977,12 @@ class FanService extends BaseSourceService {
 
     // 解析数据源并处理事件
     final QuakeSourceType source = _resolveSource(event, sourceHint);
-    final result = _parseFanEvent(event, source, isInitialLoad: isInitialLoad);
+    final result = _parseFanEvent(
+      event,
+      source,
+      isInitialLoad: isInitialLoad,
+      sourceHint: sourceHint,
+    );
     if (result != null) {
       if (isInitialLoad) {
         // kanameishi: query_response / initial_all 包含当前活跃的 EEW 事件
@@ -1071,14 +1076,9 @@ class FanService extends BaseSourceService {
 
   /// 解析数据源类型
   ///
-  /// 优先使用 sourceHint，其次通过特征检测，最后默认为 CENC。
-  ///
-  /// 参数：
-  /// - [json]: JSON 格式的事件数据
-  /// - [sourceHint]: 数据源提示
-  ///
-  /// 返回：
-  /// - 识别出的数据源类型
+  /// 优先使用 sourceHint。已适配的源走专门类型。
+  /// 未识别的 source 名不再回落到 CENC；没有 source 时仍走特征检测，
+  /// 以免已适配的 CENC 报文在缺字段时被改成未适配源。
   QuakeSourceType _resolveSource(
     Map<String, dynamic> json,
     String? sourceHint,
@@ -1086,8 +1086,9 @@ class FanService extends BaseSourceService {
     if (sourceHint != null && sourceHint.isNotEmpty) {
       final fromHint = _sourceNameToType(sourceHint);
       if (fromHint != null) return fromHint;
+      return QuakeSourceType.unadapted;
     }
-    return _detectSource(json) ?? QuakeSourceType.cenc;
+    return _detectSource(json) ?? QuakeSourceType.unadapted;
   }
 
   /// FAN source 字段名转换为 QuakeSourceType
@@ -1098,24 +1099,25 @@ class FanService extends BaseSourceService {
   /// 返回：
   /// - 对应的 QuakeSourceType，如果不识别则返回 null
   QuakeSourceType? _sourceNameToType(String name) {
-    switch (name) {
+    final key = name.trim().toLowerCase().replaceAll('-', '_');
+    switch (key) {
       case 'cenc':
         return QuakeSourceType.cenc;
       case 'cea':
         return QuakeSourceType.cea;
-      case 'cea-pr':
+      case 'cea_pr':
         return QuakeSourceType.cea_pr;
       case 'jma':
         return QuakeSourceType.jma_fan;
       case 'cwa':
         return QuakeSourceType.cwa;
-      case 'cwa-eew':
+      case 'cwa_eew':
         return QuakeSourceType.cwa_eew;
       case 'hko':
         return QuakeSourceType.hko;
       case 'kma':
         return QuakeSourceType.kma_eq;
-      case 'kma-eew':
+      case 'kma_eew':
         return QuakeSourceType.kma_eew_fan;
       case 'sa':
         return QuakeSourceType.sa;
@@ -1129,6 +1131,8 @@ class FanService extends BaseSourceService {
         return QuakeSourceType.gfz;
       case 'usp':
         return QuakeSourceType.usp;
+      case 'geonet':
+        return QuakeSourceType.geonet;
       case 'usgs':
         return QuakeSourceType.usgs;
       case 'ningxia':
@@ -1141,7 +1145,7 @@ class FanService extends BaseSourceService {
         return QuakeSourceType.beijing;
       case 'yunnan':
         return QuakeSourceType.yunnan;
-      case 'fssn-cmt':
+      case 'fssn_cmt':
         return QuakeSourceType.fssnCmt;
       default:
         return null;
@@ -1257,12 +1261,8 @@ class FanService extends BaseSourceService {
       }
     }
 
-    // 默认：有 eventId 或 id + shockTime 的地震信息
-    if (json.containsKey('shockTime') || json.containsKey('originTime')) {
-      return QuakeSourceType.cenc;
-    }
-
-    return QuakeSourceType.cenc;
+    // Unknown payloads are handled as unadapted sources instead of CENC.
+    return null;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1295,6 +1295,7 @@ class FanService extends BaseSourceService {
     Map<String, dynamic> json,
     QuakeSourceType source, {
     bool isInitialLoad = false,
+    String? sourceHint,
   }) {
     try {
       // ─── 基础字段 ───
@@ -1562,40 +1563,58 @@ class FanService extends BaseSourceService {
         shouldEmitUnified = elapsedSec < timeoutSec;
       }
       if (shouldEmitUnified) {
-        _emitFanUnified(source, <String, dynamic>{
-          'eventId': eventId.isNotEmpty
-              ? eventId
-              : id.isNotEmpty
-              ? id
-              : md5,
-          'location': location,
-          'magnitude': magnitude > 0 ? magnitude : magnitudel,
-          'depth': depth,
-          'latitude': latitude,
-          'longitude': longitude,
-          'originTime': json['shockTime']?.toString() ?? '',
-          'maxIntensity': finalIntensity,
-          'jmaShindo': jmaShindo,
-          'infoTypeName': infoTypeName,
-          'reviewType': reviewType ?? '',
-          'type': reviewType ?? '',
-          'verify': verify,
-          'updates': updates,
-          'isWarn': source == QuakeSourceType.jma_fan && infoTypeName == '警報',
-          'isFinal': isFinal,
-          'isCancel': isCancel,
-          'isAssumption': false,
-          'isTraining': isTraining,
-          'placeName': location,
-          'createTime': json['createTime']?.toString() ?? '',
-          'updateTime': updateTime,
-          'shockTime': json['shockTime']?.toString() ?? '',
-          'nodalPlane1': nodalPlane1 ?? '',
-          'nodalPlane2': nodalPlane2 ?? '',
-          'centroidDepth': json['centroidDepth'],
-          'momentTensor': momentTensor,
-          'momentTensorConvention': 'ned',
-        });
+        if (source == QuakeSourceType.unadapted) {
+          final payload = Map<String, dynamic>.from(json);
+          if (sourceHint != null && sourceHint.isNotEmpty) {
+            payload.putIfAbsent('source', () => sourceHint);
+          }
+          _emitFanUnified(source, payload, apiName: sourceHint);
+        } else {
+          _emitFanUnified(source, <String, dynamic>{
+            'eventId': eventId.isNotEmpty
+                ? eventId
+                : id.isNotEmpty
+                ? id
+                : md5,
+            'location': location,
+            'magnitude': source == QuakeSourceType.geonet
+                ? json['magnitude']
+                : magnitude > 0
+                ? magnitude
+                : magnitudel,
+            'depth': source == QuakeSourceType.geonet ? json['depth'] : depth,
+            'latitude': source == QuakeSourceType.geonet
+                ? json['latitude']
+                : latitude,
+            'longitude': source == QuakeSourceType.geonet
+                ? json['longitude']
+                : longitude,
+            'originTime': json['shockTime']?.toString() ?? '',
+            'maxIntensity': source == QuakeSourceType.geonet
+                ? null
+                : finalIntensity,
+            'jmaShindo': jmaShindo,
+            'infoTypeName': infoTypeName,
+            'reviewType': reviewType ?? '',
+            'type': reviewType ?? '',
+            'verify': verify,
+            'updates': updates,
+            'isWarn': source == QuakeSourceType.jma_fan && infoTypeName == '警報',
+            'isFinal': isFinal,
+            'isCancel': isCancel,
+            'isAssumption': false,
+            'isTraining': isTraining,
+            'placeName': location,
+            'createTime': json['createTime']?.toString() ?? '',
+            'updateTime': updateTime,
+            'shockTime': json['shockTime']?.toString() ?? '',
+            'nodalPlane1': nodalPlane1 ?? '',
+            'nodalPlane2': nodalPlane2 ?? '',
+            'centroidDepth': json['centroidDepth'],
+            'momentTensor': momentTensor,
+            'momentTensorConvention': 'ned',
+          });
+        }
       }
 
       return QuakeMessage(
@@ -1877,7 +1896,21 @@ class FanService extends BaseSourceService {
 
   /// 映射 QuakeSourceType → 适配器 source 字符串
   /// 并通过适配器转换并发射统一事件
-  void _emitFanUnified(QuakeSourceType source, Map<String, dynamic> data) {
+  void _emitFanUnified(
+    QuakeSourceType source,
+    Map<String, dynamic> data, {
+    String? apiName,
+  }) {
+    if (source == QuakeSourceType.unadapted) {
+      emitUnified(
+        QuakeEventAdapter.convertUnadapted(
+          apiName: apiName ?? '',
+          origin: 1,
+          data: data,
+        ),
+      );
+      return;
+    }
     final adapterSource = _sourceToAdapterSource(source);
     if (adapterSource == null) return;
     final result = QuakeEventAdapter.convert(adapterSource, data, 1);
@@ -1918,6 +1951,8 @@ class FanService extends BaseSourceService {
         return 'gfz';
       case QuakeSourceType.usp:
         return 'usp';
+      case QuakeSourceType.geonet:
+        return 'geonet';
       case QuakeSourceType.usgs:
         return 'usgsEqlist';
       case QuakeSourceType.fssn:

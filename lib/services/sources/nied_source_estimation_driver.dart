@@ -845,6 +845,7 @@ class NiedSourceEstimationDriver {
       'updateStamp': updateAt.millisecondsSinceEpoch,
       'ascend': station.ascend,
       'level': station.kaLevel,
+      'shindo': _stationComparableValue(station),
       'isActive': active,
     };
   }

@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'package:archive/archive_io.dart';
 import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as image_lib;
@@ -11,6 +13,7 @@ import '../../models/tsunami_message.dart';
 import '../../models/source_status.dart';
 import '../../services/quake_event_adapter.dart';
 import '../../models/unified_quake_data.dart';
+import '../../core/utils/quake_time.dart';
 import 'nied_monitor.dart';
 import '../../models/nied_calibration.dart';
 import '../../core/source_estimation/kotoho7_js_receiver_bridge.dart';
@@ -35,6 +38,16 @@ import 'lmoni_image_service.dart';
 /// - FAN格式: FanStudio聚合数据格式
 class MockInputService extends BaseSourceService {
   bool _niedGifInjectionRunning = false;
+  bool _niedGifInjectionCancelRequested = false;
+
+  bool get isNiedGifInjectionRunning => _niedGifInjectionRunning;
+
+  /// Request cooperative cancel of an in-flight [injectFromNiedGifPath].
+  void stopNiedGifInjection() {
+    if (!_niedGifInjectionRunning) return;
+    _niedGifInjectionCancelRequested = true;
+    debugPrint('[NIED GIF Inject] cancel requested');
+  }
 
   @override
   String get name => 'Mock';
@@ -111,6 +124,18 @@ class MockInputService extends BaseSourceService {
     try {
       final adapterSource = _quakeSourceToAdapterSource(q.source);
       if (adapterSource == null) {
+        if (q.source == QuakeSourceType.unadapted) {
+          final apiName =
+              json['source']?.toString() ?? json['api']?.toString() ?? '';
+          emitUnified(
+            QuakeEventAdapter.convertUnadapted(
+              apiName: apiName,
+              origin: _getOrigin(q.source),
+              data: json,
+            ),
+          );
+          return;
+        }
         debugPrint('_emitUnified: no adapter for source=${q.source}');
         return;
       }
@@ -237,19 +262,7 @@ class MockInputService extends BaseSourceService {
   }
 
   int _getTimeZone(QuakeSourceType source) {
-    switch (source) {
-      case QuakeSourceType.wolfx:
-      case QuakeSourceType.jma_fan:
-      case QuakeSourceType.p2p:
-      case QuakeSourceType.kma_eew_fan:
-      case QuakeSourceType.kma_eq:
-        return 9;
-      case QuakeSourceType.cwa_eew:
-      case QuakeSourceType.cwa:
-        return 8;
-      default:
-        return 8;
-    }
+    return QuakeTime.wallClockOffsetHours(source);
   }
 
   String _formatMaxIntensity(QuakeMessage q) {
@@ -489,7 +502,7 @@ class MockInputService extends BaseSourceService {
     }
 
     final source = switch (type) {
-      'cenc_eew' => QuakeSourceType.cenc,
+      'cenc_eew' => QuakeSourceType.cea, // Wolfx cenc_eew → ceaEew adapter
       'fj_eew' => QuakeSourceType.fj_eew,
       'cq_eew' => QuakeSourceType.cq_eew,
       'sc_eew' => QuakeSourceType.sc_eew,
@@ -609,6 +622,8 @@ class MockInputService extends BaseSourceService {
           return QuakeSourceType.jma_fan;
         case 'cenc':
           return QuakeSourceType.cenc;
+        case 'usgs':
+          return QuakeSourceType.usgs;
         case 'cea':
           return QuakeSourceType.cea;
         case 'cea-pr':
@@ -621,6 +636,8 @@ class MockInputService extends BaseSourceService {
           return QuakeSourceType.kma_eq;
         case 'kma-eew':
           return QuakeSourceType.kma_eew_fan;
+        default:
+          return QuakeSourceType.unadapted;
       }
     }
 
@@ -940,6 +957,7 @@ class MockInputService extends BaseSourceService {
     }
 
     _niedGifInjectionRunning = true;
+    _niedGifInjectionCancelRequested = false;
     final imageService = LmoniImageService()..start();
     var injected = 0;
     DateTime? fallbackTime;
@@ -947,6 +965,12 @@ class MockInputService extends BaseSourceService {
     final playbackClock = Stopwatch()..start();
     try {
       for (final file in files) {
+        if (_niedGifInjectionCancelRequested) {
+          debugPrint(
+            '[NIED GIF Inject] cancelled after $injected / ${files.length}',
+          );
+          break;
+        }
         final dataTime =
             _niedGifTimestampFromName(file) ??
             (fallbackTime = (fallbackTime ?? DateTime.now()).add(
@@ -957,24 +981,32 @@ class MockInputService extends BaseSourceService {
         if (targetElapsed > Duration.zero) {
           final remaining = targetElapsed - playbackClock.elapsed;
           if (remaining > Duration.zero) {
-            await Future<void>.delayed(remaining);
+            await _delayUnlessNiedGifCancelled(remaining);
+            if (_niedGifInjectionCancelRequested) {
+              debugPrint(
+                '[NIED GIF Inject] cancelled after $injected / ${files.length}',
+              );
+              break;
+            }
           }
         }
 
         final bytes = await file.readAsBytes();
-        final decoded = image_lib.decodeImage(bytes);
-        if (decoded == null) continue;
-        if (decoded.width != 352 || decoded.height != 400) {
+        // Decode off the UI isolate — 352x400 GIF decode on the main thread
+        // stacks with wave/camera/station rebuilds and feels like hard jank.
+        final packedRgb = await Isolate.run(
+          () => _packedRgbFromGifBytes(bytes),
+        );
+        if (packedRgb == null) {
           debugPrint(
-            '[NIED GIF Inject] skip ${file.path}: '
-            'unexpected size ${decoded.width}x${decoded.height}',
+            '[NIED GIF Inject] skip ${file.path}: decode failed or bad size',
           );
           continue;
         }
-        final packedRgb = _packedRgbFromImage(decoded);
+        if (_niedGifInjectionCancelRequested) break;
         imageService.processPixels(
           packedRgb,
-          surfaceGifBytes: Uint8List.fromList(bytes),
+          surfaceGifBytes: bytes,
           dataTime: dataTime,
           receivedAt: DateTime.now(),
         );
@@ -983,9 +1015,21 @@ class MockInputService extends BaseSourceService {
       }
     } finally {
       _niedGifInjectionRunning = false;
+      _niedGifInjectionCancelRequested = false;
     }
     debugPrint('[NIED GIF Inject] Injected $injected GIF seconds from $path');
     return injected;
+  }
+
+  Future<void> _delayUnlessNiedGifCancelled(Duration duration) async {
+    const slice = Duration(milliseconds: 50);
+    var remaining = duration;
+    while (remaining > Duration.zero) {
+      if (_niedGifInjectionCancelRequested) return;
+      final step = remaining > slice ? slice : remaining;
+      await Future<void>.delayed(step);
+      remaining -= step;
+    }
   }
 
   Future<void> _waitForNiedSourceBridgePlaybackBackpressure() async {
@@ -1058,19 +1102,6 @@ class MockInputService extends BaseSourceService {
     );
   }
 
-  List<int> _packedRgbFromImage(image_lib.Image image) {
-    final pixels = List<int>.filled(image.width * image.height, 0);
-    var index = 0;
-    for (var y = 0; y < image.height; y++) {
-      for (var x = 0; x < image.width; x++) {
-        final pixel = image.getPixel(x, y);
-        pixels[index++] =
-            (pixel.r.toInt() << 16) | (pixel.g.toInt() << 8) | pixel.b.toInt();
-      }
-    }
-    return pixels;
-  }
-
   double _log10(double x) => x <= 0 ? 0 : (math.log(x) / 2.302585092994046);
 
   String _guessPref(double lat, double lng) {
@@ -1099,6 +1130,24 @@ class MockInputService extends BaseSourceService {
     }
     return bestPref;
   }
+}
+
+/// Decode NIED surface GIF off the UI isolate (must be top-level for [Isolate.run]).
+/// Returns compact [Uint32List] (not boxed [List<int>]) to cut Dart heap peak.
+Uint32List? _packedRgbFromGifBytes(Uint8List bytes) {
+  final decoded = image_lib.decodeImage(bytes);
+  if (decoded == null) return null;
+  if (decoded.width != 352 || decoded.height != 400) return null;
+  final pixels = Uint32List(decoded.width * decoded.height);
+  var index = 0;
+  for (var y = 0; y < decoded.height; y++) {
+    for (var x = 0; x < decoded.width; x++) {
+      final pixel = decoded.getPixel(x, y);
+      pixels[index++] =
+          (pixel.r.toInt() << 16) | (pixel.g.toInt() << 8) | pixel.b.toInt();
+    }
+  }
+  return pixels;
 }
 
 /// K-NET 测站累计 PGA 数据

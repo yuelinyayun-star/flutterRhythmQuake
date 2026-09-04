@@ -38,12 +38,11 @@ class KanameishiJma2001TravelTimeTable {
     final upperDepthWeight = upperDepth - depth;
     final lowerDepthWeight = depth - lowerDepth;
     final depthWeightSum = upperDepthWeight + lowerDepthWeight;
-    double depthInterpolatedAt(int column) =>
-        depthWeightSum == 0.0
-            ? sample(lowerDepthIndex, column)
-            : (upperDepthWeight * sample(lowerDepthIndex, column) +
-                    lowerDepthWeight * sample(upperDepthIndex, column)) /
-                depthWeightSum;
+    double depthInterpolatedAt(int column) => depthWeightSum == 0.0
+        ? sample(lowerDepthIndex, column)
+        : (upperDepthWeight * sample(lowerDepthIndex, column) +
+                  lowerDepthWeight * sample(upperDepthIndex, column)) /
+              depthWeightSum;
     final lowerTime = depthInterpolatedAt(lowerDistanceIndex);
     final upperTime = depthInterpolatedAt(upperDistanceIndex);
     if (upperDistance == lowerDistance) return lowerTime;

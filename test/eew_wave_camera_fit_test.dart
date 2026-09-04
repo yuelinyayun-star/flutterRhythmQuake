@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutterrhythmquake/core/utils/world_wrap.dart';
 import 'package:flutterrhythmquake/models/quake_message.dart';
 import 'package:flutterrhythmquake/providers/map_state_provider.dart';
 import 'package:flutterrhythmquake/widgets/map/eew_wave_camera_follow_gate.dart';
@@ -142,7 +143,7 @@ void main() {
     }
   });
 
-  testWidgets('continuous wave follow settles after a large acquire jump', (
+  testWidgets('continuous wave follow has no idle gap before the next target', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1200, 800);
@@ -170,66 +171,18 @@ void main() {
 
       provider.animatedMove(const LatLng(36, 136), 7, continuousFollow: true);
       await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 200)),
+        () => Future<void>.delayed(const Duration(milliseconds: 800)),
       );
       await tester.pump(const Duration(milliseconds: 50));
-      final zoomMid = controller.camera.zoom;
-
+      final zoomAt820ms = controller.camera.zoom;
       await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 700)),
+        () => Future<void>.delayed(const Duration(milliseconds: 100)),
       );
       await tester.pump(const Duration(milliseconds: 50));
+      final zoomAt940ms = controller.camera.zoom;
 
-      expect(zoomMid, greaterThan(4.0));
-      expect(zoomMid, lessThan(7.0));
-      expect(controller.camera.zoom, closeTo(7.0, 0.08));
-      expect(controller.camera.center.latitude, closeTo(36.0, 0.05));
-      expect(controller.camera.center.longitude, closeTo(136.0, 0.05));
-    } finally {
-      provider.dispose();
-    }
-  });
-
-  testWidgets('small continuous follow settles on center before the next tick', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(1200, 800);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-
-    final controller = MapController();
-    final provider = MapStateProvider();
-
-    try {
-      await tester.pumpWidget(
-        MaterialApp(
-          home: FlutterMap(
-            mapController: controller,
-            options: const MapOptions(
-              initialCenter: LatLng(35.0, 135.0),
-              initialZoom: 6.0,
-            ),
-            children: const [],
-          ),
-        ),
-      );
-      provider.setController(controller, const TestVSync());
-
-      // Tiny wave-expansion chase: should finish well under the ~900ms policy.
-      provider.animatedMove(
-        const LatLng(35.15, 135.12),
-        5.85,
-        continuousFollow: true,
-      );
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 560)),
-      );
-      await tester.pump(const Duration(milliseconds: 50));
-
-      expect(controller.camera.center.latitude, closeTo(35.15, 0.01));
-      expect(controller.camera.center.longitude, closeTo(135.12, 0.01));
-      expect(controller.camera.zoom, closeTo(5.85, 0.05));
+      expect(zoomAt940ms, greaterThan(zoomAt820ms));
+      expect(zoomAt940ms, lessThan(7));
     } finally {
       provider.dispose();
     }
@@ -257,4 +210,148 @@ void main() {
       isFalse,
     );
   });
+
+  test('released wave follow keeps a distant EEW on the carousel focus', () {
+    final now = DateTime.now().toUtc();
+    final japan = QuakeMessage(
+      source: QuakeSourceType.wolfx,
+      eventId: 'japan',
+      location: 'Japan',
+      magnitude: 5,
+      latitude: 36,
+      longitude: 140,
+      depth: 20,
+      originTime: now,
+    );
+    final california = QuakeMessage(
+      source: QuakeSourceType.sa,
+      eventId: 'california',
+      location: 'California',
+      magnitude: 5,
+      latitude: 36.6,
+      longitude: -120.5,
+      depth: 10,
+      originTime: now,
+    );
+    final events = [japan, california];
+
+    final focused = eewCameraFocusEvents(
+      events: events,
+      splitDistant: true,
+      currentEvent: california,
+    );
+    expect(focused, [same(california)]);
+
+    final provider = MapStateProvider();
+    addTearDown(provider.dispose);
+    final center = provider.wrappedEventViewCenterForTest(focused);
+    expect(center, isNotNull);
+    expect(center!.latitude, closeTo(california.latitude, 0.001));
+    expect(
+      WorldWrap.normalizeLongitude(center.longitude),
+      closeTo(california.longitude, 0.001),
+    );
+    expect(
+      eewCameraFocusEvents(
+        events: events,
+        splitDistant: false,
+        currentEvent: california,
+      ),
+      same(events),
+    );
+  });
+
+  test(
+    'a trans-Pacific EEW keeps the camera center on the epicenter, not Africa',
+    () {
+      final provider = MapStateProvider();
+      try {
+        final event = QuakeMessage(
+          source: QuakeSourceType.sa,
+          eventId: 'ci39818958',
+          location: 'Near Central California',
+          magnitude: 3.9,
+          latitude: 36.6,
+          longitude: -120.5,
+          depth: 5,
+          originTime: DateTime.now().toUtc().subtract(const Duration(hours: 2)),
+        );
+        final center = provider.wrappedEventViewCenterForTest(
+          [event],
+          waveEvents: [event],
+        );
+        expect(center, isNotNull);
+        final lng = WorldWrap.normalizeLongitude(center!.longitude);
+        expect(lng, closeTo(-120.5, 20));
+        expect(lng, isNot(inInclusiveRange(-20, 60)));
+      } finally {
+        provider.dispose();
+      }
+    },
+  );
+
+  testWidgets(
+    'China to California EEW pans east across the Pacific instead of west through Africa',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final controller = MapController();
+      final provider = MapStateProvider();
+
+      try {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: FlutterMap(
+              mapController: controller,
+              options: const MapOptions(
+                initialCenter: LatLng(29.36, 120.17),
+                initialZoom: 4,
+              ),
+              children: const [],
+            ),
+          ),
+        );
+        provider.setController(controller, const TestVSync());
+
+        final event = QuakeMessage(
+          source: QuakeSourceType.sa,
+          eventId: 'ci-camera-haul',
+          location: 'Near Central California',
+          magnitude: 3.9,
+          latitude: 36.6,
+          longitude: -120.5,
+          depth: 5,
+          originTime: DateTime.now().toUtc().subtract(
+            const Duration(minutes: 20),
+          ),
+        );
+
+        provider.smartMoveToEvents(
+          [event],
+          waveEvents: [event],
+          padding: 0.8,
+          minZoom: 4.5,
+          maxZoom: 8,
+          force: true,
+          minInterval: Duration.zero,
+          continuousFollow: true,
+        );
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 400)),
+        );
+        await tester.pump(const Duration(milliseconds: 50));
+
+        expect(controller.camera.center.longitude, greaterThan(120.17));
+        expect(
+          WorldWrap.normalizeLongitude(controller.camera.center.longitude),
+          isNot(inInclusiveRange(-20, 60)),
+        );
+      } finally {
+        provider.dispose();
+      }
+    },
+  );
 }

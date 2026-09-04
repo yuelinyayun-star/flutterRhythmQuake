@@ -311,6 +311,36 @@ void main() {
     },
   );
 
+  test('different API IDs for one JMA warning share one card and history', () {
+    final provider = QuakeProvider();
+    addTearDown(() => provider.dispose());
+
+    final wolfxRaw = _wolfxRaw(
+      eventId: 'WOLFX-SAME-WARNING',
+      report: 1,
+      hypocenter: '熊本県熊本地方',
+    );
+    final fanRaw =
+        _fanRaw(eventId: 'FAN-SAME-WARNING', report: 2, hypocenter: '熊本県熊本地方')
+          ..['originTime'] = wolfxRaw['OriginTime']
+          ..['latitude'] = 32.601
+          ..['longitude'] = 130.701;
+
+    final wolfx = _adaptWolfx(wolfxRaw);
+    final fan = _adaptFan(fanRaw);
+    provider.handleUnifiedEventForTest(wolfx);
+    provider.handleUnifiedEventForTest(fan);
+
+    expect(provider.unifiedEvents, hasLength(1));
+    expect(provider.unifiedEvents.single.reportNumText, '第2報');
+    expect(provider.eewHistory, hasLength(1));
+    expect(provider.eewHistory.single.reportCount, 2);
+    expect(
+      provider.eewHistory.single.reports.map((event) => event.reportNumText),
+      orderedEquals(['第2報', '第1報']),
+    );
+  });
+
   testWidgets(
     'AlertModule renders both APIs latest report fields after a 48-message burst',
     (tester) async {

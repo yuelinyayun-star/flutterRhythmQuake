@@ -1,0 +1,325 @@
+{
+  "meta": {
+    "name": "平成23年東北地方太平洋沖地震 津波警報序列",
+    "refs": [
+      "https://www.jstage.jst.go.jp/article/zisin/64/3/64_3_155/_pdf",
+      "https://www.jma.go.jp/jma/kishou/hyouka/kondankai/kondankai16/shiryou6.pdf",
+      "https://www.bousai.go.jp/kaigirep/chousakai/tohokukyokun/9/pdf/sub3.pdf"
+    ],
+    "truth": {
+      "r1": "14:49 第1報 — 宮城6m / 岩手・福島3m（大津波），他沿岸津波警報",
+      "r2": "15:14 第2報 — 宮城10m以上 / 岩手・福島6m，青森太平洋・茨城・千葉外房升级",
+      "peak": "16:08 峰值 — 青森太平洋〜千葉九十九里・外房 10m以上 大津波"
+    },
+    "areaNames": "与 assets/maps/jp.tsunami.topo.json region.name 一致"
+  },
+  "reports": [
+    {
+      "id": "tohoku311_tsunami_r1",
+      "code": 552,
+      "cancelled": false,
+      "issue": {
+        "source": "気象庁",
+        "time": "2011/03/11 14:49:00",
+        "type": "Focus"
+      },
+      "areas": [
+        {
+          "name": "岩手県",
+          "grade": "MajorWarning",
+          "immediate": true,
+          "maxHeight": { "description": "３ｍ", "value": 3 }
+        },
+        {
+          "name": "宮城県",
+          "grade": "MajorWarning",
+          "immediate": true,
+          "maxHeight": { "description": "６ｍ", "value": 6 }
+        },
+        {
+          "name": "福島県",
+          "grade": "MajorWarning",
+          "immediate": true,
+          "maxHeight": { "description": "３ｍ", "value": 3 }
+        },
+        {
+          "name": "北海道太平洋沿岸中部",
+          "grade": "Warning",
+          "immediate": false,
+          "maxHeight": { "description": "１ｍ", "value": 1 },
+          "firstHeight": { "arrivalTime": "2011/03/11 15:30:00" }
+        },
+        {
+          "name": "青森県太平洋沿岸",
+          "grade": "Warning",
+          "immediate": false,
+          "maxHeight": { "description": "１ｍ", "value": 1 },
+          "firstHeight": { "arrivalTime": "2011/03/11 15:20:00" }
+        },
+        {
+          "name": "茨城県",
+          "grade": "Warning",
+          "immediate": false,
+          "maxHeight": { "description": "２ｍ", "value": 2 }
+        },
+        {
+          "name": "千葉県九十九里・外房",
+          "grade": "Warning",
+          "immediate": false,
+          "maxHeight": { "description": "２ｍ", "value": 2 }
+        },
+        {
+          "name": "伊豆諸島",
+          "grade": "Warning",
+          "immediate": false,
+          "maxHeight": { "description": "１ｍ", "value": 1 }
+        },
+        {
+          "name": "北海道太平洋沿岸東部",
+          "grade": "Watch",
+          "immediate": false,
+          "maxHeight": { "description": "０．５ｍ", "value": 0.5 }
+        },
+        {
+          "name": "北海道太平洋沿岸西部",
+          "grade": "Watch",
+          "immediate": false,
+          "maxHeight": { "description": "０．５ｍ", "value": 0.5 }
+        },
+        {
+          "name": "千葉県内房",
+          "grade": "Watch",
+          "immediate": false,
+          "maxHeight": { "description": "０．５ｍ", "value": 0.5 }
+        },
+        {
+          "name": "小笠原諸島",
+          "grade": "Watch",
+          "immediate": false,
+          "maxHeight": { "description": "０．５ｍ", "value": 0.5 }
+        },
+        {
+          "name": "相模湾・三浦半島",
+          "grade": "Watch",
+          "immediate": false,
+          "maxHeight": { "description": "０．５ｍ", "value": 0.5 }
+        },
+        {
+          "name": "静岡県",
+          "grade": "Watch",
+          "immediate": false,
+          "maxHeight": { "description": "０．５ｍ", "value": 0.5 }
+        }
+      ]
+    },
+    {
+      "id": "tohoku311_tsunami_r2",
+      "code": 552,
+      "cancelled": false,
+      "issue": {
+        "source": "気象庁",
+        "time": "2011/03/11 15:14:00",
+        "type": "Focus"
+      },
+      "areas": [
+        {
+          "name": "岩手県",
+          "grade": "MajorWarning",
+          "immediate": true,
+          "firstHeight": { "condition": "津波到達中と推測" },
+          "maxHeight": { "description": "６ｍ", "value": 6 }
+        },
+        {
+          "name": "宮城県",
+          "grade": "MajorWarning",
+          "immediate": true,
+          "firstHeight": { "condition": "津波到達中と推測" },
+          "maxHeight": { "description": "１０ｍ超", "value": 10 }
+        },
+        {
+          "name": "福島県",
+          "grade": "MajorWarning",
+          "immediate": true,
+          "maxHeight": { "description": "６ｍ", "value": 6 }
+        },
+        {
+          "name": "青森県太平洋沿岸",
+          "grade": "MajorWarning",
+          "immediate": false,
+          "maxHeight": { "description": "３ｍ", "value": 3 }
+        },
+        {
+          "name": "茨城県",
+          "grade": "MajorWarning",
+          "immediate": false,
+          "maxHeight": { "description": "４ｍ", "value": 4 }
+        },
+        {
+          "name": "千葉県九十九里・外房",
+          "grade": "MajorWarning",
+          "immediate": false,
+          "maxHeight": { "description": "３ｍ", "value": 3 }
+        },
+        {
+          "name": "北海道太平洋沿岸中部",
+          "grade": "Warning",
+          "immediate": false,
+          "maxHeight": { "description": "２ｍ", "value": 2 }
+        },
+        {
+          "name": "伊豆諸島",
+          "grade": "Warning",
+          "immediate": false,
+          "maxHeight": { "description": "２ｍ", "value": 2 }
+        },
+        {
+          "name": "北海道太平洋沿岸東部",
+          "grade": "Watch",
+          "immediate": false,
+          "maxHeight": { "description": "１ｍ", "value": 1 }
+        },
+        {
+          "name": "北海道太平洋沿岸西部",
+          "grade": "Watch",
+          "immediate": false,
+          "maxHeight": { "description": "１ｍ", "value": 1 }
+        },
+        {
+          "name": "千葉県内房",
+          "grade": "Watch",
+          "immediate": false,
+          "maxHeight": { "description": "１ｍ", "value": 1 }
+        },
+        {
+          "name": "小笠原諸島",
+          "grade": "Watch",
+          "immediate": false,
+          "maxHeight": { "description": "１ｍ", "value": 1 }
+        }
+      ]
+    },
+    {
+      "id": "tohoku311_tsunami_peak",
+      "code": 552,
+      "cancelled": false,
+      "issue": {
+        "source": "気象庁",
+        "time": "2011/03/11 16:08:00",
+        "type": "Focus"
+      },
+      "areas": [
+        {
+          "name": "青森県太平洋沿岸",
+          "grade": "MajorWarning",
+          "immediate": true,
+          "maxHeight": { "description": "１０ｍ超", "value": 10 }
+        },
+        {
+          "name": "岩手県",
+          "grade": "MajorWarning",
+          "immediate": true,
+          "firstHeight": { "condition": "津波到達中と推測" },
+          "maxHeight": { "description": "１０ｍ超", "value": 10 }
+        },
+        {
+          "name": "宮城県",
+          "grade": "MajorWarning",
+          "immediate": true,
+          "firstHeight": { "condition": "津波到達中と推測" },
+          "maxHeight": { "description": "１０ｍ超", "value": 10 }
+        },
+        {
+          "name": "福島県",
+          "grade": "MajorWarning",
+          "immediate": true,
+          "firstHeight": { "condition": "津波到達中と推測" },
+          "maxHeight": { "description": "１０ｍ超", "value": 10 }
+        },
+        {
+          "name": "茨城県",
+          "grade": "MajorWarning",
+          "immediate": true,
+          "maxHeight": { "description": "１０ｍ超", "value": 10 }
+        },
+        {
+          "name": "千葉県九十九里・外房",
+          "grade": "MajorWarning",
+          "immediate": false,
+          "maxHeight": { "description": "１０ｍ超", "value": 10 }
+        },
+        {
+          "name": "北海道太平洋沿岸中部",
+          "grade": "MajorWarning",
+          "immediate": false,
+          "maxHeight": { "description": "８ｍ", "value": 8 }
+        },
+        {
+          "name": "北海道太平洋沿岸東部",
+          "grade": "MajorWarning",
+          "immediate": false,
+          "maxHeight": { "description": "６ｍ", "value": 6 }
+        },
+        {
+          "name": "北海道太平洋沿岸西部",
+          "grade": "MajorWarning",
+          "immediate": false,
+          "maxHeight": { "description": "６ｍ", "value": 6 }
+        },
+        {
+          "name": "伊豆諸島",
+          "grade": "MajorWarning",
+          "immediate": false,
+          "maxHeight": { "description": "６ｍ", "value": 6 }
+        },
+        {
+          "name": "千葉県内房",
+          "grade": "MajorWarning",
+          "immediate": false,
+          "maxHeight": { "description": "４ｍ", "value": 4 }
+        },
+        {
+          "name": "小笠原諸島",
+          "grade": "MajorWarning",
+          "immediate": false,
+          "maxHeight": { "description": "４ｍ", "value": 4 }
+        },
+        {
+          "name": "青森県日本海沿岸",
+          "grade": "MajorWarning",
+          "immediate": false,
+          "maxHeight": { "description": "３ｍ", "value": 3 }
+        },
+        {
+          "name": "相模湾・三浦半島",
+          "grade": "MajorWarning",
+          "immediate": false,
+          "maxHeight": { "description": "３ｍ", "value": 3 }
+        },
+        {
+          "name": "静岡県",
+          "grade": "MajorWarning",
+          "immediate": false,
+          "maxHeight": { "description": "３ｍ", "value": 3 }
+        },
+        {
+          "name": "和歌山県",
+          "grade": "MajorWarning",
+          "immediate": false,
+          "maxHeight": { "description": "３ｍ", "value": 3 }
+        },
+        {
+          "name": "徳島県",
+          "grade": "Warning",
+          "immediate": false,
+          "maxHeight": { "description": "２ｍ", "value": 2 }
+        },
+        {
+          "name": "高知県",
+          "grade": "Warning",
+          "immediate": false,
+          "maxHeight": { "description": "２ｍ", "value": 2 }
+        }
+      ]
+    }
+  ]
+}

@@ -168,7 +168,7 @@ def _callback_page(*, success: bool, detail: str) -> web.Response:
       margin: 0;
       padding: 24px;
       background-color: #171717;
-      background-image: url("/wauth/assets/background.jpg");
+      background-image: url("/wauth/assets/background.jpg?v=4da918f5");
       background-position: center;
       background-repeat: no-repeat;
       background-size: cover;

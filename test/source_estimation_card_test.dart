@@ -126,7 +126,7 @@ void main() {
     tester,
   ) async {
     final observedAt = DateTime.utc(2026, 7, 17, 19, 45, 22);
-    tracker.setNiedEstimator(const _DartHypUiEstimator());
+    tracker.setNiedEstimator(const _DartHypUiEstimator(magnitude: 4.6));
     tracker.ingestNiedFrame(
       stations: [
         _station('N', const LatLng(36, 140), observedAt),
@@ -152,7 +152,7 @@ void main() {
     expect(find.text('35.783\u00b0N, 141.317\u00b0E'), findsOneWidget);
     expect(
       find.text(
-        '\u6df1\u5ea6 40km \u00b7 \u652f\u6301 5\u7ad9 \u00b7 Dart HYP',
+        'M4.6 \u00b7 \u6df1\u5ea6 40km \u00b7 \u652f\u6301 5\u7ad9 \u00b7 Dart HYP',
       ),
       findsOneWidget,
     );
@@ -173,6 +173,41 @@ void main() {
 
     expect(find.text('\u9707\u6e90\u672c\u5730\u63a8\u7b97'), findsNothing);
   });
+
+  for (final (stable, expectedTitle) in const [
+    (false, '\u9707\u6e90\u672c\u5730\u63a8\u7b97 \u7b2c3\u62a5'),
+    (
+      true,
+      '\u9707\u6e90\u672c\u5730\u63a8\u7b97 \u7b2c3\u62a5\uff08\u7a33\u5b9a\uff09',
+    ),
+  ]) {
+    testWidgets('shows Dart HYP report state stable=$stable', (tester) async {
+      final observedAt = DateTime.utc(2026, 8, 10, 12);
+      tracker.setNiedEstimator(
+        _DartHypUiEstimator(reportNumber: 3, stable: stable),
+      );
+      tracker.ingestNiedFrame(
+        stations: [
+          _station('N', const LatLng(36, 140), observedAt),
+          _station('E', const LatLng(35, 141), observedAt),
+          _station('S', const LatLng(34, 140), observedAt),
+          _station('W', const LatLng(35, 139), observedAt),
+        ],
+        observedAt: observedAt,
+        stageName: 'confirmed',
+        maxShindo: 2,
+        eventId: 'ui-dart-hyp-report-$stable',
+        metadata: const {
+          'source_trigger_member_ids': ['N', 'E', 'S', 'W'],
+        },
+      );
+
+      await _pumpAlertModule(tester);
+      await tester.pump();
+
+      expect(find.text(expectedTitle), findsOneWidget);
+    });
+  }
 
   testWidgets('shows candidate region metadata without replacing epicenter', (
     tester,
@@ -351,7 +386,15 @@ class _Kotoho7JsUiEstimator implements SourceEstimator {
 
 class _DartHypUiEstimator
     implements SourceEstimator, SourceEstimatorLifecycleOwner {
-  const _DartHypUiEstimator();
+  const _DartHypUiEstimator({
+    this.reportNumber,
+    this.stable = false,
+    this.magnitude,
+  });
+
+  final int? reportNumber;
+  final bool stable;
+  final double? magnitude;
 
   @override
   String get methodId => 'nied_dart_hyp_v1';
@@ -375,10 +418,13 @@ class _DartHypUiEstimator
       confidence: 0.37,
       method: methodId,
       supportingStationCount: 5,
-      diagnostics: const {
+      magnitude: magnitude,
+      diagnostics: {
         'error_level': 12.3456,
         'quality_rank': 'C',
-        'wave_counts': {'P': 3, 'S': 2, 'O': 1},
+        'wave_counts': const {'P': 3, 'S': 2, 'O': 1},
+        if (reportNumber != null) 'nied_dart_hyp_report_num': reportNumber,
+        if (reportNumber != null) 'nied_dart_hyp_stable': stable,
       },
     );
   }

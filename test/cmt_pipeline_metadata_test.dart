@@ -72,7 +72,7 @@ void main() {
       },
     );
 
-    test('Japanese CMT sources use the UTC+9 display classification', () {
+    test('Japanese CMT sources display in UTC+9', () {
       final event = QuakeMessage(
         source: QuakeSourceType.hinetAquaCmt,
         eventId: 'aqua-test',
@@ -86,6 +86,30 @@ void main() {
 
       expect(QuakeTime.targetOffset(event), const Duration(hours: 9));
       expect(QuakeTime.zoneLabel(event), 'UTC+9');
+    });
+
+    test('F-net CMT keeps its UT instant and displays in UTC+9', () {
+      final event = QuakeEventAdapter.convert('fnetCmt', {
+        'eventId': 'fnet-utc-test',
+        'originTime': '2026-08-02T08:35:26.000Z',
+        'latitude': -38.0,
+        'longitude': 178.0,
+        'depth': 35.5,
+        'magnitude': 5.6,
+        'reviewType': 'auto',
+      }, 0);
+
+      expect(event, isNotNull);
+      expect(event!.timeZone, 9);
+      expect(event.originTime, DateTime(2026, 8, 2, 17, 35, 26));
+      expect(
+        QuakeTime.unifiedInstantUtc(event),
+        DateTime.utc(2026, 8, 2, 8, 35, 26),
+      );
+      expect(
+        QuakeTime.formatUnifiedOriginClock(event),
+        '2026-08-02 17:35:26 (UTC+9)',
+      );
     });
 
     test('CMT raw metadata survives QuakeMessage serialization', () {

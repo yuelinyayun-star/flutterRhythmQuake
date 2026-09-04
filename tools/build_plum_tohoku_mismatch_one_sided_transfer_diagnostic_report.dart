@@ -234,7 +234,9 @@ Map<String, Object?> buildPlumTohokuMismatchOneSidedTransferDiagnosticJson({
     'thresholds': {
       for (final threshold in _thresholds)
         threshold.label: _buildThresholdJson(
-          validation: splitAccumulators['validation']!.threshold(threshold.label),
+          validation: splitAccumulators['validation']!.threshold(
+            threshold.label,
+          ),
           test: splitAccumulators['test']!.threshold(threshold.label),
         ),
     },
@@ -259,8 +261,7 @@ Map<String, Object?> _buildThresholdJson({
   final mismatchLabels = {
     ...validationRegimes.keys.where((key) => key.startsWith('mismatch/')),
     ...testRegimes.keys.where((key) => key.startsWith('mismatch/')),
-  }.toList()
-    ..sort();
+  }.toList()..sort();
   final mismatchTransfer = [
     for (final regimeLabel in mismatchLabels)
       {
@@ -271,9 +272,11 @@ Map<String, Object?> _buildThresholdJson({
             validationRegimes[regimeLabel]?['truePositiveCount'] ?? 0,
         'validationFalsePositiveCount':
             validationRegimes[regimeLabel]?['falsePositiveCount'] ?? 0,
-        'validationPrecision':
-            _number(validationRegimes[regimeLabel]?['precision']),
-        'testFocusSampleCount': testRegimes[regimeLabel]?['focusSampleCount'] ?? 0,
+        'validationPrecision': _number(
+          validationRegimes[regimeLabel]?['precision'],
+        ),
+        'testFocusSampleCount':
+            testRegimes[regimeLabel]?['focusSampleCount'] ?? 0,
         'testTruePositiveCount':
             testRegimes[regimeLabel]?['truePositiveCount'] ?? 0,
         'testFalsePositiveCount':
@@ -342,8 +345,8 @@ List<_EvidenceStation> _supportingEvidence({
       observed.longitude,
     );
     if (distance > _plumRadiusKm) continue;
-    final propagated = observed.intensity -
-        _plumDampingPer10Km * (distance / 10.0);
+    final propagated =
+        observed.intensity - _plumDampingPer10Km * (distance / 10.0);
     if (propagated >= threshold) {
       supportingEvidence.add(
         _EvidenceStation(
@@ -414,9 +417,7 @@ String plumTohokuMismatchOneSidedTransferDiagnosticMarkdown(
       '- Baseline threshold crossing required: '
       '`${focusFilter['baselineThresholdCrossingRequired']}`',
     )
-    ..writeln(
-      '- Neighbor windows: `${focusFilter['neighborWindowsKm']}`',
-    )
+    ..writeln('- Neighbor windows: `${focusFilter['neighborWindowsKm']}`')
     ..writeln()
     ..writeln('## Regime Definitions')
     ..writeln();
@@ -462,9 +463,7 @@ String plumTohokuMismatchOneSidedTransferDiagnosticMarkdown(
       ..writeln()
       ..writeln('### Regime Aggregates')
       ..writeln()
-      ..writeln(
-        '| Split | Regime | Samples | TP | FP | Precision |',
-      )
+      ..writeln('| Split | Regime | Samples | TP | FP | Precision |')
       ..writeln('| --- | --- | ---: | ---: | ---: | ---: |');
     for (final splitName in const ['validation', 'test']) {
       final split = splitName == 'validation' ? validation : test;
@@ -532,21 +531,26 @@ class _ThresholdAccumulator {
   Map<String, Object?> toJson() {
     final byRegime = <String, _RegimeAccumulator>{};
     for (final sample in samples) {
-      byRegime.putIfAbsent(sample.regimeLabel, _RegimeAccumulator.new).add(sample);
+      byRegime
+          .putIfAbsent(sample.regimeLabel, _RegimeAccumulator.new)
+          .add(sample);
     }
-    final regimeRows = [
-      for (final entry in byRegime.entries)
-        entry.value.toJson(regimeLabel: entry.key),
-    ]..sort((left, right) {
-        final bySamples = (right['focusSampleCount'] as int).compareTo(
-          left['focusSampleCount'] as int,
-        );
-        if (bySamples != 0) return bySamples;
-        return (right['falsePositiveCount'] as int).compareTo(
-          left['falsePositiveCount'] as int,
-        );
-      });
-    final truePositiveCount = samples.where((sample) => sample.actualPositive).length;
+    final regimeRows =
+        [
+          for (final entry in byRegime.entries)
+            entry.value.toJson(regimeLabel: entry.key),
+        ]..sort((left, right) {
+          final bySamples = (right['focusSampleCount'] as int).compareTo(
+            left['focusSampleCount'] as int,
+          );
+          if (bySamples != 0) return bySamples;
+          return (right['falsePositiveCount'] as int).compareTo(
+            left['falsePositiveCount'] as int,
+          );
+        });
+    final truePositiveCount = samples
+        .where((sample) => sample.actualPositive)
+        .length;
     final falsePositiveCount = samples.length - truePositiveCount;
     return {
       'summary': {
@@ -575,14 +579,14 @@ class _RegimeAccumulator {
   }
 
   Map<String, Object?> toJson({required String regimeLabel}) => {
-        'regimeLabel': regimeLabel,
-        'focusSampleCount': focusSampleCount,
-        'truePositiveCount': truePositiveCount,
-        'falsePositiveCount': falsePositiveCount,
-        'precision': focusSampleCount == 0
-            ? 0.0
-            : truePositiveCount / focusSampleCount,
-      };
+    'regimeLabel': regimeLabel,
+    'focusSampleCount': focusSampleCount,
+    'truePositiveCount': truePositiveCount,
+    'falsePositiveCount': falsePositiveCount,
+    'precision': focusSampleCount == 0
+        ? 0.0
+        : truePositiveCount / focusSampleCount,
+  };
 }
 
 class _Sample {
@@ -608,15 +612,16 @@ class _Sample {
     final localConsistency = localBelowThresholdShare10Km < 0.25
         ? 'consistent'
         : localBelowThresholdShare10Km < 0.50
-            ? 'mixed'
-            : 'mismatch';
-    final geometry =
-        supportingEvidenceQuadrantCoverage >= 3 ? 'surrounded' : 'one_sided';
+        ? 'mixed'
+        : 'mismatch';
+    final geometry = supportingEvidenceQuadrantCoverage >= 3
+        ? 'surrounded'
+        : 'one_sided';
     final spread = supportingEvidenceMaxSpreadKm < 20.0
         ? 'compact'
         : supportingEvidenceMaxSpreadKm < 40.0
-            ? 'moderate'
-            : 'wide';
+        ? 'moderate'
+        : 'wide';
     return '$localConsistency/$geometry/$spread';
   }
 }
@@ -637,7 +642,10 @@ class _NeighborSummary {
   final int count;
   final double belowThresholdShare;
 
-  const _NeighborSummary({required this.count, required this.belowThresholdShare});
+  const _NeighborSummary({
+    required this.count,
+    required this.belowThresholdShare,
+  });
 }
 
 _NeighborSummary _localNeighborSummary(
@@ -762,63 +770,61 @@ Map<String, Object?> _emptyReport({
   required String dataDirectory,
   required String modelPath,
 }) => {
-        'schemaVersion':
-            'plum_tohoku_mismatch_one_sided_transfer_diagnostic_v1',
-        'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
-        'status': 'fail',
-        'policy': {
-          'method': 'PLUM Tohoku mismatch one-sided transfer diagnostic',
-          'rawPredictedIntensityMutated': false,
-          'frozenTestEvaluated': true,
-          'productionReady': false,
-          'productionUiConnected': false,
-          'diagnosticOnly': true,
-          'parametersTuned': false,
-          'suppressionApplied': false,
-          'plumRadiusKm': _plumRadiusKm,
-          'plumDampingPer10Km': _plumDampingPer10Km,
-        },
-        'inputs': {
-          'dataDirectory': dataDirectory,
-          'modelPath': modelPath,
-          'splits': ['validation', 'test'],
-        },
-        'focusFilter': {
-          'estimatedSourceRegion': _focusRegion,
-          'minimumEvidenceCount': _focusMinimumEvidenceCount,
-          'maximumNearestEvidenceDistanceKm':
-              _focusMaximumNearestEvidenceDistanceKm,
-          'minimumPredictionMarginShindo': _focusMinimumMargin,
-          'baselineThresholdCrossingRequired': true,
-          'neighborWindowsKm': [_localNeighbor10Km, _localNeighbor20Km],
-        },
-        'regimeDefinitions': const {
-          'localConsistencyBand': {
-            'consistent': 'belowThresholdShare10Km < 0.25',
-            'mixed': '0.25 <= belowThresholdShare10Km < 0.50',
-            'mismatch': 'belowThresholdShare10Km >= 0.50',
-          },
-          'geometryBand': {
-            'surrounded': 'quadrant coverage >= 3',
-            'one_sided': 'quadrant coverage < 3',
-          },
-          'spreadBand': {
-            'compact': 'max spread < 20 km',
-            'moderate': '20 <= max spread < 40 km',
-            'wide': 'max spread >= 40 km',
-          },
-        },
-        'coverage': {
-          'validationVariants': 0,
-          'testVariants': 0,
-          'validationStationForecasts': 0,
-          'testStationForecasts': 0,
-          'skippedMissingMagnitudeEvents': 0,
-          'skippedNoSourceEstimateVariants': 0,
-        },
-        'thresholds': const {},
-        'errors': errors,
-      };
+  'schemaVersion': 'plum_tohoku_mismatch_one_sided_transfer_diagnostic_v1',
+  'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
+  'status': 'fail',
+  'policy': {
+    'method': 'PLUM Tohoku mismatch one-sided transfer diagnostic',
+    'rawPredictedIntensityMutated': false,
+    'frozenTestEvaluated': true,
+    'productionReady': false,
+    'productionUiConnected': false,
+    'diagnosticOnly': true,
+    'parametersTuned': false,
+    'suppressionApplied': false,
+    'plumRadiusKm': _plumRadiusKm,
+    'plumDampingPer10Km': _plumDampingPer10Km,
+  },
+  'inputs': {
+    'dataDirectory': dataDirectory,
+    'modelPath': modelPath,
+    'splits': ['validation', 'test'],
+  },
+  'focusFilter': {
+    'estimatedSourceRegion': _focusRegion,
+    'minimumEvidenceCount': _focusMinimumEvidenceCount,
+    'maximumNearestEvidenceDistanceKm': _focusMaximumNearestEvidenceDistanceKm,
+    'minimumPredictionMarginShindo': _focusMinimumMargin,
+    'baselineThresholdCrossingRequired': true,
+    'neighborWindowsKm': [_localNeighbor10Km, _localNeighbor20Km],
+  },
+  'regimeDefinitions': const {
+    'localConsistencyBand': {
+      'consistent': 'belowThresholdShare10Km < 0.25',
+      'mixed': '0.25 <= belowThresholdShare10Km < 0.50',
+      'mismatch': 'belowThresholdShare10Km >= 0.50',
+    },
+    'geometryBand': {
+      'surrounded': 'quadrant coverage >= 3',
+      'one_sided': 'quadrant coverage < 3',
+    },
+    'spreadBand': {
+      'compact': 'max spread < 20 km',
+      'moderate': '20 <= max spread < 40 km',
+      'wide': 'max spread >= 40 km',
+    },
+  },
+  'coverage': {
+    'validationVariants': 0,
+    'testVariants': 0,
+    'validationStationForecasts': 0,
+    'testStationForecasts': 0,
+    'skippedMissingMagnitudeEvents': 0,
+    'skippedNoSourceEstimateVariants': 0,
+  },
+  'thresholds': const {},
+  'errors': errors,
+};
 
 StaticAttenuationModel _modelFromJson(Map<String, Object?> json) {
   return StaticAttenuationModel(

@@ -140,30 +140,36 @@ void main() {
       // Tokyo: lon=139.6917, lat=35.6895
       // Osaka: lon=135.5193, lat=34.6937
       // Expected great-circle distance: ~397 km
-      callProcedure(thread,
-          'W緯度経度で距離km(多目的0) xy1 %s %s xy2 %s %s',
-          [139.6917, 35.6895, 135.5193, 34.6937]);
-      final dist = scratchNumber(
-          getVariable(thread.target, '多目的0'));
+      callProcedure(thread, 'W緯度経度で距離km(多目的0) xy1 %s %s xy2 %s %s', [
+        139.6917,
+        35.6895,
+        135.5193,
+        34.6937,
+      ]);
+      final dist = scratchNumber(getVariable(thread.target, '多目的0'));
       expect(dist, closeTo(397, 5)); // ±5 km tolerance
     });
 
     test('same point yields distance 0', () {
-      callProcedure(thread,
-          'W緯度経度で距離km(多目的0) xy1 %s %s xy2 %s %s',
-          [139.0, 35.0, 139.0, 35.0]);
-      final dist = scratchNumber(
-          getVariable(thread.target, '多目的0'));
+      callProcedure(thread, 'W緯度経度で距離km(多目的0) xy1 %s %s xy2 %s %s', [
+        139.0,
+        35.0,
+        139.0,
+        35.0,
+      ]);
+      final dist = scratchNumber(getVariable(thread.target, '多目的0'));
       expect(dist, closeTo(0, 0.01));
     });
 
     test('antipodal points yield ~20015 km', () {
       // Antipodal: (0,0) vs (180,0) — half circumference ≈ 20015 km
-      callProcedure(thread,
-          'W緯度経度で距離km(多目的0) xy1 %s %s xy2 %s %s',
-          [0.0, 0.0, 180.0, 0.0]);
-      final dist = scratchNumber(
-          getVariable(thread.target, '多目的0'));
+      callProcedure(thread, 'W緯度経度で距離km(多目的0) xy1 %s %s xy2 %s %s', [
+        0.0,
+        0.0,
+        180.0,
+        0.0,
+      ]);
+      final dist = scratchNumber(getVariable(thread.target, '多目的0'));
       expect(dist, closeTo(20015, 5));
     });
   });
@@ -235,8 +241,11 @@ void main() {
       ];
       expect(thread.procedures.length, 47);
       for (final name in expectedProcedures) {
-        expect(thread.procedures, contains(name),
-            reason: 'procedure "$name" not registered');
+        expect(
+          thread.procedures,
+          contains(name),
+          reason: 'procedure "$name" not registered',
+        );
       }
     });
 
@@ -277,16 +286,22 @@ void main() {
     });
 
     test('factory21 write to 多目的0 persists and is readable', () {
-      callProcedure(thread,
-          'W緯度経度で距離km(多目的0) xy1 %s %s xy2 %s %s',
-          [0.0, 0.0, 0.0, 0.0]);
+      callProcedure(thread, 'W緯度経度で距離km(多目的0) xy1 %s %s xy2 %s %s', [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+      ]);
       final first = scratchNumber(getVariable(thread.target, '多目的0'));
       expect(first, closeTo(0, 0.01));
 
       // A second call with different coords should overwrite 多目的0.
-      callProcedure(thread,
-          'W緯度経度で距離km(多目的0) xy1 %s %s xy2 %s %s',
-          [0.0, 0.0, 180.0, 0.0]);
+      callProcedure(thread, 'W緯度経度で距離km(多目的0) xy1 %s %s xy2 %s %s', [
+        0.0,
+        0.0,
+        180.0,
+        0.0,
+      ]);
       final second = scratchNumber(getVariable(thread.target, '多目的0'));
       expect(second, closeTo(20015, 5));
       expect(second, isNot(closeTo(first, 1)));
@@ -304,15 +319,13 @@ void main() {
       // The SNAPSHOT is a const Map; mutating a runtime list built from
       // it must not change the original SNAPSHOT entries.
       final beforeLen =
-          (kotoho7Snapshot['stage']!['variables']
-                  as Map<String, dynamic>)
+          (kotoho7Snapshot['stage']!['variables'] as Map<String, dynamic>)
               .length;
       final thread1 = _makeThread();
       // Perform some mutations (call a procedure that writes to lists)
       callProcedure(thread1, 'W震度履歴リセット');
       final afterLen =
-          (kotoho7Snapshot['stage']!['variables']
-                  as Map<String, dynamic>)
+          (kotoho7Snapshot['stage']!['variables'] as Map<String, dynamic>)
               .length;
       expect(afterLen, beforeLen);
     });

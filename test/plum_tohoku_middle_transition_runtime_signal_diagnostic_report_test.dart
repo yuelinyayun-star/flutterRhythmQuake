@@ -35,20 +35,24 @@ void main() {
       final label = (report['labelDefinition'] as Map).cast<String, Object?>();
       expect(label['positiveLabel'], 'middle_transition_zone');
 
-      final means =
-          (report['testOutcomeFeatureMeans'] as Map).cast<String, Object?>();
+      final means = (report['testOutcomeFeatureMeans'] as Map)
+          .cast<String, Object?>();
       expect(
         means.keys,
         containsAll(<String>['middleTransitionZone', 'otherFocusSamples']),
       );
 
-      final families = (report['featureFamilies'] as Map).cast<String, Object?>();
-      expect(families.keys, containsAll(<String>[
-        'topContributionShareBand',
-        'contributionHhiBand',
-        'marginStdDevBand',
-        'topContributionShareBand|geometrySpread',
-      ]));
+      final families = (report['featureFamilies'] as Map)
+          .cast<String, Object?>();
+      expect(
+        families.keys,
+        containsAll(<String>[
+          'topContributionShareBand',
+          'contributionHhiBand',
+          'marginStdDevBand',
+          'topContributionShareBand|geometrySpread',
+        ]),
+      );
 
       final markdown =
           plumTohokuMiddleTransitionRuntimeSignalDiagnosticMarkdown(report);
@@ -62,4 +66,3 @@ void main() {
     timeout: const Timeout(Duration(minutes: 8)),
   );
 }
-

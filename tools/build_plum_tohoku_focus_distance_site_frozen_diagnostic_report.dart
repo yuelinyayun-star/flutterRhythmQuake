@@ -180,7 +180,9 @@ Map<String, Object?> buildPlumTohokuFocusDistanceSiteFrozenDiagnosticJson({
             }
             if (margin < _focusMinimumMargin) continue;
 
-            splitAccumulator.threshold(threshold.label).add(
+            splitAccumulator
+                .threshold(threshold.label)
+                .add(
                   _DistanceSiteSample(
                     actual: station.intensity,
                     baselineRaw: baselineRaw,
@@ -197,7 +199,9 @@ Map<String, Object?> buildPlumTohokuFocusDistanceSiteFrozenDiagnosticJson({
 
   final thresholds = <String, Object?>{};
   for (final threshold in _thresholds) {
-    final validation = splitAccumulators['validation']!.threshold(threshold.label);
+    final validation = splitAccumulators['validation']!.threshold(
+      threshold.label,
+    );
     final test = splitAccumulators['test']!.threshold(threshold.label);
     final validationBands = validation.validationBandByJointKey();
     thresholds[threshold.label] = {
@@ -379,11 +383,15 @@ String plumTohokuFocusDistanceSiteFrozenDiagnosticMarkdown(
       ..writeln('| --- | --- | ---: | --- | ---: | ---: |');
     final validationBuckets = {
       for (final rawBucket in _list(validation['jointBuckets']))
-        '${_map(rawBucket)['distance']}|${_map(rawBucket)['site']}': _map(rawBucket),
+        '${_map(rawBucket)['distance']}|${_map(rawBucket)['site']}': _map(
+          rawBucket,
+        ),
     };
     final testBuckets = {
       for (final rawBucket in _list(test['jointBuckets']))
-        '${_map(rawBucket)['distance']}|${_map(rawBucket)['site']}': _map(rawBucket),
+        '${_map(rawBucket)['distance']}|${_map(rawBucket)['site']}': _map(
+          rawBucket,
+        ),
     };
     final orderedKeys = validationBuckets.keys.toList()..sort();
     for (final key in orderedKeys) {
@@ -451,19 +459,21 @@ class _ThresholdAccumulator {
     final actualPositive = sample.actual >= threshold;
     baseline.add(actualPositive: actualPositive);
     final jointKey = '${sample.distance}|${sample.site}';
-    jointBuckets.putIfAbsent(jointKey, _DistanceSiteBucket.new).add(
+    jointBuckets
+        .putIfAbsent(jointKey, _DistanceSiteBucket.new)
+        .add(
           distance: sample.distance,
           site: sample.site,
           actualPositive: actualPositive,
         );
-    marginalDistance.putIfAbsent(sample.distance, _PredictedBucket.new).add(
-          actualPositive: actualPositive,
-        );
+    marginalDistance
+        .putIfAbsent(sample.distance, _PredictedBucket.new)
+        .add(actualPositive: actualPositive);
   }
 
   Map<String, String> validationBandByJointKey() => {
-        for (final entry in jointBuckets.entries) entry.key: _bandFor(entry.value),
-      };
+    for (final entry in jointBuckets.entries) entry.key: _bandFor(entry.value),
+  };
 
   Map<String, Object?> toJson({
     required Map<String, String> bandByJointKey,
@@ -508,14 +518,12 @@ class _ThresholdAccumulator {
       'baseline': baseline.toJson(),
       'marginalDistance': [
         for (final distance in _distanceBands)
-          {
-            'distance': distance,
-            ...?marginalDistance[distance]?.toJson(),
-          },
+          {'distance': distance, ...?marginalDistance[distance]?.toJson()},
       ],
       'jointBuckets': jointJson,
       'bandSummary': {
-        for (final entry in bandSummary.entries) entry.key: entry.value.toJson(),
+        for (final entry in bandSummary.entries)
+          entry.key: entry.value.toJson(),
       },
       if (includeTransfer)
         'bandTransferSummary': {
@@ -593,11 +601,11 @@ class _PredictedBucket {
       predictedPositive == 0 ? 0.0 : truePositive / predictedPositive;
 
   Map<String, Object?> toJson() => {
-        'predictedPositive': predictedPositive,
-        'truePositive': truePositive,
-        'falsePositive': falsePositive,
-        'precision': precision,
-      };
+    'predictedPositive': predictedPositive,
+    'truePositive': truePositive,
+    'falsePositive': falsePositive,
+    'precision': precision,
+  };
 }
 
 class _BandAccumulator {
@@ -617,12 +625,12 @@ class _BandAccumulator {
       predictedPositive == 0 ? 0.0 : truePositive / predictedPositive;
 
   Map<String, Object?> toJson() => {
-        'bucketCount': bucketCount,
-        'predictedPositive': predictedPositive,
-        'truePositive': truePositive,
-        'falsePositive': falsePositive,
-        'precision': precision,
-      };
+    'bucketCount': bucketCount,
+    'predictedPositive': predictedPositive,
+    'truePositive': truePositive,
+    'falsePositive': falsePositive,
+    'precision': precision,
+  };
 }
 
 class _Threshold {
@@ -637,56 +645,55 @@ Map<String, Object?> _emptyReport({
   required String dataDirectory,
   required String modelPath,
 }) => {
-        'schemaVersion': 'plum_tohoku_focus_distance_site_frozen_diagnostic_v1',
-        'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
-        'status': 'fail',
-        'policy': {
-          'method': 'PLUM Tohoku focus distance/site frozen diagnostic',
-          'rawPredictedIntensityMutated': false,
-          'frozenTestEvaluated': true,
-          'productionReady': false,
-          'productionUiConnected': false,
-          'diagnosticOnly': true,
-          'parametersTuned': false,
-          'suppressionApplied': false,
-          'plumRadiusKm': _plumRadiusKm,
-          'plumDampingPer10Km': _plumDampingPer10Km,
-          'validationBandThresholds': {
-            'high': _highBandMinPrecision,
-            'medium': _mediumBandMinPrecision,
-            'minSampleForBandAssignment': _minSampleForBandAssignment,
-          },
-        },
-        'inputs': {
-          'dataDirectory': dataDirectory,
-          'modelPath': modelPath,
-          'splits': ['validation', 'test'],
-        },
-        'focusFilter': {
-          'estimatedSourceRegion': _focusRegion,
-          'minimumEvidenceCount': _focusMinimumEvidenceCount,
-          'maximumNearestEvidenceDistanceKm':
-              _focusMaximumNearestEvidenceDistanceKm,
-          'minimumPredictionMarginShindo': _focusMinimumMargin,
-          'baselineThresholdCrossingRequired': true,
-        },
-        'bucketDefinitions': const {
-          'distanceBands': _distanceBands,
-          'siteBands': _siteBands,
-          'distanceSource': 'estimated_source_to_station_distance',
-          'siteSource': 'station_latitude',
-        },
-        'coverage': {
-          'validationVariants': 0,
-          'testVariants': 0,
-          'validationStationForecasts': 0,
-          'testStationForecasts': 0,
-          'skippedMissingMagnitudeEvents': 0,
-          'skippedNoSourceEstimateVariants': 0,
-        },
-        'thresholds': const {},
-        'errors': errors,
-      };
+  'schemaVersion': 'plum_tohoku_focus_distance_site_frozen_diagnostic_v1',
+  'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
+  'status': 'fail',
+  'policy': {
+    'method': 'PLUM Tohoku focus distance/site frozen diagnostic',
+    'rawPredictedIntensityMutated': false,
+    'frozenTestEvaluated': true,
+    'productionReady': false,
+    'productionUiConnected': false,
+    'diagnosticOnly': true,
+    'parametersTuned': false,
+    'suppressionApplied': false,
+    'plumRadiusKm': _plumRadiusKm,
+    'plumDampingPer10Km': _plumDampingPer10Km,
+    'validationBandThresholds': {
+      'high': _highBandMinPrecision,
+      'medium': _mediumBandMinPrecision,
+      'minSampleForBandAssignment': _minSampleForBandAssignment,
+    },
+  },
+  'inputs': {
+    'dataDirectory': dataDirectory,
+    'modelPath': modelPath,
+    'splits': ['validation', 'test'],
+  },
+  'focusFilter': {
+    'estimatedSourceRegion': _focusRegion,
+    'minimumEvidenceCount': _focusMinimumEvidenceCount,
+    'maximumNearestEvidenceDistanceKm': _focusMaximumNearestEvidenceDistanceKm,
+    'minimumPredictionMarginShindo': _focusMinimumMargin,
+    'baselineThresholdCrossingRequired': true,
+  },
+  'bucketDefinitions': const {
+    'distanceBands': _distanceBands,
+    'siteBands': _siteBands,
+    'distanceSource': 'estimated_source_to_station_distance',
+    'siteSource': 'station_latitude',
+  },
+  'coverage': {
+    'validationVariants': 0,
+    'testVariants': 0,
+    'validationStationForecasts': 0,
+    'testStationForecasts': 0,
+    'skippedMissingMagnitudeEvents': 0,
+    'skippedNoSourceEstimateVariants': 0,
+  },
+  'thresholds': const {},
+  'errors': errors,
+};
 
 StaticAttenuationModel _modelFromJson(Map<String, Object?> json) {
   return StaticAttenuationModel(

@@ -47,7 +47,9 @@ void main(List<String> args) {
     plumTohokuFocusRegionSiteFrozenDiagnosticMarkdown(report),
   );
 
-  stdout.writeln('wrote PLUM Tohoku focus region/site frozen diagnostic report');
+  stdout.writeln(
+    'wrote PLUM Tohoku focus region/site frozen diagnostic report',
+  );
   stdout.writeln('json: ${output.path}');
   stdout.writeln('markdown: ${markdown.path}');
 
@@ -164,7 +166,9 @@ Map<String, Object?> buildPlumTohokuFocusRegionSiteFrozenDiagnosticJson({
             }
             if (margin < _focusMinimumMargin) continue;
 
-            splitAccumulator.threshold(threshold.label).add(
+            splitAccumulator
+                .threshold(threshold.label)
+                .add(
                   _RegionSiteSample(
                     actual: station.intensity,
                     baselineRaw: baselineRaw,
@@ -181,7 +185,9 @@ Map<String, Object?> buildPlumTohokuFocusRegionSiteFrozenDiagnosticJson({
 
   final thresholds = <String, Object?>{};
   for (final threshold in _thresholds) {
-    final validation = splitAccumulators['validation']!.threshold(threshold.label);
+    final validation = splitAccumulators['validation']!.threshold(
+      threshold.label,
+    );
     final test = splitAccumulators['test']!.threshold(threshold.label);
     final validationBands = validation.validationBandByJointKey();
     thresholds[threshold.label] = {
@@ -363,11 +369,15 @@ String plumTohokuFocusRegionSiteFrozenDiagnosticMarkdown(
       ..writeln('| --- | --- | ---: | --- | ---: | ---: |');
     final validationBuckets = {
       for (final rawBucket in _list(validation['jointBuckets']))
-        '${_map(rawBucket)['region']}|${_map(rawBucket)['site']}': _map(rawBucket),
+        '${_map(rawBucket)['region']}|${_map(rawBucket)['site']}': _map(
+          rawBucket,
+        ),
     };
     final testBuckets = {
       for (final rawBucket in _list(test['jointBuckets']))
-        '${_map(rawBucket)['region']}|${_map(rawBucket)['site']}': _map(rawBucket),
+        '${_map(rawBucket)['region']}|${_map(rawBucket)['site']}': _map(
+          rawBucket,
+        ),
     };
     final orderedKeys = validationBuckets.keys.toList()..sort();
     for (final key in orderedKeys) {
@@ -436,19 +446,21 @@ class _ThresholdAccumulator {
     final actualPositive = sample.actual >= threshold;
     baseline.add(actualPositive: actualPositive);
     final jointKey = '${sample.region}|${sample.site}';
-    jointBuckets.putIfAbsent(jointKey, _RegionSiteBucket.new).add(
+    jointBuckets
+        .putIfAbsent(jointKey, _RegionSiteBucket.new)
+        .add(
           region: sample.region,
           site: sample.site,
           actualPositive: actualPositive,
         );
-    marginalSite.putIfAbsent(sample.site, _PredictedBucket.new).add(
-          actualPositive: actualPositive,
-        );
+    marginalSite
+        .putIfAbsent(sample.site, _PredictedBucket.new)
+        .add(actualPositive: actualPositive);
   }
 
   Map<String, String> validationBandByJointKey() => {
-        for (final entry in jointBuckets.entries) entry.key: _bandFor(entry.value),
-      };
+    for (final entry in jointBuckets.entries) entry.key: _bandFor(entry.value),
+  };
 
   Map<String, Object?> toJson({
     required Map<String, String> bandByJointKey,
@@ -493,14 +505,12 @@ class _ThresholdAccumulator {
       'baseline': baseline.toJson(),
       'marginalSite': [
         for (final site in _siteBands)
-          {
-            'site': site,
-            ...?marginalSite[site]?.toJson(),
-          },
+          {'site': site, ...?marginalSite[site]?.toJson()},
       ],
       'jointBuckets': jointJson,
       'bandSummary': {
-        for (final entry in bandSummary.entries) entry.key: entry.value.toJson(),
+        for (final entry in bandSummary.entries)
+          entry.key: entry.value.toJson(),
       },
       if (includeTransfer)
         'bandTransferSummary': {
@@ -578,11 +588,11 @@ class _PredictedBucket {
       predictedPositive == 0 ? 0.0 : truePositive / predictedPositive;
 
   Map<String, Object?> toJson() => {
-        'predictedPositive': predictedPositive,
-        'truePositive': truePositive,
-        'falsePositive': falsePositive,
-        'precision': precision,
-      };
+    'predictedPositive': predictedPositive,
+    'truePositive': truePositive,
+    'falsePositive': falsePositive,
+    'precision': precision,
+  };
 }
 
 class _BandAccumulator {
@@ -602,12 +612,12 @@ class _BandAccumulator {
       predictedPositive == 0 ? 0.0 : truePositive / predictedPositive;
 
   Map<String, Object?> toJson() => {
-        'bucketCount': bucketCount,
-        'predictedPositive': predictedPositive,
-        'truePositive': truePositive,
-        'falsePositive': falsePositive,
-        'precision': precision,
-      };
+    'bucketCount': bucketCount,
+    'predictedPositive': predictedPositive,
+    'truePositive': truePositive,
+    'falsePositive': falsePositive,
+    'precision': precision,
+  };
 }
 
 class _Threshold {
@@ -622,56 +632,55 @@ Map<String, Object?> _emptyReport({
   required String dataDirectory,
   required String modelPath,
 }) => {
-        'schemaVersion': 'plum_tohoku_focus_region_site_frozen_diagnostic_v1',
-        'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
-        'status': 'fail',
-        'policy': {
-          'method': 'PLUM Tohoku focus region/site frozen diagnostic',
-          'rawPredictedIntensityMutated': false,
-          'frozenTestEvaluated': true,
-          'productionReady': false,
-          'productionUiConnected': false,
-          'diagnosticOnly': true,
-          'parametersTuned': false,
-          'suppressionApplied': false,
-          'plumRadiusKm': _plumRadiusKm,
-          'plumDampingPer10Km': _plumDampingPer10Km,
-          'validationBandThresholds': {
-            'high': _highBandMinPrecision,
-            'medium': _mediumBandMinPrecision,
-            'minSampleForBandAssignment': _minSampleForBandAssignment,
-          },
-        },
-        'inputs': {
-          'dataDirectory': dataDirectory,
-          'modelPath': modelPath,
-          'splits': ['validation', 'test'],
-        },
-        'focusFilter': {
-          'estimatedSourceRegion': _focusRegion,
-          'minimumEvidenceCount': _focusMinimumEvidenceCount,
-          'maximumNearestEvidenceDistanceKm':
-              _focusMaximumNearestEvidenceDistanceKm,
-          'minimumPredictionMarginShindo': _focusMinimumMargin,
-          'baselineThresholdCrossingRequired': true,
-        },
-        'bucketDefinitions': const {
-          'regionBands': ['hokkaido', 'tohoku', 'kanto_chubu', 'west_south'],
-          'siteBands': ['hokkaido', 'tohoku', 'kanto_chubu', 'west_south'],
-          'regionSource': 'estimated_source_latitude',
-          'siteSource': 'station_latitude',
-        },
-        'coverage': {
-          'validationVariants': 0,
-          'testVariants': 0,
-          'validationStationForecasts': 0,
-          'testStationForecasts': 0,
-          'skippedMissingMagnitudeEvents': 0,
-          'skippedNoSourceEstimateVariants': 0,
-        },
-        'thresholds': const {},
-        'errors': errors,
-      };
+  'schemaVersion': 'plum_tohoku_focus_region_site_frozen_diagnostic_v1',
+  'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
+  'status': 'fail',
+  'policy': {
+    'method': 'PLUM Tohoku focus region/site frozen diagnostic',
+    'rawPredictedIntensityMutated': false,
+    'frozenTestEvaluated': true,
+    'productionReady': false,
+    'productionUiConnected': false,
+    'diagnosticOnly': true,
+    'parametersTuned': false,
+    'suppressionApplied': false,
+    'plumRadiusKm': _plumRadiusKm,
+    'plumDampingPer10Km': _plumDampingPer10Km,
+    'validationBandThresholds': {
+      'high': _highBandMinPrecision,
+      'medium': _mediumBandMinPrecision,
+      'minSampleForBandAssignment': _minSampleForBandAssignment,
+    },
+  },
+  'inputs': {
+    'dataDirectory': dataDirectory,
+    'modelPath': modelPath,
+    'splits': ['validation', 'test'],
+  },
+  'focusFilter': {
+    'estimatedSourceRegion': _focusRegion,
+    'minimumEvidenceCount': _focusMinimumEvidenceCount,
+    'maximumNearestEvidenceDistanceKm': _focusMaximumNearestEvidenceDistanceKm,
+    'minimumPredictionMarginShindo': _focusMinimumMargin,
+    'baselineThresholdCrossingRequired': true,
+  },
+  'bucketDefinitions': const {
+    'regionBands': ['hokkaido', 'tohoku', 'kanto_chubu', 'west_south'],
+    'siteBands': ['hokkaido', 'tohoku', 'kanto_chubu', 'west_south'],
+    'regionSource': 'estimated_source_latitude',
+    'siteSource': 'station_latitude',
+  },
+  'coverage': {
+    'validationVariants': 0,
+    'testVariants': 0,
+    'validationStationForecasts': 0,
+    'testStationForecasts': 0,
+    'skippedMissingMagnitudeEvents': 0,
+    'skippedNoSourceEstimateVariants': 0,
+  },
+  'thresholds': const {},
+  'errors': errors,
+};
 
 StaticAttenuationModel _modelFromJson(Map<String, Object?> json) {
   return StaticAttenuationModel(

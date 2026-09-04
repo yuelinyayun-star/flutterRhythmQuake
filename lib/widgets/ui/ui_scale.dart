@@ -41,6 +41,17 @@ class UiScale {
   static double compact(BuildContext context) =>
       factor(context, refWidth: compactRefWidth, min: 0.7);
 
+  /// Width-only scale for right-side panels: keep the original compact
+  /// baseline at 1280px, never shrink below 1.0, grow on wider windows.
+  static double sidePanelWidthScale(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    return (width / compactRefWidth).clamp(1.0, 2.0).toDouble();
+  }
+
+  static double sidePanelWidth(BuildContext context, double value) {
+    return value * sidePanelWidthScale(context);
+  }
+
   static double phone(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
     return (width / 430.0).clamp(0.88, 1.0).toDouble();

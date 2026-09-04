@@ -90,9 +90,7 @@ class _AlertPanelState extends State<AlertPanel> {
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(16),
                   color: isSerious
-                      ? Colors.red.withValues(
-                          alpha: _flashLevel.value * 0.8,
-                        )
+                      ? Colors.red.withValues(alpha: _flashLevel.value * 0.8)
                       : themeColor.withValues(alpha: 0.3),
                 ),
                 child: child,

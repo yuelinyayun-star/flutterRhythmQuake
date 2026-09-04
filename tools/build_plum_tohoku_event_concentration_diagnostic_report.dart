@@ -116,8 +116,9 @@ Map<String, Object?> buildPlumTohokuEventConcentrationDiagnosticJson({
 
   for (final splitName in const ['validation', 'test']) {
     final dataset = synthetic.datasetsBySplit[splitName]!;
-    final splitAccumulator =
-        splitName == 'validation' ? validationAccumulator : testAccumulator;
+    final splitAccumulator = splitName == 'validation'
+        ? validationAccumulator
+        : testAccumulator;
     for (final rawEvent in _list(dataset['events'])) {
       final event = StaticIntensityEvent.fromJson(_map(rawEvent));
       final magnitude = event.magnitude;
@@ -255,10 +256,19 @@ Map<String, Object?> buildPlumTohokuEventConcentrationDiagnosticJson({
     'dominantEvent': {
       'eventId': dominantEventId,
       'testFocusCount': dominantTestEventSamples.length,
-      'testFocusShare':
-          testSamples.isEmpty ? 0.0 : dominantTestEventSamples.length / testSamples.length,
-      'top3CumulativeShare': _topCumulativeShare(eventRows, 3, testSamples.length),
-      'top5CumulativeShare': _topCumulativeShare(eventRows, 5, testSamples.length),
+      'testFocusShare': testSamples.isEmpty
+          ? 0.0
+          : dominantTestEventSamples.length / testSamples.length,
+      'top3CumulativeShare': _topCumulativeShare(
+        eventRows,
+        3,
+        testSamples.length,
+      ),
+      'top5CumulativeShare': _topCumulativeShare(
+        eventRows,
+        5,
+        testSamples.length,
+      ),
     },
     'sliceSummaries': {
       'validation': _summaryJson(validationSamples),
@@ -386,11 +396,15 @@ List<Map<String, Object?>> _buildFamilySlices({
           testFull.length,
         ),
         'dominantEventOnly': _familySnapshot(
-          dominantEventOnly.where((sample) => selector(sample) == family).toList(),
+          dominantEventOnly
+              .where((sample) => selector(sample) == family)
+              .toList(),
           dominantEventOnly.length,
         ),
         'leaveTopEventOut': _familySnapshot(
-          leaveTopEventOut.where((sample) => selector(sample) == family).toList(),
+          leaveTopEventOut
+              .where((sample) => selector(sample) == family)
+              .toList(),
           leaveTopEventOut.length,
         ),
       },
@@ -413,25 +427,29 @@ List<Map<String, Object?>> _buildJointSlices({
       final validationRows = validation
           .where(
             (sample) =>
-                firstSelector(sample) == first && secondSelector(sample) == second,
+                firstSelector(sample) == first &&
+                secondSelector(sample) == second,
           )
           .toList();
       final testFullRows = testFull
           .where(
             (sample) =>
-                firstSelector(sample) == first && secondSelector(sample) == second,
+                firstSelector(sample) == first &&
+                secondSelector(sample) == second,
           )
           .toList();
       final dominantEventRows = dominantEventOnly
           .where(
             (sample) =>
-                firstSelector(sample) == first && secondSelector(sample) == second,
+                firstSelector(sample) == first &&
+                secondSelector(sample) == second,
           )
           .toList();
       final leaveTopEventOutRows = leaveTopEventOut
           .where(
             (sample) =>
-                firstSelector(sample) == first && secondSelector(sample) == second,
+                firstSelector(sample) == first &&
+                secondSelector(sample) == second,
           )
           .toList();
       if (validationRows.isEmpty &&
@@ -445,21 +463,25 @@ List<Map<String, Object?>> _buildJointSlices({
         'second': second,
         'validation': _familySnapshot(validationRows, validation.length),
         'testFull': _familySnapshot(testFullRows, testFull.length),
-        'dominantEventOnly':
-            _familySnapshot(dominantEventRows, dominantEventOnly.length),
-        'leaveTopEventOut':
-            _familySnapshot(leaveTopEventOutRows, leaveTopEventOut.length),
+        'dominantEventOnly': _familySnapshot(
+          dominantEventRows,
+          dominantEventOnly.length,
+        ),
+        'leaveTopEventOut': _familySnapshot(
+          leaveTopEventOutRows,
+          leaveTopEventOut.length,
+        ),
       });
     }
   }
   rows.sort((left, right) {
-    final byTest = _number(_map(right['testFull'])['count']).compareTo(
-      _number(_map(left['testFull'])['count']),
-    );
+    final byTest = _number(
+      _map(right['testFull'])['count'],
+    ).compareTo(_number(_map(left['testFull'])['count']));
     if (byTest != 0) return byTest;
-    return _number(_map(right['dominantEventOnly'])['count']).compareTo(
-      _number(_map(left['dominantEventOnly'])['count']),
-    );
+    return _number(
+      _map(right['dominantEventOnly'])['count'],
+    ).compareTo(_number(_map(left['dominantEventOnly'])['count']));
   });
   return rows;
 }
@@ -470,7 +492,8 @@ Map<String, Object?> _deltaSummary(
 ) {
   return {
     'sampleShareDelta':
-        _number(comparison['focusSampleCount']) - _number(baseline['focusSampleCount']),
+        _number(comparison['focusSampleCount']) -
+        _number(baseline['focusSampleCount']),
     'precisionDelta':
         _number(comparison['precision']) - _number(baseline['precision']),
     'middleTransitionShareDelta':
@@ -483,45 +506,53 @@ Map<String, Object?> _deltaSummary(
 }
 
 Map<String, Object?> _summaryJson(List<_Sample> samples) {
-  final truePositiveCount =
-      samples.where((sample) => sample.actualPositive).length;
-  final middleTransitionCount =
-      samples.where((sample) => sample.isMiddleTransitionZone).length;
-  final plumOnlyFalsePositiveCount =
-      samples.where((sample) => sample.plumOnlyFalsePositive).length;
+  final truePositiveCount = samples
+      .where((sample) => sample.actualPositive)
+      .length;
+  final middleTransitionCount = samples
+      .where((sample) => sample.isMiddleTransitionZone)
+      .length;
+  final plumOnlyFalsePositiveCount = samples
+      .where((sample) => sample.plumOnlyFalsePositive)
+      .length;
   return {
     'focusSampleCount': samples.length,
     'truePositiveCount': truePositiveCount,
     'falsePositiveCount': samples.length - truePositiveCount,
     'precision': samples.isEmpty ? 0.0 : truePositiveCount / samples.length,
     'middleTransitionCount': middleTransitionCount,
-    'middleTransitionShare':
-        samples.isEmpty ? 0.0 : middleTransitionCount / samples.length,
+    'middleTransitionShare': samples.isEmpty
+        ? 0.0
+        : middleTransitionCount / samples.length,
     'plumOnlyFalsePositiveCount': plumOnlyFalsePositiveCount,
   };
 }
 
 Map<String, Object?> _familySnapshot(List<_Sample> samples, int total) {
-  final actualPositiveCount =
-      samples.where((sample) => sample.actualPositive).length;
-  final middleTransitionCount =
-      samples.where((sample) => sample.isMiddleTransitionZone).length;
-  final plumOnlyFalsePositiveCount =
-      samples.where((sample) => sample.plumOnlyFalsePositive).length;
+  final actualPositiveCount = samples
+      .where((sample) => sample.actualPositive)
+      .length;
+  final middleTransitionCount = samples
+      .where((sample) => sample.isMiddleTransitionZone)
+      .length;
+  final plumOnlyFalsePositiveCount = samples
+      .where((sample) => sample.plumOnlyFalsePositive)
+      .length;
   final meanPlumMinusJma = samples.isEmpty
       ? 0.0
       : samples
-              .map((sample) => sample.plumMinusJma)
-              .fold<double>(0.0, (sum, gap) => sum + gap) /
-          samples.length;
+                .map((sample) => sample.plumMinusJma)
+                .fold<double>(0.0, (sum, gap) => sum + gap) /
+            samples.length;
   return {
     'count': samples.length,
     'share': total == 0 ? 0.0 : samples.length / total,
     'actualPositiveCount': actualPositiveCount,
     'precision': samples.isEmpty ? 0.0 : actualPositiveCount / samples.length,
     'middleTransitionCount': middleTransitionCount,
-    'middleTransitionRate':
-        samples.isEmpty ? 0.0 : middleTransitionCount / samples.length,
+    'middleTransitionRate': samples.isEmpty
+        ? 0.0
+        : middleTransitionCount / samples.length,
     'plumOnlyFalsePositiveCount': plumOnlyFalsePositiveCount,
     'meanPlumMinusJma': meanPlumMinusJma,
   };
@@ -547,10 +578,9 @@ double _topCumulativeShare(
   int total,
 ) {
   if (total == 0) return 0.0;
-  final topCount = eventRows.take(topN).fold<int>(
-    0,
-    (sum, row) => sum + (_map(row)['count'] as int),
-  );
+  final topCount = eventRows
+      .take(topN)
+      .fold<int>(0, (sum, row) => sum + (_map(row)['count'] as int));
   return topCount / total;
 }
 
@@ -563,12 +593,11 @@ List<Map<String, Object?>> _buildEventRows(List<_Sample> samples) {
     for (final entry in byEvent.entries) entry.value.toJson(eventId: entry.key),
   ];
   rows.sort((left, right) {
-    final byCount =
-        _number(right['count']).compareTo(_number(left['count']));
+    final byCount = _number(right['count']).compareTo(_number(left['count']));
     if (byCount != 0) return byCount;
-    return _number(right['middleTransitionCount']).compareTo(
-      _number(left['middleTransitionCount']),
-    );
+    return _number(
+      right['middleTransitionCount'],
+    ).compareTo(_number(left['middleTransitionCount']));
   });
   return rows;
 }
@@ -588,8 +617,8 @@ List<_EvidenceStation> _supportingEvidence({
       observed.longitude,
     );
     if (distance > _plumRadiusKm) continue;
-    final propagated = observed.intensity -
-        _plumDampingPer10Km * (distance / 10.0);
+    final propagated =
+        observed.intensity - _plumDampingPer10Km * (distance / 10.0);
     if (propagated >= threshold) {
       supportingEvidence.add(
         _EvidenceStation(
@@ -684,55 +713,54 @@ Map<String, Object?> _emptyReport({
   required String dataDirectory,
   required String modelPath,
 }) => {
-        'schemaVersion': 'plum_tohoku_event_concentration_diagnostic_v1',
-        'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
-        'status': 'fail',
-        'policy': {
-          'method': 'PLUM Tohoku event-concentration diagnostic',
-          'rawPredictedIntensityMutated': false,
-          'frozenTestEvaluated': true,
-          'productionReady': false,
-          'productionUiConnected': false,
-          'diagnosticOnly': true,
-          'parametersTuned': false,
-          'suppressionApplied': false,
-          'plumRadiusKm': _plumRadiusKm,
-          'plumDampingPer10Km': _plumDampingPer10Km,
-        },
-        'inputs': {
-          'dataDirectory': dataDirectory,
-          'modelPath': modelPath,
-          'splits': ['validation', 'test'],
-          'threshold': _threshold.label,
-        },
-        'focusFilter': {
-          'estimatedSourceRegion': _focusRegion,
-          'minimumEvidenceCount': _focusMinimumEvidenceCount,
-          'maximumNearestEvidenceDistanceKm':
-              _focusMaximumNearestEvidenceDistanceKm,
-          'baselineThresholdCrossingRequired': true,
-          'plumMarginGateApplied': false,
-        },
-        'dominantEvent': const {
-          'eventId': 'none',
-          'testFocusCount': 0,
-          'testFocusShare': 0.0,
-          'top3CumulativeShare': 0.0,
-          'top5CumulativeShare': 0.0,
-        },
-        'sliceSummaries': {
-          'validation': _summaryJson(const []),
-          'testFull': _summaryJson(const []),
-          'dominantTestEventOnly': _summaryJson(const []),
-          'testWithoutDominantEvent': _summaryJson(const []),
-        },
-        'summaryDelta': const {},
-        'sourceTriggerFamilySlices': const [],
-        'sourceWinnerFamilySlices': const [],
-        'sourceWinnerTransitionSlices': const [],
-        'eventConcentrationTable': const [],
-        'errors': errors,
-      };
+  'schemaVersion': 'plum_tohoku_event_concentration_diagnostic_v1',
+  'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
+  'status': 'fail',
+  'policy': {
+    'method': 'PLUM Tohoku event-concentration diagnostic',
+    'rawPredictedIntensityMutated': false,
+    'frozenTestEvaluated': true,
+    'productionReady': false,
+    'productionUiConnected': false,
+    'diagnosticOnly': true,
+    'parametersTuned': false,
+    'suppressionApplied': false,
+    'plumRadiusKm': _plumRadiusKm,
+    'plumDampingPer10Km': _plumDampingPer10Km,
+  },
+  'inputs': {
+    'dataDirectory': dataDirectory,
+    'modelPath': modelPath,
+    'splits': ['validation', 'test'],
+    'threshold': _threshold.label,
+  },
+  'focusFilter': {
+    'estimatedSourceRegion': _focusRegion,
+    'minimumEvidenceCount': _focusMinimumEvidenceCount,
+    'maximumNearestEvidenceDistanceKm': _focusMaximumNearestEvidenceDistanceKm,
+    'baselineThresholdCrossingRequired': true,
+    'plumMarginGateApplied': false,
+  },
+  'dominantEvent': const {
+    'eventId': 'none',
+    'testFocusCount': 0,
+    'testFocusShare': 0.0,
+    'top3CumulativeShare': 0.0,
+    'top5CumulativeShare': 0.0,
+  },
+  'sliceSummaries': {
+    'validation': _summaryJson(const []),
+    'testFull': _summaryJson(const []),
+    'dominantTestEventOnly': _summaryJson(const []),
+    'testWithoutDominantEvent': _summaryJson(const []),
+  },
+  'summaryDelta': const {},
+  'sourceTriggerFamilySlices': const [],
+  'sourceWinnerFamilySlices': const [],
+  'sourceWinnerTransitionSlices': const [],
+  'eventConcentrationTable': const [],
+  'errors': errors,
+};
 
 String plumTohokuEventConcentrationDiagnosticMarkdown(
   Map<String, Object?> report,
@@ -744,8 +772,9 @@ String plumTohokuEventConcentrationDiagnosticMarkdown(
   final sliceSummaries = _map(report['sliceSummaries']);
   final sourceTriggerFamilySlices = _list(report['sourceTriggerFamilySlices']);
   final sourceWinnerFamilySlices = _list(report['sourceWinnerFamilySlices']);
-  final sourceWinnerTransitionSlices =
-      _list(report['sourceWinnerTransitionSlices']);
+  final sourceWinnerTransitionSlices = _list(
+    report['sourceWinnerTransitionSlices'],
+  );
   final eventConcentrationTable = _list(report['eventConcentrationTable']);
   final summaryDelta = _map(report['summaryDelta']);
 
@@ -767,9 +796,7 @@ String plumTohokuEventConcentrationDiagnosticMarkdown(
     ..writeln()
     ..writeln('## Coverage')
     ..writeln()
-    ..writeln(
-      '- Validation variants: `${coverage['validationVariants']}`',
-    )
+    ..writeln('- Validation variants: `${coverage['validationVariants']}`')
     ..writeln('- Test variants: `${coverage['testVariants']}`')
     ..writeln(
       '- Validation station forecasts: `${coverage['validationStationForecasts']}`',
@@ -955,7 +982,9 @@ String _familyCell(Map<String, Object?> row) {
 
 String _mixCell(Map<String, Object?> mix) {
   final entries = mix.entries.toList()
-    ..sort((left, right) => _number(right.value).compareTo(_number(left.value)));
+    ..sort(
+      (left, right) => _number(right.value).compareTo(_number(left.value)),
+    );
   return entries
       .where((entry) => _number(entry.value) > 0)
       .map((entry) => '${entry.key}:${entry.value}')
@@ -995,19 +1024,18 @@ class _EventAccumulator {
   }
 
   Map<String, Object?> toJson({required String eventId}) => {
-        'eventId': eventId,
-        'count': count,
-        'truePositiveCount': truePositiveCount,
-        'falsePositiveCount': count - truePositiveCount,
-        'precision': count == 0 ? 0.0 : truePositiveCount / count,
-        'middleTransitionCount': middleTransitionCount,
-        'middleTransitionShare':
-            count == 0 ? 0.0 : middleTransitionCount / count,
-        'dominantWinnerFamily': _maxKey(sourceWinnerCounts),
-        'dominantEventFamily': _maxKey(eventFamilyCounts),
-        'sourceTriggerCounts': sourceTriggerCounts,
-        'sourceWinnerCounts': sourceWinnerCounts,
-      };
+    'eventId': eventId,
+    'count': count,
+    'truePositiveCount': truePositiveCount,
+    'falsePositiveCount': count - truePositiveCount,
+    'precision': count == 0 ? 0.0 : truePositiveCount / count,
+    'middleTransitionCount': middleTransitionCount,
+    'middleTransitionShare': count == 0 ? 0.0 : middleTransitionCount / count,
+    'dominantWinnerFamily': _maxKey(sourceWinnerCounts),
+    'dominantEventFamily': _maxKey(eventFamilyCounts),
+    'sourceTriggerCounts': sourceTriggerCounts,
+    'sourceWinnerCounts': sourceWinnerCounts,
+  };
 }
 
 String _maxKey(Map<String, int> counts) {
@@ -1114,9 +1142,8 @@ class _Sample {
       const ['-1.0_to_0.0', '0.0_to_1.0'].contains(actualGapBand) &&
       const ['1.0_to_2.0', '2.0_to_3.0'].contains(evidenceGapBand);
 
-  String get transitionLabel => isMiddleTransitionZone
-      ? 'middle_transition_zone'
-      : 'other_focus_samples';
+  String get transitionLabel =>
+      isMiddleTransitionZone ? 'middle_transition_zone' : 'other_focus_samples';
 }
 
 class _EvidenceStation {
@@ -1135,7 +1162,10 @@ class _NeighborSummary {
   final int count;
   final double belowThresholdShare;
 
-  const _NeighborSummary({required this.count, required this.belowThresholdShare});
+  const _NeighborSummary({
+    required this.count,
+    required this.belowThresholdShare,
+  });
 }
 
 class _SupportShape {
@@ -1186,7 +1216,8 @@ StaticAttenuationModel _modelFromJson(Map<String, Object?> json) {
 Map<String, Object?> _map(Object? value) =>
     (value as Map).cast<String, Object?>();
 
-List<Object?> _list(Object? value) => (value as List?)?.cast<Object?>() ?? const [];
+List<Object?> _list(Object? value) =>
+    (value as List?)?.cast<Object?>() ?? const [];
 
 double _number(Object? value) => (value as num?)?.toDouble() ?? 0.0;
 

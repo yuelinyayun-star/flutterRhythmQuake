@@ -152,6 +152,58 @@ void main() {
     expect(station.expireSeconds, NiedStation.kaExpireSeconds);
   });
 
+  test('KA ascend keeps a short deep valley as a valid trigger baseline', () {
+    final station =
+        NiedStation(
+            id: 3,
+            code: 'TEST003',
+            name: 'TEST003',
+            coordinate: const LatLng(35, 140),
+            network: 'K-NET',
+            prefecture: 'Test',
+            expireSeconds: 10,
+          )
+          ..lastDataTime = DateTime(2026, 7, 17, 12)
+          ..recentLevel = [0, 0, 5];
+
+    station.update(5);
+
+    expect(station.recentLevel, [5, 0, 0, 5]);
+    expect(station.ascend, 5);
+    expect(
+      station.triggerStamp,
+      station.lastDataTime!
+          .subtract(const Duration(seconds: 1))
+          .millisecondsSinceEpoch,
+    );
+    expect(station.activity, greaterThan(0));
+  });
+
+  test('KA ascend stops at the first one-level rebound', () {
+    final frameTime = DateTime(2026, 7, 17, 12);
+    final station =
+        NiedStation(
+            id: 4,
+            code: 'TEST004',
+            name: 'TEST004',
+            coordinate: const LatLng(35, 140),
+            network: 'K-NET',
+            prefecture: 'Test',
+            expireSeconds: 10,
+          )
+          ..lastDataTime = frameTime
+          ..recentLevel = [4, 5, 0];
+
+    station.update(5);
+
+    expect(station.recentLevel, [5, 4, 5, 0]);
+    expect(station.ascend, 1);
+    expect(
+      station.triggerStamp,
+      frameTime.subtract(const Duration(seconds: 1)).millisecondsSinceEpoch,
+    );
+  });
+
   test('KA abnormal station quarantine lasts 600 normal updates', () {
     final start = DateTime(2026, 7, 17, 12);
     final station = NiedStation(

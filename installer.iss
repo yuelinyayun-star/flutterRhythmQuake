@@ -3,7 +3,7 @@
 ; 使用前请先运行: .\build_windows.ps1 -Release
 
 #define MyAppName "FlutterRhythmQuake"
-#define MyAppVersion "1.0.3"
+#define MyAppVersion "1.0.4"
 #define MyAppPublisher "com.example"
 #define MyAppURL ""
 #define MyAppExeName "flutterrhythmquake.exe"

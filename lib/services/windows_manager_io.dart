@@ -4,16 +4,16 @@ import 'package:tray_manager/tray_manager.dart';
 import 'package:local_notifier/local_notifier.dart';
 
 /// Windows桌面管理器
-/// 
+///
 /// 该类提供Windows桌面应用的窗口和托盘管理功能。
 /// 混入TrayListener和WindowListener以响应系统事件。
-/// 
+///
 /// 主要功能：
 /// - 窗口初始化和显示
 /// - 系统托盘管理
 /// - 原生通知支持
 /// - 紧急预警窗口置顶
-/// 
+///
 /// 使用场景：
 /// - 应用启动时初始化窗口
 /// - 收到紧急预警时强制显示窗口
@@ -24,7 +24,7 @@ class WindowsManager with TrayListener, WindowListener {
   WindowsManager._internal();
 
   /// 初始化窗口管理器
-  /// 
+  ///
   /// 执行以下初始化：
   /// 1. 窗口管理器 - 设置窗口大小和位置
   /// 2. 系统托盘 - 设置图标和右键菜单
@@ -44,18 +44,22 @@ class WindowsManager with TrayListener, WindowListener {
     });
 
     await trayManager.setIcon('assets/images/app_icon_win.ico');
-    await trayManager.setContextMenu(Menu(items: [
-      MenuItem(key: 'show_window', label: '显示主界面'),
-      MenuItem.separator(),
-      MenuItem(key: 'exit_app', label: '退出程序'),
-    ]));
+    await trayManager.setContextMenu(
+      Menu(
+        items: [
+          MenuItem(key: 'show_window', label: '显示主界面'),
+          MenuItem.separator(),
+          MenuItem(key: 'exit_app', label: '退出程序'),
+        ],
+      ),
+    );
     trayManager.addListener(this);
 
     await localNotifier.setup(appName: 'RhythmQuake');
   }
 
   /// 强制显示预警窗口
-  /// 
+  ///
   /// 当收到严重地震预警时调用：
   /// - 显示并聚焦窗口
   /// - 设置窗口始终置顶
@@ -67,7 +71,7 @@ class WindowsManager with TrayListener, WindowListener {
   }
 
   /// 重置窗口状态
-  /// 
+  ///
   /// 预警结束后调用，恢复正常窗口状态：
   /// - 取消始终置顶
   /// - 隐藏任务栏进度条

@@ -27,24 +27,32 @@ class ComplianceMapView extends StatelessWidget {
             TileLayer(
               urlTemplate: ChinaMapSources.tiandituVec(tdtKey),
               subdomains: const ['0', '1', '2', '3', '4', '5', '6', '7'],
-              userAgentPackageName: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              userAgentPackageName:
+                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             ),
             // 矢量注记
             TileLayer(
               urlTemplate: ChinaMapSources.tiandituCva(tdtKey),
               subdomains: const ['0', '1', '2', '3', '4', '5', '6', '7'],
-              userAgentPackageName: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              userAgentPackageName:
+                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             ),
 
             // 2. 行政边界纠偏层 (使用 GeoJSON)
             if (snapshot.hasData)
               PolygonLayer(
-                polygons: snapshot.data!.map((polyPoints) => Polygon(
-                  points: polyPoints,
-                  color: Colors.transparent,
-                  borderColor: Colors.blueGrey.withValues(alpha: 0.8), // 边界线颜色
-                  borderStrokeWidth: 1.5,
-                )).toList(),
+                polygons: snapshot.data!
+                    .map(
+                      (polyPoints) => Polygon(
+                        points: polyPoints,
+                        color: Colors.transparent,
+                        borderColor: Colors.blueGrey.withValues(
+                          alpha: 0.8,
+                        ), // 边界线颜色
+                        borderStrokeWidth: 1.5,
+                      ),
+                    )
+                    .toList(),
               ),
           ],
         );

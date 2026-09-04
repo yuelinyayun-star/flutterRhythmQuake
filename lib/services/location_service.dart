@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart'
-    show ValueListenable, ValueNotifier, kIsWeb;
+    show ValueListenable, ValueNotifier, kIsWeb, visibleForTesting;
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
+
+import 'epicenter_region_service.dart';
 
 enum LocationServiceStatus {
   idle,
@@ -52,6 +55,9 @@ class LocationService {
   /// IP 兜底返回的省/市描述，便于 UI 提示与排查
   String? _ipRegion;
 
+  /// 离线行政区反查结果，比 IP 文本字段更细（如县级）。
+  String? _resolvedAdminArea;
+
   final ValueNotifier<Position?> _positionNotifier = ValueNotifier(null);
   final ValueNotifier<LocationServiceStatus> _statusNotifier = ValueNotifier(
     LocationServiceStatus.idle,
@@ -64,6 +70,7 @@ class LocationService {
   Position? get currentPosition => _currentPosition;
   LocationSource get currentSource => _currentSource;
   String? get ipRegion => _ipRegion;
+  String? get resolvedAdminArea => _resolvedAdminArea;
 
   ValueListenable<Position?> get positionListenable => _positionNotifier;
   ValueListenable<LocationServiceStatus> get statusListenable =>
@@ -152,12 +159,12 @@ class LocationService {
   /// 通过 IP 地理定位拿一个城市级粗略位置，作为无 GPS 设备的兜底。
   ///
   /// 三段回退链，按可用性与平台兼容性排序：
-  /// 1. fanstudio geo_ip.php（https，返回中文省市 + 经纬度，iOS/Web/Android 通吃）
+  /// 1. fanstudio geo_ip.php（https，返回中文省/市/区 + 经纬度，iOS/Web/Android 通吃）
   /// 2. wolfx ip.php 取公网 IP 后，带 ?ip= 显式查 fanstudio（应对 CDN 误判访客 IP）
   /// 3. ip-api.com（http，Android cleartext 已开，最后兜底）
   ///
   /// 任一步成功即返回；全部失败才置 failed。
-  /// IP 坐标精度仅城市级，省市名直接使用 IP 服务返回值。
+  /// IP 坐标精度仅城市级，行政区文本会结合离线反查尽量细化到县/区。
   Future<Position?> _requestIpFallbackPosition() async {
     // 1. fanstudio 直查（访客 IP 自动判定）
     final pos = await _requestFanstudioGeoIp(ip: null);
@@ -179,6 +186,9 @@ class LocationService {
   }
 
   /// fanstudio geo_ip.php：返回中文 country/province/city + latitude/longitude。
+  ///
+  /// 升级后 `city` 可能直接返回区/县级名称（如「西城区」），也可能单独提供
+  /// `district` / `county` 字段；解析时会自动识别并拼成可读区域标签。
   /// 传 [ip] 时走 ?ip= 显式查询，不传时由服务端自动判定访客 IP。
   Future<Position?> _requestFanstudioGeoIp({String? ip}) async {
     final url = ip == null
@@ -186,28 +196,29 @@ class LocationService {
         : 'https://api.fanstudio.tech/tool/geo_ip.php?ip=${Uri.encodeComponent(ip)}';
     try {
       final resp = await http
-          .get(Uri.parse(url))
+          .get(
+            Uri.parse(url),
+            headers: const {
+              'Accept': 'application/json',
+              'User-Agent':
+                  'flutterrhythmquake/1.0 (+https://api.fanstudio.tech/)',
+            },
+          )
           .timeout(const Duration(seconds: 5));
       if (resp.statusCode != 200) return null;
       final data = json.decode(resp.body);
       if (data is! Map) return null;
-      // 错误响应：{"error": "..."}
-      if (data['error'] != null) return null;
-      final lat = _toDouble(data['latitude']);
-      final lon = _toDouble(data['longitude']);
-      if (lat == null || lat.isNaN || lon == null || lon.isNaN) return null;
 
-      final regionParts = <String>[];
-      final province = data['province'];
-      if (province is String && province.isNotEmpty) {
-        regionParts.add(province);
-      }
-      final city = data['city'];
-      if (city is String && city.isNotEmpty) {
-        regionParts.add(city);
-      }
+      final lookup = parseFanstudioGeoIpResponse(
+        Map<String, dynamic>.from(data),
+      );
+      if (lookup == null) return null;
 
-      return _buildIpPosition(lat, lon, regionParts.join(' '));
+      return _buildIpPosition(
+        lookup.latitude,
+        lookup.longitude,
+        lookup.regionLabel,
+      );
     } catch (_) {
       return null;
     }
@@ -280,7 +291,18 @@ class LocationService {
       speedAccuracy: 0,
     );
     _applyPosition(pos, LocationSource.ipFallback, ipRegion: region);
+    unawaited(_resolveAdminArea(lat, lon));
     return pos;
+  }
+
+  Future<void> _resolveAdminArea(double lat, double lng) async {
+    try {
+      await EpicenterRegionService.instance.load();
+      final area = EpicenterRegionService.instance.lookupChinaPlace(lat, lng);
+      if (area == null || area.isEmpty) return;
+      _resolvedAdminArea = area;
+      _positionNotifier.value = _currentPosition;
+    } catch (_) {}
   }
 
   void _applyPosition(
@@ -291,6 +313,9 @@ class LocationService {
     _currentPosition = position;
     _currentSource = source;
     _ipRegion = ipRegion;
+    if (source != LocationSource.ipFallback) {
+      _resolvedAdminArea = null;
+    }
     _positionNotifier.value = position;
     _sourceNotifier.value = source;
     _statusNotifier.value = LocationServiceStatus.available;
@@ -331,4 +356,109 @@ class LocationService {
     if (v is String) return double.tryParse(v);
     return null;
   }
+}
+
+class FanstudioGeoIpLookup {
+  const FanstudioGeoIpLookup({
+    required this.latitude,
+    required this.longitude,
+    this.ip,
+    this.country,
+    this.province,
+    this.city,
+    this.district,
+    this.isp,
+  });
+
+  final String? ip;
+  final String? country;
+  final String? province;
+  final String? city;
+  final String? district;
+  final String? isp;
+  final double latitude;
+  final double longitude;
+
+  String get regionLabel =>
+      buildGeoIpRegionLabel(province: province, city: city, district: district);
+}
+
+@visibleForTesting
+FanstudioGeoIpLookup? parseFanstudioGeoIpResponse(Map<String, dynamic> data) {
+  if (data['error'] != null) return null;
+
+  final lat = _parseGeoDouble(data['latitude']);
+  final lon = _parseGeoDouble(data['longitude']);
+  if (lat == null || lat.isNaN || lon == null || lon.isNaN) return null;
+
+  final province = _cleanGeoField(data['province']);
+  var city = _cleanGeoField(data['city']);
+  var district =
+      _cleanGeoField(data['district']) ?? _cleanGeoField(data['county']);
+
+  if (district == null && city != null && _looksLikeDistrictName(city)) {
+    district = city;
+    city = null;
+  }
+
+  return FanstudioGeoIpLookup(
+    ip: _cleanGeoField(data['ip']),
+    country: _cleanGeoField(data['country']),
+    province: province,
+    city: city,
+    district: district,
+    isp: _cleanGeoField(data['isp']),
+    latitude: lat,
+    longitude: lon,
+  );
+}
+
+@visibleForTesting
+String buildGeoIpRegionLabel({
+  String? province,
+  String? city,
+  String? district,
+}) {
+  final parts = <String>[];
+  for (final value in [province, city, district]) {
+    if (value == null || value.isEmpty) continue;
+    if (parts.isNotEmpty && _isRedundantGeoPlace(parts.last, value)) continue;
+    parts.add(value);
+  }
+  return parts.join(' ');
+}
+
+String? _cleanGeoField(Object? value) {
+  final text = value?.toString().replaceAll(RegExp(r'\s+'), '').trim();
+  if (text == null || text.isEmpty) return null;
+  return text;
+}
+
+double? _parseGeoDouble(Object? value) {
+  if (value is num) return value.toDouble();
+  if (value is String) return double.tryParse(value);
+  return null;
+}
+
+bool _looksLikeDistrictName(String name) {
+  if (name.contains('自治区') ||
+      name.contains('行政区') ||
+      name.endsWith('地区') ||
+      name.endsWith('自治州') ||
+      name.endsWith('盟')) {
+    return false;
+  }
+  return name.contains('区') ||
+      name.contains('县') ||
+      name.contains('旗') ||
+      name.contains('自治县') ||
+      name.contains('林区');
+}
+
+bool _isRedundantGeoPlace(String previous, String next) {
+  if (previous == next) return true;
+  if (previous.startsWith(next) || next.startsWith(previous)) return true;
+  final prevCore = previous.replaceAll(RegExp(r'(省|市|自治区|特别行政区)$'), '');
+  final nextCore = next.replaceAll(RegExp(r'(省|市|自治区|特别行政区|区|县)$'), '');
+  return prevCore.isNotEmpty && prevCore == nextCore;
 }

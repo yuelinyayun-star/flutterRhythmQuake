@@ -37,6 +37,38 @@ void main() {
     expect(manager.jmaList.single.eventId, 'fan-jma-1');
   });
 
+  test('resolved JMA report replaces same-second investigation in list', () {
+    final origin = DateTime(2026, 8, 9, 14, 5);
+    manager.updateJmaList([
+      _quake(
+        source: QuakeSourceType.p2p,
+        eventId: '2026-08-09 14:05:00',
+        originTime: origin,
+        location: '',
+        magnitude: -1,
+        depth: -1,
+      ),
+    ]);
+
+    manager.upsertBucketItem(
+      'jmaEqlist',
+      _quake(
+        source: QuakeSourceType.jma_fan,
+        eventId: '20260809140518',
+        originTime: origin,
+        location: '千葉県北東部',
+        magnitude: 4.2,
+        depth: 10,
+      ),
+    );
+
+    expect(manager.jmaList, hasLength(1));
+    expect(manager.jmaList.single.eventId, '20260809140518');
+    expect(manager.jmaList.single.location, '千葉県北東部');
+    expect(manager.jmaList.single.magnitude, 4.2);
+    expect(manager.jmaList.single.depth, 10);
+  });
+
   test('keeps the newest 50 JMA items in source order', () {
     final origin = DateTime(2026, 7, 28, 18);
     manager.updateJmaList([
@@ -69,15 +101,18 @@ QuakeMessage _quake({
   required String eventId,
   required DateTime originTime,
   DateTime? reportTime,
+  String location = '岩手県沖',
+  double magnitude = 6.9,
+  double depth = 50,
 }) {
   return QuakeMessage(
     source: source,
     eventId: eventId,
-    location: '岩手県沖',
-    magnitude: 6.9,
+    location: location,
+    magnitude: magnitude,
     latitude: 39.0,
     longitude: 142.0,
-    depth: 50,
+    depth: depth,
     originTime: originTime,
     reportTime: reportTime,
     isHistory: true,

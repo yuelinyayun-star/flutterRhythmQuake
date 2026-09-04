@@ -449,13 +449,20 @@ class P2PQuakeService extends BaseSourceService {
     final name = hypocenter['name']?.toString().trim() ?? '';
     final lat = _parseDouble(hypocenter['latitude']);
     final lng = _parseDouble(hypocenter['longitude']);
+    final normalizedName = name.toLowerCase();
     return name.isNotEmpty &&
+        normalizedName != '調査中' &&
+        normalizedName != '调查中' &&
+        normalizedName != '不明' &&
+        normalizedName != '不詳' &&
+        normalizedName != 'unknown' &&
         lat != null &&
         lng != null &&
         lat >= -90 &&
         lat <= 90 &&
         lng >= -180 &&
-        lng <= 180;
+        lng <= 180 &&
+        (lat != 0 || lng != 0);
   }
 
   bool _hasValidMaxScale(dynamic value) {

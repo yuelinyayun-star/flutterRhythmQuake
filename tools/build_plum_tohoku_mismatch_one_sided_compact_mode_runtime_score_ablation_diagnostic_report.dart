@@ -124,8 +124,9 @@ buildPlumTohokuMismatchOneSidedCompactModeRuntimeScoreAblationDiagnosticJson({
 
   for (final splitName in const ['validation', 'test']) {
     final dataset = synthetic.datasetsBySplit[splitName]!;
-    final splitAccumulator =
-        splitName == 'validation' ? validationAccumulator : testAccumulator;
+    final splitAccumulator = splitName == 'validation'
+        ? validationAccumulator
+        : testAccumulator;
     for (final rawEvent in _list(dataset['events'])) {
       final event = StaticIntensityEvent.fromJson(_map(rawEvent));
       final magnitude = event.magnitude;
@@ -222,41 +223,38 @@ buildPlumTohokuMismatchOneSidedCompactModeRuntimeScoreAblationDiagnosticJson({
   final variants = <String, Object?>{};
   for (final variant in _variantOrder) {
     final validationScores = [
-      for (final sample in validationTargetModes) sample.scoreForVariant(variant),
+      for (final sample in validationTargetModes)
+        sample.scoreForVariant(variant),
     ];
     final anchors = _ScoreAnchors.fromScores(validationScores);
     variants[variant] = {
       'scoreDefinition': _scoreDefinitionForVariant(variant),
       'scoreAnchors': anchors.toJson(),
       'modeScoreMeans': {
-        'validationNearThresholdPositive':
-            _ScoreMeanAccumulator.fromSamples(
-              validationTargetModes.where(
-                (sample) => sample.isNearThresholdPositiveMode,
-              ),
-              variant: variant,
-            ).toJson(),
-        'validationFalseMiddleTransition':
-            _ScoreMeanAccumulator.fromSamples(
-              validationTargetModes.where(
-                (sample) => sample.isFalseMiddleTransitionMode,
-              ),
-              variant: variant,
-            ).toJson(),
-        'remainderNearThresholdPositive':
-            _ScoreMeanAccumulator.fromSamples(
-              remainderTargetModes.where(
-                (sample) => sample.isNearThresholdPositiveMode,
-              ),
-              variant: variant,
-            ).toJson(),
-        'remainderFalseMiddleTransition':
-            _ScoreMeanAccumulator.fromSamples(
-              remainderTargetModes.where(
-                (sample) => sample.isFalseMiddleTransitionMode,
-              ),
-              variant: variant,
-            ).toJson(),
+        'validationNearThresholdPositive': _ScoreMeanAccumulator.fromSamples(
+          validationTargetModes.where(
+            (sample) => sample.isNearThresholdPositiveMode,
+          ),
+          variant: variant,
+        ).toJson(),
+        'validationFalseMiddleTransition': _ScoreMeanAccumulator.fromSamples(
+          validationTargetModes.where(
+            (sample) => sample.isFalseMiddleTransitionMode,
+          ),
+          variant: variant,
+        ).toJson(),
+        'remainderNearThresholdPositive': _ScoreMeanAccumulator.fromSamples(
+          remainderTargetModes.where(
+            (sample) => sample.isNearThresholdPositiveMode,
+          ),
+          variant: variant,
+        ).toJson(),
+        'remainderFalseMiddleTransition': _ScoreMeanAccumulator.fromSamples(
+          remainderTargetModes.where(
+            (sample) => sample.isFalseMiddleTransitionMode,
+          ),
+          variant: variant,
+        ).toJson(),
       },
       'validationAnchoredBandTransfer': {
         'validation': _buildBandRows(
@@ -334,23 +332,19 @@ buildPlumTohokuMismatchOneSidedCompactModeRuntimeScoreAblationDiagnosticJson({
     },
     'coverage': {
       'validationTargetModeCount': validationTargetModes.length,
-      'validationNearThresholdPositiveCount':
-          validationTargetModes
-              .where((sample) => sample.isNearThresholdPositiveMode)
-              .length,
-      'validationFalseMiddleTransitionCount':
-          validationTargetModes
-              .where((sample) => sample.isFalseMiddleTransitionMode)
-              .length,
+      'validationNearThresholdPositiveCount': validationTargetModes
+          .where((sample) => sample.isNearThresholdPositiveMode)
+          .length,
+      'validationFalseMiddleTransitionCount': validationTargetModes
+          .where((sample) => sample.isFalseMiddleTransitionMode)
+          .length,
       'remainderTargetModeCount': remainderTargetModes.length,
-      'remainderNearThresholdPositiveCount':
-          remainderTargetModes
-              .where((sample) => sample.isNearThresholdPositiveMode)
-              .length,
-      'remainderFalseMiddleTransitionCount':
-          remainderTargetModes
-              .where((sample) => sample.isFalseMiddleTransitionMode)
-              .length,
+      'remainderNearThresholdPositiveCount': remainderTargetModes
+          .where((sample) => sample.isNearThresholdPositiveMode)
+          .length,
+      'remainderFalseMiddleTransitionCount': remainderTargetModes
+          .where((sample) => sample.isFalseMiddleTransitionMode)
+          .length,
       'skippedMissingMagnitudeEvents': skippedMissingMagnitude,
       'skippedNoSourceEstimateVariants': skippedNoEstimate,
     },
@@ -373,8 +367,7 @@ Map<String, Object?> _scoreDefinitionForVariant(String variant) {
       return {
         'weights': const {'supportGeometry': 0.70, 'evidenceProximity': 0.30},
         'components': {
-          'supportGeometry':
-              'same as support_geometry_only',
+          'supportGeometry': 'same as support_geometry_only',
           'evidenceProximity':
               'inverse(nearest evidence distance, desirable <= 2.5 km, weak >= 5.0 km)',
         },
@@ -387,8 +380,7 @@ Map<String, Object?> _scoreDefinitionForVariant(String variant) {
           'evidenceProximity': 0.20,
         },
         'components': {
-          'supportGeometry':
-              'same as support_geometry_only',
+          'supportGeometry': 'same as support_geometry_only',
           'concentration':
               '0.5 * inverse(topContributionShare, desirable <= 0.20, weak >= 0.33) + 0.5 * inverse(HHI, desirable <= 0.10, weak >= 0.20)',
           'evidenceProximity':
@@ -468,10 +460,12 @@ List<Map<String, Object?>> _buildBandRows(
     rows[anchors.bandFor(sample.scoreForVariant(variant))]!.add(sample);
   }
   final total = samples.length;
-  final positiveTotal =
-      samples.where((sample) => sample.isNearThresholdPositiveMode).length;
-  final negativeTotal =
-      samples.where((sample) => sample.isFalseMiddleTransitionMode).length;
+  final positiveTotal = samples
+      .where((sample) => sample.isNearThresholdPositiveMode)
+      .length;
+  final negativeTotal = samples
+      .where((sample) => sample.isFalseMiddleTransitionMode)
+      .length;
   return [
     for (final band in const ['low', 'mid_low', 'mid_high', 'high'])
       rows[band]!.toJson(
@@ -490,22 +484,27 @@ List<Map<String, Object?>> _buildRemainderQuartiles(
   if (samples.isEmpty) return const [];
   final sorted = [...samples]
     ..sort(
-      (left, right) =>
-          left.scoreForVariant(variant).compareTo(right.scoreForVariant(variant)),
+      (left, right) => left
+          .scoreForVariant(variant)
+          .compareTo(right.scoreForVariant(variant)),
     );
   final rows = <Map<String, Object?>>[];
-  final positiveTotal =
-      samples.where((sample) => sample.isNearThresholdPositiveMode).length;
-  final negativeTotal =
-      samples.where((sample) => sample.isFalseMiddleTransitionMode).length;
+  final positiveTotal = samples
+      .where((sample) => sample.isNearThresholdPositiveMode)
+      .length;
+  final negativeTotal = samples
+      .where((sample) => sample.isFalseMiddleTransitionMode)
+      .length;
   for (var quartile = 0; quartile < 4; quartile++) {
     final start = (sorted.length * quartile / 4).floor();
     final end = (sorted.length * (quartile + 1) / 4).floor();
     final bucket = sorted.sublist(start, end);
-    final positive =
-        bucket.where((sample) => sample.isNearThresholdPositiveMode).length;
-    final negative =
-        bucket.where((sample) => sample.isFalseMiddleTransitionMode).length;
+    final positive = bucket
+        .where((sample) => sample.isNearThresholdPositiveMode)
+        .length;
+    final negative = bucket
+        .where((sample) => sample.isFalseMiddleTransitionMode)
+        .length;
     rows.add({
       'quartile': quartile + 1,
       'scoreMin': bucket.isEmpty ? 0.0 : bucket.first.scoreForVariant(variant),
@@ -515,8 +514,12 @@ List<Map<String, Object?>> _buildRemainderQuartiles(
       'negativeCount': negative,
       'positiveRate': bucket.isEmpty ? 0.0 : positive / bucket.length,
       'negativeRate': bucket.isEmpty ? 0.0 : negative / bucket.length,
-      'positiveCaptureShare': positiveTotal == 0 ? 0.0 : positive / positiveTotal,
-      'negativeCaptureShare': negativeTotal == 0 ? 0.0 : negative / negativeTotal,
+      'positiveCaptureShare': positiveTotal == 0
+          ? 0.0
+          : positive / positiveTotal,
+      'negativeCaptureShare': negativeTotal == 0
+          ? 0.0
+          : negative / negativeTotal,
     });
   }
   return rows;
@@ -549,9 +552,12 @@ Map<String, Object?> _buildRemainderMonotonicity(
       negativeIncreasing++;
     }
   }
-  final low = quartiles.isEmpty ? const <String, Object?>{} : _map(quartiles.first);
-  final high =
-      quartiles.isEmpty ? const <String, Object?>{} : _map(quartiles.last);
+  final low = quartiles.isEmpty
+      ? const <String, Object?>{}
+      : _map(quartiles.first);
+  final high = quartiles.isEmpty
+      ? const <String, Object?>{}
+      : _map(quartiles.last);
   final lowPositive = _number(low['positiveRate']);
   final highPositive = _number(high['positiveRate']);
   final lowNegative = _number(low['negativeRate']);
@@ -559,10 +565,14 @@ Map<String, Object?> _buildRemainderMonotonicity(
   return {
     'highQuartilePositiveRate': highPositive,
     'lowQuartilePositiveRate': lowPositive,
-    'highToLowPositiveLift': lowPositive == 0 ? 0.0 : highPositive / lowPositive,
+    'highToLowPositiveLift': lowPositive == 0
+        ? 0.0
+        : highPositive / lowPositive,
     'lowQuartileNegativeRate': lowNegative,
     'highQuartileNegativeRate': highNegative,
-    'lowToHighNegativeReduction': lowNegative == 0 ? 0.0 : highNegative / lowNegative,
+    'lowToHighNegativeReduction': lowNegative == 0
+        ? 0.0
+        : highNegative / lowNegative,
     'positiveNonDecreasingAdjacentPairs': positiveNonDecreasing,
     'positiveDecreasingAdjacentPairs': positiveDecreasing,
     'negativeNonIncreasingAdjacentPairs': negativeNonIncreasing,
@@ -652,8 +662,8 @@ _ContributionSummary _supportContributionSummary({
   final contributionHhi = total <= 0
       ? 0.0
       : sorted
-          .map((margin) => margin / total)
-          .fold<double>(0.0, (sum, share) => sum + share * share);
+            .map((margin) => margin / total)
+            .fold<double>(0.0, (sum, share) => sum + share * share);
   return _ContributionSummary(
     topContributionShare: topContributionShare,
     contributionHhi: contributionHhi,
@@ -675,8 +685,8 @@ List<_EvidenceStation> _supportingEvidence({
       observed.longitude,
     );
     if (distance > _plumRadiusKm) continue;
-    final propagated = observed.intensity -
-        _plumDampingPer10Km * (distance / 10.0);
+    final propagated =
+        observed.intensity - _plumDampingPer10Km * (distance / 10.0);
     if (propagated >= threshold) {
       supportingEvidence.add(
         _EvidenceStation(
@@ -859,9 +869,7 @@ plumTohokuMismatchOneSidedCompactModeRuntimeScoreAblationDiagnosticMarkdown(
       'remainderFalseMiddleTransition',
     ]) {
       final row = _map(means[mode]);
-      buffer.writeln(
-        '| `$mode` | ${row['count']} | ${_fmt(row['score'])} |',
-      );
+      buffer.writeln('| `$mode` | ${row['count']} | ${_fmt(row['score'])} |');
     }
     buffer
       ..writeln()
@@ -962,10 +970,12 @@ class _BandAccumulator {
       'negativeCount': negativeCount,
       'positiveRate': positiveRate,
       'negativeRate': negativeRate,
-      'positiveCaptureShare':
-          positiveTotal == 0 ? 0.0 : positiveCount / positiveTotal,
-      'negativeCaptureShare':
-          negativeTotal == 0 ? 0.0 : negativeCount / negativeTotal,
+      'positiveCaptureShare': positiveTotal == 0
+          ? 0.0
+          : positiveCount / positiveTotal,
+      'negativeCaptureShare': negativeTotal == 0
+          ? 0.0
+          : negativeCount / negativeTotal,
     };
   }
 }
@@ -993,9 +1003,9 @@ class _ScoreMeanAccumulator {
   }
 
   Map<String, Object?> toJson() => {
-        'count': count,
-        'score': count == 0 ? 0.0 : score / count,
-      };
+    'count': count,
+    'score': count == 0 ? 0.0 : score / count,
+  };
 }
 
 class _ScoreSample {
@@ -1044,9 +1054,8 @@ class _ScoreSample {
   String get geometryBand =>
       supportingEvidenceQuadrantCoverage >= 3 ? 'surrounded' : 'one_sided';
 
-  String get spreadBand => supportingEvidenceQuadrantCoverage < 3
-      ? 'compact'
-      : 'unknown';
+  String get spreadBand =>
+      supportingEvidenceQuadrantCoverage < 3 ? 'compact' : 'unknown';
 
   String get eventFamilyLabel =>
       '$localConsistencyLabel/$geometryBand/$spreadBand';
@@ -1117,10 +1126,10 @@ class _ScoreSample {
   }
 
   double get evidenceProximityScore => _inverseLinear(
-        nearestEvidenceDistanceKm,
-        desirableCeiling: 2.5,
-        weakFloor: 5.0,
-      );
+    nearestEvidenceDistanceKm,
+    desirableCeiling: 2.5,
+    weakFloor: 5.0,
+  );
 
   double scoreForVariant(String variant) {
     switch (variant) {
@@ -1166,7 +1175,10 @@ class _NeighborSummary {
   final int count;
   final double belowThresholdShare;
 
-  const _NeighborSummary({required this.count, required this.belowThresholdShare});
+  const _NeighborSummary({
+    required this.count,
+    required this.belowThresholdShare,
+  });
 }
 
 class _SupportShape {
@@ -1216,11 +1228,7 @@ class _ScoreAnchors {
     return 'high';
   }
 
-  Map<String, Object?> toJson() => {
-        'q25': q25,
-        'q50': q50,
-        'q75': q75,
-      };
+  Map<String, Object?> toJson() => {'q25': q25, 'q50': q50, 'q75': q75};
 }
 
 Map<String, Object?> _emptyReport({
@@ -1228,44 +1236,43 @@ Map<String, Object?> _emptyReport({
   required String dataDirectory,
   required String modelPath,
 }) => {
-      'schemaVersion':
-          'plum_tohoku_mismatch_one_sided_compact_mode_runtime_score_ablation_diagnostic_v1',
-      'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
-      'status': 'fail',
-      'policy': {
-        'method':
-            'PLUM Tohoku mismatch/one_sided/compact mode runtime-score ablation diagnostic',
-        'rawPredictedIntensityMutated': false,
-        'frozenTestEvaluated': true,
-        'productionReady': false,
-        'productionUiConnected': false,
-        'diagnosticOnly': true,
-        'parametersTuned': false,
-        'suppressionApplied': false,
-        'plumRadiusKm': _plumRadiusKm,
-        'plumDampingPer10Km': _plumDampingPer10Km,
-      },
-      'inputs': {
-        'dataDirectory': dataDirectory,
-        'modelPath': modelPath,
-        'splits': ['validation', 'test'],
-        'threshold': _threshold.label,
-        'family': _focusFamily,
-        'variants': _variantOrder,
-      },
-      'scope': {
-        'removedDominantEvent': 'none',
-        'estimatedSourceRegion': _focusRegion,
-        'minimumEvidenceCount': _focusMinimumEvidenceCount,
-        'maximumNearestEvidenceDistanceKm':
-            _focusMaximumNearestEvidenceDistanceKm,
-        'baselineThresholdCrossingRequired': true,
-      },
-      'labelDefinition': const {},
-      'coverage': const {},
-      'variantComparison': const {},
-      'errors': errors,
-    };
+  'schemaVersion':
+      'plum_tohoku_mismatch_one_sided_compact_mode_runtime_score_ablation_diagnostic_v1',
+  'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
+  'status': 'fail',
+  'policy': {
+    'method':
+        'PLUM Tohoku mismatch/one_sided/compact mode runtime-score ablation diagnostic',
+    'rawPredictedIntensityMutated': false,
+    'frozenTestEvaluated': true,
+    'productionReady': false,
+    'productionUiConnected': false,
+    'diagnosticOnly': true,
+    'parametersTuned': false,
+    'suppressionApplied': false,
+    'plumRadiusKm': _plumRadiusKm,
+    'plumDampingPer10Km': _plumDampingPer10Km,
+  },
+  'inputs': {
+    'dataDirectory': dataDirectory,
+    'modelPath': modelPath,
+    'splits': ['validation', 'test'],
+    'threshold': _threshold.label,
+    'family': _focusFamily,
+    'variants': _variantOrder,
+  },
+  'scope': {
+    'removedDominantEvent': 'none',
+    'estimatedSourceRegion': _focusRegion,
+    'minimumEvidenceCount': _focusMinimumEvidenceCount,
+    'maximumNearestEvidenceDistanceKm': _focusMaximumNearestEvidenceDistanceKm,
+    'baselineThresholdCrossingRequired': true,
+  },
+  'labelDefinition': const {},
+  'coverage': const {},
+  'variantComparison': const {},
+  'errors': errors,
+};
 
 StaticAttenuationModel _modelFromJson(Map<String, Object?> json) {
   return StaticAttenuationModel(

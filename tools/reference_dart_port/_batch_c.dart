@@ -31,10 +31,14 @@ void _factory168(Thread thread) {
     // fun90___id3___ID_____ — JS: function fun90___id3___ID_____ (p0,p1)
     final p0 = args[0];
     final p1 = args[1];
-    if (!compareEqual(indexGet(b0.value, or0(or0(or0(or0(p0) - 1) * 10) + 3)), '')) {
+    if (!compareEqual(
+      indexGet(b0.value, or0(or0(or0(or0(p0) - 1) * 10) + 3)),
+      '',
+    )) {
       callProcedure(thread, 'W検出id適用数カウント追加 %s %b %s', [p0, !false, -1]);
     }
-    if (((runtime.ioDevices['clock']!.projectTimer() < 10) && (0 < (b1.value as List).length))) {
+    if (((runtime.ioDevices['clock']!.projectTimer() < 10) &&
+        (0 < (b1.value as List).length))) {
       b2.value = ((b1.value as List).length / 20);
     } else {
       callProcedure(thread, 'W検出id4_点に適用するべきIDを検索 %s %b', [p0, p1]);
@@ -43,17 +47,28 @@ void _factory168(Thread thread) {
       listReplace(b0, or0(or0(or0(or0(p0) - 1) * 10) + 3), b2.value);
     } else {
       if (!compareLessThan(b2.value, 0)) {
-        if (runtime.ioDevices['keyboard']!.getKeyIsDown('l')) {
-        }
+        if (runtime.ioDevices['keyboard']!.getKeyIsDown('l')) {}
         callProcedure(thread, 'W検出id_新規id追加 %s %b', [p0, p1]);
-        listReplace(b0, or0(or0(or0(or0(p0) - 1) * 10) + 3), ((b1.value as List).length / 20));
+        listReplace(
+          b0,
+          or0(or0(or0(or0(p0) - 1) * 10) + 3),
+          ((b1.value as List).length / 20),
+        );
       } else {
         callProcedure(thread, 'W検出id_点の推定用をリセット %s', [p0]);
         return '';
       }
     }
-    listReplace(b3, listGetList(b4.value as List<Object?>, p0), indexGet(b0.value, or0(or0(or0(or0(p0) - 1) * 10) + 3)));
-    listReplace(b5, listGetList(b4.value as List<Object?>, p0), indexGet(b6.value, 1));
+    listReplace(
+      b3,
+      listGetList(b4.value as List<Object?>, p0),
+      indexGet(b0.value, or0(or0(or0(or0(p0) - 1) * 10) + 3)),
+    );
+    listReplace(
+      b5,
+      listGetList(b4.value as List<Object?>, p0),
+      indexGet(b6.value, 1),
+    );
     callProcedure(thread, 'W検出id適用数カウント追加 %s %b %s', [p0, !false, 1]);
     return '';
   };

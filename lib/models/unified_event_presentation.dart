@@ -1,3 +1,4 @@
+import '../core/utils/quake_time.dart';
 import 'unified_quake_data.dart';
 
 String unifiedRomanIntensityLabel(String value) {
@@ -45,6 +46,29 @@ class UnifiedEventPresentation {
   final String apiTypeLabel;
 
   factory UnifiedEventPresentation.fromEvent(UnifiedQuakeData event) {
+    if (event.isJmaLpgm) {
+      final title = event.reportNumText.isNotEmpty
+          ? '${event.titleText} ${event.reportNumText}'
+          : event.titleText;
+      return UnifiedEventPresentation(
+        title: title,
+        primaryText: event.hypocenter,
+        secondaryText: event.depthText.isNotEmpty
+            ? '${event.magnitude >= 0 ? 'M${event.magnitude.toStringAsFixed(1)}' : 'M--'}  ·  ${event.depthText}'
+            : (event.magnitude >= 0
+                  ? 'M${event.magnitude.toStringAsFixed(1)}'
+                  : 'M--'),
+        compactSecondaryText: event.depthText.isNotEmpty
+            ? '${event.magnitude >= 0 ? 'M${event.magnitude.toStringAsFixed(1)}' : 'M--'}  ·  ${event.depthText}'
+            : (event.magnitude >= 0
+                  ? 'M${event.magnitude.toStringAsFixed(1)}'
+                  : 'M--'),
+        timeText: QuakeTime.formatUnifiedOriginClock(event),
+        intensityLabel: '长周期',
+        intensityValue: '长周期',
+        apiTypeLabel: event.apiTypeLabel,
+      );
+    }
     final volcano = event.volcanoEvent;
     if (volcano != null) {
       final title = event.reportNumText.isNotEmpty
@@ -56,27 +80,33 @@ class UnifiedEventPresentation {
         primaryText: volcano.displayLocation,
         secondaryText: volcano.displayDetail,
         compactSecondaryText: volcano.compactDisplayDetail,
-        timeText: eventTime != null
-            ? eventTime.toLocal().toString().substring(5, 19)
-            : '--:--:--',
+        timeText: QuakeTime.formatSourceClockInSystem(
+          eventTime,
+          event.timeZone,
+          includeZoneLabel: true,
+        ),
         intensityLabel: '火山',
         intensityValue: '火山',
         apiTypeLabel: event.apiTypeLabel,
       );
     }
-    final isScalePrompt = event.magnitude < 0 && event.hypocenter.isEmpty;
-    final title = event.reportNumText.isNotEmpty
-        ? '${event.titleText} ${event.reportNumText}'
-        : event.titleText;
-    final primaryText = isScalePrompt ? '震源 調査中' : event.hypocenter;
-    final magnitudeText = isScalePrompt
+    final hypocenterInvestigating = _isInvestigatingHypocenter(
+      event.hypocenter,
+    );
+    final magnitudeInvestigating = event.magnitude < 0;
+    final isFullInvestigation =
+        hypocenterInvestigating && magnitudeInvestigating;
+    final title = _displayTitle(event);
+    final primaryText = hypocenterInvestigating ? '震源 調査中' : event.hypocenter;
+    final magnitudeText = magnitudeInvestigating
         ? '規模 調査中'
         : event.isAssumption
         ? '仮定震源要素'
         : event.magnitude >= 0
         ? 'M${event.magnitude.toStringAsFixed(1)}'
         : 'M--';
-    final depthText = isScalePrompt || event.isAssumption
+    final depthText =
+        isFullInvestigation || magnitudeInvestigating || event.isAssumption
         ? ''
         : event.depthText.isNotEmpty
         ? event.depthText
@@ -86,9 +116,7 @@ class UnifiedEventPresentation {
     final secondaryText = depthText.isNotEmpty
         ? '$magnitudeText  ·  $depthText'
         : magnitudeText;
-    final timeText = event.originTime != null
-        ? event.originTime!.toLocal().toString().substring(5, 19)
-        : '--:--:--';
+    final timeText = QuakeTime.formatUnifiedOriginClock(event);
     final intensityValue = event.useShindo
         ? event.maxIntensity
         : unifiedRomanIntensityLabel(event.maxIntensity);
@@ -112,4 +140,32 @@ class UnifiedEventPresentation {
     timeText,
     if (apiTypeLabel.isNotEmpty) apiTypeLabel,
   ].where((line) => line.trim().isNotEmpty).join('\n');
+}
+
+String _displayTitle(UnifiedQuakeData event) {
+  final report = event.reportNumText.trim();
+  if (report.isEmpty) return event.titleText;
+
+  // JMA 情报（含 P2P / WHEWS）不拼报次；取消/订正等状态仍显示。
+  if (!event.isEew && event.source == 'jmaEqlist') {
+    if (RegExp(r'^第\d+報').hasMatch(report)) {
+      final status = RegExp(r'（([^）]+)）').firstMatch(report)?.group(1)?.trim();
+      if (status != null && status.isNotEmpty) {
+        return '${event.titleText} $status';
+      }
+      return event.titleText;
+    }
+  }
+
+  return '${event.titleText} $report';
+}
+
+bool _isInvestigatingHypocenter(String value) {
+  final text = value.trim();
+  return text.isEmpty ||
+      text.contains('調査中') ||
+      text.contains('调查中') ||
+      text == '不明' ||
+      text == '不詳' ||
+      text.toLowerCase() == 'unknown';
 }

@@ -8,6 +8,8 @@ import '../../core/utils/jma_seis_int_loc.dart';
 
 enum IntensityFillMode { jma, csis }
 
+bool _sameDoubleValue(double a, double b) => a == b || (a.isNaN && b.isNaN);
+
 class IntensityFillLayer extends StatefulWidget {
   final double magnitude;
   final double depth;
@@ -63,10 +65,10 @@ class _IntensityFillLayerState extends State<IntensityFillLayer> {
     super.didUpdateWidget(oldWidget);
     final sourceChanged = oldWidget.source != widget.source;
     final dataChanged =
-        oldWidget.magnitude != widget.magnitude ||
-        oldWidget.depth != widget.depth ||
-        oldWidget.hypoLat != widget.hypoLat ||
-        oldWidget.hypoLng != widget.hypoLng;
+        !_sameDoubleValue(oldWidget.magnitude, widget.magnitude) ||
+        !_sameDoubleValue(oldWidget.depth, widget.depth) ||
+        !_sameDoubleValue(oldWidget.hypoLat, widget.hypoLat) ||
+        !_sameDoubleValue(oldWidget.hypoLng, widget.hypoLng);
     final warnAreaChanged = oldWidget.warnAreaJson != widget.warnAreaJson;
 
     if (sourceChanged) {
@@ -111,10 +113,10 @@ class _IntensityFillLayerState extends State<IntensityFillLayer> {
 
   void _calculateIntensities() {
     if (_topoData == null) return;
-    if (widget.magnitude == _lastMag &&
-        widget.depth == _lastDepth &&
-        widget.hypoLat == _lastLat &&
-        widget.hypoLng == _lastLng &&
+    if (_sameDoubleValue(widget.magnitude, _lastMag) &&
+        _sameDoubleValue(widget.depth, _lastDepth) &&
+        _sameDoubleValue(widget.hypoLat, _lastLat) &&
+        _sameDoubleValue(widget.hypoLng, _lastLng) &&
         widget.source == _lastSource &&
         widget.warnAreaJson == _lastWarnArea) {
       return;

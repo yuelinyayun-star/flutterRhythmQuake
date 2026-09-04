@@ -101,11 +101,18 @@ class KmaMonitorService {
   factory KmaMonitorService() => _instance;
   KmaMonitorService._internal();
 
-  static const List<String> _wsUrls = [
+  static const List<String> _pewsWsUrls = [
     'wss://ws.yuelinrhythm.top/kma-station',
+  ];
+
+  static const List<String> _fanWsUrls = [
     'wss://ws.fanstudio.tech/kma-station',
     'wss://ws.fanstudio.hk/kma-station',
   ];
+
+  String _connectionSource = 'pews';
+  List<String> get _wsUrls =>
+      _connectionSource == 'fan' ? _fanWsUrls : _pewsWsUrls;
 
   List<KmaStation> _stations = [];
   List<KmaStation> get stations => _stations;
@@ -116,7 +123,9 @@ class KmaMonitorService {
   int _reconnectAttempts = 0;
   int _currentUrlIndex = 0;
   bool _isConnected = false;
+  bool _connectionRequested = false;
   bool _hasRealtimeData = false;
+  bool _externalInputEnabled = false;
   DateTime _lastMessageAt = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime? _lastDataTimestamp;
   final ValueNotifier<DateTime?> dataTimeNotifier = ValueNotifier(null);
@@ -146,12 +155,23 @@ class KmaMonitorService {
 
   void Function(bool connected)? onStatusChanged;
 
+  /// Selects the socket group without starting a connection.
+  void setConnectionSource(String source) {
+    final normalized = source == 'fan' ? 'fan' : 'pews';
+    if (_connectionSource == normalized) return;
+    _connectionSource = normalized;
+    _currentUrlIndex = 0;
+    disconnect();
+  }
+
   void connect() {
+    _connectionRequested = true;
     if (_channel != null) return;
     _doConnect(_currentUrlIndex);
   }
 
   void _doConnect(int urlIndex) {
+    if (!_connectionRequested) return;
     if (urlIndex >= _wsUrls.length) {
       debugPrint('KMA: 所有WebSocket地址连接失败，${_reconnectAttempts + 1}秒后重试');
       onStatusChanged?.call(false);
@@ -247,12 +267,13 @@ class KmaMonitorService {
     }
 
     if (newStations.isNotEmpty) {
-      _stations = newStations;
+      _replaceStations(newStations);
       debugPrint('KMA: 收到 ${_stations.length} 个测站');
     }
   }
 
   void _handleData(dynamic data) {
+    if (_externalInputEnabled) return;
     if (data is! Map) return;
 
     final timestamp = _parseTimestamp(data['timestamp']);
@@ -260,12 +281,6 @@ class KmaMonitorService {
       _logRejectedFrame('missing timestamp');
       return;
     }
-    final previousTimestamp = _lastDataTimestamp;
-    if (previousTimestamp != null && !timestamp.isAfter(previousTimestamp)) {
-      _logRejectedFrame('stale timestamp ${data['timestamp']}');
-      return;
-    }
-
     final mmi = data['mmi'] as List?;
     if (mmi == null) return;
     if (mmi.length != _stations.length) {
@@ -287,6 +302,56 @@ class KmaMonitorService {
       parsed.add(val);
     }
 
+    _applyRealtimeFrame(timestamp, parsed);
+  }
+
+  /// Feeds an authenticated external KMA frame through the same history,
+  /// gap, hold-window, and shake-detection pipeline as the PEWS socket.
+  void ingestExternalFrame({
+    required DateTime timestamp,
+    required List<LatLng> coordinates,
+    required List<double> values,
+  }) {
+    if (!_externalInputEnabled) return;
+    if (coordinates.isEmpty || coordinates.length != values.length) {
+      _logRejectedFrame(
+        'external length mismatch ${values.length}/${coordinates.length}',
+      );
+      return;
+    }
+
+    final parsed = <int>[];
+    for (final raw in values) {
+      final value = _parseMmi(raw);
+      if (value == null || value == -3) {
+        _logRejectedFrame('external invalid value $raw');
+        return;
+      }
+      parsed.add(value);
+    }
+
+    if (!_matchesCoordinates(coordinates)) {
+      _replaceStations(
+        List.generate(
+          coordinates.length,
+          (index) => KmaStation(id: index, coordinate: coordinates[index]),
+        ),
+      );
+    }
+    _applyRealtimeFrame(timestamp, parsed);
+  }
+
+  void _applyRealtimeFrame(DateTime timestamp, List<int> parsed) {
+    final previousTimestamp = _lastDataTimestamp;
+    if (previousTimestamp != null && !timestamp.isAfter(previousTimestamp)) {
+      _logRejectedFrame('stale timestamp $timestamp');
+      return;
+    }
+    if (parsed.length != _stations.length) {
+      _logRejectedFrame('length mismatch ${parsed.length}/${_stations.length}');
+      return;
+    }
+
     final now = DateTime.now();
     _applyDataGap(timestamp);
     dataTimeNotifier.value = timestamp;
@@ -296,14 +361,72 @@ class KmaMonitorService {
     }
 
     for (int i = 0; i < parsed.length; i++) {
-      final val = parsed[i];
-      _stations[i].update(val, holdFrames: _intensityHoldFrames);
+      _stations[i].update(parsed[i], holdFrames: _intensityHoldFrames);
       _stations[i].lastUpdate = now;
     }
 
     _processShakeDetection();
-
     _stationController.add(List.unmodifiable(_stations));
+  }
+
+  bool _matchesCoordinates(List<LatLng> coordinates) {
+    if (_stations.length != coordinates.length) return false;
+    for (var i = 0; i < coordinates.length; i++) {
+      final current = _stations[i].coordinate;
+      final next = coordinates[i];
+      if (current.latitude != next.latitude ||
+          current.longitude != next.longitude) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  void _replaceStations(List<KmaStation> stations) {
+    for (final station in _stations) {
+      station.dispose();
+    }
+    _stations = stations;
+    _adjStationIds = [];
+    _distMatrix = [];
+    _lastStationCount = 0;
+    _lastDataTimestamp = null;
+    _prevMaxActiveShindo = -1;
+    dataTimeNotifier.value = null;
+  }
+
+  void resetRealtimeState({bool clearStations = true}) {
+    final hadActiveShake = _prevMaxActiveShindo >= 0;
+    for (final station in _stations) {
+      station.clearActive();
+      station.recentLevel.clear();
+      station.ascend = 0;
+      station.activityLevel = -1;
+      station.holdLevel = -1;
+    }
+    _lastDataTimestamp = null;
+    _hasRealtimeData = false;
+    _prevMaxActiveShindo = -1;
+    dataTimeNotifier.value = null;
+    if (clearStations) {
+      for (final station in _stations) {
+        station.dispose();
+      }
+      _stations = [];
+      _adjStationIds = [];
+      _distMatrix = [];
+      _lastStationCount = 0;
+      if (!_stationController.isClosed) {
+        _stationController.add(const <KmaStation>[]);
+      }
+    }
+    if (hadActiveShake) onShakeExpired?.call();
+  }
+
+  void setExternalInputEnabled(bool enabled) {
+    if (_externalInputEnabled == enabled) return;
+    _externalInputEnabled = enabled;
+    resetRealtimeState();
   }
 
   int? _parseMmi(dynamic raw) {
@@ -510,7 +633,7 @@ class KmaMonitorService {
       }
     }
 
-    final currentMaxShindo = _shindoFromKmaLevel(currentMaxLevel);
+    final currentMaxShindo = shindoFromLevel(currentMaxLevel);
     if (currentMaxShindo >= 0 && currentMaxShindo > _prevMaxActiveShindo) {
       onShakeDetected?.call(currentMaxShindo);
     } else if (currentMaxShindo < 0 && _prevMaxActiveShindo >= 0) {
@@ -519,7 +642,7 @@ class KmaMonitorService {
     _prevMaxActiveShindo = currentMaxShindo;
   }
 
-  int _shindoFromKmaLevel(int level) {
+  static int shindoFromLevel(int level) {
     if (level < 0) return -1;
     if (level <= 3) return 0;
     if (level <= 4) return 1;
@@ -532,6 +655,7 @@ class KmaMonitorService {
   }
 
   void _reconnect(int failedUrlIndex) {
+    if (!_connectionRequested) return;
     _heartbeatTimer?.cancel();
     _channel?.sink.close();
     _channel = null;
@@ -545,8 +669,10 @@ class KmaMonitorService {
   }
 
   void _scheduleReconnect(int seconds, int nextUrlIndex) {
+    if (!_connectionRequested) return;
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer(Duration(seconds: seconds), () {
+      if (!_connectionRequested) return;
       _doConnect(nextUrlIndex);
     });
   }
@@ -568,6 +694,7 @@ class KmaMonitorService {
   }
 
   void disconnect() {
+    _connectionRequested = false;
     _reconnectTimer?.cancel();
     _heartbeatTimer?.cancel();
     _channel?.sink.close();
@@ -575,6 +702,7 @@ class KmaMonitorService {
     _isConnected = false;
     _hasRealtimeData = false;
     dataTimeNotifier.value = null;
+    onStatusChanged?.call(false);
   }
 
   void dispose() {

@@ -65,12 +65,7 @@ void main() {
         (rawPacket as Map)['caseId'] as String: rawPacket
             .cast<String, Object?>(),
     };
-    expect(
-      packets.keys,
-      containsAll({
-        '20260620_iwate_offshore_m34_ref',
-      }),
-    );
+    expect(packets.keys, containsAll({'20260620_iwate_offshore_m34_ref'}));
 
     final priorityCases = packets.values
         .where(

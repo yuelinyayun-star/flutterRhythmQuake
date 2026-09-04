@@ -328,10 +328,7 @@ void indexSet(Variable variable, Object? index, Object? value) {
 Variable cloneVariable(Variable v) => v.clone();
 
 /// Mirror of JS `makeTarget` (line 66952).
-Target makeTarget(
-  Map<String, dynamic> snapshot,
-  Runtime runtime,
-) {
+Target makeTarget(Map<String, dynamic> snapshot, Runtime runtime) {
   final variables = <String, Variable>{};
   final vars = snapshot['variables'] as Map<String, dynamic>;
   for (final entry in vars.entries) {
@@ -344,8 +341,8 @@ Target makeTarget(
       value is List
           ? List<Object?>.of(value)
           : value is num
-              ? value
-              : value?.toString(),
+          ? value
+          : value?.toString(),
     );
   }
   final target = Target(snapshot['name'] as String, variables);
@@ -399,8 +396,11 @@ class Thread {
 Object? runMaybeGenerator(Object? value) => value;
 
 /// Mirror of JS `callProcedure` (line 66960).
-Object? callProcedure(Thread thread, String key,
-    [List<Object?> args = const []]) {
+Object? callProcedure(
+  Thread thread,
+  String key, [
+  List<Object?> args = const [],
+]) {
   final fn = thread.procedures[key];
   if (fn == null) throw Exception('procedure not found: $key');
   return runMaybeGenerator(fn(args));

@@ -18,6 +18,53 @@ void main() {
         DateTime.utc(2026, 7, 17, 7, 29, 49),
       );
     });
+
+    test('accepts only a strictly newer realtime frame', () {
+      final previous = DateTime.utc(2026, 8, 19, 4, 20, 16);
+
+      expect(
+        PAlertService.isNewerFrameTime(
+          previous,
+          previous.add(const Duration(seconds: 1)),
+        ),
+        isTrue,
+      );
+      expect(PAlertService.isNewerFrameTime(previous, previous), isFalse);
+      expect(
+        PAlertService.isNewerFrameTime(
+          previous,
+          previous.subtract(const Duration(seconds: 1)),
+        ),
+        isFalse,
+      );
+      expect(PAlertService.isNewerFrameTime(null, previous), isTrue);
+    });
+
+    test('marks a feed stale only after the six-second frame deadline', () {
+      final receivedAt = DateTime.utc(2026, 8, 19, 4, 20, 16);
+
+      expect(
+        PAlertService.isFrameStale(
+          receivedAt,
+          receivedAt.add(PAlertService.frameStaleAfter),
+        ),
+        isFalse,
+      );
+      expect(
+        PAlertService.isFrameStale(
+          receivedAt,
+          receivedAt.add(
+            PAlertService.frameStaleAfter + const Duration(milliseconds: 1),
+          ),
+        ),
+        isTrue,
+      );
+      expect(PAlertService.isFrameStale(null, receivedAt), isFalse);
+    });
+
+    test('requires three consecutive transport failures', () {
+      expect(PAlertService.maxConsecutiveFailures, 3);
+    });
   });
 
   group('P-Alert CWA intensity', () {

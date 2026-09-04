@@ -69,7 +69,8 @@ void main(List<String> args) {
   if (report['status'] != 'pass') exitCode = 1;
 }
 
-Map<String, Object?> buildPlumTohokuMiddleTransitionRuntimeSignalDiagnosticJson({
+Map<String, Object?>
+buildPlumTohokuMiddleTransitionRuntimeSignalDiagnosticJson({
   String dataDirectory = _defaultDataDirectory,
   String modelPath = _defaultModelPath,
 }) {
@@ -275,10 +276,8 @@ Map<String, Object?> buildPlumTohokuMiddleTransitionRuntimeSignalDiagnosticJson(
           'top1 propagated excess minus top2 propagated excess',
       'marginStdDevBand':
           'standard deviation of supporting propagated excess values',
-      'marginRangeBand':
-          'max-minus-min supporting propagated excess',
-      'meanContributionMarginBand':
-          'mean supporting propagated excess',
+      'marginRangeBand': 'max-minus-min supporting propagated excess',
+      'meanContributionMarginBand': 'mean supporting propagated excess',
       'effectiveSupportCountBand':
           '1 / HHI as a soft effective-support count proxy',
     },
@@ -308,10 +307,7 @@ Map<String, Object?> _buildFamilyJson({
 }) {
   final validationBuckets = validation.bucketsForFamily(family);
   final testBuckets = test.bucketsForFamily(family);
-  final keys = {
-    ...validationBuckets.keys,
-    ...testBuckets.keys,
-  }.toList()
+  final keys = {...validationBuckets.keys, ...testBuckets.keys}.toList()
     ..sort();
   return {
     'validationPositiveCount': validation.summary.middleTransitionCount,
@@ -363,8 +359,9 @@ Map<String, Object?> _bucketRow({
     'family': family,
     'bucket': bucket,
     'validationCount': validationCount,
-    'validationShare':
-        validationTotal == 0 ? 0.0 : validationCount / validationTotal,
+    'validationShare': validationTotal == 0
+        ? 0.0
+        : validationCount / validationTotal,
     'validationPositiveCount': validationPositiveCount,
     'validationPositiveRate': validationRate,
     'testCount': testCount,
@@ -372,7 +369,8 @@ Map<String, Object?> _bucketRow({
     'testPositiveCount': testPositiveCount,
     'testPositiveRate': testRate,
     'testPositiveCaptureShare': testCaptureShare,
-    'sampleShareDelta': (testTotal == 0 ? 0.0 : testCount / testTotal) -
+    'sampleShareDelta':
+        (testTotal == 0 ? 0.0 : testCount / testTotal) -
         (validationTotal == 0 ? 0.0 : validationCount / validationTotal),
     'positiveRateDelta': testRate - validationRate,
     'testLift': testLift,
@@ -393,14 +391,17 @@ List<Map<String, Object?>> _buildRankedCandidates(
     }
   }
   rows.sort((left, right) {
-    final scoreCmp =
-        _number(right['proxyScore']).compareTo(_number(left['proxyScore']));
+    final scoreCmp = _number(
+      right['proxyScore'],
+    ).compareTo(_number(left['proxyScore']));
     if (scoreCmp != 0) return scoreCmp;
-    final liftCmp =
-        _number(right['testLift']).compareTo(_number(left['testLift']));
+    final liftCmp = _number(
+      right['testLift'],
+    ).compareTo(_number(left['testLift']));
     if (liftCmp != 0) return liftCmp;
-    return _int(right['testPositiveCount'])
-        .compareTo(_int(left['testPositiveCount']));
+    return _int(
+      right['testPositiveCount'],
+    ).compareTo(_int(left['testPositiveCount']));
   });
   return rows.take(20).toList();
 }
@@ -519,10 +520,11 @@ _ContributionSummary _supportContributionSummary({
   final contributionHhi = total <= 0
       ? 0.0
       : margins
-          .map((margin) => margin / total)
-          .fold<double>(0.0, (sum, share) => sum + share * share);
+            .map((margin) => margin / total)
+            .fold<double>(0.0, (sum, share) => sum + share * share);
   final mean = total / margins.length;
-  final variance = margins.fold<double>(
+  final variance =
+      margins.fold<double>(
         0.0,
         (sum, margin) => sum + math.pow(margin - mean, 2).toDouble(),
       ) /
@@ -556,8 +558,8 @@ List<_EvidenceStation> _supportingEvidence({
       observed.longitude,
     );
     if (distance > _plumRadiusKm) continue;
-    final propagated = observed.intensity -
-        _plumDampingPer10Km * (distance / 10.0);
+    final propagated =
+        observed.intensity - _plumDampingPer10Km * (distance / 10.0);
     if (propagated >= threshold) {
       supportingEvidence.add(
         _EvidenceStation(
@@ -693,7 +695,9 @@ String plumTohokuMiddleTransitionRuntimeSignalDiagnosticMarkdown(
     ..writeln()
     ..writeln('## Coverage')
     ..writeln()
-    ..writeln('| Split | Variants | Station forecasts | Focus samples | Middle-transition samples | Rate |')
+    ..writeln(
+      '| Split | Variants | Station forecasts | Focus samples | Middle-transition samples | Rate |',
+    )
     ..writeln('| --- | ---: | ---: | ---: | ---: | ---: |');
   for (final split in const ['validation', 'test']) {
     final summary = _map(labelSummary[split]);
@@ -811,8 +815,9 @@ class _SplitAccumulator {
   void add(_SignalSample sample) => samples.add(sample);
 
   _LabelSummary get summary {
-    final middle =
-        samples.where((sample) => sample.isMiddleTransitionZone).length;
+    final middle = samples
+        .where((sample) => sample.isMiddleTransitionZone)
+        .length;
     return _LabelSummary(
       focusSampleCount: samples.length,
       middleTransitionCount: middle,
@@ -823,9 +828,9 @@ class _SplitAccumulator {
     final buckets = <String, _BucketStats>{};
     for (final sample in samples) {
       final key = sample.bucketForFamily(family);
-      buckets.putIfAbsent(key, _BucketStats.new).add(
-        sample.isMiddleTransitionZone,
-      );
+      buckets
+          .putIfAbsent(key, _BucketStats.new)
+          .add(sample.isMiddleTransitionZone);
     }
     return buckets;
   }
@@ -840,15 +845,14 @@ class _LabelSummary {
     required this.middleTransitionCount,
   });
 
-  double get middleTransitionRate => focusSampleCount == 0
-      ? 0.0
-      : middleTransitionCount / focusSampleCount;
+  double get middleTransitionRate =>
+      focusSampleCount == 0 ? 0.0 : middleTransitionCount / focusSampleCount;
 
   Map<String, Object?> toJson() => {
-        'focusSampleCount': focusSampleCount,
-        'middleTransitionCount': middleTransitionCount,
-        'middleTransitionRate': middleTransitionRate,
-      };
+    'focusSampleCount': focusSampleCount,
+    'middleTransitionCount': middleTransitionCount,
+    'middleTransitionRate': middleTransitionRate,
+  };
 }
 
 class _BucketStats {
@@ -887,20 +891,17 @@ class _FeatureMeanAccumulator {
   }
 
   Map<String, Object?> toJson() => {
-        'count': count,
-        'topContributionShare': count == 0 ? 0.0 : topContributionShare / count,
-        'top2ContributionShare':
-            count == 0 ? 0.0 : top2ContributionShare / count,
-        'contributionHhi': count == 0 ? 0.0 : contributionHhi / count,
-        'dominanceShareGap': count == 0 ? 0.0 : dominanceShareGap / count,
-        'dominanceMarginGap': count == 0 ? 0.0 : dominanceMarginGap / count,
-        'marginStdDev': count == 0 ? 0.0 : marginStdDev / count,
-        'marginRange': count == 0 ? 0.0 : marginRange / count,
-        'meanContributionMargin':
-            count == 0 ? 0.0 : meanContributionMargin / count,
-        'effectiveSupportCount':
-            count == 0 ? 0.0 : effectiveSupportCount / count,
-      };
+    'count': count,
+    'topContributionShare': count == 0 ? 0.0 : topContributionShare / count,
+    'top2ContributionShare': count == 0 ? 0.0 : top2ContributionShare / count,
+    'contributionHhi': count == 0 ? 0.0 : contributionHhi / count,
+    'dominanceShareGap': count == 0 ? 0.0 : dominanceShareGap / count,
+    'dominanceMarginGap': count == 0 ? 0.0 : dominanceMarginGap / count,
+    'marginStdDev': count == 0 ? 0.0 : marginStdDev / count,
+    'marginRange': count == 0 ? 0.0 : marginRange / count,
+    'meanContributionMargin': count == 0 ? 0.0 : meanContributionMargin / count,
+    'effectiveSupportCount': count == 0 ? 0.0 : effectiveSupportCount / count,
+  };
 }
 
 class _SignalSample {
@@ -1134,7 +1135,10 @@ class _NeighborSummary {
   final int count;
   final double belowThresholdShare;
 
-  const _NeighborSummary({required this.count, required this.belowThresholdShare});
+  const _NeighborSummary({
+    required this.count,
+    required this.belowThresholdShare,
+  });
 }
 
 class _SupportShape {
@@ -1161,71 +1165,69 @@ Map<String, Object?> _emptyReport({
   required String dataDirectory,
   required String modelPath,
 }) => {
-        'schemaVersion':
-            'plum_tohoku_middle_transition_runtime_signal_diagnostic_v1',
-        'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
-        'status': 'fail',
-        'policy': {
-          'method': 'PLUM Tohoku middle-transition runtime-signal diagnostic',
-          'rawPredictedIntensityMutated': false,
-          'frozenTestEvaluated': true,
-          'productionReady': false,
-          'productionUiConnected': false,
-          'diagnosticOnly': true,
-          'parametersTuned': false,
-          'suppressionApplied': false,
-          'plumRadiusKm': _plumRadiusKm,
-          'plumDampingPer10Km': _plumDampingPer10Km,
-          'minimumTestSamplesForRanking': _minTestSamplesForRanking,
-        },
-        'inputs': {
-          'dataDirectory': dataDirectory,
-          'modelPath': modelPath,
-          'splits': ['validation', 'test'],
-          'threshold': _threshold.label,
-        },
-        'focusFilter': {
-          'estimatedSourceRegion': _focusRegion,
-          'minimumEvidenceCount': _focusMinimumEvidenceCount,
-          'maximumNearestEvidenceDistanceKm':
-              _focusMaximumNearestEvidenceDistanceKm,
-          'minimumPredictionMarginShindo': _focusMinimumMargin,
-          'baselineThresholdCrossingRequired': true,
-        },
-        'labelDefinition': const {
-          'positiveLabel': 'middle_transition_zone',
-          'truthInputs': [
-            'actualGapBand in {-1.0_to_0.0, 0.0_to_1.0}',
-            'evidenceGapBand in {1.0_to_2.0, 2.0_to_3.0}',
-            'localConsistencyLabel == mismatch',
-          ],
-        },
-        'featureDefinitions': const {},
-        'coverage': {
-          'validationVariants': 0,
-          'testVariants': 0,
-          'validationStationForecasts': 0,
-          'testStationForecasts': 0,
-          'skippedMissingMagnitudeEvents': 0,
-          'skippedNoSourceEstimateVariants': 0,
-        },
-        'labelSummary': const {
-          'validation': {
-            'focusSampleCount': 0,
-            'middleTransitionCount': 0,
-            'middleTransitionRate': 0.0,
-          },
-          'test': {
-            'focusSampleCount': 0,
-            'middleTransitionCount': 0,
-            'middleTransitionRate': 0.0,
-          },
-        },
-        'testOutcomeFeatureMeans': const {},
-        'featureFamilies': const {},
-        'rankedCandidates': const [],
-        'errors': errors,
-      };
+  'schemaVersion': 'plum_tohoku_middle_transition_runtime_signal_diagnostic_v1',
+  'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
+  'status': 'fail',
+  'policy': {
+    'method': 'PLUM Tohoku middle-transition runtime-signal diagnostic',
+    'rawPredictedIntensityMutated': false,
+    'frozenTestEvaluated': true,
+    'productionReady': false,
+    'productionUiConnected': false,
+    'diagnosticOnly': true,
+    'parametersTuned': false,
+    'suppressionApplied': false,
+    'plumRadiusKm': _plumRadiusKm,
+    'plumDampingPer10Km': _plumDampingPer10Km,
+    'minimumTestSamplesForRanking': _minTestSamplesForRanking,
+  },
+  'inputs': {
+    'dataDirectory': dataDirectory,
+    'modelPath': modelPath,
+    'splits': ['validation', 'test'],
+    'threshold': _threshold.label,
+  },
+  'focusFilter': {
+    'estimatedSourceRegion': _focusRegion,
+    'minimumEvidenceCount': _focusMinimumEvidenceCount,
+    'maximumNearestEvidenceDistanceKm': _focusMaximumNearestEvidenceDistanceKm,
+    'minimumPredictionMarginShindo': _focusMinimumMargin,
+    'baselineThresholdCrossingRequired': true,
+  },
+  'labelDefinition': const {
+    'positiveLabel': 'middle_transition_zone',
+    'truthInputs': [
+      'actualGapBand in {-1.0_to_0.0, 0.0_to_1.0}',
+      'evidenceGapBand in {1.0_to_2.0, 2.0_to_3.0}',
+      'localConsistencyLabel == mismatch',
+    ],
+  },
+  'featureDefinitions': const {},
+  'coverage': {
+    'validationVariants': 0,
+    'testVariants': 0,
+    'validationStationForecasts': 0,
+    'testStationForecasts': 0,
+    'skippedMissingMagnitudeEvents': 0,
+    'skippedNoSourceEstimateVariants': 0,
+  },
+  'labelSummary': const {
+    'validation': {
+      'focusSampleCount': 0,
+      'middleTransitionCount': 0,
+      'middleTransitionRate': 0.0,
+    },
+    'test': {
+      'focusSampleCount': 0,
+      'middleTransitionCount': 0,
+      'middleTransitionRate': 0.0,
+    },
+  },
+  'testOutcomeFeatureMeans': const {},
+  'featureFamilies': const {},
+  'rankedCandidates': const [],
+  'errors': errors,
+};
 
 StaticAttenuationModel _modelFromJson(Map<String, Object?> json) {
   return StaticAttenuationModel(

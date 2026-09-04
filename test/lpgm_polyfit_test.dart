@@ -27,8 +27,36 @@ import 'package:flutter_test/flutter_test.dart';
   return (h, s, cMax);
 }
 
-const _svaScaleValues = [0.001, 0.01, 0.1, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0];
-const _log10SvaScale = [-3.0, -2.0, -1.0, 0.0, 0.30103, 0.69897, 1.0, 1.30103, 1.69897, 2.0, 2.30103, 2.69897, 3.0];
+const _svaScaleValues = [
+  0.001,
+  0.01,
+  0.1,
+  1.0,
+  2.0,
+  5.0,
+  10.0,
+  20.0,
+  50.0,
+  100.0,
+  200.0,
+  500.0,
+  1000.0,
+];
+const _log10SvaScale = [
+  -3.0,
+  -2.0,
+  -1.0,
+  0.0,
+  0.30103,
+  0.69897,
+  1.0,
+  1.30103,
+  1.69897,
+  2.0,
+  2.30103,
+  2.69897,
+  3.0,
+];
 
 double _svaFromPosition(double p) {
   final clamped = p.clamp(0.0, 1.0);
@@ -37,7 +65,8 @@ double _svaFromPosition(double p) {
   final i = idx.toInt();
   if (i >= n - 1) return 1000.0;
   final t = idx - i;
-  final logSva = _log10SvaScale[i] + (_log10SvaScale[i + 1] - _log10SvaScale[i]) * t;
+  final logSva =
+      _log10SvaScale[i] + (_log10SvaScale[i + 1] - _log10SvaScale[i]) * t;
   return math.pow(10.0, logSva).toDouble();
 }
 
@@ -45,7 +74,9 @@ double _positionFromSva(double sva) {
   final logSva = math.log(sva) / math.ln10;
   for (int i = 0; i < _log10SvaScale.length - 1; i++) {
     if (logSva >= _log10SvaScale[i] && logSva <= _log10SvaScale[i + 1]) {
-      final t = (logSva - _log10SvaScale[i]) / (_log10SvaScale[i + 1] - _log10SvaScale[i]);
+      final t =
+          (logSva - _log10SvaScale[i]) /
+          (_log10SvaScale[i + 1] - _log10SvaScale[i]);
       return (i + t) / 12;
     }
   }
@@ -80,14 +111,22 @@ void main() {
       int c = 0;
       for (int y = 0; y < bh; y++) {
         final off = (y * bw + x) * 4;
-        if (raw.getUint8(off) != 0 || raw.getUint8(off+1) != 0 || raw.getUint8(off+2) != 0) c++;
+        if (raw.getUint8(off) != 0 ||
+            raw.getUint8(off + 1) != 0 ||
+            raw.getUint8(off + 2) != 0)
+          c++;
       }
-      if (c > bestBarCount) { bestBarCount = c; bestBarX = x; }
+      if (c > bestBarCount) {
+        bestBarCount = c;
+        bestBarX = x;
+      }
     }
     int barTop = bh, barBottom = 0;
     for (int y = 0; y < bh; y++) {
       final off = (y * bw + bestBarX) * 4;
-      if (raw.getUint8(off) != 0 || raw.getUint8(off+1) != 0 || raw.getUint8(off+2) != 0) {
+      if (raw.getUint8(off) != 0 ||
+          raw.getUint8(off + 1) != 0 ||
+          raw.getUint8(off + 2) != 0) {
         if (y < barTop) barTop = y;
         if (y > barBottom) barBottom = y;
       }
@@ -102,9 +141,14 @@ void main() {
       for (int x = bestBarX - 5; x <= bestBarX + 5; x++) {
         if (x < 0 || x >= bw) continue;
         final off = (y * bw + x) * 4;
-        final r = raw.getUint8(off), g = raw.getUint8(off+1), b = raw.getUint8(off+2);
+        final r = raw.getUint8(off),
+            g = raw.getUint8(off + 1),
+            b = raw.getUint8(off + 2);
         if (r == 0 && g == 0 && b == 0) continue;
-        sumR += r; sumG += g; sumB += b; count++;
+        sumR += r;
+        sumG += g;
+        sumB += b;
+        count++;
       }
       if (count == 0) continue;
       samples.add((sumR ~/ count, sumG ~/ count, sumB ~/ count, position));
@@ -127,18 +171,29 @@ void main() {
 
     for (final expectedSva in _svaScaleValues) {
       final pos = _positionFromSva(expectedSva);
-      final imageY = (barBottom - pos * (barBottom - barTop)).round().clamp(barTop, barBottom);
+      final imageY = (barBottom - pos * (barBottom - barTop)).round().clamp(
+        barTop,
+        barBottom,
+      );
 
       // Get average color at this Y
       int sumR = 0, sumG = 0, sumB = 0, count = 0;
       for (int x = bestBarX - 5; x <= bestBarX + 5; x++) {
         if (x < 0 || x >= bw) continue;
         final off = (imageY * bw + x) * 4;
-        final r = raw.getUint8(off), g = raw.getUint8(off+1), b = raw.getUint8(off+2);
+        final r = raw.getUint8(off),
+            g = raw.getUint8(off + 1),
+            b = raw.getUint8(off + 2);
         if (r == 0 && g == 0 && b == 0) continue;
-        sumR += r; sumG += g; sumB += b; count++;
+        sumR += r;
+        sumG += g;
+        sumB += b;
+        count++;
       }
-      if (count == 0) { print('  SVA=$expectedSva: no data at y=$imageY'); continue; }
+      if (count == 0) {
+        print('  SVA=$expectedSva: no data at y=$imageY');
+        continue;
+      }
       final r = sumR ~/ count;
       final g = sumG ~/ count;
       final b = sumB ~/ count;
@@ -160,17 +215,22 @@ void main() {
         final ds = (sHsv.$2 - inputHsv.$2).abs();
         final dv = (sHsv.$3 - inputHsv.$3).abs();
         final dist = dh * dh + ds * ds * 16 + dv * dv * 16;
-        if (dist < bestDist) { bestDist = dist; bestPos = sp; }
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestPos = sp;
+        }
       }
       final actualSva = _svaFromPosition(bestPos);
       final err = (actualSva - expectedSva).abs() / expectedSva * 100;
 
-      print('  SVA=${expectedSva.toStringAsFixed(3).padLeft(8)}  '
-          'RGB=(${r.toString().padLeft(3)},${g.toString().padLeft(3)},${b.toString().padLeft(3)})  '
-          'pos=${pos.toStringAsFixed(4)}  '
-          'lookupPos=${bestPos.toStringAsFixed(4)}  '
-          'calcSVA=${actualSva.toStringAsFixed(2).padLeft(10)}  '
-          'err=${err.toStringAsFixed(1).padLeft(6)}%');
+      print(
+        '  SVA=${expectedSva.toStringAsFixed(3).padLeft(8)}  '
+        'RGB=(${r.toString().padLeft(3)},${g.toString().padLeft(3)},${b.toString().padLeft(3)})  '
+        'pos=${pos.toStringAsFixed(4)}  '
+        'lookupPos=${bestPos.toStringAsFixed(4)}  '
+        'calcSVA=${actualSva.toStringAsFixed(2).padLeft(10)}  '
+        'err=${err.toStringAsFixed(1).padLeft(6)}%',
+      );
     }
   });
 }

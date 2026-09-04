@@ -536,46 +536,9 @@ class _NiedWorkerState {
   }
 
   List<int> _dedupe(List<int> stationIds, List<_DetectorStationState> states) {
-    if (stationIds.length <= 1) return stationIds;
-    final bestByCluster = <String, int>{};
-    final order = <String>[];
-    for (final id in stationIds) {
-      final key = _detectorConfigs[id].clusterKey;
-      final current = bestByCluster[key];
-      if (current == null) {
-        bestByCluster[key] = id;
-        order.add(key);
-      } else {
-        bestByCluster[key] = _prefer(current, id, states);
-      }
-    }
-    return [for (final key in order) bestByCluster[key]!];
-  }
-
-  int _prefer(
-    int currentId,
-    int candidateId,
-    List<_DetectorStationState> states,
-  ) {
-    final current = states[currentId];
-    final candidate = states[candidateId];
-    if (candidate.kaLevel != current.kaLevel) {
-      return candidate.kaLevel > current.kaLevel ? candidateId : currentId;
-    }
-    if (candidate.activity != current.activity) {
-      return candidate.activity > current.activity ? candidateId : currentId;
-    }
-    if (candidate.ascend != current.ascend) {
-      return candidate.ascend > current.ascend ? candidateId : currentId;
-    }
-    if (candidate.continuousShindo != current.continuousShindo) {
-      return candidate.continuousShindo > current.continuousShindo
-          ? candidateId
-          : currentId;
-    }
-    return _detectorConfigs[candidateId].id < _detectorConfigs[currentId].id
-        ? candidateId
-        : currentId;
+    // Keep one detector result per station, matching KA's station list. The
+    // GIF pixel-cluster key is retained only as provenance metadata.
+    return stationIds;
   }
 
   double _haversine(_DetectorStationConfig a, _DetectorStationConfig b) {

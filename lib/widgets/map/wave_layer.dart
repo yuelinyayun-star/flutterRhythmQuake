@@ -99,10 +99,9 @@ class _QuakeWaveLayerState extends State<QuakeWaveLayer> {
 
   @override
   Widget build(BuildContext context) {
-    return _buildPaint(context);
-  }
-
-  Widget _buildPaint(BuildContext context) {
+    // Must follow MapCamera every frame during pan/zoom — sampling camera only
+    // on the wave clock (4fps) makes epicenter/waves drift against tiles.
+    // Station layers stay on mapStyleZoomOf to avoid that cost.
     return Builder(
       builder: (innerContext) {
         final camera = MapCamera.of(innerContext);
@@ -111,23 +110,25 @@ class _QuakeWaveLayerState extends State<QuakeWaveLayer> {
                 widget.frameRate,
               )
             : null;
-        return CustomPaint(
-          painter: WavePainter(
-            event: widget.event,
-            camera: camera,
-            showWaves: widget.showWaves,
-            userPosition: widget.userPosition,
-            colorMode: widget.colorMode,
-            blinkOn: widget.blinkOn,
-            pWaveColor: widget.pWaveColor,
-            sWaveColor: widget.sWaveColor,
-            showCrosshair: widget.showCrosshair,
-            showEpicenterLabel: widget.showEpicenterLabel,
-            repaint: repaint,
+        return RepaintBoundary(
+          child: CustomPaint(
+            painter: WavePainter(
+              event: widget.event,
+              camera: camera,
+              showWaves: widget.showWaves,
+              userPosition: widget.userPosition,
+              colorMode: widget.colorMode,
+              blinkOn: widget.blinkOn,
+              pWaveColor: widget.pWaveColor,
+              sWaveColor: widget.sWaveColor,
+              showCrosshair: widget.showCrosshair,
+              showEpicenterLabel: widget.showEpicenterLabel,
+              repaint: repaint,
+            ),
+            size: Size.infinite,
+            isComplex: true,
+            willChange: widget.showWaves,
           ),
-          size: Size.infinite,
-          isComplex: true,
-          willChange: widget.showWaves,
         );
       },
     );
@@ -195,7 +196,10 @@ class WavePainter extends CustomPainter {
       currentTime,
     );
 
-    final isValidHypo = event.latitude != 0.0 || event.longitude != 0.0;
+    final isValidHypo = QuakeCalculator.isUsableMapCoordinate(
+      event.latitude,
+      event.longitude,
+    );
     if (!isValidHypo) return;
 
     final centerLatLng = WorldWrap.latLngClosestToCamera(
@@ -545,10 +549,16 @@ class WavePainter extends CustomPainter {
 
   void _drawEpicenterLabel(Canvas canvas, Offset center) {
     String label;
+    final title = event.infoTypeName?.trim() ?? '';
+    final isForeign = title.contains('遠地地震') || title.contains('海外');
     if (event.isCanceled) {
       label = '已取消';
     } else if (event.isAssumption) {
       label = '假定震源';
+    } else if (isForeign) {
+      label = '遠地地震に関する情報';
+    } else if (event.magnitude < 0) {
+      label = '規模 調査中';
     } else {
       label = 'M${event.magnitude.toStringAsFixed(1)}';
     }

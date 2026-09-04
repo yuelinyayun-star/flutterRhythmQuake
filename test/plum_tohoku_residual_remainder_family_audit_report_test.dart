@@ -24,7 +24,8 @@ void main() {
       expect(policy['parametersTuned'], isFalse);
       expect(policy['suppressionApplied'], isFalse);
 
-      final dominantEvent = (report['dominantEvent'] as Map).cast<String, Object?>();
+      final dominantEvent = (report['dominantEvent'] as Map)
+          .cast<String, Object?>();
       expect(dominantEvent['eventId'], isNot('none'));
       expect(dominantEvent['removedFromTest'], isTrue);
 
@@ -41,14 +42,16 @@ void main() {
       expect(report['dominanceSummary'], isA<Map>());
       expect(report['remainderEventRows'], isA<List>());
 
-      final markdown =
-          plumTohokuResidualRemainderFamilyAuditMarkdown(report);
+      final markdown = plumTohokuResidualRemainderFamilyAuditMarkdown(report);
       expect(
         markdown,
         contains('# PLUM Tohoku Residual Remainder Family Audit'),
       );
       expect(markdown, contains('## Dominance Summary'));
-      expect(markdown, contains('## Remainder PLUM-Only False-Positive Families'));
+      expect(
+        markdown,
+        contains('## Remainder PLUM-Only False-Positive Families'),
+      );
       expect(markdown, contains('## Remainder Events'));
     },
     timeout: const Timeout(Duration(minutes: 8)),

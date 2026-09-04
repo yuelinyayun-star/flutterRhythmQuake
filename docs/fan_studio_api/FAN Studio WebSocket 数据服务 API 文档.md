@@ -33,6 +33,7 @@ WebSocket API 将在服务端收到新消息后自动向所有客户端推送相
 | `/emsc` | [`欧洲地中海地震中心地震信息`](#emsc) |
 | `/bcsf` | [`法国中央地震研究所地震信息`](#bcsf) |
 | `/gfz` | [`德国地学研究中心地震信息`](#gfz) |
+| `/geonet` | [`新西兰地球科学局地震信息`](#geonet) |
 | `/usp` | [`巴西圣保罗大学地震信息`](#usp) |
 | `/kma` | [`韩国气象厅地震信息`](#kma) |
 | `/kma-eew` | [`韩国气象厅地震预警`](#kma-eew) |
@@ -731,6 +732,45 @@ WebSocket API 将在服务端收到新消息后自动向所有客户端推送相
 | `depth` | integer \| null | 震源深度（单位：千米） |
 | `magnitude` | number \| null | 地震震级 |
 | `placeName` | string | 震中位置的文字描述 |
+
+## 注意事项
+
+- 所有时间（ `shockTime` ）均为 **UTC+8 (北京时间)** 。
+
+---
+
+## 新西兰地球科学局地震信息 /geonet
+
+**数据来源：** 新西兰地球科学局（GeoNet）地震信息
+**更新规则：** 收到新地震报告或更新后立即推送
+**示例返回：**
+
+```json
+{
+"Data":{
+"id": "20260817095329",
+"shockTime": "2026-08-17 09:53:29",
+"latitude": -38.3,
+"longitude": 175.8,
+"depth": 192,
+"magnitude": 1.5,
+"placeName": "35 km south-west of Tokoroa"
+},
+"md5": "example-md5-hash"
+}
+```
+
+## 字段说明
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | string | 地震事件唯一标识 |
+| `shockTime` | string | 地震发生时间（UTC+8，格式：YYYY-MM-DD HH:mm:ss） |
+| `latitude` | number | 震中纬度 |
+| `longitude` | number | 震中经度 |
+| `depth` | number \| null | 震源深度（单位：千米） |
+| `magnitude` | number \| null | 地震震级 |
+| `placeName` | string \| null | 震中位置的文字描述（若未提供则为 null） |
 
 ## 注意事项
 

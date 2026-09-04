@@ -5,6 +5,7 @@ import 'package:latlong2/latlong.dart';
 import '../../services/sources/jp_shindo_scale.dart';
 import '../../services/sources/nied_monitor.dart';
 import '../../services/sources/shake_detection_service.dart';
+import 'map_style_zoom.dart';
 import 'station_dot_painter_layer.dart';
 
 class NiedIntensityLayer extends StatefulWidget {
@@ -29,7 +30,8 @@ class NiedIntensityLayer extends StatefulWidget {
   State<NiedIntensityLayer> createState() => _NiedIntensityLayerState();
 }
 
-class _NiedIntensityLayerState extends State<NiedIntensityLayer> {
+class _NiedIntensityLayerState extends State<NiedIntensityLayer>
+    with GridCentersEmitMixin {
   final Map<String, _HeldGridCell> _gridCells = {};
 
   static const Color _idleColor = Color(0x4D0003CF);
@@ -74,9 +76,9 @@ class _NiedIntensityLayerState extends State<NiedIntensityLayer> {
     final data = widget.stations;
     if (data == null || data.isEmpty) return const SizedBox.shrink();
 
-    double zoom = 4.0;
-    final camera = MapCamera.maybeOf(context);
-    if (camera != null) zoom = camera.zoom;
+    // Avoid MapCamera InheritedWidget — continuous EEW follow would otherwise
+    // rebuild hundreds of station dots on every camera tick.
+    final zoom = mapStyleZoomOf(context);
 
     final overview = _overviewFactor(zoom);
     final dotSize = (0.9 + (zoom - 3) * 0.95).clamp(0.9, 7.5);
@@ -91,10 +93,10 @@ class _NiedIntensityLayerState extends State<NiedIntensityLayer> {
       _gridCells.clear();
     }
 
-    final callback = widget.onGridCellsChanged;
-    if (callback != null) {
-      callback(_gridCells.values.map((c) => c.center).toList(growable: false));
-    }
+    emitGridCentersIfChanged(
+      _gridCells.values.map((c) => c.center).toList(growable: false),
+      widget.onGridCellsChanged,
+    );
 
     final dots = <StationDot>[];
     final iconMarkers = <Marker>[];
@@ -147,7 +149,7 @@ class _NiedIntensityLayerState extends State<NiedIntensityLayer> {
       children: [
         if (_gridCells.isNotEmpty && !widget.hideGrid)
           PolygonLayer(polygons: _buildGridPolygons()),
-        StationDotPainterLayer(dots: dots),
+        StationDotPainterLayer(dots: dots, sizeWithCameraZoom: true),
         if (iconMarkers.isNotEmpty) MarkerLayer(markers: iconMarkers),
       ],
     );
@@ -236,17 +238,20 @@ class _IntensityMarker extends StatelessWidget {
         ),
       ),
       child: Center(
-        child: Text(
-          label,
-          style: TextStyle(
-            color: JpShindoScale.jmaIndexFromKanameishiLevel(level) >= 4
-                ? Colors.black
-                : Colors.white,
-            fontSize: isHigh ? 8 : 7,
-            fontWeight: FontWeight.bold,
-            height: 1.0,
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            label,
+            style: TextStyle(
+              color: JpShindoScale.jmaIndexFromKanameishiLevel(level) >= 4
+                  ? Colors.black
+                  : Colors.white,
+              fontSize: isHigh ? 8 : 7,
+              fontWeight: FontWeight.bold,
+              height: 1.0,
+            ),
+            textAlign: TextAlign.center,
           ),
-          textAlign: TextAlign.center,
         ),
       ),
     );

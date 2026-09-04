@@ -16,8 +16,8 @@ void main() {
     longitude: 106.06,
   );
 
-  test('refreshes local weather every ten minutes', () {
-    expect(CmaLocalWeatherService.refreshInterval, const Duration(minutes: 10));
+  test('refreshes local weather every five minutes', () {
+    expect(CmaLocalWeatherService.refreshInterval, const Duration(minutes: 5));
   });
 
   test('parses the official CMA current weather payload', () {
@@ -37,9 +37,63 @@ void main() {
     expect(observation.windScale, '微风');
     expect(observation.precipitation, 0.0);
     expect(observation.observedAt, DateTime(2026, 7, 19, 0, 20));
+    expect(observation.alarms, hasLength(1));
+    expect(observation.alarms.single.displayText, '高温橙色预警');
+    expect(observation.alarms.single.severity, 'ORANGE');
   });
 
-  test('selects the nearest five-digit CMA station', () {
+  test('builds alert card payload from highest-severity CMA station alarm', () {
+    final observation = cmaObservationFromJson(_observationPayload(), station);
+    expect(observation, isNotNull);
+
+    final alarm = cmaBestWeatherAlarmForDisplay(observation);
+    expect(alarm, isNotNull);
+    expect(alarm!.headline, contains('高温'));
+    expect(alarm.levelLabel, '橙色');
+    expect(alarm.disasterType, '高温');
+    expect(alarm.description, '中国, 重庆, 铜梁');
+  });
+
+  test('parses CMA station alarms from a list or a single object', () {
+    final listed = cmaAlarmsFromRaw([
+      {
+        'id': '44050041600000_20260814101359',
+        'title': '汕头市气象台发布暴雨黄色预警[III级/较重]',
+        'signaltype': '暴雨',
+        'signallevel': '黄色',
+        'effective': '2026/08/14 10:10',
+        'severity': 'YELLOW',
+        'type': 'p0002003',
+      },
+      {
+        'id': '44050041600000_20260814105100',
+        'title': '汕头市气象台发布雷雨大风黄色预警[III级/较重]',
+        'signaltype': '雷雨大风',
+        'signallevel': '黄色',
+        'effective': '2026/08/14 10:45',
+        'severity': 'ORANGE',
+        'type': 'p0015003',
+      },
+    ]);
+    expect(listed, hasLength(2));
+    expect(listed.first.displayText, '雷雨大风黄色预警');
+    expect(listed.first.severityRank, 3);
+    expect(listed.last.displayText, '暴雨黄色预警');
+
+    final single = cmaAlarmsFromRaw({
+      'id': '35010041600000_20260814104000',
+      'title': '福州市气象台发布高温橙色预警信号',
+      'signaltype': '高温',
+      'signallevel': '橙色',
+      'effective': '2026/08/14 10:40',
+      'severity': 'ORANGE',
+    });
+    expect(single, hasLength(1));
+    expect(single.single.displayText, '高温橙色预警');
+    expect(single.single.effective, DateTime(2026, 8, 14, 10, 40));
+  });
+
+  test('selects the nearest CMA station including alphanumeric regional IDs', () {
     final selected = cmaNearestStationFromRows(
       _stationRows(),
       latitude: 29.84,
@@ -49,6 +103,15 @@ void main() {
     expect(selected, isNotNull);
     expect(selected!.id, '57510');
     expect(selected.name, '铜梁');
+
+    final regionalSelected = cmaNearestStationFromRows(
+      _stationRows(),
+      latitude: 30.55,
+      longitude: 119.97,
+    );
+    expect(regionalSelected, isNotNull);
+    expect(regionalSelected!.id, 'K5079');
+    expect(regionalSelected.name, '德清');
   });
 
   test('reuses the cached station for the same saved location', () async {
@@ -112,6 +175,7 @@ List<List<Object>> _stationRows() => [
   ['57516', '重庆', '中国', 2, 29.56, 106.55],
   ['57510', '铜梁', '中国', 3, 29.86, 106.06],
   ['57510-ACQ', '铜梁重复站', '中国', 3, 29.86, 106.06],
+  ['K5079', '德清', '中国', 3, 30.54, 119.98],
 ];
 
 Map<String, dynamic> _observationPayload() => {
@@ -130,6 +194,19 @@ Map<String, dynamic> _observationPayload() => {
       'windScale': '微风',
       'feelst': 32.9,
     },
+    'alarm': [
+      {
+        'id': '50000041600000_20260814093705',
+        'title': '重庆市气象台发布高温橙色预警[II级/较重]',
+        'signaltype': '高温',
+        'signallevel': '橙色',
+        'effective': '2026/08/14 09:36',
+        'eventType': '11B09',
+        'severity': 'ORANGE',
+        'type': 'p0003002',
+      },
+    ],
+    'jieQi': '',
     'lastUpdate': '2026/07/19 00:20',
   },
 };

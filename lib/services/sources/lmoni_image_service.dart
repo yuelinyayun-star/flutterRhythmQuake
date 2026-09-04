@@ -160,7 +160,7 @@ class LmoniImageService {
     if (surfaceGifBytes != null) {
       final gifFrame = NiedGifFrame(
         dataTime: stamp,
-        surfaceGifBytes: Uint8List.fromList(surfaceGifBytes),
+        surfaceGifBytes: surfaceGifBytes,
       );
       _lastGifFrame = gifFrame;
       _gifFrameController.add(gifFrame);

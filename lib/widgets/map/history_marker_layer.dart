@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../../models/quake_message.dart';
+import '../../core/calculator.dart';
 import '../../core/utils/world_wrap.dart';
 
 /// 历史地震标记图层
@@ -27,7 +28,12 @@ class HistoryMarkerLayer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (event == null) return const SizedBox.shrink();
-    if (event!.latitude == 0.0 && event!.longitude == 0.0) return const SizedBox.shrink();
+    if (!QuakeCalculator.isUsableMapCoordinate(
+      event!.latitude,
+      event!.longitude,
+    )) {
+      return const SizedBox.shrink();
+    }
 
     return Builder(
       builder: (innerContext) {
@@ -43,6 +49,7 @@ class HistoryMarkerLayer extends StatelessWidget {
                 latitude: event!.latitude,
                 longitude: event!.longitude,
                 magnitude: event!.magnitude,
+                infoTypeName: event!.infoTypeName,
                 camera: camera,
               ),
               size: Size.infinite,
@@ -67,6 +74,9 @@ class HistoryCrossPainter extends CustomPainter {
   /// 地震震级
   final double magnitude;
 
+  /// 情报标题类型
+  final String? infoTypeName;
+
   /// 地图相机对象
   /// 用于坐标转换
   final MapCamera camera;
@@ -75,6 +85,7 @@ class HistoryCrossPainter extends CustomPainter {
     required this.latitude,
     required this.longitude,
     required this.magnitude,
+    this.infoTypeName,
     required this.camera,
   });
 
@@ -155,7 +166,16 @@ class HistoryCrossPainter extends CustomPainter {
   ///
   /// 在震中上方显示震级信息
   void _drawLabel(Canvas canvas, Offset center) {
-    final label = 'M${magnitude.toStringAsFixed(1)}';
+    final title = infoTypeName?.trim() ?? '';
+    final isForeign = title.contains('遠地地震') || title.contains('海外');
+    String label;
+    if (isForeign) {
+      label = '遠地地震に関する情報';
+    } else if (magnitude < 0) {
+      label = '規模 調査中';
+    } else {
+      label = 'M${magnitude.toStringAsFixed(1)}';
+    }
     final bgPaint = Paint()
       ..color = Colors.black.withValues(alpha: 0.7)
       ..style = PaintingStyle.fill;

@@ -28,12 +28,34 @@ import 'package:flutter_test/flutter_test.dart';
 }
 
 const _svaScaleValues = [
-  0.001, 0.01, 0.1, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0,
+  0.001,
+  0.01,
+  0.1,
+  1.0,
+  2.0,
+  5.0,
+  10.0,
+  20.0,
+  50.0,
+  100.0,
+  200.0,
+  500.0,
   1000.0,
 ];
 const _log10SvaScale = [
-  -3.0, -2.0, -1.0, 0.0, 0.30103, 0.69897, 1.0, 1.30103, 1.69897, 2.0,
-  2.30103, 2.69897, 3.0,
+  -3.0,
+  -2.0,
+  -1.0,
+  0.0,
+  0.30103,
+  0.69897,
+  1.0,
+  1.30103,
+  1.69897,
+  2.0,
+  2.30103,
+  2.69897,
+  3.0,
 ];
 
 double _svaFromPosition(double p) {
@@ -43,7 +65,8 @@ double _svaFromPosition(double p) {
   final i = idx.toInt();
   if (i >= n - 1) return 1000.0;
   final t = idx - i;
-  final logSva = _log10SvaScale[i] + (_log10SvaScale[i + 1] - _log10SvaScale[i]) * t;
+  final logSva =
+      _log10SvaScale[i] + (_log10SvaScale[i + 1] - _log10SvaScale[i]) * t;
   return math.pow(10.0, logSva).toDouble();
 }
 
@@ -52,7 +75,8 @@ double _positionFromSva(double sva) {
   for (int i = 0; i < _log10SvaScale.length - 1; i++) {
     if (logSva >= _log10SvaScale[i] && logSva <= _log10SvaScale[i + 1]) {
       final t =
-          (logSva - _log10SvaScale[i]) / (_log10SvaScale[i + 1] - _log10SvaScale[i]);
+          (logSva - _log10SvaScale[i]) /
+          (_log10SvaScale[i + 1] - _log10SvaScale[i]);
       return (i + t) / 12;
     }
   }
@@ -155,7 +179,8 @@ void main() {
         final off = (y * bw + x) * 4;
         if (raw.getUint8(off) != 0 ||
             raw.getUint8(off + 1) != 0 ||
-            raw.getUint8(off + 2) != 0) c++;
+            raw.getUint8(off + 2) != 0)
+          c++;
       }
       if (c > bestBarCount) {
         bestBarCount = c;
@@ -169,7 +194,9 @@ void main() {
     int firstNonBlack = bh, lastNonBlack = 0;
     for (int y = 0; y < bh; y++) {
       final off = (y * bw + bestBarX) * 4;
-      final r = raw.getUint8(off), g = raw.getUint8(off + 1), b = raw.getUint8(off + 2);
+      final r = raw.getUint8(off),
+          g = raw.getUint8(off + 1),
+          b = raw.getUint8(off + 2);
       if (r != 0 || g != 0 || b != 0) {
         if (y < firstNonBlack) firstNonBlack = y;
         if (y > lastNonBlack) lastNonBlack = y;
@@ -185,9 +212,14 @@ void main() {
       for (int x = bestBarX - 3; x <= bestBarX + 3; x++) {
         if (x < 0 || x >= bw) continue;
         final off = (y * bw + x) * 4;
-        final r = raw.getUint8(off), g = raw.getUint8(off + 1), b = raw.getUint8(off + 2);
+        final r = raw.getUint8(off),
+            g = raw.getUint8(off + 1),
+            b = raw.getUint8(off + 2);
         if (r == 0 && g == 0 && b == 0) continue;
-        sumR += r; sumG += g; sumB += b; count++;
+        sumR += r;
+        sumG += g;
+        sumB += b;
+        count++;
       }
       if (count == 0) continue;
       final avgR = sumR / count, avgG = sumG / count, avgB = sumB / count;
@@ -207,9 +239,14 @@ void main() {
       for (int x = bestBarX - 3; x <= bestBarX + 3; x++) {
         if (x < 0 || x >= bw) continue;
         final off = (y * bw + x) * 4;
-        final r = raw.getUint8(off), g = raw.getUint8(off + 1), b = raw.getUint8(off + 2);
+        final r = raw.getUint8(off),
+            g = raw.getUint8(off + 1),
+            b = raw.getUint8(off + 2);
         if (r == 0 && g == 0 && b == 0) continue;
-        sumR += r; sumG += g; sumB += b; count++;
+        sumR += r;
+        sumG += g;
+        sumB += b;
+        count++;
       }
       if (count == 0) continue;
       final avgR = sumR / count, avgG = sumG / count, avgB = sumB / count;
@@ -222,19 +259,26 @@ void main() {
       }
     }
     print('Color bar center: x=$bestBarX');
-    print('Gradient range: y=$barTop ~ $barBottom (${barBottom - barTop + 1} rows)');
+    print(
+      'Gradient range: y=$barTop ~ $barBottom (${barBottom - barTop + 1} rows)',
+    );
 
     // 3. Sample every row with horizontal averaging
     // Note: Use single-row sampling (not multi-row avg) because actual map pixels
     // are single pixels, not averaged. Multi-row avg distorts the polynomial fit.
-    final samples = <(double, double, double, double, double)>[]; // (H_norm, S, V, G_norm, position)
+    final samples =
+        <
+          (double, double, double, double, double)
+        >[]; // (H_norm, S, V, G_norm, position)
     for (int y = barBottom; y >= barTop; y--) {
       final position = (barBottom - y) / (barBottom - barTop);
       int sumR = 0, sumG = 0, sumB = 0, count = 0;
       for (int x = bestBarX - 5; x <= bestBarX + 5; x++) {
         if (x < 0 || x >= bw) continue;
         final off = (y * bw + x) * 4;
-        final r = raw.getUint8(off), g = raw.getUint8(off + 1), b = raw.getUint8(off + 2);
+        final r = raw.getUint8(off),
+            g = raw.getUint8(off + 1),
+            b = raw.getUint8(off + 2);
         if (r == 0 && g == 0 && b == 0) continue;
         sumR += r;
         sumG += g;
@@ -257,9 +301,14 @@ void main() {
       for (int x = bestBarX - 5; x <= bestBarX + 5; x++) {
         if (x < 0 || x >= bw) continue;
         final off = (imageY * bw + x) * 4;
-        final r = raw.getUint8(off), g = raw.getUint8(off + 1), b = raw.getUint8(off + 2);
+        final r = raw.getUint8(off),
+            g = raw.getUint8(off + 1),
+            b = raw.getUint8(off + 2);
         if (r == 0 && g == 0 && b == 0) continue;
-        sumR += r; sumG += g; sumB += b; count++;
+        sumR += r;
+        sumG += g;
+        sumB += b;
+        count++;
       }
       if (count == 0) return null;
       return (sumR ~/ count, sumG ~/ count, sumB ~/ count);
@@ -273,12 +322,14 @@ void main() {
     for (int i = 0; i < samples.length; i += 5) {
       final (h, s, v, gNorm, pos) = samples[i];
       final rowIdx = (barBottom - pos * (barBottom - barTop)).round();
-      print('  pos=${pos.toStringAsFixed(4)}  '
-          'row=$rowIdx  '
-          'H=${h.toStringAsFixed(1).padLeft(6)}  '
-          'S=${s.toStringAsFixed(3)}  '
-          'V=${v.toStringAsFixed(3)}  '
-          'G=${gNorm.toStringAsFixed(3)}');
+      print(
+        '  pos=${pos.toStringAsFixed(4)}  '
+        'row=$rowIdx  '
+        'H=${h.toStringAsFixed(1).padLeft(6)}  '
+        'S=${s.toStringAsFixed(3)}  '
+        'V=${v.toStringAsFixed(3)}  '
+        'G=${gNorm.toStringAsFixed(3)}',
+      );
     }
 
     // 4b. Print the 13 calibration point rows for debugging
@@ -287,18 +338,26 @@ void main() {
     print('═══════════════════════════════════════════════════════════════');
     for (final expectedSva in _svaScaleValues) {
       final pos = _positionFromSva(expectedSva);
-      final imageY = (barBottom - pos * (barBottom - barTop)).round().clamp(barTop, barBottom);
+      final imageY = (barBottom - pos * (barBottom - barTop)).round().clamp(
+        barTop,
+        barBottom,
+      );
       final rgb = sampleAtRow(imageY);
-      if (rgb == null) { print('  SVA=$expectedSva row=$imageY → all black'); continue; }
+      if (rgb == null) {
+        print('  SVA=$expectedSva row=$imageY → all black');
+        continue;
+      }
       final (r, g, b) = rgb;
       final hsv = _rgbToHsv(r, g, b);
       final hNorm = _normalizeH(hsv.$1);
-      print('  SVA=${expectedSva.toStringAsFixed(3).padLeft(8)}  '
-          'pos=${pos.toStringAsFixed(4)}  '
-          'row=$imageY  '
-          'H=${hNorm.toStringAsFixed(1).padLeft(6)}  '
-          'V=${hsv.$3.toStringAsFixed(3)}  '
-          'S=${hsv.$2.toStringAsFixed(3)}');
+      print(
+        '  SVA=${expectedSva.toStringAsFixed(3).padLeft(8)}  '
+        'pos=${pos.toStringAsFixed(4)}  '
+        'row=$imageY  '
+        'H=${hNorm.toStringAsFixed(1).padLeft(6)}  '
+        'V=${hsv.$3.toStringAsFixed(3)}  '
+        'S=${hsv.$2.toStringAsFixed(3)}',
+      );
     }
 
     // 5. Split into segments with fixed H wrap-around
@@ -328,15 +387,21 @@ void main() {
     }
 
     print('\nSegment sizes (fixed H wrap-around):');
-    print('  Non-red (H_norm > 10°): ${nonRedH.length} samples, '
-        'H=${nonRedH.first.toStringAsFixed(1)}~${nonRedH.last.toStringAsFixed(1)}, '
-        'pos=${nonRedPos.first.toStringAsFixed(4)}~${nonRedPos.last.toStringAsFixed(4)}');
-    print('  Plateau (10° < H ≤ 65°): ${plateauG.length} samples, '
-        'G=${plateauG.first.toStringAsFixed(3)}~${plateauG.last.toStringAsFixed(3)}, '
-        'pos=${plateauPos.first.toStringAsFixed(4)}~${plateauPos.last.toStringAsFixed(4)}');
-    print('  Red (H_norm ≤ 10°): ${redV.length} samples, '
-        'V=${redV.first.toStringAsFixed(3)}~${redV.last.toStringAsFixed(3)}, '
-        'pos=${redPos.first.toStringAsFixed(4)}~${redPos.last.toStringAsFixed(4)}');
+    print(
+      '  Non-red (H_norm > 10°): ${nonRedH.length} samples, '
+      'H=${nonRedH.first.toStringAsFixed(1)}~${nonRedH.last.toStringAsFixed(1)}, '
+      'pos=${nonRedPos.first.toStringAsFixed(4)}~${nonRedPos.last.toStringAsFixed(4)}',
+    );
+    print(
+      '  Plateau (10° < H ≤ 65°): ${plateauG.length} samples, '
+      'G=${plateauG.first.toStringAsFixed(3)}~${plateauG.last.toStringAsFixed(3)}, '
+      'pos=${plateauPos.first.toStringAsFixed(4)}~${plateauPos.last.toStringAsFixed(4)}',
+    );
+    print(
+      '  Red (H_norm ≤ 10°): ${redV.length} samples, '
+      'V=${redV.first.toStringAsFixed(3)}~${redV.last.toStringAsFixed(3)}, '
+      'pos=${redPos.first.toStringAsFixed(4)}~${redPos.last.toStringAsFixed(4)}',
+    );
 
     // ═══════════════════════════════════════════════════════════════
     // Approach A: Direct H→position for non-red, inverted position→V for red
@@ -371,7 +436,9 @@ void main() {
         bestNonRedDeg = deg;
       }
     }
-    print('  Best: deg=$bestNonRedDeg RMSE=${bestNonRedRmse.toStringAsFixed(6)}');
+    print(
+      '  Best: deg=$bestNonRedDeg RMSE=${bestNonRedRmse.toStringAsFixed(6)}',
+    );
 
     // Fit position→V for red region (inverted approach)
     List<double>? bestRedPosToVCoeffs;
@@ -395,14 +462,19 @@ void main() {
         bestRedPosToVDeg = deg;
       }
     }
-    print('  Best: deg=$bestRedPosToVDeg RMSE=${bestRedPosToVRmse.toStringAsFixed(6)}');
+    print(
+      '  Best: deg=$bestRedPosToVDeg RMSE=${bestRedPosToVRmse.toStringAsFixed(6)}',
+    );
 
     // Pre-compute 13 calibration point HSV values (using multi-row avg)
     final calPoints = <(double, double, double, double, double)>[];
     // (expectedSva, pos, hNorm, V, S)
     for (final expectedSva in _svaScaleValues) {
       final pos = _positionFromSva(expectedSva);
-      final imageY = (barBottom - pos * (barBottom - barTop)).round().clamp(barTop, barBottom);
+      final imageY = (barBottom - pos * (barBottom - barTop)).round().clamp(
+        barTop,
+        barBottom,
+      );
       final rgb = sampleAtRow(imageY);
       if (rgb == null) continue;
       final (r, g, b) = rgb;
@@ -441,13 +513,15 @@ void main() {
       totalErrA += err;
       errCountA++;
 
-      print('  SVA=${expectedSva.toStringAsFixed(3).padLeft(8)}  '
-          'H=${hNorm.toStringAsFixed(1).padLeft(6)}  '
-          'V=${v.toStringAsFixed(3)}  '
-          'pos=${pos.toStringAsFixed(4)}  '
-          'calcPos=${calcPos.toStringAsFixed(4)}  '
-          'calcSVA=${actualSva.toStringAsFixed(2).padLeft(10)}  '
-          'err=${err.toStringAsFixed(1).padLeft(6)}%');
+      print(
+        '  SVA=${expectedSva.toStringAsFixed(3).padLeft(8)}  '
+        'H=${hNorm.toStringAsFixed(1).padLeft(6)}  '
+        'V=${v.toStringAsFixed(3)}  '
+        'pos=${pos.toStringAsFixed(4)}  '
+        'calcPos=${calcPos.toStringAsFixed(4)}  '
+        'calcSVA=${actualSva.toStringAsFixed(2).padLeft(10)}  '
+        'err=${err.toStringAsFixed(1).padLeft(6)}%',
+      );
     }
     print('\n  Average error: ${(totalErrA / errCountA).toStringAsFixed(1)}%');
 
@@ -496,7 +570,9 @@ void main() {
         bestSeg1Deg = deg;
       }
     }
-    print('  Seg1 best: deg=$bestSeg1Deg RMSE=${bestSeg1Rmse.toStringAsFixed(6)}');
+    print(
+      '  Seg1 best: deg=$bestSeg1Deg RMSE=${bestSeg1Rmse.toStringAsFixed(6)}',
+    );
 
     // Fit Seg2
     List<double>? bestSeg2Coeffs;
@@ -517,7 +593,9 @@ void main() {
         bestSeg2Deg = deg;
       }
     }
-    print('  Seg2 best: deg=$bestSeg2Deg RMSE=${bestSeg2Rmse.toStringAsFixed(6)}');
+    print(
+      '  Seg2 best: deg=$bestSeg2Deg RMSE=${bestSeg2Rmse.toStringAsFixed(6)}',
+    );
 
     // Test Approach B
     print('\n  13 calibration points (Approach B):');
@@ -550,13 +628,15 @@ void main() {
       totalErrB += err;
       errCountB++;
 
-      print('  SVA=${expectedSva.toStringAsFixed(3).padLeft(8)}  '
-          'H=${hNorm.toStringAsFixed(1).padLeft(6)}  '
-          'V=${v.toStringAsFixed(3)}  '
-          'pos=${pos.toStringAsFixed(4)}  '
-          'calcPos=${calcPos.toStringAsFixed(4)}  '
-          'calcSVA=${actualSva.toStringAsFixed(2).padLeft(10)}  '
-          'err=${err.toStringAsFixed(1).padLeft(6)}%');
+      print(
+        '  SVA=${expectedSva.toStringAsFixed(3).padLeft(8)}  '
+        'H=${hNorm.toStringAsFixed(1).padLeft(6)}  '
+        'V=${v.toStringAsFixed(3)}  '
+        'pos=${pos.toStringAsFixed(4)}  '
+        'calcPos=${calcPos.toStringAsFixed(4)}  '
+        'calcSVA=${actualSva.toStringAsFixed(2).padLeft(10)}  '
+        'err=${err.toStringAsFixed(1).padLeft(6)}%',
+      );
     }
     print('\n  Average error: ${(totalErrB / errCountB).toStringAsFixed(1)}%');
 
@@ -595,7 +675,9 @@ void main() {
 
     // Fit position→H for each sub-segment
     List<double>? bestSub1Coeffs, bestSub2Coeffs, bestSub3Coeffs;
-    double bestSub1Rmse = double.infinity, bestSub2Rmse = double.infinity, bestSub3Rmse = double.infinity;
+    double bestSub1Rmse = double.infinity,
+        bestSub2Rmse = double.infinity,
+        bestSub3Rmse = double.infinity;
     int bestSub1Deg = 0, bestSub2Deg = 0, bestSub3Deg = 0;
 
     for (int deg = 3; deg <= 7; deg++) {
@@ -603,33 +685,57 @@ void main() {
         final coeffs = _polyFit(sub1Pos, sub1H, deg);
         double ss = 0;
         for (int i = 0; i < sub1Pos.length; i++) {
-          ss += (_polyEval(coeffs, sub1Pos[i]) - sub1H[i]) * (_polyEval(coeffs, sub1Pos[i]) - sub1H[i]);
+          ss +=
+              (_polyEval(coeffs, sub1Pos[i]) - sub1H[i]) *
+              (_polyEval(coeffs, sub1Pos[i]) - sub1H[i]);
         }
         final rmse = math.sqrt(ss / sub1Pos.length);
-        if (rmse < bestSub1Rmse) { bestSub1Rmse = rmse; bestSub1Coeffs = coeffs; bestSub1Deg = deg; }
+        if (rmse < bestSub1Rmse) {
+          bestSub1Rmse = rmse;
+          bestSub1Coeffs = coeffs;
+          bestSub1Deg = deg;
+        }
       }
       if (sub2Pos.length > deg) {
         final coeffs = _polyFit(sub2Pos, sub2H, deg);
         double ss = 0;
         for (int i = 0; i < sub2Pos.length; i++) {
-          ss += (_polyEval(coeffs, sub2Pos[i]) - sub2H[i]) * (_polyEval(coeffs, sub2Pos[i]) - sub2H[i]);
+          ss +=
+              (_polyEval(coeffs, sub2Pos[i]) - sub2H[i]) *
+              (_polyEval(coeffs, sub2Pos[i]) - sub2H[i]);
         }
         final rmse = math.sqrt(ss / sub2Pos.length);
-        if (rmse < bestSub2Rmse) { bestSub2Rmse = rmse; bestSub2Coeffs = coeffs; bestSub2Deg = deg; }
+        if (rmse < bestSub2Rmse) {
+          bestSub2Rmse = rmse;
+          bestSub2Coeffs = coeffs;
+          bestSub2Deg = deg;
+        }
       }
       if (sub3Pos.length > deg) {
         final coeffs = _polyFit(sub3Pos, sub3H, deg);
         double ss = 0;
         for (int i = 0; i < sub3Pos.length; i++) {
-          ss += (_polyEval(coeffs, sub3Pos[i]) - sub3H[i]) * (_polyEval(coeffs, sub3Pos[i]) - sub3H[i]);
+          ss +=
+              (_polyEval(coeffs, sub3Pos[i]) - sub3H[i]) *
+              (_polyEval(coeffs, sub3Pos[i]) - sub3H[i]);
         }
         final rmse = math.sqrt(ss / sub3Pos.length);
-        if (rmse < bestSub3Rmse) { bestSub3Rmse = rmse; bestSub3Coeffs = coeffs; bestSub3Deg = deg; }
+        if (rmse < bestSub3Rmse) {
+          bestSub3Rmse = rmse;
+          bestSub3Coeffs = coeffs;
+          bestSub3Deg = deg;
+        }
       }
     }
-    print('  Sub1 best: deg=$bestSub1Deg RMSE=${bestSub1Rmse.toStringAsFixed(6)}');
-    print('  Sub2 best: deg=$bestSub2Deg RMSE=${bestSub2Rmse.toStringAsFixed(6)}');
-    print('  Sub3 best: deg=$bestSub3Deg RMSE=${bestSub3Rmse.toStringAsFixed(6)}');
+    print(
+      '  Sub1 best: deg=$bestSub1Deg RMSE=${bestSub1Rmse.toStringAsFixed(6)}',
+    );
+    print(
+      '  Sub2 best: deg=$bestSub2Deg RMSE=${bestSub2Rmse.toStringAsFixed(6)}',
+    );
+    print(
+      '  Sub3 best: deg=$bestSub3Deg RMSE=${bestSub3Rmse.toStringAsFixed(6)}',
+    );
 
     // Inverted approach: given H, find position via binary search in each sub-segment
     double positionFromHInverted(double hNorm) {
@@ -696,13 +802,15 @@ void main() {
       totalErrC += err;
       errCountC++;
 
-      print('  SVA=${expectedSva.toStringAsFixed(3).padLeft(8)}  '
-          'H=${hNorm.toStringAsFixed(1).padLeft(6)}  '
-          'V=${v.toStringAsFixed(3)}  '
-          'pos=${pos.toStringAsFixed(4)}  '
-          'calcPos=${calcPos.toStringAsFixed(4)}  '
-          'calcSVA=${actualSva.toStringAsFixed(2).padLeft(10)}  '
-          'err=${err.toStringAsFixed(1).padLeft(6)}%');
+      print(
+        '  SVA=${expectedSva.toStringAsFixed(3).padLeft(8)}  '
+        'H=${hNorm.toStringAsFixed(1).padLeft(6)}  '
+        'V=${v.toStringAsFixed(3)}  '
+        'pos=${pos.toStringAsFixed(4)}  '
+        'calcPos=${calcPos.toStringAsFixed(4)}  '
+        'calcSVA=${actualSva.toStringAsFixed(2).padLeft(10)}  '
+        'err=${err.toStringAsFixed(1).padLeft(6)}%',
+      );
     }
     print('\n  Average error: ${(totalErrC / errCountC).toStringAsFixed(1)}%');
 
@@ -741,7 +849,9 @@ void main() {
         bestHighHDeg = deg;
       }
     }
-    print('  High-H (H>65°) H→position: deg=$bestHighHDeg RMSE=${bestHighHRmse.toStringAsFixed(6)}');
+    print(
+      '  High-H (H>65°) H→position: deg=$bestHighHDeg RMSE=${bestHighHRmse.toStringAsFixed(6)}',
+    );
 
     // Fit G→position for plateau region (10° < H ≤ 65°)
     List<double>? bestPlateauGCoeffs;
@@ -762,7 +872,9 @@ void main() {
         bestPlateauGDeg = deg;
       }
     }
-    print('  Plateau (10°<H≤65°) G→position: deg=$bestPlateauGDeg RMSE=${bestPlateauGRmse.toStringAsFixed(6)}');
+    print(
+      '  Plateau (10°<H≤65°) G→position: deg=$bestPlateauGDeg RMSE=${bestPlateauGRmse.toStringAsFixed(6)}',
+    );
 
     // Test Approach D on 13 calibration points
     print('\n  13 calibration points (Approach D):');
@@ -770,8 +882,10 @@ void main() {
     int errCountD = 0;
     for (final expectedSva in _svaScaleValues) {
       final pos = _positionFromSva(expectedSva);
-      final imageY =
-          (barBottom - pos * (barBottom - barTop)).round().clamp(barTop, barBottom);
+      final imageY = (barBottom - pos * (barBottom - barTop)).round().clamp(
+        barTop,
+        barBottom,
+      );
 
       final rgb = sampleAtRow(imageY);
       if (rgb == null) continue;
@@ -807,14 +921,16 @@ void main() {
       totalErrD += err;
       errCountD++;
 
-      print('  SVA=${expectedSva.toStringAsFixed(3).padLeft(8)}  '
-          'H=${hNorm.toStringAsFixed(1).padLeft(6)}  '
-          'G=${(g/255.0).toStringAsFixed(3)}  '
-          'V=${hsv.$3.toStringAsFixed(3)}  '
-          'pos=${pos.toStringAsFixed(4)}  '
-          'calcPos=${calcPos.toStringAsFixed(4)}  '
-          'calcSVA=${actualSva.toStringAsFixed(2).padLeft(10)}  '
-          'err=${err.toStringAsFixed(1).padLeft(6)}%');
+      print(
+        '  SVA=${expectedSva.toStringAsFixed(3).padLeft(8)}  '
+        'H=${hNorm.toStringAsFixed(1).padLeft(6)}  '
+        'G=${(g / 255.0).toStringAsFixed(3)}  '
+        'V=${hsv.$3.toStringAsFixed(3)}  '
+        'pos=${pos.toStringAsFixed(4)}  '
+        'calcPos=${calcPos.toStringAsFixed(4)}  '
+        'calcSVA=${actualSva.toStringAsFixed(2).padLeft(10)}  '
+        'err=${err.toStringAsFixed(1).padLeft(6)}%',
+      );
     }
     print('\n  Average error: ${(totalErrD / errCountD).toStringAsFixed(1)}%');
 
@@ -839,9 +955,11 @@ void main() {
         plateauVPos.add(pos);
       }
     }
-    print('  Plateau (10°<H≤65°) V→position: ${plateauV.length} samples, '
-        'V=${plateauV.first.toStringAsFixed(3)}~${plateauV.last.toStringAsFixed(3)}, '
-        'pos=${plateauVPos.first.toStringAsFixed(4)}~${plateauVPos.last.toStringAsFixed(4)}');
+    print(
+      '  Plateau (10°<H≤65°) V→position: ${plateauV.length} samples, '
+      'V=${plateauV.first.toStringAsFixed(3)}~${plateauV.last.toStringAsFixed(3)}, '
+      'pos=${plateauVPos.first.toStringAsFixed(4)}~${plateauVPos.last.toStringAsFixed(4)}',
+    );
 
     // Check V monotonicity in plateau region
     bool vMonotonic = true;
@@ -873,7 +991,9 @@ void main() {
         bestPlateauVDeg = deg;
       }
     }
-    print('  Plateau V→position best: deg=$bestPlateauVDeg RMSE=${bestPlateauVRmse.toStringAsFixed(6)}');
+    print(
+      '  Plateau V→position best: deg=$bestPlateauVDeg RMSE=${bestPlateauVRmse.toStringAsFixed(6)}',
+    );
 
     // Test Approach E on 13 calibration points
     print('\n  13 calibration points (Approach E):');
@@ -908,13 +1028,15 @@ void main() {
       totalErrE += err;
       errCountE++;
 
-      print('  SVA=${expectedSva.toStringAsFixed(3).padLeft(8)}  '
-          'H=${hNorm.toStringAsFixed(1).padLeft(6)}  '
-          'V=${v.toStringAsFixed(3)}  '
-          'pos=${pos.toStringAsFixed(4)}  '
-          'calcPos=${calcPos.toStringAsFixed(4)}  '
-          'calcSVA=${actualSva.toStringAsFixed(2).padLeft(10)}  '
-          'err=${err.toStringAsFixed(1).padLeft(6)}%');
+      print(
+        '  SVA=${expectedSva.toStringAsFixed(3).padLeft(8)}  '
+        'H=${hNorm.toStringAsFixed(1).padLeft(6)}  '
+        'V=${v.toStringAsFixed(3)}  '
+        'pos=${pos.toStringAsFixed(4)}  '
+        'calcPos=${calcPos.toStringAsFixed(4)}  '
+        'calcSVA=${actualSva.toStringAsFixed(2).padLeft(10)}  '
+        'err=${err.toStringAsFixed(1).padLeft(6)}%',
+      );
     }
     print('\n  Average error: ${(totalErrE / errCountE).toStringAsFixed(1)}%');
 
@@ -949,11 +1071,17 @@ void main() {
     for (int i = 0; i < allPos.length; i++) {
       final p = allPos[i];
       if (p <= 0.30) {
-        fwdSeg1Pos.add(p); fwdSeg1H.add(allH[i]); fwdSeg1V.add(allV[i]);
+        fwdSeg1Pos.add(p);
+        fwdSeg1H.add(allH[i]);
+        fwdSeg1V.add(allV[i]);
       } else if (p <= 0.80) {
-        fwdSeg2Pos.add(p); fwdSeg2H.add(allH[i]); fwdSeg2V.add(allV[i]);
+        fwdSeg2Pos.add(p);
+        fwdSeg2H.add(allH[i]);
+        fwdSeg2V.add(allV[i]);
       } else {
-        fwdSeg3Pos.add(p); fwdSeg3H.add(allH[i]); fwdSeg3V.add(allV[i]);
+        fwdSeg3Pos.add(p);
+        fwdSeg3H.add(allH[i]);
+        fwdSeg3V.add(allV[i]);
       }
     }
     print('  Fwd Seg1 (pos 0~0.30): ${fwdSeg1Pos.length} samples');
@@ -962,7 +1090,9 @@ void main() {
 
     // Fit position→H for each segment
     List<double>? fwdSeg1HCoeffs, fwdSeg2HCoeffs, fwdSeg3HCoeffs;
-    double fwdSeg1HRmse = double.infinity, fwdSeg2HRmse = double.infinity, fwdSeg3HRmse = double.infinity;
+    double fwdSeg1HRmse = double.infinity,
+        fwdSeg2HRmse = double.infinity,
+        fwdSeg3HRmse = double.infinity;
     int fwdSeg1HDeg = 0, fwdSeg2HDeg = 0, fwdSeg3HDeg = 0;
 
     for (int deg = 3; deg <= 8; deg++) {
@@ -970,37 +1100,63 @@ void main() {
         final coeffs = _polyFit(fwdSeg1Pos, fwdSeg1H, deg);
         double ss = 0;
         for (int i = 0; i < fwdSeg1Pos.length; i++) {
-          ss += (_polyEval(coeffs, fwdSeg1Pos[i]) - fwdSeg1H[i]) * (_polyEval(coeffs, fwdSeg1Pos[i]) - fwdSeg1H[i]);
+          ss +=
+              (_polyEval(coeffs, fwdSeg1Pos[i]) - fwdSeg1H[i]) *
+              (_polyEval(coeffs, fwdSeg1Pos[i]) - fwdSeg1H[i]);
         }
         final rmse = math.sqrt(ss / fwdSeg1Pos.length);
-        if (rmse < fwdSeg1HRmse) { fwdSeg1HRmse = rmse; fwdSeg1HCoeffs = coeffs; fwdSeg1HDeg = deg; }
+        if (rmse < fwdSeg1HRmse) {
+          fwdSeg1HRmse = rmse;
+          fwdSeg1HCoeffs = coeffs;
+          fwdSeg1HDeg = deg;
+        }
       }
       if (fwdSeg2Pos.length > deg) {
         final coeffs = _polyFit(fwdSeg2Pos, fwdSeg2H, deg);
         double ss = 0;
         for (int i = 0; i < fwdSeg2Pos.length; i++) {
-          ss += (_polyEval(coeffs, fwdSeg2Pos[i]) - fwdSeg2H[i]) * (_polyEval(coeffs, fwdSeg2Pos[i]) - fwdSeg2H[i]);
+          ss +=
+              (_polyEval(coeffs, fwdSeg2Pos[i]) - fwdSeg2H[i]) *
+              (_polyEval(coeffs, fwdSeg2Pos[i]) - fwdSeg2H[i]);
         }
         final rmse = math.sqrt(ss / fwdSeg2Pos.length);
-        if (rmse < fwdSeg2HRmse) { fwdSeg2HRmse = rmse; fwdSeg2HCoeffs = coeffs; fwdSeg2HDeg = deg; }
+        if (rmse < fwdSeg2HRmse) {
+          fwdSeg2HRmse = rmse;
+          fwdSeg2HCoeffs = coeffs;
+          fwdSeg2HDeg = deg;
+        }
       }
       if (fwdSeg3Pos.length > deg) {
         final coeffs = _polyFit(fwdSeg3Pos, fwdSeg3H, deg);
         double ss = 0;
         for (int i = 0; i < fwdSeg3Pos.length; i++) {
-          ss += (_polyEval(coeffs, fwdSeg3Pos[i]) - fwdSeg3H[i]) * (_polyEval(coeffs, fwdSeg3Pos[i]) - fwdSeg3H[i]);
+          ss +=
+              (_polyEval(coeffs, fwdSeg3Pos[i]) - fwdSeg3H[i]) *
+              (_polyEval(coeffs, fwdSeg3Pos[i]) - fwdSeg3H[i]);
         }
         final rmse = math.sqrt(ss / fwdSeg3Pos.length);
-        if (rmse < fwdSeg3HRmse) { fwdSeg3HRmse = rmse; fwdSeg3HCoeffs = coeffs; fwdSeg3HDeg = deg; }
+        if (rmse < fwdSeg3HRmse) {
+          fwdSeg3HRmse = rmse;
+          fwdSeg3HCoeffs = coeffs;
+          fwdSeg3HDeg = deg;
+        }
       }
     }
-    print('  Fwd Seg1 pos→H: deg=$fwdSeg1HDeg RMSE=${fwdSeg1HRmse.toStringAsFixed(6)}');
-    print('  Fwd Seg2 pos→H: deg=$fwdSeg2HDeg RMSE=${fwdSeg2HRmse.toStringAsFixed(6)}');
-    print('  Fwd Seg3 pos→H: deg=$fwdSeg3HDeg RMSE=${fwdSeg3HRmse.toStringAsFixed(6)}');
+    print(
+      '  Fwd Seg1 pos→H: deg=$fwdSeg1HDeg RMSE=${fwdSeg1HRmse.toStringAsFixed(6)}',
+    );
+    print(
+      '  Fwd Seg2 pos→H: deg=$fwdSeg2HDeg RMSE=${fwdSeg2HRmse.toStringAsFixed(6)}',
+    );
+    print(
+      '  Fwd Seg3 pos→H: deg=$fwdSeg3HDeg RMSE=${fwdSeg3HRmse.toStringAsFixed(6)}',
+    );
 
     // Fit position→V for each segment
     List<double>? fwdSeg1VCoeffs, fwdSeg2VCoeffs, fwdSeg3VCoeffs;
-    double fwdSeg1VRmse = double.infinity, fwdSeg2VRmse = double.infinity, fwdSeg3VRmse = double.infinity;
+    double fwdSeg1VRmse = double.infinity,
+        fwdSeg2VRmse = double.infinity,
+        fwdSeg3VRmse = double.infinity;
     int fwdSeg1VDeg = 0, fwdSeg2VDeg = 0, fwdSeg3VDeg = 0;
 
     for (int deg = 2; deg <= 6; deg++) {
@@ -1008,33 +1164,57 @@ void main() {
         final coeffs = _polyFit(fwdSeg1Pos, fwdSeg1V, deg);
         double ss = 0;
         for (int i = 0; i < fwdSeg1Pos.length; i++) {
-          ss += (_polyEval(coeffs, fwdSeg1Pos[i]) - fwdSeg1V[i]) * (_polyEval(coeffs, fwdSeg1Pos[i]) - fwdSeg1V[i]);
+          ss +=
+              (_polyEval(coeffs, fwdSeg1Pos[i]) - fwdSeg1V[i]) *
+              (_polyEval(coeffs, fwdSeg1Pos[i]) - fwdSeg1V[i]);
         }
         final rmse = math.sqrt(ss / fwdSeg1Pos.length);
-        if (rmse < fwdSeg1VRmse) { fwdSeg1VRmse = rmse; fwdSeg1VCoeffs = coeffs; fwdSeg1VDeg = deg; }
+        if (rmse < fwdSeg1VRmse) {
+          fwdSeg1VRmse = rmse;
+          fwdSeg1VCoeffs = coeffs;
+          fwdSeg1VDeg = deg;
+        }
       }
       if (fwdSeg2Pos.length > deg) {
         final coeffs = _polyFit(fwdSeg2Pos, fwdSeg2V, deg);
         double ss = 0;
         for (int i = 0; i < fwdSeg2Pos.length; i++) {
-          ss += (_polyEval(coeffs, fwdSeg2Pos[i]) - fwdSeg2V[i]) * (_polyEval(coeffs, fwdSeg2Pos[i]) - fwdSeg2V[i]);
+          ss +=
+              (_polyEval(coeffs, fwdSeg2Pos[i]) - fwdSeg2V[i]) *
+              (_polyEval(coeffs, fwdSeg2Pos[i]) - fwdSeg2V[i]);
         }
         final rmse = math.sqrt(ss / fwdSeg2Pos.length);
-        if (rmse < fwdSeg2VRmse) { fwdSeg2VRmse = rmse; fwdSeg2VCoeffs = coeffs; fwdSeg2VDeg = deg; }
+        if (rmse < fwdSeg2VRmse) {
+          fwdSeg2VRmse = rmse;
+          fwdSeg2VCoeffs = coeffs;
+          fwdSeg2VDeg = deg;
+        }
       }
       if (fwdSeg3Pos.length > deg) {
         final coeffs = _polyFit(fwdSeg3Pos, fwdSeg3V, deg);
         double ss = 0;
         for (int i = 0; i < fwdSeg3Pos.length; i++) {
-          ss += (_polyEval(coeffs, fwdSeg3Pos[i]) - fwdSeg3V[i]) * (_polyEval(coeffs, fwdSeg3Pos[i]) - fwdSeg3V[i]);
+          ss +=
+              (_polyEval(coeffs, fwdSeg3Pos[i]) - fwdSeg3V[i]) *
+              (_polyEval(coeffs, fwdSeg3Pos[i]) - fwdSeg3V[i]);
         }
         final rmse = math.sqrt(ss / fwdSeg3Pos.length);
-        if (rmse < fwdSeg3VRmse) { fwdSeg3VRmse = rmse; fwdSeg3VCoeffs = coeffs; fwdSeg3VDeg = deg; }
+        if (rmse < fwdSeg3VRmse) {
+          fwdSeg3VRmse = rmse;
+          fwdSeg3VCoeffs = coeffs;
+          fwdSeg3VDeg = deg;
+        }
       }
     }
-    print('  Fwd Seg1 pos→V: deg=$fwdSeg1VDeg RMSE=${fwdSeg1VRmse.toStringAsFixed(6)}');
-    print('  Fwd Seg2 pos→V: deg=$fwdSeg2VDeg RMSE=${fwdSeg2VRmse.toStringAsFixed(6)}');
-    print('  Fwd Seg3 pos→V: deg=$fwdSeg3VDeg RMSE=${fwdSeg3VRmse.toStringAsFixed(6)}');
+    print(
+      '  Fwd Seg1 pos→V: deg=$fwdSeg1VDeg RMSE=${fwdSeg1VRmse.toStringAsFixed(6)}',
+    );
+    print(
+      '  Fwd Seg2 pos→V: deg=$fwdSeg2VDeg RMSE=${fwdSeg2VRmse.toStringAsFixed(6)}',
+    );
+    print(
+      '  Fwd Seg3 pos→V: deg=$fwdSeg3VDeg RMSE=${fwdSeg3VRmse.toStringAsFixed(6)}',
+    );
 
     // Binary search: find position that minimizes distance in (H_norm, V) space
     double positionFromHV(double hNorm, double v) {
@@ -1047,11 +1227,14 @@ void main() {
         // Determine which segment
         List<double> hCoeffs, vCoeffs;
         if (pos <= 0.30) {
-          hCoeffs = fwdSeg1HCoeffs!; vCoeffs = fwdSeg1VCoeffs!;
+          hCoeffs = fwdSeg1HCoeffs!;
+          vCoeffs = fwdSeg1VCoeffs!;
         } else if (pos <= 0.80) {
-          hCoeffs = fwdSeg2HCoeffs!; vCoeffs = fwdSeg2VCoeffs!;
+          hCoeffs = fwdSeg2HCoeffs!;
+          vCoeffs = fwdSeg2VCoeffs!;
         } else {
-          hCoeffs = fwdSeg3HCoeffs!; vCoeffs = fwdSeg3VCoeffs!;
+          hCoeffs = fwdSeg3HCoeffs!;
+          vCoeffs = fwdSeg3VCoeffs!;
         }
         final predH = _polyEval(hCoeffs, pos);
         final predV = _polyEval(vCoeffs, pos);
@@ -1084,9 +1267,13 @@ void main() {
       double d = a + phi * (b - a);
       for (int iter = 0; iter < 50; iter++) {
         if (distAt(c) < distAt(d)) {
-          b = d; d = c; c = b - phi * (b - a);
+          b = d;
+          d = c;
+          c = b - phi * (b - a);
         } else {
-          a = c; c = d; d = a + phi * (b - a);
+          a = c;
+          c = d;
+          d = a + phi * (b - a);
         }
       }
       return ((a + b) / 2).clamp(0.0, 1.0);
@@ -1104,13 +1291,15 @@ void main() {
       totalErrF += err;
       errCountF++;
 
-      print('  SVA=${expectedSva.toStringAsFixed(3).padLeft(8)}  '
-          'H=${hNorm.toStringAsFixed(1).padLeft(6)}  '
-          'V=${v.toStringAsFixed(3)}  '
-          'pos=${pos.toStringAsFixed(4)}  '
-          'calcPos=${calcPos.toStringAsFixed(4)}  '
-          'calcSVA=${actualSva.toStringAsFixed(2).padLeft(10)}  '
-          'err=${err.toStringAsFixed(1).padLeft(6)}%');
+      print(
+        '  SVA=${expectedSva.toStringAsFixed(3).padLeft(8)}  '
+        'H=${hNorm.toStringAsFixed(1).padLeft(6)}  '
+        'V=${v.toStringAsFixed(3)}  '
+        'pos=${pos.toStringAsFixed(4)}  '
+        'calcPos=${calcPos.toStringAsFixed(4)}  '
+        'calcSVA=${actualSva.toStringAsFixed(2).padLeft(10)}  '
+        'err=${err.toStringAsFixed(1).padLeft(6)}%',
+      );
     }
     print('\n  Average error: ${(totalErrF / errCountF).toStringAsFixed(1)}%');
 
@@ -1159,9 +1348,13 @@ void main() {
       double d = a + phi * (b - a);
       for (int iter = 0; iter < 50; iter++) {
         if (distAt(c) < distAt(d)) {
-          b = d; d = c; c = b - phi * (b - a);
+          b = d;
+          d = c;
+          c = b - phi * (b - a);
         } else {
-          a = c; c = d; d = a + phi * (b - a);
+          a = c;
+          c = d;
+          d = a + phi * (b - a);
         }
       }
       return ((a + b) / 2).clamp(0.80, 1.0);
@@ -1189,13 +1382,15 @@ void main() {
       totalErrG += err;
       errCountG++;
 
-      print('  SVA=${expectedSva.toStringAsFixed(3).padLeft(8)}  '
-          'H=${hNorm.toStringAsFixed(1).padLeft(6)}  '
-          'V=${v.toStringAsFixed(3)}  '
-          'pos=${pos.toStringAsFixed(4)}  '
-          'calcPos=${calcPos.toStringAsFixed(4)}  '
-          'calcSVA=${actualSva.toStringAsFixed(2).padLeft(10)}  '
-          'err=${err.toStringAsFixed(1).padLeft(6)}%');
+      print(
+        '  SVA=${expectedSva.toStringAsFixed(3).padLeft(8)}  '
+        'H=${hNorm.toStringAsFixed(1).padLeft(6)}  '
+        'V=${v.toStringAsFixed(3)}  '
+        'pos=${pos.toStringAsFixed(4)}  '
+        'calcPos=${calcPos.toStringAsFixed(4)}  '
+        'calcSVA=${actualSva.toStringAsFixed(2).padLeft(10)}  '
+        'err=${err.toStringAsFixed(1).padLeft(6)}%',
+      );
     }
     print('\n  Average error: ${(totalErrG / errCountG).toStringAsFixed(1)}%');
 
@@ -1206,7 +1401,9 @@ void main() {
     // ═══════════════════════════════════════════════════════════════
 
     print('\n═══════════════════════════════════════════════════════════════');
-    print('  Approach H: Seg1 H→pos + forward min-dist plateau + forward min-dist red');
+    print(
+      '  Approach H: Seg1 H→pos + forward min-dist plateau + forward min-dist red',
+    );
     print('═══════════════════════════════════════════════════════════════');
 
     // For plateau region, use forward pos→H + pos→V with minimum distance search
@@ -1245,9 +1442,13 @@ void main() {
       double d = a + phi * (b - a);
       for (int iter = 0; iter < 50; iter++) {
         if (distAt(c) < distAt(d)) {
-          b = d; d = c; c = b - phi * (b - a);
+          b = d;
+          d = c;
+          c = b - phi * (b - a);
         } else {
-          a = c; c = d; d = a + phi * (b - a);
+          a = c;
+          c = d;
+          d = a + phi * (b - a);
         }
       }
       return ((a + b) / 2).clamp(0.30, 0.80);
@@ -1275,13 +1476,15 @@ void main() {
       totalErrH += err;
       errCountH++;
 
-      print('  SVA=${expectedSva.toStringAsFixed(3).padLeft(8)}  '
-          'H=${hNorm.toStringAsFixed(1).padLeft(6)}  '
-          'V=${v.toStringAsFixed(3)}  '
-          'pos=${pos.toStringAsFixed(4)}  '
-          'calcPos=${calcPos.toStringAsFixed(4)}  '
-          'calcSVA=${actualSva.toStringAsFixed(2).padLeft(10)}  '
-          'err=${err.toStringAsFixed(1).padLeft(6)}%');
+      print(
+        '  SVA=${expectedSva.toStringAsFixed(3).padLeft(8)}  '
+        'H=${hNorm.toStringAsFixed(1).padLeft(6)}  '
+        'V=${v.toStringAsFixed(3)}  '
+        'pos=${pos.toStringAsFixed(4)}  '
+        'calcPos=${calcPos.toStringAsFixed(4)}  '
+        'calcSVA=${actualSva.toStringAsFixed(2).padLeft(10)}  '
+        'err=${err.toStringAsFixed(1).padLeft(6)}%',
+      );
     }
     print('\n  Average error: ${(totalErrH / errCountH).toStringAsFixed(1)}%');
 
@@ -1290,14 +1493,16 @@ void main() {
     // ═══════════════════════════════════════════════════════════════
 
     print('\n═══════════════════════════════════════════════════════════════');
-    print('  Summary: A avg=${(totalErrA / errCountA).toStringAsFixed(1)}%, '
-        'B avg=${(totalErrB / errCountB).toStringAsFixed(1)}%, '
-        'C avg=${(totalErrC / errCountC).toStringAsFixed(1)}%, '
-        'D avg=${(totalErrD / errCountD).toStringAsFixed(1)}%, '
-        'E avg=${(totalErrE / errCountE).toStringAsFixed(1)}%, '
-        'F avg=${(totalErrF / errCountF).toStringAsFixed(1)}%, '
-        'G avg=${(totalErrG / errCountG).toStringAsFixed(1)}%, '
-        'H avg=${(totalErrH / errCountH).toStringAsFixed(1)}%');
+    print(
+      '  Summary: A avg=${(totalErrA / errCountA).toStringAsFixed(1)}%, '
+      'B avg=${(totalErrB / errCountB).toStringAsFixed(1)}%, '
+      'C avg=${(totalErrC / errCountC).toStringAsFixed(1)}%, '
+      'D avg=${(totalErrD / errCountD).toStringAsFixed(1)}%, '
+      'E avg=${(totalErrE / errCountE).toStringAsFixed(1)}%, '
+      'F avg=${(totalErrF / errCountF).toStringAsFixed(1)}%, '
+      'G avg=${(totalErrG / errCountG).toStringAsFixed(1)}%, '
+      'H avg=${(totalErrH / errCountH).toStringAsFixed(1)}%',
+    );
     print('═══════════════════════════════════════════════════════════════');
 
     // Print coefficients for best approach
@@ -1313,82 +1518,118 @@ void main() {
     ];
     approaches.sort((a, b) => a.$2.compareTo(b.$2));
     final bestApproach = approaches.first.$1;
-    print('\n  Best approach: $bestApproach (avg=${approaches.first.$2.toStringAsFixed(1)}%)');
+    print(
+      '\n  Best approach: $bestApproach (avg=${approaches.first.$2.toStringAsFixed(1)}%)',
+    );
 
     // Always print Approach G coefficients (our chosen approach for service code)
     print('\n// ═══ Approach G coefficients (for service code) ═══');
     print('// Seg1 (H>65°): H_norm/360 → position, deg=$bestSeg1Deg');
     print('static const _seg1HCoeffs = [');
-    for (final c in bestSeg1Coeffs!) { print('  ${c.toStringAsFixed(15)},'); }
+    for (final c in bestSeg1Coeffs!) {
+      print('  ${c.toStringAsFixed(15)},');
+    }
     print('];');
     print('\n// Seg2 (10°<H≤65°): H_norm/360 → position, deg=$bestSeg2Deg');
     print('static const _seg2HCoeffs = [');
-    for (final c in bestSeg2Coeffs!) { print('  ${c.toStringAsFixed(15)},'); }
+    for (final c in bestSeg2Coeffs!) {
+      print('  ${c.toStringAsFixed(15)},');
+    }
     print('];');
     print('\n// Fwd Seg3 (pos 0.80~1.00): pos→H, deg=$fwdSeg3HDeg');
     print('static const _fwdSeg3HCoeffs = [');
-    for (final c in fwdSeg3HCoeffs!) { print('  ${c.toStringAsFixed(15)},'); }
+    for (final c in fwdSeg3HCoeffs!) {
+      print('  ${c.toStringAsFixed(15)},');
+    }
     print('];');
     print('\n// Fwd Seg3 (pos 0.80~1.00): pos→V, deg=$fwdSeg3VDeg');
     print('static const _fwdSeg3VCoeffs = [');
-    for (final c in fwdSeg3VCoeffs!) { print('  ${c.toStringAsFixed(15)},'); }
+    for (final c in fwdSeg3VCoeffs!) {
+      print('  ${c.toStringAsFixed(15)},');
+    }
     print('];');
 
     if (bestApproach == 'G') {
       print('\n// ═══ Approach G coefficients ═══');
       print('// Seg1 (H>65°): H_norm/360 → position, deg=$bestSeg1Deg');
       print('static const _seg1HCoeffs = [');
-      for (final c in bestSeg1Coeffs!) { print('  ${c.toStringAsFixed(15)},'); }
+      for (final c in bestSeg1Coeffs!) {
+        print('  ${c.toStringAsFixed(15)},');
+      }
       print('];');
       print('\n// Seg2 (10°<H≤65°): H_norm/360 → position, deg=$bestSeg2Deg');
       print('static const _seg2HCoeffs = [');
-      for (final c in bestSeg2Coeffs!) { print('  ${c.toStringAsFixed(15)},'); }
+      for (final c in bestSeg2Coeffs!) {
+        print('  ${c.toStringAsFixed(15)},');
+      }
       print('];');
       print('\n// Fwd Seg3 (pos 0.80~1.00): pos→H, deg=$fwdSeg3HDeg');
       print('static const _fwdSeg3HCoeffs = [');
-      for (final c in fwdSeg3HCoeffs!) { print('  ${c.toStringAsFixed(15)},'); }
+      for (final c in fwdSeg3HCoeffs!) {
+        print('  ${c.toStringAsFixed(15)},');
+      }
       print('];');
       print('\n// Fwd Seg3 (pos 0.80~1.00): pos→V, deg=$fwdSeg3VDeg');
       print('static const _fwdSeg3VCoeffs = [');
-      for (final c in fwdSeg3VCoeffs!) { print('  ${c.toStringAsFixed(15)},'); }
+      for (final c in fwdSeg3VCoeffs!) {
+        print('  ${c.toStringAsFixed(15)},');
+      }
       print('];');
     } else if (bestApproach == 'F') {
       print('\n// ═══ Approach F coefficients ═══');
       print('// Fwd Seg1 (pos 0~0.30): pos→H, deg=$fwdSeg1HDeg');
       print('static const _fwdSeg1HCoeffs = [');
-      for (final c in fwdSeg1HCoeffs!) { print('  ${c.toStringAsFixed(15)},'); }
+      for (final c in fwdSeg1HCoeffs!) {
+        print('  ${c.toStringAsFixed(15)},');
+      }
       print('];');
       print('\n// Fwd Seg2 (pos 0.30~0.80): pos→H, deg=$fwdSeg2HDeg');
       print('static const _fwdSeg2HCoeffs = [');
-      for (final c in fwdSeg2HCoeffs!) { print('  ${c.toStringAsFixed(15)},'); }
+      for (final c in fwdSeg2HCoeffs!) {
+        print('  ${c.toStringAsFixed(15)},');
+      }
       print('];');
       print('\n// Fwd Seg3 (pos 0.80~1.00): pos→H, deg=$fwdSeg3HDeg');
       print('static const _fwdSeg3HCoeffs = [');
-      for (final c in fwdSeg3HCoeffs!) { print('  ${c.toStringAsFixed(15)},'); }
+      for (final c in fwdSeg3HCoeffs!) {
+        print('  ${c.toStringAsFixed(15)},');
+      }
       print('];');
       print('\n// Fwd Seg1 (pos 0~0.30): pos→V, deg=$fwdSeg1VDeg');
       print('static const _fwdSeg1VCoeffs = [');
-      for (final c in fwdSeg1VCoeffs!) { print('  ${c.toStringAsFixed(15)},'); }
+      for (final c in fwdSeg1VCoeffs!) {
+        print('  ${c.toStringAsFixed(15)},');
+      }
       print('];');
       print('\n// Fwd Seg2 (pos 0.30~0.80): pos→V, deg=$fwdSeg2VDeg');
       print('static const _fwdSeg2VCoeffs = [');
-      for (final c in fwdSeg2VCoeffs!) { print('  ${c.toStringAsFixed(15)},'); }
+      for (final c in fwdSeg2VCoeffs!) {
+        print('  ${c.toStringAsFixed(15)},');
+      }
       print('];');
       print('\n// Fwd Seg3 (pos 0.80~1.00): pos→V, deg=$fwdSeg3VDeg');
       print('static const _fwdSeg3VCoeffs = [');
-      for (final c in fwdSeg3VCoeffs!) { print('  ${c.toStringAsFixed(15)},'); }
+      for (final c in fwdSeg3VCoeffs!) {
+        print('  ${c.toStringAsFixed(15)},');
+      }
       print('];');
     } else if (bestApproach == 'A') {
       print('\n// ═══ Approach A coefficients ═══');
       print('// Non-red: H_norm/360 → position, deg=$bestNonRedDeg');
       print('static const _nonRedHCoeffs = [');
-      for (final c in bestNonRedCoeffs!) { print('  ${c.toStringAsFixed(15)},'); }
+      for (final c in bestNonRedCoeffs!) {
+        print('  ${c.toStringAsFixed(15)},');
+      }
       print('];');
       print('\n// Red: position → V (for inversion), deg=$bestRedPosToVDeg');
       print('static const _redPosToVCoeffs = [');
-      for (final c in bestRedPosToVCoeffs!) { print('  ${c.toStringAsFixed(15)},'); }
+      for (final c in bestRedPosToVCoeffs!) {
+        print('  ${c.toStringAsFixed(15)},');
+      }
       print('];');
-      print('// Red region position range: ${redPos.first.toStringAsFixed(4)} ~ ${redPos.last.toStringAsFixed(4)}');
+      print(
+        '// Red region position range: ${redPos.first.toStringAsFixed(4)} ~ ${redPos.last.toStringAsFixed(4)}',
+      );
     }
   });
 
@@ -1457,13 +1698,17 @@ void main() {
         final dv = predV - targetV;
         return dh * dh + dv * dv;
       }
+
       double bestPos = 0.80;
       double bestDist = double.infinity;
       const gridN = 40;
       for (int i = (gridN * 0.80).round(); i <= gridN; i++) {
         final p = i / gridN;
         final d = distAt(p);
-        if (d < bestDist) { bestDist = d; bestPos = p; }
+        if (d < bestDist) {
+          bestDist = d;
+          bestPos = p;
+        }
       }
       double lo = (bestPos - 0.05).clamp(0.80, 1.0);
       double hi = (bestPos + 0.05).clamp(0.80, 1.0);
@@ -1473,9 +1718,13 @@ void main() {
       double d = a + phi * (b - a);
       for (int iter = 0; iter < 30; iter++) {
         if (distAt(c) < distAt(d)) {
-          b = d; d = c; c = b - phi * (b - a);
+          b = d;
+          d = c;
+          c = b - phi * (b - a);
         } else {
-          a = c; c = d; d = a + phi * (b - a);
+          a = c;
+          c = d;
+          d = a + phi * (b - a);
         }
       }
       return ((a + b) / 2).clamp(0.80, 1.0);
@@ -1488,9 +1737,12 @@ void main() {
       final delta = cMax - cMin;
       double h = 0.0;
       if (delta != 0) {
-        if (cMax == rn) h = 60 * (((gn - bn) / delta) % 6);
-        else if (cMax == gn) h = 60 * (((bn - rn) / delta) + 2);
-        else h = 60 * (((rn - gn) / delta) + 4);
+        if (cMax == rn)
+          h = 60 * (((gn - bn) / delta) % 6);
+        else if (cMax == gn)
+          h = 60 * (((bn - rn) / delta) + 2);
+        else
+          h = 60 * (((rn - gn) / delta) + 4);
       }
       if (h < 0) h += 360;
       final s = cMax == 0 ? 0.0 : delta / cMax;
@@ -1535,15 +1787,23 @@ void main() {
       int c = 0;
       for (int y = 0; y < bh; y++) {
         final off = (y * bw + x) * 4;
-        if (raw.getUint8(off) != 0 || raw.getUint8(off + 1) != 0 || raw.getUint8(off + 2) != 0) c++;
+        if (raw.getUint8(off) != 0 ||
+            raw.getUint8(off + 1) != 0 ||
+            raw.getUint8(off + 2) != 0)
+          c++;
       }
-      if (c > bestBarCount) { bestBarCount = c; bestBarX = x; }
+      if (c > bestBarCount) {
+        bestBarCount = c;
+        bestBarX = x;
+      }
     }
     // Find gradient range (exclude border and gray background)
     int firstNonBlack = bh, lastNonBlack = 0;
     for (int y = 0; y < bh; y++) {
       final off = (y * bw + bestBarX) * 4;
-      final r = raw.getUint8(off), g = raw.getUint8(off + 1), b = raw.getUint8(off + 2);
+      final r = raw.getUint8(off),
+          g = raw.getUint8(off + 1),
+          b = raw.getUint8(off + 2);
       if (r != 0 || g != 0 || b != 0) {
         if (y < firstNonBlack) firstNonBlack = y;
         if (y > lastNonBlack) lastNonBlack = y;
@@ -1555,58 +1815,86 @@ void main() {
       for (int x = bestBarX - 3; x <= bestBarX + 3; x++) {
         if (x < 0 || x >= bw) continue;
         final off = (y * bw + x) * 4;
-        final r = raw.getUint8(off), g = raw.getUint8(off + 1), b = raw.getUint8(off + 2);
+        final r = raw.getUint8(off),
+            g = raw.getUint8(off + 1),
+            b = raw.getUint8(off + 2);
         if (r == 0 && g == 0 && b == 0) continue;
-        sumR += r; sumG += g; sumB += b; count++;
+        sumR += r;
+        sumG += g;
+        sumB += b;
+        count++;
       }
       if (count == 0) continue;
       final avgR = sumR / count, avgG = sumG / count, avgB = sumB / count;
       final cMax = [avgR, avgG, avgB].reduce(math.max) / 255.0;
       final cMin = [avgR, avgG, avgB].reduce(math.min) / 255.0;
       final sat = cMax == 0 ? 0.0 : (cMax - cMin) / cMax;
-      if (sat > 0.15) { barTop = y; break; }
+      if (sat > 0.15) {
+        barTop = y;
+        break;
+      }
     }
     for (int y = lastNonBlack; y >= firstNonBlack; y--) {
       int sumR = 0, sumG = 0, sumB = 0, count = 0;
       for (int x = bestBarX - 3; x <= bestBarX + 3; x++) {
         if (x < 0 || x >= bw) continue;
         final off = (y * bw + x) * 4;
-        final r = raw.getUint8(off), g = raw.getUint8(off + 1), b = raw.getUint8(off + 2);
+        final r = raw.getUint8(off),
+            g = raw.getUint8(off + 1),
+            b = raw.getUint8(off + 2);
         if (r == 0 && g == 0 && b == 0) continue;
-        sumR += r; sumG += g; sumB += b; count++;
+        sumR += r;
+        sumG += g;
+        sumB += b;
+        count++;
       }
       if (count == 0) continue;
       final avgR = sumR / count, avgG = sumG / count, avgB = sumB / count;
       final cMax = [avgR, avgG, avgB].reduce(math.max) / 255.0;
       final cMin = [avgR, avgG, avgB].reduce(math.min) / 255.0;
       final sat = cMax == 0 ? 0.0 : (cMax - cMin) / cMax;
-      if (sat > 0.15) { barBottom = y; break; }
+      if (sat > 0.15) {
+        barBottom = y;
+        break;
+      }
     }
 
     print('\n═══════════════════════════════════════════════════════════════');
-    print('  Integration test: Service polynomial method on 13 calibration points');
+    print(
+      '  Integration test: Service polynomial method on 13 calibration points',
+    );
     print('═══════════════════════════════════════════════════════════════');
 
     double totalErr = 0;
     int errCount = 0;
     for (final expectedSva in _svaScaleValues) {
       final pos = _positionFromSva(expectedSva);
-      final imageY = (barBottom - pos * (barBottom - barTop)).round().clamp(barTop, barBottom);
+      final imageY = (barBottom - pos * (barBottom - barTop)).round().clamp(
+        barTop,
+        barBottom,
+      );
 
       int sumR = 0, sumG = 0, sumB = 0, count = 0;
       for (int x = bestBarX - 5; x <= bestBarX + 5; x++) {
         if (x < 0 || x >= bw) continue;
         final off = (imageY * bw + x) * 4;
-        final r = raw.getUint8(off), g = raw.getUint8(off + 1), b = raw.getUint8(off + 2);
+        final r = raw.getUint8(off),
+            g = raw.getUint8(off + 1),
+            b = raw.getUint8(off + 2);
         if (r == 0 && g == 0 && b == 0) continue;
-        sumR += r; sumG += g; sumB += b; count++;
+        sumR += r;
+        sumG += g;
+        sumB += b;
+        count++;
       }
       if (count == 0) continue;
       final r = sumR ~/ count, g = sumG ~/ count, b = sumB ~/ count;
 
       final actualSva = rgbToSva(r, g, b);
       if (actualSva == null) {
-        print('  SVA=${expectedSva.toStringAsFixed(3).padLeft(8)}  RGB=($r,$g,$b)  → null (unexpected)');
+        print(
+          '  SVA=${expectedSva.toStringAsFixed(3).padLeft(8)}  RGB=($r,$g,$b)  → null (unexpected)',
+        );
         continue;
       }
       final err = (actualSva - expectedSva).abs() / expectedSva * 100;
@@ -1620,21 +1908,26 @@ void main() {
       final delta2 = cMax2 - cMin2;
       double h2 = 0.0;
       if (delta2 != 0) {
-        if (cMax2 == rn2) h2 = 60 * (((gn2 - bn2) / delta2) % 6);
-        else if (cMax2 == gn2) h2 = 60 * (((bn2 - rn2) / delta2) + 2);
-        else h2 = 60 * (((rn2 - gn2) / delta2) + 4);
+        if (cMax2 == rn2)
+          h2 = 60 * (((gn2 - bn2) / delta2) % 6);
+        else if (cMax2 == gn2)
+          h2 = 60 * (((bn2 - rn2) / delta2) + 2);
+        else
+          h2 = 60 * (((rn2 - gn2) / delta2) + 4);
       }
       if (h2 < 0) h2 += 360;
       final hNorm2 = h2 > 350 ? h2 - 360 : h2;
       final s2 = cMax2 == 0 ? 0.0 : delta2 / cMax2;
 
-      print('  SVA=${expectedSva.toStringAsFixed(3).padLeft(8)}  '
-          'RGB=($r,$g,$b)  '
-          'H=${hNorm2.toStringAsFixed(1)}  '
-          'S=${s2.toStringAsFixed(3)}  '
-          'V=${cMax2.toStringAsFixed(3)}  '
-          'calcSVA=${actualSva.toStringAsFixed(2).padLeft(10)}  '
-          'err=${err.toStringAsFixed(1).padLeft(6)}%');
+      print(
+        '  SVA=${expectedSva.toStringAsFixed(3).padLeft(8)}  '
+        'RGB=($r,$g,$b)  '
+        'H=${hNorm2.toStringAsFixed(1)}  '
+        'S=${s2.toStringAsFixed(3)}  '
+        'V=${cMax2.toStringAsFixed(3)}  '
+        'calcSVA=${actualSva.toStringAsFixed(2).padLeft(10)}  '
+        'err=${err.toStringAsFixed(1).padLeft(6)}%',
+      );
     }
     final avgErr = totalErr / errCount;
     print('\n  Average error: ${avgErr.toStringAsFixed(1)}%');

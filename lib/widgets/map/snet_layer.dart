@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import '../../models/snet_station.dart';
 import '../../services/sources/jp_shindo_scale.dart';
+import 'map_style_zoom.dart';
 import 'station_dot_painter_layer.dart';
 
 class SnetLayer extends StatelessWidget {
@@ -51,9 +52,7 @@ class SnetLayer extends StatelessWidget {
     final data = stations;
     if (data == null || data.isEmpty) return const SizedBox.shrink();
 
-    double zoom = 4.0;
-    final camera = MapCamera.maybeOf(context);
-    if (camera != null) zoom = camera.zoom;
+    final zoom = mapStyleZoomOf(context);
 
     final overview = _overviewFactor(zoom);
     final dotSize = (0.9 + (zoom - 3) * 0.95).clamp(0.9, 7.5);
@@ -121,7 +120,7 @@ class SnetLayer extends StatelessWidget {
 
     return Stack(
       children: [
-        StationDotPainterLayer(dots: dots),
+        StationDotPainterLayer(dots: dots, sizeWithCameraZoom: true),
         if (iconMarkers.isNotEmpty) MarkerLayer(markers: iconMarkers),
       ],
     );
@@ -160,13 +159,17 @@ class _SnetShindoMarker extends StatelessWidget {
         border: Border.all(color: Colors.white, width: isStrong ? 1.5 : 1.0),
       ),
       child: Center(
-        child: Text(
-          label,
-          style: TextStyle(
-            color: jmaIndex >= 4 ? Colors.black : Colors.white,
-            fontSize: isStrong ? 8.0 : 7.0,
-            fontWeight: FontWeight.bold,
-            height: 1.0,
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            label,
+            style: TextStyle(
+              color: jmaIndex >= 4 ? Colors.black : Colors.white,
+              fontSize: isStrong ? 8.0 : 7.0,
+              fontWeight: FontWeight.bold,
+              height: 1.0,
+            ),
+            textAlign: TextAlign.center,
           ),
         ),
       ),

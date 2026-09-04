@@ -141,8 +141,7 @@ Map<String, Object?> _buildPendingReviewReport(String captureDirectory) {
     'createdAtUtc': '2026-06-29T00:00:00Z',
     'status': 'pass',
     'truthReviewPath': '.dart_tool/hinet_truth_quality_review/report.json',
-    'decisionPath':
-        'docs/data/hinet_capture_provenance_review_decisions.json',
+    'decisionPath': 'docs/data/hinet_capture_provenance_review_decisions.json',
     'summary': {
       'caseCount': 1,
       'pendingRepairOrExclusionCount': 1,
@@ -158,7 +157,8 @@ Map<String, Object?> _buildPendingReviewReport(String captureDirectory) {
     'cases': [
       {
         'caseId': '20260620_iwate_offshore_m34_ref',
-        'captureDirectory': 'tmp/captures/20260620_212527_jst_iwate_offshore_m34_ref',
+        'captureDirectory':
+            'tmp/captures/20260620_212527_jst_iwate_offshore_m34_ref',
         'captureExpectedGifCount': 302,
         'captureDownloadedGifCount': 301,
         'captureFailedGifCount': 1,

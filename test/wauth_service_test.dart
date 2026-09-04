@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -9,6 +10,7 @@ import 'package:flutterrhythmquake/services/wauth_service.dart';
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+    FlutterSecureStorage.setMockInitialValues({});
   });
 
   test('builds an OAuth authorization URI with PKCE parameters', () async {
@@ -262,6 +264,8 @@ void main() {
 
     expect(captured.headers['authorization'], 'Bearer stored-access-token');
     expect(authorized.userInfo['sub'], '72');
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.containsKey(WAuthService.accessTokenPreferenceKey), isFalse);
   });
 
   test('official userinfo rejection keeps protected API disabled', () async {
@@ -354,6 +358,82 @@ void main() {
     expect(verified.apiToken, 'stored-api-token');
     expect(verified.claims['valid'], isTrue);
   });
+
+  test(
+    'expired access token alone does not force forgetting a valid API login',
+    () async {
+      SharedPreferences.setMockInitialValues({
+        WAuthService.accessTokenPreferenceKey: 'expired-access-token',
+        WAuthService.apiTokenPreferenceKey: 'still-valid-api-token',
+      });
+      final client = MockClient((request) async {
+        if (request.url.path == WAuthService.userInfoPath) {
+          return http.Response(jsonEncode({'error': 'invalid_token'}), 401);
+        }
+        expect(request.url.path, WAuthService.verifyApiTokenPath);
+        return http.Response(jsonEncode({'valid': true}), 200);
+      });
+      final service = WAuthService(client: client);
+
+      final status = await service.inspectStoredAuthorization();
+
+      expect(status.hasCredentials, isTrue);
+      expect(status.accessAuthorized, isFalse);
+      expect(status.accessRejected, isTrue);
+      expect(status.apiAuthorized, isTrue);
+      expect(status.apiRejected, isFalse);
+      expect(status.shouldForgetLogin, isFalse);
+    },
+  );
+
+  test(
+    'network failure on API verify keeps cached login presentation',
+    () async {
+      SharedPreferences.setMockInitialValues({
+        WAuthService.accessTokenPreferenceKey: 'access-token',
+        WAuthService.apiTokenPreferenceKey: 'api-token',
+        WAuthService.userInfoPreferenceKey: jsonEncode({'name': 'Rhythm'}),
+      });
+      final client = MockClient((request) async {
+        if (request.url.path == WAuthService.userInfoPath) {
+          return http.Response(jsonEncode({'name': 'Rhythm'}), 200);
+        }
+        return http.Response(jsonEncode({'error': 'timeout'}), 408);
+      });
+      final service = WAuthService(client: client);
+
+      final status = await service.inspectStoredAuthorization();
+
+      expect(status.accessAuthorized, isTrue);
+      expect(status.apiAuthorized, isFalse);
+      expect(status.apiRejected, isFalse);
+      expect(status.shouldForgetLogin, isFalse);
+      expect(status.hasTransientVerificationFailure, isTrue);
+      expect(status.keepsCachedLoginPresentation, isTrue);
+    },
+  );
+
+  test('rejected API token forces forgetting saved login', () async {
+    SharedPreferences.setMockInitialValues({
+      WAuthService.accessTokenPreferenceKey: 'access-token',
+      WAuthService.apiTokenPreferenceKey: 'dead-api-token',
+    });
+    final client = MockClient((request) async {
+      if (request.url.path == WAuthService.userInfoPath) {
+        return http.Response(jsonEncode({'sub': '72'}), 200);
+      }
+      return http.Response(jsonEncode({'valid': false}), 200);
+    });
+    final service = WAuthService(client: client);
+
+    final status = await service.inspectStoredAuthorization();
+
+    expect(status.accessAuthorized, isTrue);
+    expect(status.apiAuthorized, isFalse);
+    expect(status.apiRejected, isTrue);
+    expect(status.shouldForgetLogin, isTrue);
+  });
+
   test('gateway requests time out instead of leaving login pending', () async {
     final service = WAuthService(
       client: MockClient((_) async {

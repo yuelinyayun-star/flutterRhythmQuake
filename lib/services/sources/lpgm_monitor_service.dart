@@ -63,9 +63,12 @@ class LpgmMonitorService {
   // untouched and exclude this station only from derived readings.
   static const Set<String> blockedStationCodes = {'ISKH08'};
   static const String _latestUrl =
-      'https://smi.lmoniexp.bosai.go.jp/webservice/server/pros/latest.json';
+      'https://www.lmoni.bosai.go.jp/img_svr/webservice/server/pros/latest.json';
   static const String legendImageUrl =
       'https://www.lmoni.bosai.go.jp/monitor/data/data/map_img/ScaleImg2/nied_abrspmx_s_w_scale.png';
+  static const Duration _metadataTimeout = Duration(seconds: 3);
+  static const Duration _imageTimeout = Duration(seconds: 3);
+  static const Duration _metadataRefreshInterval = Duration(seconds: 60);
 
   static const double _isolatedHighSva = 5.0;
   static const double _supportingRiseMinSva = 0.1;
@@ -73,10 +76,14 @@ class LpgmMonitorService {
 
   bool _running = false;
   bool get isRunning => _running;
-  bool _isTicking = false;
 
   Timer? _timer;
+  int _runGeneration = 0;
+  int? _tickingGeneration;
   String? _lastStamp;
+  DateTime? _liveFrameAnchorJst;
+  final Stopwatch _liveFrameAnchorClock = Stopwatch();
+  final Stopwatch _metadataRefreshClock = Stopwatch();
   LpgmSnapshot? _latestSnapshot;
   LpgmInputFrame? _latestInputFrame;
   List<_LpgmPoint> _points = const [];
@@ -156,6 +163,8 @@ class LpgmMonitorService {
     }
     _interval = interval;
     _running = true;
+    _runGeneration++;
+    _resetLiveFrameAnchor();
     _buildPoints();
     _timer = Timer.periodic(_interval, (_) => _tick());
     unawaited(_tick());
@@ -165,8 +174,10 @@ class LpgmMonitorService {
     _timer?.cancel();
     _timer = null;
     _running = false;
-    _isTicking = false;
+    _runGeneration++;
+    _tickingGeneration = null;
     _lastStamp = null;
+    _resetLiveFrameAnchor();
     _previousSvaByCode.clear();
     _currentSvaByCode.clear();
     _confirmedSupportingRiseCodes.clear();
@@ -198,14 +209,18 @@ class LpgmMonitorService {
   }
 
   Future<void> _tick() async {
-    if (!_running || _isTicking) return;
-    _isTicking = true;
+    if (!_running) return;
+    final generation = _runGeneration;
+    if (_tickingGeneration == generation) return;
+    _tickingGeneration = generation;
     try {
-      final stamp = await _fetchLatestStamp();
+      final stamp = await _stampForTick(generation);
+      if (!_isCurrentRun(generation)) return;
       if (stamp == null || stamp == _lastStamp) return;
       final time = _parseStamp(stamp);
       if (time == null) return;
       final frame = await _fetchGif(_buildRtImageUrl(stamp));
+      if (!_isCurrentRun(generation)) return;
       if (frame == null) return;
       _lastStamp = stamp;
       if (_frameController.hasListener) {
@@ -221,9 +236,68 @@ class LpgmMonitorService {
     } catch (_) {
       // keep silent for now; caller can observe stream gaps.
     } finally {
-      _isTicking = false;
+      if (_tickingGeneration == generation) {
+        _tickingGeneration = null;
+      }
     }
   }
+
+  Future<String?> _stampForTick(int generation) async {
+    final anchor = _liveFrameAnchorJst;
+    final refreshDue =
+        anchor == null ||
+        !_metadataRefreshClock.isRunning ||
+        _metadataRefreshClock.elapsed >= _metadataRefreshInterval;
+    if (refreshDue) {
+      _metadataRefreshClock
+        ..reset()
+        ..start();
+      if (anchor == null) {
+        await _refreshLiveFrameAnchor(generation);
+      } else {
+        // Keep the one-second image clock moving while periodic time sync is
+        // in flight, matching the official Lmoni viewer.
+        unawaited(_refreshLiveFrameAnchor(generation));
+      }
+    }
+
+    final current = _projectLiveFrameTime();
+    return current == null ? null : _formatStamp(current);
+  }
+
+  Future<void> _refreshLiveFrameAnchor(int generation) async {
+    final stamp = await _fetchLatestStamp();
+    if (!_isCurrentRun(generation) || stamp == null) return;
+    final latest = _parseStamp(stamp);
+    if (latest == null) return;
+    final current = _liveFrameAnchorJst;
+    if (current != null && !latest.isAfter(current)) return;
+    _liveFrameAnchorJst = latest;
+    _liveFrameAnchorClock
+      ..reset()
+      ..start();
+  }
+
+  DateTime? _projectLiveFrameTime() {
+    final anchor = _liveFrameAnchorJst;
+    if (anchor == null) return null;
+    return anchor.add(
+      Duration(seconds: _liveFrameAnchorClock.elapsed.inSeconds),
+    );
+  }
+
+  void _resetLiveFrameAnchor() {
+    _liveFrameAnchorJst = null;
+    _liveFrameAnchorClock
+      ..stop()
+      ..reset();
+    _metadataRefreshClock
+      ..stop()
+      ..reset();
+  }
+
+  bool _isCurrentRun(int generation) =>
+      _running && _runGeneration == generation;
 
   Future<String?> _fetchLatestStamp() async {
     final nowMs = DateTime.now().millisecondsSinceEpoch;
@@ -553,28 +627,36 @@ class LpgmMonitorService {
   }
 
   static String rtImageUrlFromTime(DateTime dataTime) {
-    String two(int v) => v.toString().padLeft(2, '0');
-    final y = dataTime.year.toString().padLeft(4, '0');
-    final mo = two(dataTime.month);
-    final d = two(dataTime.day);
-    final h = two(dataTime.hour);
-    final mi = two(dataTime.minute);
-    final s = two(dataTime.second);
-    final ymd = '$y$mo$d';
-    final stamp = '$y$mo$d$h$mi$s';
+    final stamp = _formatStamp(dataTime);
+    final ymd = stamp.substring(0, 8);
     return 'https://www.lmoni.bosai.go.jp/monitor/data/data/map_img/RealTimeImg/abrspmx_s/$ymd/$stamp.abrspmx_s.gif';
   }
 
+  static String _formatStamp(DateTime dataTime) {
+    String two(int value) => value.toString().padLeft(2, '0');
+    return '${dataTime.year.toString().padLeft(4, '0')}'
+        '${two(dataTime.month)}'
+        '${two(dataTime.day)}'
+        '${two(dataTime.hour)}'
+        '${two(dataTime.minute)}'
+        '${two(dataTime.second)}';
+  }
+
+  @visibleForTesting
+  static String get latestMetadataUrlForTesting => _latestUrl;
+
   Future<String?> _fetchText(String url) async {
     try {
-      final req = await _client.getUrl(Uri.parse(url));
+      final req = await _client
+          .getUrl(Uri.parse(url))
+          .timeout(_metadataTimeout);
       req.headers.set('Referer', 'https://www.lmoni.bosai.go.jp/monitor/');
       req.headers.set('User-Agent', _ua);
       req.headers.set('Cache-Control', 'no-cache');
       req.headers.set('Pragma', 'no-cache');
-      final res = await req.close();
+      final res = await req.close().timeout(_metadataTimeout);
       if (res.statusCode != 200) return null;
-      return await utf8.decoder.bind(res).join();
+      return await utf8.decoder.bind(res).join().timeout(_metadataTimeout);
     } catch (_) {
       return null;
     }
@@ -588,14 +670,16 @@ class LpgmMonitorService {
 
   Future<(List<int>, int, int, Uint8List)?> _fetchGifOrPng(String url) async {
     try {
-      final req = await _client.getUrl(Uri.parse(url));
+      final req = await _client.getUrl(Uri.parse(url)).timeout(_imageTimeout);
       req.headers.set('Referer', 'https://www.lmoni.bosai.go.jp/monitor/');
       req.headers.set('User-Agent', _ua);
       req.headers.set('Cache-Control', 'no-cache');
       req.headers.set('Pragma', 'no-cache');
-      final res = await req.close();
+      final res = await req.close().timeout(_imageTimeout);
       if (res.statusCode != 200) return null;
-      final bytes = await consolidateHttpClientResponseBytes(res);
+      final bytes = await consolidateHttpClientResponseBytes(
+        res,
+      ).timeout(_imageTimeout);
       final codec = await ui.instantiateImageCodec(bytes);
       final frame = await codec.getNextFrame();
       final img = frame.image;

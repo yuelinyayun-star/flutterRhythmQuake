@@ -12,16 +12,19 @@ import 'package:shared_preferences/shared_preferences.dart';
 class BackgroundSettingsProvider with ChangeNotifier {
   static const String _prefix = 'background_';
   static const String _enabledKey = '${_prefix}enabled';
+  static const String _autoStartOnBootKey = '${_prefix}auto_start_on_boot';
   static const String _reportEnabledKey = '${_prefix}report_enabled';
   static const String _eewEnabledKey = '${_prefix}eew_enabled';
   static const String _eewMinIntensityKey = '${_prefix}eew_min_intensity';
 
   bool _enabled = false;
+  bool _autoStartOnBoot = false;
   bool _reportEnabled = true;
   bool _eewEnabled = true;
   double _eewMinIntensity = 0.0;
 
   bool get enabled => _enabled;
+  bool get autoStartOnBoot => _autoStartOnBoot;
   bool get reportEnabled => _reportEnabled;
   bool get eewEnabled => _eewEnabled;
   double get eewMinIntensity => _eewMinIntensity;
@@ -35,6 +38,7 @@ class BackgroundSettingsProvider with ChangeNotifier {
   /// 加载持久化设置
   Future<void> load(SharedPreferences prefs) async {
     _enabled = prefs.getBool(_enabledKey) ?? false;
+    _autoStartOnBoot = prefs.getBool(_autoStartOnBootKey) ?? false;
     _reportEnabled = prefs.getBool(_reportEnabledKey) ?? true;
     _eewEnabled = prefs.getBool(_eewEnabledKey) ?? true;
     _eewMinIntensity = prefs.getDouble(_eewMinIntensityKey) ?? 0.0;
@@ -55,6 +59,13 @@ class BackgroundSettingsProvider with ChangeNotifier {
     if (_enabled == value) return;
     _enabled = value;
     await _saveBool(_enabledKey, value);
+    notifyListeners();
+  }
+
+  Future<void> setAutoStartOnBoot(bool value) async {
+    if (_autoStartOnBoot == value) return;
+    _autoStartOnBoot = value;
+    await _saveBool(_autoStartOnBootKey, value);
     notifyListeners();
   }
 

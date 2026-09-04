@@ -1,0 +1,17 @@
+{
+  "type": "jma_eew",
+  "EventID": "20260811220000",
+  "Serial": 3,
+  "Title": "緊急地震速報（警報）",
+  "OriginTime": "2026-08-11 22:00:00",
+  "AnnouncedTime": "2026-08-11 22:00:12",
+  "Hypocenter": "熊本県熊本地方",
+  "Magunitude": 5.4,
+  "Depth": 10,
+  "Latitude": 32.7,
+  "Longitude": 130.8,
+  "MaxIntensity": "5強",
+  "isWarn": true,
+  "isFinal": false,
+  "isCancel": false
+}

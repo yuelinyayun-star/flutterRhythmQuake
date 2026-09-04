@@ -6,6 +6,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../models/jma_volcano_site.dart';
+import '../../core/utils/volcano_icon_assets.dart';
 
 class VolcanoLayer extends StatelessWidget {
   final List<JmaVolcanoSite> sites;
@@ -202,13 +203,7 @@ class _VolcanoIcon extends StatelessWidget {
     );
   }
 
-  String _assetForSite(JmaVolcanoSite site) {
-    final level = site.alertLevel;
-    if (level < 1 || level > 5) {
-      return 'assets/images/volcano/vol.png';
-    }
-    return 'assets/images/volcano/Lv$level.png';
-  }
+  String _assetForSite(JmaVolcanoSite site) => VolcanoIconAssets.forSite(site);
 }
 
 class _VolcanoHoverCard extends StatelessWidget {

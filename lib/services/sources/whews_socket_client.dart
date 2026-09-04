@@ -20,6 +20,10 @@ class WhewsSocketClient {
     this.onStateChanged,
   }) : _apiToken = apiToken.trim();
 
+  static const Duration heartbeatInterval = Duration(seconds: 30);
+  static const Duration stallTimeout = Duration(seconds: 90);
+  static const Duration livenessTimeout = Duration(seconds: 20);
+
   final String url;
   final void Function(dynamic message) onMessage;
   final void Function(WhewsSocketState state)? onStateChanged;
@@ -29,21 +33,25 @@ class WhewsSocketClient {
   StreamSubscription<dynamic>? _subscription;
   Timer? _reconnectTimer;
   Timer? _heartbeatTimer;
+  Timer? _livenessTimer;
   int _serial = 0;
   int _retrySeconds = 3;
   bool _running = false;
   bool _authorizationRejected = false;
+  bool _queryAuthFailed = false;
   DateTime? _lastFrameAt;
-  bool _serverFrameReceived = false;
+  bool _aliveConfirmed = false;
 
   bool get isRunning => _running;
   bool get authorizationRejected => _authorizationRejected;
+  bool get aliveConfirmed => _aliveConfirmed;
 
   void setApiToken(String apiToken) {
     final next = apiToken.trim();
     if (next == _apiToken) return;
     _apiToken = next;
     _authorizationRejected = false;
+    _queryAuthFailed = false;
     if (_running) {
       stop();
       start();
@@ -59,6 +67,7 @@ class WhewsSocketClient {
     }
     _running = true;
     _authorizationRejected = false;
+    _queryAuthFailed = false;
     _retrySeconds = 3;
     _connect();
   }
@@ -67,22 +76,27 @@ class WhewsSocketClient {
     if (!_running || _authorizationRejected || _apiToken.isEmpty) return;
     final serial = ++_serial;
     _reconnectTimer?.cancel();
+    _stopHeartbeatTimers();
+    _aliveConfirmed = false;
+    _lastFrameAt = null;
     onStateChanged?.call(WhewsSocketState.connecting);
 
+    final useQueryTokenAuth = !_queryAuthFailed;
     WebSocketChannel? channel;
     try {
-      channel = WebSocketChannel.connect(Uri.parse(url));
+      channel = WebSocketChannel.connect(
+        useQueryTokenAuth ? buildConnectionUri(url, _apiToken) : Uri.parse(url),
+      );
       _channel = channel;
       await channel.ready.timeout(const Duration(seconds: 12));
       if (!_isCurrent(channel, serial)) {
         await channel.sink.close();
         return;
       }
-      channel.sink.add(jsonEncode({'token': _apiToken}));
-      _lastFrameAt = DateTime.now();
+      if (!useQueryTokenAuth) {
+        channel.sink.add(jsonEncode({'token': _apiToken}));
+      }
       _retrySeconds = 3;
-      _serverFrameReceived = false;
-      _startHeartbeat(channel, serial);
       _subscription = channel.stream.listen(
         (data) => _handleFrame(channel!, serial, data),
         onError: (Object error, StackTrace stackTrace) {
@@ -93,6 +107,9 @@ class WhewsSocketClient {
         onDone: () => _handleClosed(channel!, serial),
         cancelOnError: true,
       );
+      // Stay yellow until heartbeat/pong/any valid frame proves the session is
+      // alive. Probe immediately so we do not wait a full heartbeat interval.
+      _startHeartbeat(channel, serial);
     } catch (error) {
       if (channel != null && !_isCurrent(channel, serial)) return;
       debugPrint('WHEWS $url connection failed: $error');
@@ -102,17 +119,14 @@ class WhewsSocketClient {
 
   void _handleFrame(WebSocketChannel channel, int serial, dynamic raw) {
     if (!_isCurrent(channel, serial)) return;
-    _lastFrameAt = DateTime.now();
     dynamic decoded;
     try {
       decoded = raw is String ? jsonDecode(raw) : raw;
     } catch (_) {
       return;
     }
-    if (!_serverFrameReceived) {
-      _serverFrameReceived = true;
-      onStateChanged?.call(WhewsSocketState.connected);
-    }
+    _lastFrameAt = DateTime.now();
+    _confirmAlive();
     if (decoded is Map && decoded['type'] == 'heartbeat') {
       channel.sink.add(jsonEncode({'type': 'ping'}));
       return;
@@ -121,30 +135,59 @@ class WhewsSocketClient {
     onMessage(decoded);
   }
 
+  void _confirmAlive() {
+    if (_aliveConfirmed) return;
+    _aliveConfirmed = true;
+    _livenessTimer?.cancel();
+    _livenessTimer = null;
+    onStateChanged?.call(WhewsSocketState.connected);
+  }
+
   void _startHeartbeat(WebSocketChannel channel, int serial) {
-    _heartbeatTimer?.cancel();
-    _heartbeatTimer = Timer.periodic(const Duration(seconds: 25), (_) {
+    _stopHeartbeatTimers();
+    try {
+      channel.sink.add(jsonEncode({'type': 'ping'}));
+    } catch (_) {
+      _handleClosed(channel, serial);
+      return;
+    }
+    _livenessTimer = Timer(livenessTimeout, () {
+      if (!_isCurrent(channel, serial) || _aliveConfirmed) return;
+      debugPrint('WHEWS $url liveness timeout waiting for heartbeat/pong');
+      _handleClosed(channel, serial);
+    });
+    _heartbeatTimer = Timer.periodic(heartbeatInterval, (_) {
       if (!_isCurrent(channel, serial)) return;
       final lastFrameAt = _lastFrameAt;
       if (lastFrameAt != null &&
-          DateTime.now().difference(lastFrameAt) >
-              const Duration(seconds: 75)) {
+          DateTime.now().difference(lastFrameAt) > stallTimeout) {
         _handleClosed(channel, serial);
         return;
       }
-      channel.sink.add(jsonEncode({'type': 'ping'}));
+      try {
+        channel.sink.add(jsonEncode({'type': 'ping'}));
+      } catch (_) {
+        _handleClosed(channel, serial);
+      }
     });
+  }
+
+  void _stopHeartbeatTimers() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+    _livenessTimer?.cancel();
+    _livenessTimer = null;
   }
 
   void _handleClosed(WebSocketChannel? channel, int serial) {
     if (channel != null && !_isCurrent(channel, serial)) return;
     final closeCode = channel?.closeCode;
-    _heartbeatTimer?.cancel();
-    _heartbeatTimer = null;
+    _stopHeartbeatTimers();
     _subscription?.cancel();
     _subscription = null;
     _channel = null;
-    _serverFrameReceived = false;
+    _aliveConfirmed = false;
+    _lastFrameAt = null;
     try {
       channel?.sink.close();
     } catch (_) {
@@ -156,6 +199,16 @@ class WhewsSocketClient {
       return;
     }
     if (closeCode == 4401) {
+      if (!_queryAuthFailed) {
+        _queryAuthFailed = true;
+        debugPrint(
+          'WHEWS $url query-token auth rejected; retrying with frame token',
+        );
+        onStateChanged?.call(WhewsSocketState.connecting);
+        _reconnectTimer?.cancel();
+        _reconnectTimer = Timer(Duration.zero, _connect);
+        return;
+      }
       _authorizationRejected = true;
       onStateChanged?.call(WhewsSocketState.unauthorized);
       return;
@@ -171,19 +224,28 @@ class WhewsSocketClient {
     return _running && identical(_channel, channel) && _serial == serial;
   }
 
+  Uri _connectionUri() => buildConnectionUri(url, _apiToken);
+
+  @visibleForTesting
+  static Uri buildConnectionUri(String url, String apiToken) {
+    final base = Uri.parse(url);
+    return base.replace(
+      queryParameters: {...base.queryParameters, 'token': apiToken.trim()},
+    );
+  }
+
   void stop() {
     _running = false;
     _serial++;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
-    _heartbeatTimer?.cancel();
-    _heartbeatTimer = null;
+    _stopHeartbeatTimers();
     _subscription?.cancel();
     _subscription = null;
     _channel?.sink.close();
     _channel = null;
     _lastFrameAt = null;
-    _serverFrameReceived = false;
+    _aliveConfirmed = false;
     onStateChanged?.call(WhewsSocketState.disconnected);
   }
 

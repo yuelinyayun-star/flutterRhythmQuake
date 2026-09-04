@@ -6,8 +6,7 @@ void main() {
   test(
     'PLUM Tohoku mismatch one-sided transfer diagnostic is structured and non-production',
     () {
-      final report =
-          buildPlumTohokuMismatchOneSidedTransferDiagnosticJson();
+      final report = buildPlumTohokuMismatchOneSidedTransferDiagnosticJson();
 
       expect(
         report['schemaVersion'],
@@ -32,13 +31,16 @@ void main() {
       expect(focus['minimumPredictionMarginShindo'], 1.0);
       expect(focus['baselineThresholdCrossingRequired'], isTrue);
 
-      final definitions =
-          (report['regimeDefinitions'] as Map).cast<String, Object?>();
-      expect(definitions.keys, containsAll(<String>[
-        'localConsistencyBand',
-        'geometryBand',
-        'spreadBand',
-      ]));
+      final definitions = (report['regimeDefinitions'] as Map)
+          .cast<String, Object?>();
+      expect(
+        definitions.keys,
+        containsAll(<String>[
+          'localConsistencyBand',
+          'geometryBand',
+          'spreadBand',
+        ]),
+      );
 
       final thresholds = (report['thresholds'] as Map).cast<String, Object?>();
       expect(thresholds.keys, containsAll(<String>['shindo4', 'shindo5-']));
@@ -49,8 +51,9 @@ void main() {
         expect(threshold['mismatchTransfer'], isA<List>());
       }
 
-      final markdown =
-          plumTohokuMismatchOneSidedTransferDiagnosticMarkdown(report);
+      final markdown = plumTohokuMismatchOneSidedTransferDiagnosticMarkdown(
+        report,
+      );
       expect(
         markdown,
         contains('# PLUM Tohoku Mismatch One-Sided Transfer Diagnostic'),

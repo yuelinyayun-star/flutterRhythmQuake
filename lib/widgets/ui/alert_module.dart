@@ -15,6 +15,7 @@ import '../../core/source_estimation/source_estimation_models.dart';
 import '../../core/source_estimation/source_station_phase_classifier.dart';
 import '../../core/source_estimation/station_event_tracker.dart';
 import '../../core/utils/quake_time.dart';
+import '../../core/utils/volcano_icon_assets.dart';
 import 'ui_scale.dart';
 
 class AlertModule extends StatefulWidget {
@@ -337,7 +338,10 @@ class _AlertModuleState extends State<AlertModule> {
     if (sourceEvent == null || estimate == null) return null;
 
     final isKotoho7Js = estimate.method == 'nied_gif_kotoho7_js_receiver_v1';
-    final originTime = estimate.originTime ?? sourceEvent.startedAt;
+    final originTime = _sourceEstimationJstWallClock(
+      estimate.originTime ?? sourceEvent.startedAt,
+    );
+    final reportTime = _sourceEstimationJstWallClock(sourceEvent.updatedAt);
     final estimatedShindo = isKotoho7Js
         ? (_sourceDiagnosticDouble(
                 estimate,
@@ -366,6 +370,10 @@ class _AlertModuleState extends State<AlertModule> {
       ?candidateRegionText,
     ].join(' \u00b7 ');
     final triggerText = _sourceTriggerText(sourceEvent, estimate);
+    final dartHypReportNumber = isKotoho7Js
+        ? null
+        : _positiveInt(estimate.diagnostics['nied_dart_hyp_report_num']);
+    final dartHypStable = estimate.diagnostics['nied_dart_hyp_stable'] == true;
 
     return UnifiedQuakeData(
       source: _sourceEstimationUnifiedSource,
@@ -374,7 +382,9 @@ class _AlertModuleState extends State<AlertModule> {
       isEew: false,
       timeZone: 9,
       titleText: '\u9707\u6e90\u672c\u5730\u63a8\u7b97',
-      reportNumText: '',
+      reportNumText: dartHypReportNumber == null
+          ? ''
+          : '第$dartHypReportNumber报${dartHypStable ? '（稳定）' : ''}',
       useShindo: true,
       maxIntensity: shindoText,
       className: estimatedShindoIndex == null
@@ -384,16 +394,14 @@ class _AlertModuleState extends State<AlertModule> {
           '${estimate.latitude.toStringAsFixed(3)}\u00b0N, '
           '${estimate.longitude.toStringAsFixed(3)}\u00b0E',
       originTime: originTime,
-      reportTime: sourceEvent.updatedAt,
+      reportTime: reportTime,
       magnitude: estimate.magnitude ?? -1,
       depth: estimate.depthKm ?? -1,
-      depthText: estimate.depthKm == null
-          ? '\u6df1\u5ea6 -- \u00b7 '
-                '\u652f\u6301 $supportCount\u7ad9 '
-                '\u00b7 ${_sourceMethodLabelV2(estimate.method)}'
-          : '\u6df1\u5ea6 ${estimate.depthKm!.round()}km \u00b7 '
-                '\u652f\u6301 $supportCount\u7ad9 '
-                '\u00b7 ${_sourceMethodLabelV2(estimate.method)}',
+      depthText: _sourceEstimateDetailsText(
+        estimate,
+        supportCount: supportCount,
+        methodLabel: _sourceMethodLabelV2(estimate.method),
+      ),
       lat: estimate.latitude,
       lng: estimate.longitude,
       isFinal: sourceEvent.isClosed,
@@ -401,6 +409,23 @@ class _AlertModuleState extends State<AlertModule> {
       warnArea: triggerText,
       arrivedAt: sourceEvent.updatedAt,
     );
+  }
+
+  String _sourceEstimateDetailsText(
+    SourceEstimate estimate, {
+    required int supportCount,
+    required String methodLabel,
+  }) {
+    final magnitude = estimate.magnitude;
+    return <String>[
+      if (magnitude != null && magnitude.isFinite && magnitude >= 0)
+        'M${magnitude.toStringAsFixed(1)}',
+      estimate.depthKm == null
+          ? '\u6df1\u5ea6 --'
+          : '\u6df1\u5ea6 ${estimate.depthKm!.round()}km',
+      '\u652f\u6301 $supportCount\u7ad9',
+      methodLabel,
+    ].join(' \u00b7 ');
   }
 
   String? _sourceCandidateRegionText(Map<String, Object?> metadata) {
@@ -460,6 +485,20 @@ class _AlertModuleState extends State<AlertModule> {
       if (qualityRank != null && qualityRank.isNotEmpty) '质量 $qualityRank',
     ];
     return parts.join(' · ');
+  }
+
+  DateTime _sourceEstimationJstWallClock(DateTime instant) {
+    final jst = instant.toUtc().add(const Duration(hours: 9));
+    return DateTime(
+      jst.year,
+      jst.month,
+      jst.day,
+      jst.hour,
+      jst.minute,
+      jst.second,
+      jst.millisecond,
+      jst.microsecond,
+    );
   }
 
   String _sourceTriggerText(
@@ -611,7 +650,10 @@ class _AlertModuleState extends State<AlertModule> {
     final quality = _sourceQualityCalculator.calculate(sourceEvent);
     final phases = _sourcePhaseClassifier.classify(sourceEvent);
     final reportNumber = _sourceEstimationReportNumber(sourceEvent, estimate);
-    final originTime = estimate.originTime ?? sourceEvent.startedAt;
+    final originTime = _sourceEstimationJstWallClock(
+      estimate.originTime ?? sourceEvent.startedAt,
+    );
+    final reportTime = _sourceEstimationJstWallClock(sourceEvent.updatedAt);
     final grade = quality?.grade ?? '?';
     final qualityText = quality == null
         ? '质量 --'
@@ -641,15 +683,14 @@ class _AlertModuleState extends State<AlertModule> {
           '${estimate.latitude.toStringAsFixed(3)}°N, '
           '${estimate.longitude.toStringAsFixed(3)}°E',
       originTime: originTime,
-      reportTime: sourceEvent.updatedAt,
+      reportTime: reportTime,
       magnitude: estimate.magnitude ?? -1,
       depth: estimate.depthKm ?? -1,
-      depthText: estimate.depthKm == null
-          ? '深度 -- · 支持 ${estimate.supportingStationCount}站 · '
-                '${_sourceMethodLabel(estimate.method)}'
-          : '深度 ${estimate.depthKm!.round()}km · '
-                '支持 ${estimate.supportingStationCount}站 · '
-                '${_sourceMethodLabel(estimate.method)}',
+      depthText: _sourceEstimateDetailsText(
+        estimate,
+        supportCount: estimate.supportingStationCount,
+        methodLabel: _sourceMethodLabel(estimate.method),
+      ),
       lat: estimate.latitude,
       lng: estimate.longitude,
       isFinal: sourceEvent.isClosed,
@@ -984,7 +1025,15 @@ class _AlertModuleState extends State<AlertModule> {
       return _buildSourceEstimationBadge(event, color);
     }
     if (event.isVolcanoEvent) {
-      return _buildVolcanoBadge(color);
+      return _buildVolcanoBadge(event, color);
+    }
+    if (event.isJmaLpgm) {
+      return _buildUnifiedListStyleBadge(
+        color: color,
+        value: '长周期',
+        label: '长周期',
+        useShindo: false,
+      );
     }
 
     final presentation = UnifiedEventPresentation.fromEvent(event);
@@ -996,7 +1045,11 @@ class _AlertModuleState extends State<AlertModule> {
     );
   }
 
-  Widget _buildVolcanoBadge(Color color) {
+  Widget _buildVolcanoBadge(UnifiedQuakeData event, Color color) {
+    final volcano = event.volcanoEvent;
+    final iconAsset = volcano == null
+        ? VolcanoIconAssets.generic
+        : VolcanoIconAssets.forVolcanoEvent(volcano);
     return Container(
       width: _s(72, context),
       height: _s(72, context),
@@ -1014,8 +1067,8 @@ class _AlertModuleState extends State<AlertModule> {
             child: Transform.scale(
               scale: 2,
               child: Image.asset(
-                'assets/images/volcano/vol.png',
-                key: const ValueKey('volcano_badge_icon'),
+                iconAsset,
+                key: ValueKey('volcano_badge_icon'),
                 fit: BoxFit.contain,
                 filterQuality: FilterQuality.high,
               ),
@@ -1218,13 +1271,12 @@ class _AlertModuleState extends State<AlertModule> {
   }
 
   String _formatUnifiedEventClock(UnifiedQuakeData event) {
-    final originTime = event.originTime;
-    if (originTime == null) return '--:--:--';
-    final sourceClock = originTime.toUtc().add(Duration(hours: event.timeZone));
-    return sourceClock
-        .toIso8601String()
-        .substring(5, 19)
-        .replaceFirst('T', ' ');
+    final clock = QuakeTime.formatUnifiedOriginClock(
+      event,
+      includeSeconds: true,
+      includeZoneLabel: false,
+    );
+    return clock.length >= 19 ? clock.substring(5, 19) : clock;
   }
 
   Color _uicColorFromClass(String className) {
@@ -1292,6 +1344,18 @@ class _AlertModuleState extends State<AlertModule> {
     );
   }
 
+  String _weatherAlarmSourceTitle(WeatherAlarm alarm) {
+    switch (alarm.source) {
+      case WeatherAlarmSource.chinaWeatherLocal:
+        return '中国气象局气象预警';
+      case WeatherAlarmSource.jmaLocal:
+        return '気象庁警報・注意報';
+      case WeatherAlarmSource.fan:
+      case WeatherAlarmSource.whews:
+        return '气象预警';
+    }
+  }
+
   Widget _buildWeatherHeader(BuildContext context, WeatherAlarm alarm) {
     final themeColor = alarm.levelColor;
     return Container(
@@ -1330,7 +1394,7 @@ class _AlertModuleState extends State<AlertModule> {
           SizedBox(width: _s(10, context)),
           Expanded(
             child: Text(
-              '中国气象局气象预警',
+              _weatherAlarmSourceTitle(alarm),
               style: TextStyle(
                 fontSize: _s(12, context),
                 fontWeight: FontWeight.w700,
@@ -1868,7 +1932,7 @@ class _AlertModuleState extends State<AlertModule> {
       case QuakeSourceType.bmkg:
         return '印度尼西亚气象气候与地球物理局';
       case QuakeSourceType.geonet:
-        return '新西兰 GeoNet';
+        return '新西兰地球科学局';
       case QuakeSourceType.tmd:
         return '泰国气象局';
       case QuakeSourceType.ingv:
@@ -1879,15 +1943,25 @@ class _AlertModuleState extends State<AlertModule> {
         return '马来西亚气象局';
       case QuakeSourceType.phivolcs:
         return '菲律宾火山与地震研究所';
+      case QuakeSourceType.sgc:
+        return '哥伦比亚地质局';
+      case QuakeSourceType.ga:
+        return '澳大利亚地质局';
+      case QuakeSourceType.cenais:
+        return '古巴国家地震研究中心';
+      case QuakeSourceType.unadapted:
+        final title = event.infoTypeName?.trim();
+        return (title != null && title.isNotEmpty) ? title : '地震信息';
       case QuakeSourceType.cwa:
       case QuakeSourceType.cwa_eew:
         return '中央氣象署地震報告';
       case QuakeSourceType.wolfx:
       case QuakeSourceType.p2p:
       case QuakeSourceType.jma_fan:
-        return event.infoTypeName ?? '鍦伴渿鎯呭牨';
+        return event.infoTypeName ?? '地震情报';
       default:
-        return '鍦伴渿鎯呭牨';
+        final title = event.infoTypeName?.trim();
+        return (title != null && title.isNotEmpty) ? title : '地震信息';
     }
   }
 
@@ -1895,6 +1969,10 @@ class _AlertModuleState extends State<AlertModule> {
   ///
   /// 参考 kanameishi 的 sourceTypes 映射
   String _sourceTypeLabel(QuakeMessage event) {
+    final apiTypeLabel = event.apiTypeLabel?.trim();
+    if (apiTypeLabel != null && apiTypeLabel.isNotEmpty) {
+      return apiTypeLabel;
+    }
     if (event.source == QuakeSourceType.wolfx) return 'Wolfx';
     if (event.source == QuakeSourceType.p2p) return 'P2PQ';
     if (event.source == QuakeSourceType.jma_fan) return 'FAN';
@@ -1921,7 +1999,10 @@ class _AlertModuleState extends State<AlertModule> {
         event.source == QuakeSourceType.ingv ||
         event.source == QuakeSourceType.nrcan ||
         event.source == QuakeSourceType.mmd ||
-        event.source == QuakeSourceType.phivolcs) {
+        event.source == QuakeSourceType.phivolcs ||
+        event.source == QuakeSourceType.sgc ||
+        event.source == QuakeSourceType.ga ||
+        event.source == QuakeSourceType.cenais) {
       return 'WHEWS';
     }
     if (event.source == QuakeSourceType.kma_eq ||
@@ -1929,6 +2010,7 @@ class _AlertModuleState extends State<AlertModule> {
       return 'KMA';
     }
     if (event.source == QuakeSourceType.sa) return 'FAN';
+    if (event.source == QuakeSourceType.unadapted) return '';
     return '';
   }
 

@@ -783,7 +783,8 @@ class _EqCardState extends State<_EqCard> {
                                   ),
                                 const Spacer(),
                                 if (((eq.source == QuakeSourceType.cenc ||
-                                            eq.source == QuakeSourceType.usgs) &&
+                                            eq.source ==
+                                                QuakeSourceType.usgs) &&
                                         (eq.infoTypeName != null &&
                                                 eq.infoTypeName!.isNotEmpty ||
                                             eq.reviewType != null &&

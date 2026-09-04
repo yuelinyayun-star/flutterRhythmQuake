@@ -3,6 +3,23 @@ import 'package:flutterrhythmquake/services/sources/lpgm_monitor_service.dart';
 import 'package:latlong2/latlong.dart';
 
 void main() {
+  test('LPGM uses the official viewer metadata and image endpoints', () {
+    final metadata = Uri.parse(LpgmMonitorService.latestMetadataUrlForTesting);
+    final image = Uri.parse(
+      LpgmMonitorService.rtImageUrlFromTime(DateTime(2026, 8, 19, 12, 34, 56)),
+    );
+
+    expect(metadata.scheme, 'https');
+    expect(metadata.host, 'www.lmoni.bosai.go.jp');
+    expect(metadata.path, '/img_svr/webservice/server/pros/latest.json');
+    expect(image.host, 'www.lmoni.bosai.go.jp');
+    expect(
+      image.path,
+      '/monitor/data/data/map_img/RealTimeImg/abrspmx_s/20260819/'
+      '20260819123456.abrspmx_s.gif',
+    );
+  });
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   LpgmStationReading reading(String code, double sva) {

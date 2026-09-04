@@ -64,6 +64,8 @@ curl "https://api.fanstudio.tech/tool/geo_ip.php"
 }
 ```
 
+部分 IP 会直接返回区/县级精度，`city` 字段可能是「西城区」这类区划名；也可能额外提供 `district` / `county` 字段。
+
 ## 字段说明
 
 | 字段 | 类型 | 说明 |
@@ -71,7 +73,9 @@ curl "https://api.fanstudio.tech/tool/geo_ip.php"
 | `ip` | string | 查询的IP地址。 |
 | `country` | string | IP地址所在的国家。 |
 | `province` | string | IP地址所在的省份。 |
-| `city` | string | IP地址所在的城市。 |
+| `city` | string | IP地址所在的城市；部分结果会直接返回区/县级名称。 |
+| `district` | string | 可选。IP地址所在的区/县，部分结果通过此字段单独提供。 |
+| `county` | string | 可选。与 `district` 含义相同，部分数据源会使用此字段名。 |
 | `isp` | string | IP地址所属的运营商或机构。 |
 | `latitude` | float | 估算的纬度。 |
 | `longitude` | float | 估算的经度。 |

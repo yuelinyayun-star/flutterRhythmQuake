@@ -201,6 +201,11 @@ void main() {
                         ))
                           entry.key: entry.value,
                     },
+                    'srevKaizouMagnitudeDiagnostics': {
+                      for (final entry in estimate.diagnostics.entries)
+                        if (entry.key.startsWith('srev_kaizou_magnitude_'))
+                          entry.key: entry.value,
+                    },
                     ...?_optionalSArrivalWindowDiagnostics(
                       frameSArrivalWindowDiagnostics,
                     ),
@@ -218,6 +223,26 @@ void main() {
           .whereType<Map<String, Object?>>()
           .toList(growable: false);
       expect(estimates, isNotEmpty);
+      final srevKaizouMagnitudeTrajectory = frames
+          .map((frame) {
+            final estimate = frame['estimate'];
+            if (estimate is! Map<String, Object?>) return null;
+            final diagnostics = estimate['srevKaizouMagnitudeDiagnostics'];
+            if (diagnostics is! Map<String, Object?> ||
+                diagnostics['srev_kaizou_magnitude_supported'] != true) {
+              return null;
+            }
+            return <String, Object?>{
+              'observedAtUtc': frame['observedAtUtc'],
+              'latitude': estimate['latitude'],
+              'longitude': estimate['longitude'],
+              'inputIntensity':
+                  diagnostics['srev_kaizou_magnitude_input_intensity'],
+              'dartMagnitude': estimate['magnitude'],
+            };
+          })
+          .whereType<Map<String, Object?>>()
+          .toList(growable: false);
       final finalEstimate = estimates.last;
       expect(finalSourceRecords, isNotNull);
       final sourceRecords = finalSourceRecords!;
@@ -371,6 +396,7 @@ void main() {
             : jshisArvManifestPath,
         'frameCount': frames.length,
         'estimateFrameCount': estimates.length,
+        'srevKaizouMagnitudeTrajectory': srevKaizouMagnitudeTrajectory,
         'productionMagnitudeChanged': false,
       };
       final geometrySuffix = sourceGeometryMode == 'dart_hyp'

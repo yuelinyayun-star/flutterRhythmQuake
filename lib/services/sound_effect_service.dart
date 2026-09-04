@@ -40,6 +40,7 @@ class SoundEffectService {
     'countdown': 'sounds/general/countdown.wav',
     'intense': 'sounds/general/intense.wav',
     'ews': 'sounds/general/ews.mp3',
+    'typhoonUpdate': 'sounds/general/typhoon_update.wav',
     '0s': 'sounds/general/0s.mp3',
     '1s': 'sounds/general/1s.mp3',
     '2s': 'sounds/general/2s.mp3',

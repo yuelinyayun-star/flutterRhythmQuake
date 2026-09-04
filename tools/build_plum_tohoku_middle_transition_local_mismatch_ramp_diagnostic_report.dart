@@ -59,7 +59,8 @@ void main(List<String> args) {
   if (report['status'] != 'pass') exitCode = 1;
 }
 
-Map<String, Object?> buildPlumTohokuMiddleTransitionLocalMismatchRampDiagnosticJson({
+Map<String, Object?>
+buildPlumTohokuMiddleTransitionLocalMismatchRampDiagnosticJson({
   String dataDirectory = _defaultDataDirectory,
   String modelPath = _defaultModelPath,
 }) {
@@ -399,10 +400,15 @@ List<Map<String, Object?>> _buildTestDeciles(
     final start = (sorted.length * decile / 10).floor();
     final end = (sorted.length * (decile + 1) / 10).floor();
     final bucket = sorted.sublist(start, end);
-    final positive =
-        bucket.where((sample) => sample.isMiddleTransitionZone).length;
-    final firstScore = adjusted ? bucket.first.adjustedScore : bucket.first.runtimeScore;
-    final lastScore = adjusted ? bucket.last.adjustedScore : bucket.last.runtimeScore;
+    final positive = bucket
+        .where((sample) => sample.isMiddleTransitionZone)
+        .length;
+    final firstScore = adjusted
+        ? bucket.first.adjustedScore
+        : bucket.first.runtimeScore;
+    final lastScore = adjusted
+        ? bucket.last.adjustedScore
+        : bucket.last.runtimeScore;
     rows.add({
       'decile': decile + 1,
       'scoreMin': firstScore,
@@ -517,7 +523,8 @@ _ContributionSummary _supportContributionSummary({
   final sorted = [...margins]..sort((left, right) => right.compareTo(left));
   final total = margins.fold<double>(0.0, (sum, value) => sum + value);
   final mean = total / margins.length;
-  final variance = margins.fold<double>(
+  final variance =
+      margins.fold<double>(
         0.0,
         (sum, margin) => sum + math.pow(margin - mean, 2).toDouble(),
       ) /
@@ -526,8 +533,8 @@ _ContributionSummary _supportContributionSummary({
   final contributionHhi = total <= 0
       ? 0.0
       : sorted
-          .map((margin) => margin / total)
-          .fold<double>(0.0, (sum, share) => sum + share * share);
+            .map((margin) => margin / total)
+            .fold<double>(0.0, (sum, share) => sum + share * share);
   return _ContributionSummary(
     topContributionShare: topContributionShare,
     contributionHhi: contributionHhi,
@@ -550,8 +557,8 @@ List<_EvidenceStation> _supportingEvidence({
       observed.longitude,
     );
     if (distance > _plumRadiusKm) continue;
-    final propagated = observed.intensity -
-        _plumDampingPer10Km * (distance / 10.0);
+    final propagated =
+        observed.intensity - _plumDampingPer10Km * (distance / 10.0);
     if (propagated >= threshold) {
       supportingEvidence.add(
         _EvidenceStation(
@@ -622,7 +629,9 @@ String plumTohokuMiddleTransitionLocalMismatchRampDiagnosticMarkdown(
     ..writeln()
     ..writeln('## Coverage')
     ..writeln()
-    ..writeln('| Split | Variants | Station forecasts | Focus samples | Middle-transition samples | Rate |')
+    ..writeln(
+      '| Split | Variants | Station forecasts | Focus samples | Middle-transition samples | Rate |',
+    )
     ..writeln('| --- | ---: | ---: | ---: | ---: | ---: |');
   for (final split in const ['validation', 'test']) {
     final summary = _map(labelSummary[split]);
@@ -665,21 +674,19 @@ String plumTohokuMiddleTransitionLocalMismatchRampDiagnosticMarkdown(
     ..writeln(
       '- Local mismatch ramp: `${scoreDefinition['localMismatchRamp']}`.',
     )
-    ..writeln(
-      '- Adjusted score: `${scoreDefinition['adjustedScore']}`.',
-    )
+    ..writeln('- Adjusted score: `${scoreDefinition['adjustedScore']}`.')
     ..writeln()
     ..writeln('## Test Outcome Means')
     ..writeln()
-    ..writeln(
-      '| Variant | Outcome | Local Ramp | Score |',
-    )
+    ..writeln('| Variant | Outcome | Local Ramp | Score |')
     ..writeln('| --- | --- | ---: | ---: |');
   for (final variant in const ['base', 'adjusted']) {
     final rows = _map(outcomeMeans[variant]);
     for (final outcome in const ['middleTransitionZone', 'otherFocusSamples']) {
       final row = _map(rows[outcome]);
-      final value = variant == 'base' ? row['runtimeScore'] : row['adjustedScore'];
+      final value = variant == 'base'
+          ? row['runtimeScore']
+          : row['adjustedScore'];
       buffer.writeln(
         '| `$variant` | `$outcome` | ${_fmt(row['localMismatchRamp'])} | ${_fmt(value)} |',
       );
@@ -713,7 +720,9 @@ String plumTohokuMiddleTransitionLocalMismatchRampDiagnosticMarkdown(
       ..writeln(
         '| Band | Val Samples | Val Share | Test Samples | Test Share | Test Middle | Test Rate | Lift | Capture Share |',
       )
-      ..writeln('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
+      ..writeln(
+        '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
+      );
     for (var i = 0; i < validationBands.length; i++) {
       final left = _map(validationBands[i]);
       final right = _map(testBands[i]);
@@ -725,7 +734,9 @@ String plumTohokuMiddleTransitionLocalMismatchRampDiagnosticMarkdown(
       );
     }
 
-    final variantDeciles = _list(_map(testDeciles[variant])['rows'] ?? testDeciles[variant]);
+    final variantDeciles = _list(
+      _map(testDeciles[variant])['rows'] ?? testDeciles[variant],
+    );
     buffer
       ..writeln()
       ..writeln('## `$variant` Test Deciles')
@@ -784,8 +795,9 @@ class _SplitAccumulator {
   void add(_Sample sample) => samples.add(sample);
 
   _LabelSummary get summary {
-    final middle =
-        samples.where((sample) => sample.isMiddleTransitionZone).length;
+    final middle = samples
+        .where((sample) => sample.isMiddleTransitionZone)
+        .length;
     return _LabelSummary(
       focusSampleCount: samples.length,
       middleTransitionCount: middle,
@@ -802,15 +814,14 @@ class _LabelSummary {
     required this.middleTransitionCount,
   });
 
-  double get middleTransitionRate => focusSampleCount == 0
-      ? 0.0
-      : middleTransitionCount / focusSampleCount;
+  double get middleTransitionRate =>
+      focusSampleCount == 0 ? 0.0 : middleTransitionCount / focusSampleCount;
 
   Map<String, Object?> toJson() => {
-        'focusSampleCount': focusSampleCount,
-        'middleTransitionCount': middleTransitionCount,
-        'middleTransitionRate': middleTransitionRate,
-      };
+    'focusSampleCount': focusSampleCount,
+    'middleTransitionCount': middleTransitionCount,
+    'middleTransitionRate': middleTransitionRate,
+  };
 }
 
 class _BandAccumulator {
@@ -830,7 +841,9 @@ class _BandAccumulator {
   }) {
     final share = total == 0 ? 0.0 : count / total;
     final positiveRate = count == 0 ? 0.0 : positiveCount / count;
-    final captureShare = positiveTotal == 0 ? 0.0 : positiveCount / positiveTotal;
+    final captureShare = positiveTotal == 0
+        ? 0.0
+        : positiveCount / positiveTotal;
     final baseline = total == 0 ? 0.0 : positiveTotal / total;
     return {
       'band': band,
@@ -858,11 +871,11 @@ class _ScoreMeanAccumulator {
   }
 
   Map<String, Object?> toJson() => {
-        'count': count,
-        'localMismatchRamp': count == 0 ? 0.0 : localMismatchRamp / count,
-        'runtimeScore': count == 0 ? 0.0 : runtimeScore / count,
-        'adjustedScore': count == 0 ? 0.0 : adjustedScore / count,
-      };
+    'count': count,
+    'localMismatchRamp': count == 0 ? 0.0 : localMismatchRamp / count,
+    'runtimeScore': count == 0 ? 0.0 : runtimeScore / count,
+    'adjustedScore': count == 0 ? 0.0 : adjustedScore / count,
+  };
 }
 
 class _Sample {
@@ -934,27 +947,20 @@ class _Sample {
     return 0.5 * topShareComponent + 0.5 * hhiComponent;
   }
 
-  double get spreadVarianceScore => _triangular(
-        contributionMarginStdDev,
-        center: 0.40,
-        halfWidth: 0.20,
-      );
+  double get spreadVarianceScore =>
+      _triangular(contributionMarginStdDev, center: 0.40, halfWidth: 0.20);
 
-  double get plumMarginScore => _triangular(
-        plum - thresholdValue,
-        center: 1.25,
-        halfWidth: 0.75,
-      );
+  double get plumMarginScore =>
+      _triangular(plum - thresholdValue, center: 1.25, halfWidth: 0.75);
 
   double get runtimeScore => _clamp01(
-        _scoreWeights['concentration']! * concentrationScore +
-            _scoreWeights['spreadVariance']! * spreadVarianceScore +
-            _scoreWeights['plumMargin']! * plumMarginScore,
-      );
+    _scoreWeights['concentration']! * concentrationScore +
+        _scoreWeights['spreadVariance']! * spreadVarianceScore +
+        _scoreWeights['plumMargin']! * plumMarginScore,
+  );
 
-  double get localMismatchRamp => _clamp01(
-        (localBelowThresholdShare10Km - 0.25) / 0.25,
-      );
+  double get localMismatchRamp =>
+      _clamp01((localBelowThresholdShare10Km - 0.25) / 0.25);
 
   double get adjustedScore => runtimeScore * localMismatchRamp;
 }
@@ -987,7 +993,10 @@ class _NeighborSummary {
   final int count;
   final double belowThresholdShare;
 
-  const _NeighborSummary({required this.count, required this.belowThresholdShare});
+  const _NeighborSummary({
+    required this.count,
+    required this.belowThresholdShare,
+  });
 }
 
 class _Threshold {
@@ -1027,11 +1036,7 @@ class _ScoreAnchors {
     return 'high';
   }
 
-  Map<String, Object?> toJson() => {
-        'q25': q25,
-        'q50': q50,
-        'q75': q75,
-      };
+  Map<String, Object?> toJson() => {'q25': q25, 'q50': q50, 'q75': q75};
 }
 
 Map<String, Object?> _emptyReport({
@@ -1039,74 +1044,68 @@ Map<String, Object?> _emptyReport({
   required String dataDirectory,
   required String modelPath,
 }) => {
-        'schemaVersion':
-            'plum_tohoku_middle_transition_local_mismatch_ramp_diagnostic_v1',
-        'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
-        'status': 'fail',
-        'policy': {
-          'method':
-              'PLUM Tohoku middle-transition local-mismatch-ramp diagnostic',
-          'rawPredictedIntensityMutated': false,
-          'frozenTestEvaluated': true,
-          'productionReady': false,
-          'productionUiConnected': false,
-          'diagnosticOnly': true,
-          'parametersTuned': false,
-          'suppressionApplied': false,
-          'plumRadiusKm': _plumRadiusKm,
-          'plumDampingPer10Km': _plumDampingPer10Km,
-        },
-        'inputs': {
-          'dataDirectory': dataDirectory,
-          'modelPath': modelPath,
-          'splits': ['validation', 'test'],
-          'threshold': _threshold.label,
-        },
-        'focusFilter': {
-          'estimatedSourceRegion': _focusRegion,
-          'minimumEvidenceCount': _focusMinimumEvidenceCount,
-          'maximumNearestEvidenceDistanceKm':
-              _focusMaximumNearestEvidenceDistanceKm,
-          'minimumPredictionMarginShindo': _focusMinimumMargin,
-          'baselineThresholdCrossingRequired': true,
-        },
-        'scoreDefinition': {
-          'baseWeights': _scoreWeights,
-        },
-        'labelDefinition': const {
-          'positiveLabel': 'middle_transition_zone',
-        },
-        'coverage': {
-          'validationVariants': 0,
-          'testVariants': 0,
-          'validationStationForecasts': 0,
-          'testStationForecasts': 0,
-          'skippedMissingMagnitudeEvents': 0,
-          'skippedNoSourceEstimateVariants': 0,
-        },
-        'labelSummary': const {
-          'validation': {
-            'focusSampleCount': 0,
-            'middleTransitionCount': 0,
-            'middleTransitionRate': 0.0,
-          },
-          'test': {
-            'focusSampleCount': 0,
-            'middleTransitionCount': 0,
-            'middleTransitionRate': 0.0,
-          },
-        },
-        'scoreAnchors': const {
-          'base': {'q25': 0.0, 'q50': 0.0, 'q75': 0.0},
-          'adjusted': {'q25': 0.0, 'q50': 0.0, 'q75': 0.0},
-        },
-        'testOutcomeMeans': const {},
-        'validationAnchoredBandTransfer': const {},
-        'testDeciles': const {},
-        'monotonicitySummary': const {},
-        'comparisonSummary': const {},
-        'errors': errors,
-      };
+  'schemaVersion':
+      'plum_tohoku_middle_transition_local_mismatch_ramp_diagnostic_v1',
+  'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
+  'status': 'fail',
+  'policy': {
+    'method': 'PLUM Tohoku middle-transition local-mismatch-ramp diagnostic',
+    'rawPredictedIntensityMutated': false,
+    'frozenTestEvaluated': true,
+    'productionReady': false,
+    'productionUiConnected': false,
+    'diagnosticOnly': true,
+    'parametersTuned': false,
+    'suppressionApplied': false,
+    'plumRadiusKm': _plumRadiusKm,
+    'plumDampingPer10Km': _plumDampingPer10Km,
+  },
+  'inputs': {
+    'dataDirectory': dataDirectory,
+    'modelPath': modelPath,
+    'splits': ['validation', 'test'],
+    'threshold': _threshold.label,
+  },
+  'focusFilter': {
+    'estimatedSourceRegion': _focusRegion,
+    'minimumEvidenceCount': _focusMinimumEvidenceCount,
+    'maximumNearestEvidenceDistanceKm': _focusMaximumNearestEvidenceDistanceKm,
+    'minimumPredictionMarginShindo': _focusMinimumMargin,
+    'baselineThresholdCrossingRequired': true,
+  },
+  'scoreDefinition': {'baseWeights': _scoreWeights},
+  'labelDefinition': const {'positiveLabel': 'middle_transition_zone'},
+  'coverage': {
+    'validationVariants': 0,
+    'testVariants': 0,
+    'validationStationForecasts': 0,
+    'testStationForecasts': 0,
+    'skippedMissingMagnitudeEvents': 0,
+    'skippedNoSourceEstimateVariants': 0,
+  },
+  'labelSummary': const {
+    'validation': {
+      'focusSampleCount': 0,
+      'middleTransitionCount': 0,
+      'middleTransitionRate': 0.0,
+    },
+    'test': {
+      'focusSampleCount': 0,
+      'middleTransitionCount': 0,
+      'middleTransitionRate': 0.0,
+    },
+  },
+  'scoreAnchors': const {
+    'base': {'q25': 0.0, 'q50': 0.0, 'q75': 0.0},
+    'adjusted': {'q25': 0.0, 'q50': 0.0, 'q75': 0.0},
+  },
+  'testOutcomeMeans': const {},
+  'validationAnchoredBandTransfer': const {},
+  'testDeciles': const {},
+  'monotonicitySummary': const {},
+  'comparisonSummary': const {},
+  'errors': errors,
+};
 
 StaticAttenuationModel _modelFromJson(Map<String, Object?> json) {
   return StaticAttenuationModel(

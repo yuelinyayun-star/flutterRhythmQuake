@@ -20,6 +20,7 @@ import '../../services/sources/nied_monitor.dart';
 import '../../services/sources/lpgm_monitor_service.dart';
 import '../../services/sources/snet_service.dart';
 import '../../services/sources/global_quake_service.dart';
+import '../../services/debug/local_inject_server.dart';
 import '../../core/nied_replay_logger.dart';
 import '../map/map_config.dart';
 import '../map/quake_map_view.dart';
@@ -35,6 +36,19 @@ class DebugPage extends StatefulWidget {
 
 class _DebugPageState extends State<DebugPage> {
   static const double _legendRefHeight = 230.0;
+  static const Color _accentColor = Color(0xFF82B1FF);
+  static const Color _panelColor = Color.fromRGBO(48, 48, 52, 0.28);
+  static const Color _dividerColor = Color.fromRGBO(255, 255, 255, 0.10);
+  static const Color _mutedTextColor = Color.fromRGBO(255, 255, 255, 0.58);
+  static const double _panelBlurSigma = 14;
+  static const double _panelHeaderHeight = 78;
+  static const double _designPanelWidth = 1180;
+  static const double _designPanelHeight = 660;
+  static const double _designNavWidth = 228;
+  static const double _desktopOuterInset = 14;
+
+  _DebugCategory _selectedCategory = _DebugCategory.mapbox;
+
   final LpgmMonitorService _lpgm = LpgmMonitorService();
   StreamSubscription<LpgmSnapshot>? _lpgmSub;
   StreamSubscription<LpgmInputFrame>? _lpgmFrameSub;
@@ -77,8 +91,12 @@ class _DebugPageState extends State<DebugPage> {
       TextEditingController();
   final TextEditingController _globalQuakeSecondaryPortController =
       TextEditingController();
+  final TextEditingController _globalQuakeFirstReportMagnitudeController =
+      TextEditingController();
   bool _globalQuakeEnabled = false;
   bool _globalQuakeLoaded = false;
+  bool _localInjectEnabled = false;
+  bool _localInjectLoaded = false;
 
   @override
   void initState() {
@@ -88,6 +106,7 @@ class _DebugPageState extends State<DebugPage> {
     NiedReplayLogger.instance.revision.addListener(_onReplayLoggerChanged);
     _initNiedDebugState();
     _initGlobalQuakeDebugState();
+    _initLocalInjectDebugState();
     _loadMapboxDebugState();
     _loadNiedLegendAssets();
     _loadLegendGeometry();
@@ -122,6 +141,7 @@ class _DebugPageState extends State<DebugPage> {
     _globalQuakePrimaryPortController.dispose();
     _globalQuakeSecondaryHostController.dispose();
     _globalQuakeSecondaryPortController.dispose();
+    _globalQuakeFirstReportMagnitudeController.dispose();
     _mapboxUsernameController.dispose();
     _mapboxStyleIdController.dispose();
     _mapboxTokenController.dispose();
@@ -140,63 +160,514 @@ class _DebugPageState extends State<DebugPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF020208),
-      appBar: AppBar(
-        backgroundColor: const Color(0xCC101A33),
-        elevation: 0,
-        title: const Text('Debug'),
-      ),
       body: Stack(
         children: [
           const AppPageBackground(),
-          Padding(
-            padding: const EdgeInsets.all(14),
+          SafeArea(
             child: Consumer2<QuakeProvider, MapStateProvider>(
               builder: (context, quake, mapState, _) {
-                final connected = quake.sourceStatuses.values
-                    .where((s) => s == SourceStatus.connected)
-                    .length;
-                final total = quake.sourceStatuses.length;
+                return LayoutBuilder(
+                  builder: (context, constraints) {
+                    final sideBySide = constraints.maxWidth >= 600;
+                    if (!sideBySide) {
+                      return Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: _buildUnifiedPanel(
+                          sideBySide: false,
+                          quake: quake,
+                          mapState: mapState,
+                        ),
+                      );
+                    }
 
-                return ListView(
-                  children: [
-                    _buildMapboxPanel(mapState),
-                    const SizedBox(height: 10),
-                    _buildLpgmPanel(),
-                    const SizedBox(height: 10),
-                    _buildNiedGifPanelV2(),
-                    const SizedBox(height: 10),
-                    _buildNiedSourceEstimatePanel(),
-                    const SizedBox(height: 10),
-                    _buildReplayLoggerToggle(),
-                    const SizedBox(height: 10),
-                    _buildGlobalQuakeToggle(),
-                    const SizedBox(height: 10),
-                    _buildSnetPanel(),
-                    const SizedBox(height: 10),
-                    _debugCard(
-                      title: 'Runtime',
-                      lines: [
-                        'Camera AutoFollow: ${mapState.canAutoFollow}',
-                        'Unified Events: ${quake.unifiedEvents.length}',
-                        'Warnings: ${quake.activeWarnings.length}',
-                        'Info Events: ${quake.activeInfoEvents.length}',
-                        'Sources: $connected / $total online',
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    _debugCard(
-                      title: 'Source Status',
-                      lines: quake.sourceStatuses.entries
-                          .map((e) => '${e.key}: ${e.value.name}')
-                          .toList(growable: false),
-                    ),
-                  ],
+                    final maxW = (constraints.maxWidth - _desktopOuterInset * 2)
+                        .clamp(0.0, double.infinity);
+                    final maxH =
+                        (constraints.maxHeight - _desktopOuterInset * 2).clamp(
+                          0.0,
+                          double.infinity,
+                        );
+                    if (maxW <= 0 || maxH <= 0) {
+                      return const SizedBox.shrink();
+                    }
+                    final scale = math.min(
+                      maxW / _designPanelWidth,
+                      maxH / _designPanelHeight,
+                    );
+                    final panelW = maxW;
+                    final panelH = maxH;
+                    final logicalPanelWidth = panelW / scale;
+                    final logicalPanelHeight = panelH / scale;
+
+                    return Center(
+                      child: SizedBox(
+                        width: panelW,
+                        height: panelH,
+                        child: ClipRect(
+                          child: OverflowBox(
+                            alignment: Alignment.center,
+                            minWidth: logicalPanelWidth,
+                            maxWidth: logicalPanelWidth,
+                            minHeight: logicalPanelHeight,
+                            maxHeight: logicalPanelHeight,
+                            child: Transform.scale(
+                              scale: scale,
+                              child: SizedBox(
+                                width: logicalPanelWidth,
+                                height: logicalPanelHeight,
+                                child: MediaQuery(
+                                  data: MediaQuery.of(context).copyWith(
+                                    size: Size(
+                                      logicalPanelWidth,
+                                      logicalPanelHeight,
+                                    ),
+                                    padding: EdgeInsets.zero,
+                                    viewPadding: EdgeInsets.zero,
+                                  ),
+                                  child: _buildUnifiedPanel(
+                                    sideBySide: true,
+                                    quake: quake,
+                                    mapState: mapState,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
                 );
               },
             ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildUnifiedPanel({
+    required bool sideBySide,
+    required QuakeProvider quake,
+    required MapStateProvider mapState,
+  }) {
+    final body = sideBySide
+        ? Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(
+                width: _designNavWidth,
+                child: _buildCategoryNavigation(compactGrid: false),
+              ),
+              const VerticalDivider(
+                width: 1,
+                thickness: 1,
+                color: _dividerColor,
+              ),
+              Expanded(
+                child: _buildCategoryContent(quake: quake, mapState: mapState),
+              ),
+            ],
+          )
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildCategoryNavigation(compactGrid: true),
+              const Divider(height: 1, thickness: 1, color: _dividerColor),
+              Expanded(
+                child: _buildCategoryContent(quake: quake, mapState: mapState),
+              ),
+            ],
+          );
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(14),
+      child: BackdropFilter(
+        filter: ui.ImageFilter.blur(
+          sigmaX: _panelBlurSigma,
+          sigmaY: _panelBlurSigma,
+        ),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: _panelColor,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.16)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.28),
+                blurRadius: 32,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Stack(
+            children: [
+              body,
+              const Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                height: 1,
+                child: IgnorePointer(
+                  child: ColoredBox(color: Color.fromRGBO(255, 255, 255, 0.08)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCategoryNavigation({required bool compactGrid}) {
+    final head = SizedBox(
+      height: _panelHeaderHeight,
+      child: Column(
+        children: [
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Row(
+                children: [
+                  IconButton(
+                    tooltip: '返回',
+                    onPressed: () => Navigator.of(context).maybePop(),
+                    icon: const Icon(Icons.arrow_back, size: 20),
+                    color: _accentColor,
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  const Text(
+                    'Debug',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      height: 1.2,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 12),
+            child: _DebugHeaderFadeDivider(),
+          ),
+        ],
+      ),
+    );
+
+    if (compactGrid) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            head,
+            const SizedBox(height: 8),
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: _debugCategories.length,
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                mainAxisSpacing: 8,
+                crossAxisSpacing: 8,
+                mainAxisExtent: 44,
+              ),
+              itemBuilder: (context, index) {
+                return _buildCategoryButton(
+                  _debugCategories[index],
+                  expanded: false,
+                  fillWidth: true,
+                );
+              },
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        head,
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+            children: [
+              for (final info in _debugCategories)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: _buildCategoryButton(info, expanded: true),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCategoryButton(
+    _DebugCategoryInfo info, {
+    required bool expanded,
+    bool fillWidth = false,
+  }) {
+    final selected = _selectedCategory == info.category;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: () => setState(() => _selectedCategory = info.category),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          height: expanded ? 58 : 44,
+          width: fillWidth ? double.infinity : null,
+          padding: EdgeInsets.symmetric(horizontal: expanded ? 12 : 10),
+          decoration: BoxDecoration(
+            gradient: selected
+                ? LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Colors.white.withValues(alpha: 0.12),
+                      info.accent.withValues(alpha: 0.14),
+                    ],
+                  )
+                : null,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: selected
+                  ? info.accent.withValues(alpha: 0.42)
+                  : Colors.transparent,
+            ),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.18),
+                      blurRadius: 16,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Row(
+            children: [
+              Icon(
+                info.icon,
+                size: 19,
+                color: selected ? info.accent : Colors.white60,
+              ),
+              const SizedBox(width: 10),
+              if (expanded)
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        info.title,
+                        style: TextStyle(
+                          color: selected ? Colors.white : Colors.white70,
+                          fontSize: 13.5,
+                          fontWeight: selected
+                              ? FontWeight.w700
+                              : FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        info.subtitle,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: _mutedTextColor,
+                          fontSize: 10.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              else
+                Expanded(
+                  child: Text(
+                    info.title,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: selected ? Colors.white : Colors.white70,
+                      fontSize: 12.5,
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCategoryContent({
+    required QuakeProvider quake,
+    required MapStateProvider mapState,
+  }) {
+    final info = _debugCategories.firstWhere(
+      (c) => c.category == _selectedCategory,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(
+          height: _panelHeaderHeight,
+          child: Column(
+            children: [
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 18),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: info.accent.withValues(alpha: 0.13),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: info.accent.withValues(alpha: 0.22),
+                          ),
+                        ),
+                        child: Icon(info.icon, color: info.accent, size: 20),
+                      ),
+                      const SizedBox(width: 11),
+                      Expanded(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              info.pageTitle,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                                height: 1.2,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              info.subtitle,
+                              style: const TextStyle(
+                                color: _mutedTextColor,
+                                fontSize: 11.5,
+                                height: 1.2,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 14),
+                child: _DebugHeaderFadeDivider(),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+            children: _buildSelectedCategoryChildren(
+              quake: quake,
+              mapState: mapState,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  List<Widget> _buildSelectedCategoryChildren({
+    required QuakeProvider quake,
+    required MapStateProvider mapState,
+  }) {
+    switch (_selectedCategory) {
+      case _DebugCategory.mapbox:
+        return [_buildMapboxPanel(mapState)];
+      case _DebugCategory.lpgm:
+        return [_buildLpgmPanel()];
+      case _DebugCategory.nied:
+        return [_buildNiedGifPanelV2()];
+      case _DebugCategory.estimate:
+        return [_buildNiedSourceEstimatePanel()];
+      case _DebugCategory.tools:
+        return [
+          _buildReplayLoggerToggle(),
+          const SizedBox(height: 12),
+          _buildLocalInjectToggle(),
+          const SizedBox(height: 12),
+          _buildGlobalQuakeToggle(),
+        ];
+      case _DebugCategory.snet:
+        return [_buildSnetPanel()];
+      case _DebugCategory.runtime:
+        final connected = quake.sourceStatuses.values
+            .where((s) => s == SourceStatus.connected)
+            .length;
+        final total = quake.sourceStatuses.length;
+        return [
+          _debugCard(
+            title: 'Runtime',
+            lines: [
+              'Camera AutoFollow: ${mapState.canAutoFollow}',
+              'Unified Events: ${quake.unifiedEvents.length}',
+              'Warnings: ${quake.activeWarnings.length}',
+              'Info Events: ${quake.activeInfoEvents.length}',
+              'HTTP Source: ${quake.sourceStatuses['HTTP']?.name ?? 'n/a'}',
+              'CMT Source: ${quake.sourceStatuses['CMT']?.name ?? 'n/a'}',
+              'Sources: $connected / $total online',
+            ],
+          ),
+          const SizedBox(height: 12),
+          _debugCard(
+            title: 'Source Status',
+            lines: quake.sourceStatuses.entries
+                .map((e) => '${e.key}: ${e.value.name}')
+                .toList(growable: false),
+          ),
+        ];
+    }
+  }
+
+  BoxDecoration _glassSectionDecoration({Color? borderColor}) {
+    return BoxDecoration(
+      color: Colors.white.withValues(alpha: 0.06),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(
+        color: borderColor ?? Colors.white.withValues(alpha: 0.12),
+      ),
+    );
+  }
+
+  ButtonStyle _glassButtonStyle({bool emphasize = false}) {
+    return OutlinedButton.styleFrom(
+      foregroundColor: Colors.white,
+      backgroundColor: emphasize
+          ? _accentColor.withValues(alpha: 0.18)
+          : Colors.white.withValues(alpha: 0.11),
+      side: BorderSide(
+        color: emphasize
+            ? _accentColor.withValues(alpha: 0.78)
+            : Colors.white.withValues(alpha: 0.24),
+      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
     );
   }
 
@@ -269,11 +740,19 @@ class _DebugPageState extends State<DebugPage> {
     final secondaryPort =
         prefs.getInt(GlobalQuakeService.secondaryPortPreferenceKey) ??
         GlobalQuakeService.defaultPort;
+    final firstReportMagnitudeThreshold =
+        prefs.getDouble(
+          GlobalQuakeService.firstReportMagnitudeThresholdPreferenceKey,
+        ) ??
+        0;
     _globalQuakeService.configureServers(
       primaryHost: primaryHost,
       primaryPort: primaryPort,
       secondaryHost: secondaryHost,
       secondaryPort: secondaryPort,
+    );
+    _globalQuakeService.configureFirstReportMagnitudeFilter(
+      firstReportMagnitudeThreshold,
     );
     _globalQuakeEnabled =
         prefs.getBool(GlobalQuakeService.enabledPreferenceKey) ??
@@ -287,6 +766,8 @@ class _DebugPageState extends State<DebugPage> {
         _globalQuakePrimaryPortController.text = primaryPort.toString();
         _globalQuakeSecondaryHostController.text = secondaryHost;
         _globalQuakeSecondaryPortController.text = secondaryPort.toString();
+        _globalQuakeFirstReportMagnitudeController.text =
+            firstReportMagnitudeThreshold.toStringAsFixed(1);
         _globalQuakeLoaded = true;
       });
     }
@@ -303,7 +784,24 @@ class _DebugPageState extends State<DebugPage> {
     }
   }
 
-  Future<void> _saveGlobalQuakeServers() async {
+  Future<void> _initLocalInjectDebugState() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _localInjectEnabled =
+          LocalInjectServer.isForcedByBuild ||
+          LocalInjectServer.isUserEnabled(prefs);
+      _localInjectLoaded = true;
+    });
+  }
+
+  Future<void> _setLocalInjectEnabled(bool enabled) async {
+    setState(() => _localInjectEnabled = enabled);
+    await LocalInjectServer.setEnabled(enabled);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _saveGlobalQuakeSettings() async {
     final primaryHost = _globalQuakePrimaryHostController.text.trim().isEmpty
         ? GlobalQuakeService.defaultPrimaryHost
         : _globalQuakePrimaryHostController.text.trim();
@@ -317,6 +815,13 @@ class _DebugPageState extends State<DebugPage> {
     final secondaryPort =
         int.tryParse(_globalQuakeSecondaryPortController.text.trim()) ??
         GlobalQuakeService.defaultPort;
+    final firstReportMagnitudeThreshold =
+        (double.tryParse(
+                  _globalQuakeFirstReportMagnitudeController.text.trim(),
+                ) ??
+                0)
+            .clamp(0.0, 10.0)
+            .toDouble();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
       GlobalQuakeService.primaryHostPreferenceKey,
@@ -334,11 +839,18 @@ class _DebugPageState extends State<DebugPage> {
       GlobalQuakeService.secondaryPortPreferenceKey,
       secondaryPort,
     );
+    await prefs.setDouble(
+      GlobalQuakeService.firstReportMagnitudeThresholdPreferenceKey,
+      firstReportMagnitudeThreshold,
+    );
     _globalQuakeService.configureServers(
       primaryHost: primaryHost,
       primaryPort: primaryPort,
       secondaryHost: secondaryHost,
       secondaryPort: secondaryPort,
+    );
+    _globalQuakeService.configureFirstReportMagnitudeFilter(
+      firstReportMagnitudeThreshold,
     );
     if (!mounted) return;
     setState(() {
@@ -346,10 +858,12 @@ class _DebugPageState extends State<DebugPage> {
       _globalQuakePrimaryPortController.text = primaryPort.toString();
       _globalQuakeSecondaryHostController.text = secondaryHost;
       _globalQuakeSecondaryPortController.text = secondaryPort.toString();
+      _globalQuakeFirstReportMagnitudeController.text =
+          firstReportMagnitudeThreshold.toStringAsFixed(1);
     });
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(const SnackBar(content: Text('GlobalQuake servers saved')));
+    ).showSnackBar(const SnackBar(content: Text('GlobalQuake settings saved')));
   }
 
   void _onNiedSourceChanged() {
@@ -470,11 +984,7 @@ class _DebugPageState extends State<DebugPage> {
     final configured = MapConfig.hasMapboxAccessToken;
     final fallback = active && !configured;
     return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.white12),
-      ),
+      decoration: _glassSectionDecoration(),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
         child: Column(
@@ -543,13 +1053,15 @@ class _DebugPageState extends State<DebugPage> {
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
                 OutlinedButton(
+                  style: _glassButtonStyle(),
                   onPressed: _mapboxDebugLoaded
                       ? () => _resetMapboxDebugState(mapState)
                       : null,
                   child: const Text('Reset'),
                 ),
                 const SizedBox(width: 8),
-                ElevatedButton(
+                OutlinedButton(
+                  style: _glassButtonStyle(emphasize: true),
                   onPressed: _mapboxDebugLoaded
                       ? () => _saveMapboxDebugState(mapState)
                       : null,
@@ -646,11 +1158,7 @@ class _DebugPageState extends State<DebugPage> {
     final mapBytes = _latestLpgmFrameBytes;
 
     return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.white12),
-      ),
+      decoration: _glassSectionDecoration(),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
         child: Column(
@@ -728,11 +1236,7 @@ class _DebugPageState extends State<DebugPage> {
           });
 
     return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.white12),
-      ),
+      decoration: _glassSectionDecoration(),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
         child: Column(
@@ -801,7 +1305,6 @@ class _DebugPageState extends State<DebugPage> {
       ),
     );
   }
-
 
   Widget _buildNiedGifMapCardV2({
     required String title,
@@ -936,11 +1439,7 @@ class _DebugPageState extends State<DebugPage> {
             .toList(growable: false);
 
     return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.white12),
-      ),
+      decoration: _glassSectionDecoration(),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
         child: Column(
@@ -1020,11 +1519,7 @@ class _DebugPageState extends State<DebugPage> {
             ];
 
             return DecoratedBox(
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.35),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.white12),
-              ),
+              decoration: _glassSectionDecoration(),
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
                 child: Column(
@@ -1052,7 +1547,7 @@ class _DebugPageState extends State<DebugPage> {
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 const Text(
-                                  '主界面曲线面板',
+                                  '主界面曲线面板（仅显示）',
                                   style: TextStyle(
                                     color: Colors.white70,
                                     fontSize: 11,
@@ -1451,11 +1946,7 @@ class _DebugPageState extends State<DebugPage> {
     final stampText = _niedGifStamp == null ? '--' : _fmtTime(_niedGifStamp!);
 
     return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.white12),
-      ),
+      decoration: _glassSectionDecoration(),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
         child: Column(
@@ -2214,15 +2705,16 @@ class _DebugPageState extends State<DebugPage> {
     final logger = NiedReplayLogger.instance;
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-      decoration: BoxDecoration(
-        color: logger.isEnabled
-            ? Colors.amber.withValues(alpha: 0.10)
-            : Colors.black.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: logger.isEnabled ? Colors.amber : Colors.white12,
-        ),
-      ),
+      decoration:
+          _glassSectionDecoration(
+            borderColor: logger.isEnabled
+                ? Colors.amber.withValues(alpha: 0.65)
+                : null,
+          ).copyWith(
+            color: logger.isEnabled
+                ? Colors.amber.withValues(alpha: 0.10)
+                : Colors.white.withValues(alpha: 0.06),
+          ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -2310,6 +2802,77 @@ class _DebugPageState extends State<DebugPage> {
     );
   }
 
+  Widget _buildLocalInjectToggle() {
+    const accent = Color(0xFF7FD4FF);
+    final supported = LocalInjectServer.isSupportedPlatform;
+    final forced = LocalInjectServer.isForcedByBuild;
+    final running = LocalInjectServer.isRunning;
+    final port = LocalInjectServer.boundPort ?? LocalInjectServer.defaultPort;
+    final subtitle = forced
+        ? 'Build flag LOCAL_INJECT=true — always on at http://127.0.0.1:$port'
+        : !supported
+        ? 'Desktop debug builds only (127.0.0.1 loopback).'
+        : running
+        ? 'Listening on http://127.0.0.1:$port (EEW / NIED GIF / K-NET / replay)'
+        : 'Off — enable to accept tools/local_inject.ps1 and inject scripts.';
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: _glassSectionDecoration(borderColor: running ? accent : null)
+          .copyWith(
+            color: running
+                ? const Color(0xFF1A3340).withValues(alpha: 0.42)
+                : Colors.white.withValues(alpha: 0.06),
+          ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Text(
+                      'Local Inject API',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      running ? 'running' : 'stopped',
+                      style: TextStyle(
+                        color: running ? accent : Colors.white54,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  style: const TextStyle(color: Colors.white70, fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: _localInjectEnabled,
+            activeThumbColor: accent,
+            activeTrackColor: accent.withValues(alpha: 0.35),
+            onChanged: forced
+                ? null
+                : (_localInjectLoaded && supported
+                      ? _setLocalInjectEnabled
+                      : null),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildGlobalQuakeToggle() {
     final status = _globalQuakeService.status;
     final statusColor = switch (status) {
@@ -2324,15 +2887,14 @@ class _DebugPageState extends State<DebugPage> {
         : 'Connect directly to the GlobalQuake 地震预警 TCP stream.';
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-      decoration: BoxDecoration(
-        color: _globalQuakeEnabled
-            ? const Color(0xFF203A2B).withValues(alpha: 0.35)
-            : Colors.black.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: _globalQuakeEnabled ? statusColor : Colors.white12,
-        ),
-      ),
+      decoration:
+          _glassSectionDecoration(
+            borderColor: _globalQuakeEnabled ? statusColor : null,
+          ).copyWith(
+            color: _globalQuakeEnabled
+                ? const Color(0xFF203A2B).withValues(alpha: 0.35)
+                : Colors.white.withValues(alpha: 0.06),
+          ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -2435,8 +2997,17 @@ class _DebugPageState extends State<DebugPage> {
                 controller: _globalQuakeSecondaryPortController,
                 keyboardType: TextInputType.number,
               ),
-              ElevatedButton(
-                onPressed: _globalQuakeLoaded ? _saveGlobalQuakeServers : null,
+              _globalQuakeField(
+                label: '首报最低震级（0=关闭）',
+                width: 180,
+                controller: _globalQuakeFirstReportMagnitudeController,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+              ),
+              OutlinedButton(
+                style: _glassButtonStyle(emphasize: true),
+                onPressed: _globalQuakeLoaded ? _saveGlobalQuakeSettings : null,
                 child: const Text('Save'),
               ),
             ],
@@ -2483,11 +3054,7 @@ class _DebugPageState extends State<DebugPage> {
 
   Widget _debugCard({required String title, required List<String> lines}) {
     return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.white12),
-      ),
+      decoration: _glassSectionDecoration(),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
         child: Column(
@@ -2501,20 +3068,136 @@ class _DebugPageState extends State<DebugPage> {
                 fontSize: 14,
               ),
             ),
-            const SizedBox(height: 8),
-            ...lines.map(
-              (line) => Padding(
-                padding: const EdgeInsets.only(bottom: 4),
+            const SizedBox(height: 10),
+            for (final line in lines) ...[
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.05),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.10),
+                  ),
+                ),
                 child: Text(
                   line,
                   style: TextStyle(
                     color: Colors.white.withValues(alpha: 0.9),
-                    fontSize: 12,
+                    fontSize: 12.5,
                   ),
                 ),
               ),
-            ),
+            ],
           ],
+        ),
+      ),
+    );
+  }
+}
+
+enum _DebugCategory { mapbox, lpgm, nied, estimate, tools, snet, runtime }
+
+class _DebugCategoryInfo {
+  final _DebugCategory category;
+  final String title;
+  final String pageTitle;
+  final String subtitle;
+  final IconData icon;
+  final Color accent;
+
+  const _DebugCategoryInfo({
+    required this.category,
+    required this.title,
+    required this.pageTitle,
+    required this.subtitle,
+    required this.icon,
+    required this.accent,
+  });
+}
+
+const List<_DebugCategoryInfo> _debugCategories = [
+  _DebugCategoryInfo(
+    category: _DebugCategory.mapbox,
+    title: 'Mapbox',
+    pageTitle: 'Mapbox 底图',
+    subtitle: '底图账号与 Token',
+    icon: Icons.map_outlined,
+    accent: Color(0xFF62C6FF),
+  ),
+  _DebugCategoryInfo(
+    category: _DebugCategory.lpgm,
+    title: '长周期',
+    pageTitle: '長周期地震動モニタ',
+    subtitle: 'LPGM 图层与图例',
+    icon: Icons.waves,
+    accent: Color(0xFFD6A5FF),
+  ),
+  _DebugCategoryInfo(
+    category: _DebugCategory.nied,
+    title: 'NIED GIF',
+    pageTitle: 'NIED 強震モニタ',
+    subtitle: '強震モニタ预览',
+    icon: Icons.radar,
+    accent: Color(0xFF72D6B1),
+  ),
+  _DebugCategoryInfo(
+    category: _DebugCategory.estimate,
+    title: '源推算',
+    pageTitle: 'NIED 源推算',
+    subtitle: '事件与估测诊断',
+    icon: Icons.my_location_outlined,
+    accent: Color(0xFFFFC66D),
+  ),
+  _DebugCategoryInfo(
+    category: _DebugCategory.tools,
+    title: '调试工具',
+    pageTitle: '调试工具',
+    subtitle: 'Replay / Inject / GlobalQuake',
+    icon: Icons.build_outlined,
+    accent: Color(0xFFAEB8CC),
+  ),
+  _DebugCategoryInfo(
+    category: _DebugCategory.snet,
+    title: 'S-Net',
+    pageTitle: 'S-Net モニタ',
+    subtitle: '海底观测网状态',
+    icon: Icons.waterfall_chart,
+    accent: Color(0xFF82B1FF),
+  ),
+  _DebugCategoryInfo(
+    category: _DebugCategory.runtime,
+    title: 'Runtime',
+    pageTitle: 'Runtime',
+    subtitle: '运行时与源状态',
+    icon: Icons.memory,
+    accent: Color(0xFF9AD0FF),
+  ),
+];
+
+class _DebugHeaderFadeDivider extends StatelessWidget {
+  const _DebugHeaderFadeDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox(
+      height: 1,
+      width: double.infinity,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              Color.fromRGBO(255, 255, 255, 0),
+              Color.fromRGBO(255, 255, 255, 0.12),
+              Color.fromRGBO(255, 255, 255, 0.12),
+              Color.fromRGBO(255, 255, 255, 0),
+            ],
+            stops: [0.0, 0.18, 0.82, 1.0],
+          ),
         ),
       ),
     );

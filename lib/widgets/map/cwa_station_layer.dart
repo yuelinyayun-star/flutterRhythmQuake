@@ -3,6 +3,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../../services/sources/cwa_station_service.dart';
 import 'ka_shindo_marker_style.dart';
+import 'map_style_zoom.dart';
 import 'station_dot_painter_layer.dart';
 
 class CwaStationLayer extends StatefulWidget {
@@ -25,7 +26,8 @@ class CwaStationLayer extends StatefulWidget {
   State<CwaStationLayer> createState() => _CwaStationLayerState();
 }
 
-class _CwaStationLayerState extends State<CwaStationLayer> {
+class _CwaStationLayerState extends State<CwaStationLayer>
+    with GridCentersEmitMixin {
   bool _hadAlertStations = false;
   List<double> _gridDecimal = const [0.0, 0.0];
   final Map<String, _CwaGridCell> _heldGridCells = {};
@@ -43,9 +45,7 @@ class _CwaStationLayerState extends State<CwaStationLayer> {
     final data = widget.stations;
     if (data == null || data.isEmpty) return const SizedBox.shrink();
 
-    double zoom = 4.0;
-    final camera = MapCamera.maybeOf(context);
-    if (camera != null) zoom = camera.zoom;
+    final zoom = mapStyleZoomOf(context);
 
     final overview = _overviewFactor(zoom);
     final idleDotSize = (0.9 + (zoom - 3) * 0.95).clamp(0.9, 7.5);
@@ -55,11 +55,10 @@ class _CwaStationLayerState extends State<CwaStationLayer> {
     _syncHeldGridCells(alertStations);
     final showGrids = _heldGridCells.isNotEmpty && !widget.hideGrid;
 
-    final callback = widget.onGridCellsChanged;
-    if (callback != null) {
-      final centers = _heldGridCells.values.map((c) => c.center).toList();
-      callback(centers);
-    }
+    emitGridCentersIfChanged(
+      _heldGridCells.values.map((c) => c.center).toList(growable: false),
+      widget.onGridCellsChanged,
+    );
 
     final dots = <StationDot>[];
     final iconMarkers = <Marker>[];
@@ -116,7 +115,7 @@ class _CwaStationLayerState extends State<CwaStationLayer> {
       children: [
         if (showGrids)
           PolygonLayer(polygons: _buildGridPolygons(widget.blinkOn)),
-        StationDotPainterLayer(dots: dots),
+        StationDotPainterLayer(dots: dots, sizeWithCameraZoom: true),
         if (iconMarkers.isNotEmpty) MarkerLayer(markers: iconMarkers),
       ],
     );
@@ -249,15 +248,18 @@ class _CwaIntensityMarker extends StatelessWidget {
         ),
       ),
       child: Center(
-        child: Text(
-          label,
-          style: TextStyle(
-            color: KaShindoMarkerStyle.foregroundForLevel(level),
-            fontSize: level >= 16 ? 8 : 7,
-            fontWeight: FontWeight.bold,
-            height: 1.0,
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            label,
+            style: TextStyle(
+              color: KaShindoMarkerStyle.foregroundForLevel(level),
+              fontSize: level >= 16 ? 8 : 7,
+              fontWeight: FontWeight.bold,
+              height: 1.0,
+            ),
+            textAlign: TextAlign.center,
           ),
-          textAlign: TextAlign.center,
         ),
       ),
     );

@@ -108,7 +108,9 @@ class VolcanoBulletin {
     }
 
     double? finiteNum(dynamic raw) {
-      final value = raw is num ? raw.toDouble() : double.tryParse('${raw ?? ''}');
+      final value = raw is num
+          ? raw.toDouble()
+          : double.tryParse('${raw ?? ''}');
       if (value == null || !value.isFinite) return null;
       return value;
     }
@@ -130,7 +132,8 @@ class VolcanoBulletin {
       ashAreas: listOf('ashAreas'),
       plumeDirections: listOf('plumeDirections'),
       sourceUrl: Uri.tryParse(json['sourceUrl']?.toString() ?? ''),
-      fetchedAt: DateTime.tryParse(json['fetchedAt']?.toString() ?? '') ??
+      fetchedAt:
+          DateTime.tryParse(json['fetchedAt']?.toString() ?? '') ??
           DateTime.now(),
     );
   }

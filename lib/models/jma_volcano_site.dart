@@ -16,6 +16,7 @@ class JmaVolcanoSite {
   final String? infoHeadTitle;
   final DateTime? infoReportTime;
   final DateTime? eruptionReportTime;
+  final bool hasProvisionalInfo;
 
   const JmaVolcanoSite({
     required this.code,
@@ -35,6 +36,7 @@ class JmaVolcanoSite {
     this.infoHeadTitle,
     this.infoReportTime,
     this.eruptionReportTime,
+    this.hasProvisionalInfo = false,
   });
 
   String get displayName {
@@ -85,5 +87,28 @@ class JmaVolcanoSite {
       return infoHeadTitle!.trim();
     }
     return null;
+  }
+
+  JmaVolcanoSite copyWith({int? alertLevel, bool? hasProvisionalInfo}) {
+    return JmaVolcanoSite(
+      code: code,
+      nameJp: nameJp,
+      nameEn: nameEn,
+      latitude: latitude,
+      longitude: longitude,
+      levelOperation: levelOperation,
+      alertLevel: alertLevel ?? this.alertLevel,
+      hasWarning: hasWarning,
+      hasRecentInfo: hasRecentInfo,
+      hasRecentEruption: hasRecentEruption,
+      warningKindCode: warningKindCode,
+      warningKindName: warningKindName,
+      warningAlarm: warningAlarm,
+      warningReportTime: warningReportTime,
+      infoHeadTitle: infoHeadTitle,
+      infoReportTime: infoReportTime,
+      eruptionReportTime: eruptionReportTime,
+      hasProvisionalInfo: hasProvisionalInfo ?? this.hasProvisionalInfo,
+    );
   }
 }

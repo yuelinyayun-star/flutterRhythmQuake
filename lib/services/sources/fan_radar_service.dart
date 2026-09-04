@@ -43,57 +43,97 @@ class FanRadarService {
   Timer? _timer;
   bool _started = false;
   bool _fetching = false;
+  bool _fetchQueued = false;
+  int _session = 0;
   FanRadarFrame? _latestFrame;
 
   Stream<FanRadarFrame?> get frameStream => _frameController.stream;
   FanRadarFrame? get latestFrame => _latestFrame;
+  bool get isRunning => _started;
 
-  void start({Duration interval = const Duration(minutes: 10)}) {
-    if (_started) return;
+  void start({
+    Duration interval = const Duration(minutes: 10),
+    int startupAttempts = 3,
+  }) {
+    if (_started) {
+      // Startup race: a previous start may still be fetching, or the first
+      // attempt failed. Keep the overlay warm by requesting again when empty.
+      if (_latestFrame == null) {
+        unawaited(fetchNow(maxAttempts: startupAttempts));
+      }
+      return;
+    }
     _started = true;
     _timer?.cancel();
     _timer = Timer.periodic(interval, (_) => unawaited(fetchNow()));
-    unawaited(fetchNow());
+    unawaited(fetchNow(maxAttempts: startupAttempts));
   }
 
   void stop({bool clear = false}) {
+    _session++;
     _timer?.cancel();
     _timer = null;
     _started = false;
+    _fetchQueued = false;
     if (clear && _latestFrame != null) {
       _latestFrame = null;
       _frameController.add(null);
     }
   }
 
-  Future<void> fetchNow() async {
-    if (_fetching) return;
+  Future<void> fetchNow({int maxAttempts = 1}) async {
+    final attempts = maxAttempts < 1 ? 1 : maxAttempts;
+    if (_fetching) {
+      _fetchQueued = true;
+      return;
+    }
     _fetching = true;
+    try {
+      do {
+        _fetchQueued = false;
+        final session = _session;
+        for (var attempt = 1; attempt <= attempts; attempt++) {
+          if (!_started || session != _session) return;
+          final ok = await _fetchOnce(session);
+          if (ok || !_started || session != _session) break;
+          if (attempt < attempts) {
+            await Future<void>.delayed(Duration(seconds: attempt * 2));
+          }
+        }
+      } while (_fetchQueued && _started);
+    } finally {
+      _fetching = false;
+    }
+  }
+
+  Future<bool> _fetchOnce(int session) async {
     try {
       final response = await http
           .get(Uri.parse(_radarChinaUrl), headers: _headers)
           .timeout(const Duration(seconds: 20));
+      if (!_started || session != _session) return false;
       if (response.statusCode != 200) {
         debugPrint('[FanRadar] HTTP ${response.statusCode}');
-        return;
+        return false;
       }
       final json = jsonDecode(utf8.decode(response.bodyBytes));
       if (json is! Map) {
         debugPrint('[FanRadar] response is not an object');
-        return;
+        return false;
       }
       final frame = _parseFrame(Map<String, dynamic>.from(json));
-      if (frame == null) return;
+      if (frame == null) return false;
+      if (!_started || session != _session) return false;
       _latestFrame = frame;
       _frameController.add(frame);
       debugPrint(
         '[FanRadar] updated: ${frame.time} '
         '${frame.width}x${frame.height}',
       );
+      return true;
     } catch (e) {
       debugPrint('[FanRadar] fetch error: $e');
-    } finally {
-      _fetching = false;
+      return false;
     }
   }
 

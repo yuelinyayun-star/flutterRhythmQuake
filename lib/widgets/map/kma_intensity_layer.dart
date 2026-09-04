@@ -3,6 +3,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../../services/sources/kma_monitor.dart';
 import 'ka_kma_marker_style.dart';
+import 'map_style_zoom.dart';
 import 'station_dot_painter_layer.dart';
 
 class KmaIntensityLayer extends StatefulWidget {
@@ -25,7 +26,8 @@ class KmaIntensityLayer extends StatefulWidget {
   State<KmaIntensityLayer> createState() => _KmaIntensityLayerState();
 }
 
-class _KmaIntensityLayerState extends State<KmaIntensityLayer> {
+class _KmaIntensityLayerState extends State<KmaIntensityLayer>
+    with GridCentersEmitMixin {
   bool _hadActiveStations = false;
   List<double> _gridDecimal = const [0.0, 0.0];
   final Map<String, _KmaGridCell> _heldGridCells = {};
@@ -43,9 +45,7 @@ class _KmaIntensityLayerState extends State<KmaIntensityLayer> {
     final data = widget.stations;
     if (data == null || data.isEmpty) return const SizedBox.shrink();
 
-    double zoom = 4.0;
-    final camera = MapCamera.maybeOf(context);
-    if (camera != null) zoom = camera.zoom;
+    final zoom = mapStyleZoomOf(context);
 
     final overview = _overviewFactor(zoom);
     final dotSize = KaKmaMarkerStyle.dotSizeForZoom(zoom);
@@ -55,12 +55,10 @@ class _KmaIntensityLayerState extends State<KmaIntensityLayer> {
     _syncHeldGridCells(activeStations);
     final showGrids = _heldGridCells.isNotEmpty && !widget.hideGrid;
 
-    // kanameishi: 通知网格中心点变化 (用于相机视角和测站焦点)
-    final callback = widget.onGridCellsChanged;
-    if (callback != null) {
-      final centers = _heldGridCells.values.map((c) => c.center).toList();
-      callback(centers);
-    }
+    emitGridCentersIfChanged(
+      _heldGridCells.values.map((c) => c.center).toList(growable: false),
+      widget.onGridCellsChanged,
+    );
 
     final dots = <StationDot>[];
     final iconMarkers = <Marker>[];
@@ -116,7 +114,7 @@ class _KmaIntensityLayerState extends State<KmaIntensityLayer> {
       children: [
         if (showGrids)
           PolygonLayer(polygons: _buildGridPolygons(widget.blinkOn)),
-        StationDotPainterLayer(dots: dots),
+        StationDotPainterLayer(dots: dots, sizeWithCameraZoom: true),
         if (iconMarkers.isNotEmpty) MarkerLayer(markers: iconMarkers),
       ],
     );

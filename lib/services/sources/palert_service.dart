@@ -108,6 +108,10 @@ class PAlertService {
   );
   static const String _stationFilter = 'onlineDot15';
   static const Duration intensityHoldDuration = Duration(seconds: 3);
+  static const Duration realtimePollInterval = Duration(seconds: 1);
+  static const Duration frameStaleAfter = Duration(seconds: 6);
+  static const Duration _frameWatchdogInterval = Duration(seconds: 1);
+  static const int maxConsecutiveFailures = 3;
 
   // Keep the fixed low-value display floor separate from the user setting
   // that controls whether valid intensity 0 markers are shown.
@@ -155,10 +159,16 @@ query (\$recordTime: Float!, \$token: String!) {
 
   Timer? _stationTimer;
   Timer? _realtimeTimer;
+  Timer? _frameWatchdogTimer;
   bool _running = false;
   bool _fetchingStations = false;
   bool _fetchingRealtime = false;
+  bool _isConnected = false;
+  bool _failureReported = false;
+  int _consecutiveFailures = 0;
+  int _runGeneration = 0;
   DateTime? _lastRealtimeTimestamp;
+  DateTime? _lastFrameReceivedAt;
   http.Client? _client;
 
   bool get isRunning => _running;
@@ -166,27 +176,43 @@ query (\$recordTime: Float!, \$token: String!) {
   void start() {
     if (_running) return;
     _running = true;
+    final generation = ++_runGeneration;
+    _consecutiveFailures = 0;
+    _isConnected = false;
+    _failureReported = false;
+    _lastFrameReceivedAt = null;
     _client = http.Client();
-    unawaited(_bootstrap());
+    unawaited(_bootstrap(generation));
     _stationTimer = Timer.periodic(
       const Duration(minutes: 10),
-      (_) => _fetchStationList(),
+      (_) => _fetchStationList(generation),
     );
     _realtimeTimer = Timer.periodic(
-      const Duration(seconds: 1),
-      (_) => _fetchRealtime(),
+      realtimePollInterval,
+      (_) => _fetchRealtime(generation),
+    );
+    _frameWatchdogTimer = Timer.periodic(
+      _frameWatchdogInterval,
+      (_) => _checkFrameFreshness(generation),
     );
   }
 
   void stop({bool clear = true}) {
     _running = false;
+    _runGeneration++;
     _stationTimer?.cancel();
     _stationTimer = null;
     _realtimeTimer?.cancel();
     _realtimeTimer = null;
+    _frameWatchdogTimer?.cancel();
+    _frameWatchdogTimer = null;
     _fetchingStations = false;
     _fetchingRealtime = false;
+    _isConnected = false;
+    _failureReported = false;
+    _consecutiveFailures = 0;
     _lastRealtimeTimestamp = null;
+    _lastFrameReceivedAt = null;
     _intensityHistory.clear();
     dataTimeNotifier.value = null;
     receivedTimeNotifier.value = null;
@@ -200,13 +226,16 @@ query (\$recordTime: Float!, \$token: String!) {
     }
   }
 
-  Future<void> _bootstrap() async {
-    await _fetchStationList();
-    if (_running) await _fetchRealtime();
+  bool _isCurrentRun(int generation) =>
+      _running && generation == _runGeneration;
+
+  Future<void> _bootstrap(int generation) async {
+    await _fetchStationList(generation);
+    if (_isCurrentRun(generation)) await _fetchRealtime(generation);
   }
 
-  Future<void> _fetchStationList() async {
-    if (!_running || _fetchingStations) return;
+  Future<void> _fetchStationList(int generation) async {
+    if (!_isCurrentRun(generation) || _fetchingStations) return;
     _fetchingStations = true;
     try {
       final json = await _postGraphql(
@@ -216,7 +245,10 @@ query (\$recordTime: Float!, \$token: String!) {
       final data = json['data'] as Map<String, dynamic>?;
       final stationList = data?['stationList'] as Map<String, dynamic>?;
       final infos = stationList?['staInfos'];
-      if (infos is! List) return;
+      if (infos is! List || infos.isEmpty) {
+        if (_stationMap.isEmpty) _handleFailure();
+        return;
+      }
 
       final nextStations = <String, PAlertStation>{};
       for (final item in infos) {
@@ -243,24 +275,34 @@ query (\$recordTime: Float!, \$token: String!) {
           receivedAt: existing?.receivedAt,
         );
       }
-      if (!_running) return;
+      if (!_isCurrentRun(generation)) return;
+      if (nextStations.isEmpty) {
+        if (_stationMap.isEmpty) _handleFailure();
+        return;
+      }
       _stationMap
         ..clear()
         ..addAll(nextStations);
       _intensityHistory.removeWhere((id, _) => !nextStations.containsKey(id));
       _emitStations();
     } catch (e) {
-      debugPrint('[P-Alert] station list fetch failed: $e');
-      if (dataTimeNotifier.value == null) {
-        onStatusChanged?.call(false);
+      if (_isCurrentRun(generation)) {
+        debugPrint('[P-Alert] station list fetch failed: $e');
+        if (_stationMap.isEmpty) _handleFailure();
       }
     } finally {
-      _fetchingStations = false;
+      if (generation == _runGeneration) {
+        _fetchingStations = false;
+      }
     }
   }
 
-  Future<void> _fetchRealtime() async {
-    if (!_running || _fetchingRealtime || _stationMap.isEmpty) return;
+  Future<void> _fetchRealtime(int generation) async {
+    if (!_isCurrentRun(generation) || _fetchingRealtime) return;
+    if (_stationMap.isEmpty) {
+      unawaited(_fetchStationList(generation));
+      return;
+    }
     _fetchingRealtime = true;
     try {
       final json = await _postGraphql(
@@ -272,19 +314,22 @@ query (\$recordTime: Float!, \$token: String!) {
       final pgv = data?['pgv'] as Map<String, dynamic>?;
       final pgaTimestamp = parseTimestamp(pga?['timestamp'] as String?);
       final pgvTimestamp = parseTimestamp(pgv?['timestamp'] as String?);
-      if (pgaTimestamp == null) return;
-      if (!_running) return;
-      final receivedAt = DateTime.now().toUtc();
-      receivedTimeNotifier.value = receivedAt;
-      onStatusChanged?.call(true);
-      if (_lastRealtimeTimestamp == pgaTimestamp) return;
-      _lastRealtimeTimestamp = pgaTimestamp;
-      dataTimeNotifier.value = pgaTimestamp;
+      if (!_isCurrentRun(generation)) return;
+      if (pgaTimestamp == null) {
+        _handleFailure();
+        return;
+      }
+      if (!isNewerFrameTime(_lastRealtimeTimestamp, pgaTimestamp)) return;
 
       final pgaVals = _asValueMap(pga?['dataVals']);
+      if (pgaVals.isEmpty) {
+        _handleFailure();
+        return;
+      }
       final pgvVals = pgvTimestamp == pgaTimestamp
           ? _asValueMap(pgv?['dataVals'])
           : const <String, double>{};
+      final receivedAt = DateTime.now().toUtc();
       var changed = false;
       for (final id in _stationMap.keys.toList(growable: false)) {
         final pgaGal = pgaVals[id];
@@ -315,13 +360,62 @@ query (\$recordTime: Float!, \$token: String!) {
         );
         changed = true;
       }
-      if (changed) _emitStations();
+      if (!changed) {
+        unawaited(_fetchStationList(generation));
+        _handleFailure();
+        return;
+      }
+
+      _lastRealtimeTimestamp = pgaTimestamp;
+      _lastFrameReceivedAt = receivedAt;
+      dataTimeNotifier.value = pgaTimestamp;
+      receivedTimeNotifier.value = receivedAt;
+      _emitStations();
+      _handleSuccess();
     } catch (e) {
-      debugPrint('[P-Alert] realtime fetch failed: $e');
-      if (_running) onStatusChanged?.call(false);
+      if (_isCurrentRun(generation)) {
+        debugPrint('[P-Alert] realtime fetch failed: $e');
+        _handleFailure();
+      }
     } finally {
-      _fetchingRealtime = false;
+      if (generation == _runGeneration) {
+        _fetchingRealtime = false;
+      }
     }
+  }
+
+  void _checkFrameFreshness(int generation) {
+    if (!_isCurrentRun(generation) ||
+        !isFrameStale(_lastFrameReceivedAt, DateTime.now().toUtc())) {
+      return;
+    }
+    _markDisconnected();
+  }
+
+  void _handleSuccess() {
+    _consecutiveFailures = 0;
+    _failureReported = false;
+    if (_isConnected) return;
+    _isConnected = true;
+    onStatusChanged?.call(true);
+  }
+
+  void _handleFailure() {
+    _consecutiveFailures++;
+    if (_consecutiveFailures < maxConsecutiveFailures || _failureReported) {
+      return;
+    }
+    _isConnected = false;
+    _failureReported = true;
+    onStatusChanged?.call(false);
+  }
+
+  void _markDisconnected() {
+    _consecutiveFailures = maxConsecutiveFailures;
+    if (_failureReported) return;
+    _isConnected = false;
+    _failureReported = true;
+    onStatusChanged?.call(false);
   }
 
   Future<Map<String, dynamic>> _postGraphql(
@@ -419,6 +513,20 @@ query (\$recordTime: Float!, \$token: String!) {
     final minute = int.parse(match.group(5)!);
     final second = int.parse(match.group(6)!);
     return DateTime.utc(year, month, day, hour, minute, second);
+  }
+
+  @visibleForTesting
+  static bool isNewerFrameTime(DateTime? previous, DateTime candidate) {
+    return previous == null || candidate.isAfter(previous);
+  }
+
+  @visibleForTesting
+  static bool isFrameStale(
+    DateTime? receivedAt,
+    DateTime now, {
+    Duration staleAfter = frameStaleAfter,
+  }) {
+    return receivedAt != null && now.difference(receivedAt) > staleAfter;
   }
 
   static Map<String, double> _asValueMap(dynamic raw) {

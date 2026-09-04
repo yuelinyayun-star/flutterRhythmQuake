@@ -112,8 +112,9 @@ Map<String, Object?> buildPlumTohokuResidualRemainderFamilyAuditJson({
 
   for (final splitName in const ['validation', 'test']) {
     final dataset = synthetic.datasetsBySplit[splitName]!;
-    final splitAccumulator =
-        splitName == 'validation' ? validationAccumulator : testAccumulator;
+    final splitAccumulator = splitName == 'validation'
+        ? validationAccumulator
+        : testAccumulator;
     for (final rawEvent in _list(dataset['events'])) {
       final event = StaticIntensityEvent.fromJson(_map(rawEvent));
       final magnitude = event.magnitude;
@@ -209,12 +210,15 @@ Map<String, Object?> buildPlumTohokuResidualRemainderFamilyAuditJson({
 
   final validationFamilyRows = _buildFamilyRows(validationSamples);
   final remainderFamilyRows = _buildFamilyRows(remainderSamples);
-  final remainderFalsePositiveFamilyRows =
-      _buildFamilyRows(remainderFalsePositives);
-  final plumOnlyFalsePositiveFamilyRows =
-      _buildFamilyRows(remainderPlumOnlyFalsePositives);
-  final plumHigherFalsePositiveFamilyRows =
-      _buildFamilyRows(remainderPlumHigherFalsePositives);
+  final remainderFalsePositiveFamilyRows = _buildFamilyRows(
+    remainderFalsePositives,
+  );
+  final plumOnlyFalsePositiveFamilyRows = _buildFamilyRows(
+    remainderPlumOnlyFalsePositives,
+  );
+  final plumHigherFalsePositiveFamilyRows = _buildFamilyRows(
+    remainderPlumHigherFalsePositives,
+  );
 
   return {
     'schemaVersion': 'plum_tohoku_residual_remainder_family_audit_v1',
@@ -267,10 +271,12 @@ Map<String, Object?> buildPlumTohokuResidualRemainderFamilyAuditJson({
       'validation': _summaryJson(validationSamples),
       'remainder': _summaryJson(remainderSamples),
       'remainderFalsePositives': _summaryJson(remainderFalsePositives),
-      'remainderPlumOnlyFalsePositives':
-          _summaryJson(remainderPlumOnlyFalsePositives),
-      'remainderPlumHigherFalsePositives':
-          _summaryJson(remainderPlumHigherFalsePositives),
+      'remainderPlumOnlyFalsePositives': _summaryJson(
+        remainderPlumOnlyFalsePositives,
+      ),
+      'remainderPlumHigherFalsePositives': _summaryJson(
+        remainderPlumHigherFalsePositives,
+      ),
     },
     'familyDefinitions': const {
       'eventFamily':
@@ -281,18 +287,20 @@ Map<String, Object?> buildPlumTohokuResidualRemainderFamilyAuditJson({
     'validationFamilyRows': validationFamilyRows,
     'remainderFamilyRows': remainderFamilyRows,
     'remainderFalsePositiveFamilyRows': remainderFalsePositiveFamilyRows,
-    'remainderPlumOnlyFalsePositiveFamilyRows':
-        plumOnlyFalsePositiveFamilyRows,
+    'remainderPlumOnlyFalsePositiveFamilyRows': plumOnlyFalsePositiveFamilyRows,
     'remainderPlumHigherFalsePositiveFamilyRows':
         plumHigherFalsePositiveFamilyRows,
     'dominanceSummary': {
       'remainderAll': _dominanceSummary(remainderFamilyRows),
-      'remainderFalsePositives':
-          _dominanceSummary(remainderFalsePositiveFamilyRows),
-      'remainderPlumOnlyFalsePositives':
-          _dominanceSummary(plumOnlyFalsePositiveFamilyRows),
-      'remainderPlumHigherFalsePositives':
-          _dominanceSummary(plumHigherFalsePositiveFamilyRows),
+      'remainderFalsePositives': _dominanceSummary(
+        remainderFalsePositiveFamilyRows,
+      ),
+      'remainderPlumOnlyFalsePositives': _dominanceSummary(
+        plumOnlyFalsePositiveFamilyRows,
+      ),
+      'remainderPlumHigherFalsePositives': _dominanceSummary(
+        plumHigherFalsePositiveFamilyRows,
+      ),
     },
     'remainderEventRows': _buildEventRows(remainderSamples),
     'errors': errors,
@@ -360,18 +368,19 @@ _Sample _buildSample({
 List<Map<String, Object?>> _buildFamilyRows(List<_Sample> samples) {
   final byFamily = <String, _FamilyAccumulator>{};
   for (final sample in samples) {
-    byFamily.putIfAbsent(sample.eventFamilyLabel, _FamilyAccumulator.new).add(sample);
+    byFamily
+        .putIfAbsent(sample.eventFamilyLabel, _FamilyAccumulator.new)
+        .add(sample);
   }
   final rows = [
     for (final entry in byFamily.entries) entry.value.toJson(family: entry.key),
   ];
   rows.sort((left, right) {
-    final byCount =
-        _number(right['count']).compareTo(_number(left['count']));
+    final byCount = _number(right['count']).compareTo(_number(left['count']));
     if (byCount != 0) return byCount;
-    return _number(right['falsePositiveCount']).compareTo(
-      _number(left['falsePositiveCount']),
-    );
+    return _number(
+      right['falsePositiveCount'],
+    ).compareTo(_number(left['falsePositiveCount']));
   });
   return rows;
 }
@@ -399,11 +408,11 @@ Map<String, Object?> _dominanceSummary(List<Map<String, Object?>> familyRows) {
       'familyCount': familyRows.length,
     };
   }
-  double cumulative(int n) => familyRows.take(n).fold<double>(
-            0.0,
-            (sum, row) => sum + _number(_map(row)['count']),
-          ) /
-          total;
+  double cumulative(int n) =>
+      familyRows
+          .take(n)
+          .fold<double>(0.0, (sum, row) => sum + _number(_map(row)['count'])) /
+      total;
   final top = _map(familyRows.first);
   return {
     'topFamily': top['family'],
@@ -415,20 +424,24 @@ Map<String, Object?> _dominanceSummary(List<Map<String, Object?>> familyRows) {
 }
 
 Map<String, Object?> _summaryJson(List<_Sample> samples) {
-  final truePositiveCount =
-      samples.where((sample) => sample.actualPositive).length;
-  final middleTransitionCount =
-      samples.where((sample) => sample.isMiddleTransitionZone).length;
-  final plumOnlyFalsePositiveCount =
-      samples.where((sample) => sample.plumOnlyFalsePositive).length;
+  final truePositiveCount = samples
+      .where((sample) => sample.actualPositive)
+      .length;
+  final middleTransitionCount = samples
+      .where((sample) => sample.isMiddleTransitionZone)
+      .length;
+  final plumOnlyFalsePositiveCount = samples
+      .where((sample) => sample.plumOnlyFalsePositive)
+      .length;
   return {
     'focusSampleCount': samples.length,
     'truePositiveCount': truePositiveCount,
     'falsePositiveCount': samples.length - truePositiveCount,
     'precision': samples.isEmpty ? 0.0 : truePositiveCount / samples.length,
     'middleTransitionCount': middleTransitionCount,
-    'middleTransitionShare':
-        samples.isEmpty ? 0.0 : middleTransitionCount / samples.length,
+    'middleTransitionShare': samples.isEmpty
+        ? 0.0
+        : middleTransitionCount / samples.length,
     'plumOnlyFalsePositiveCount': plumOnlyFalsePositiveCount,
   };
 }
@@ -456,12 +469,11 @@ List<Map<String, Object?>> _buildEventRows(List<_Sample> samples) {
     for (final entry in byEvent.entries) entry.value.toJson(eventId: entry.key),
   ];
   rows.sort((left, right) {
-    final byCount =
-        _number(right['count']).compareTo(_number(left['count']));
+    final byCount = _number(right['count']).compareTo(_number(left['count']));
     if (byCount != 0) return byCount;
-    return _number(right['middleTransitionCount']).compareTo(
-      _number(left['middleTransitionCount']),
-    );
+    return _number(
+      right['middleTransitionCount'],
+    ).compareTo(_number(left['middleTransitionCount']));
   });
   return rows;
 }
@@ -481,8 +493,8 @@ List<_EvidenceStation> _supportingEvidence({
       observed.longitude,
     );
     if (distance > _plumRadiusKm) continue;
-    final propagated = observed.intensity -
-        _plumDampingPer10Km * (distance / 10.0);
+    final propagated =
+        observed.intensity - _plumDampingPer10Km * (distance / 10.0);
     if (propagated >= threshold) {
       supportingEvidence.add(
         _EvidenceStation(
@@ -577,53 +589,52 @@ Map<String, Object?> _emptyReport({
   required String dataDirectory,
   required String modelPath,
 }) => {
-        'schemaVersion': 'plum_tohoku_residual_remainder_family_audit_v1',
-        'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
-        'status': 'fail',
-        'policy': {
-          'method': 'PLUM Tohoku residual remainder family audit',
-          'rawPredictedIntensityMutated': false,
-          'frozenTestEvaluated': true,
-          'productionReady': false,
-          'productionUiConnected': false,
-          'diagnosticOnly': true,
-          'parametersTuned': false,
-          'suppressionApplied': false,
-          'plumRadiusKm': _plumRadiusKm,
-          'plumDampingPer10Km': _plumDampingPer10Km,
-        },
-        'inputs': {
-          'dataDirectory': dataDirectory,
-          'modelPath': modelPath,
-          'splits': ['validation', 'test'],
-          'threshold': _threshold.label,
-        },
-        'focusFilter': {
-          'estimatedSourceRegion': _focusRegion,
-          'minimumEvidenceCount': _focusMinimumEvidenceCount,
-          'maximumNearestEvidenceDistanceKm':
-              _focusMaximumNearestEvidenceDistanceKm,
-          'baselineThresholdCrossingRequired': true,
-          'plumMarginGateApplied': false,
-        },
-        'dominantEvent': const {'eventId': 'none', 'removedFromTest': false},
-        'coverage': const {
-          'remainderFocusSamples': 0,
-          'remainderFalsePositives': 0,
-          'remainderPlumOnlyFalsePositives': 0,
-          'remainderPlumHigherFalsePositives': 0,
-        },
-        'summaries': const {},
-        'familyDefinitions': const {},
-        'validationFamilyRows': const [],
-        'remainderFamilyRows': const [],
-        'remainderFalsePositiveFamilyRows': const [],
-        'remainderPlumOnlyFalsePositiveFamilyRows': const [],
-        'remainderPlumHigherFalsePositiveFamilyRows': const [],
-        'dominanceSummary': const {},
-        'remainderEventRows': const [],
-        'errors': errors,
-      };
+  'schemaVersion': 'plum_tohoku_residual_remainder_family_audit_v1',
+  'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
+  'status': 'fail',
+  'policy': {
+    'method': 'PLUM Tohoku residual remainder family audit',
+    'rawPredictedIntensityMutated': false,
+    'frozenTestEvaluated': true,
+    'productionReady': false,
+    'productionUiConnected': false,
+    'diagnosticOnly': true,
+    'parametersTuned': false,
+    'suppressionApplied': false,
+    'plumRadiusKm': _plumRadiusKm,
+    'plumDampingPer10Km': _plumDampingPer10Km,
+  },
+  'inputs': {
+    'dataDirectory': dataDirectory,
+    'modelPath': modelPath,
+    'splits': ['validation', 'test'],
+    'threshold': _threshold.label,
+  },
+  'focusFilter': {
+    'estimatedSourceRegion': _focusRegion,
+    'minimumEvidenceCount': _focusMinimumEvidenceCount,
+    'maximumNearestEvidenceDistanceKm': _focusMaximumNearestEvidenceDistanceKm,
+    'baselineThresholdCrossingRequired': true,
+    'plumMarginGateApplied': false,
+  },
+  'dominantEvent': const {'eventId': 'none', 'removedFromTest': false},
+  'coverage': const {
+    'remainderFocusSamples': 0,
+    'remainderFalsePositives': 0,
+    'remainderPlumOnlyFalsePositives': 0,
+    'remainderPlumHigherFalsePositives': 0,
+  },
+  'summaries': const {},
+  'familyDefinitions': const {},
+  'validationFamilyRows': const [],
+  'remainderFamilyRows': const [],
+  'remainderFalsePositiveFamilyRows': const [],
+  'remainderPlumOnlyFalsePositiveFamilyRows': const [],
+  'remainderPlumHigherFalsePositiveFamilyRows': const [],
+  'dominanceSummary': const {},
+  'remainderEventRows': const [],
+  'errors': errors,
+};
 
 String plumTohokuResidualRemainderFamilyAuditMarkdown(
   Map<String, Object?> report,
@@ -636,12 +647,15 @@ String plumTohokuResidualRemainderFamilyAuditMarkdown(
   final dominanceSummary = _map(report['dominanceSummary']);
   final validationFamilyRows = _list(report['validationFamilyRows']);
   final remainderFamilyRows = _list(report['remainderFamilyRows']);
-  final remainderFalsePositiveFamilyRows =
-      _list(report['remainderFalsePositiveFamilyRows']);
-  final remainderPlumOnlyFalsePositiveFamilyRows =
-      _list(report['remainderPlumOnlyFalsePositiveFamilyRows']);
-  final remainderPlumHigherFalsePositiveFamilyRows =
-      _list(report['remainderPlumHigherFalsePositiveFamilyRows']);
+  final remainderFalsePositiveFamilyRows = _list(
+    report['remainderFalsePositiveFamilyRows'],
+  );
+  final remainderPlumOnlyFalsePositiveFamilyRows = _list(
+    report['remainderPlumOnlyFalsePositiveFamilyRows'],
+  );
+  final remainderPlumHigherFalsePositiveFamilyRows = _list(
+    report['remainderPlumHigherFalsePositiveFamilyRows'],
+  );
   final remainderEventRows = _list(report['remainderEventRows']);
 
   final buffer = StringBuffer()
@@ -715,7 +729,9 @@ String plumTohokuResidualRemainderFamilyAuditMarkdown(
     ..writeln()
     ..writeln('## Dominance Summary')
     ..writeln()
-    ..writeln('| Slice | Top Family | Top Share | Top-2 | Top-3 | Family Count |')
+    ..writeln(
+      '| Slice | Top Family | Top Share | Top-2 | Top-3 | Family Count |',
+    )
     ..writeln('| --- | --- | ---: | ---: | ---: | ---: |');
   for (final name in const [
     'remainderAll',
@@ -806,7 +822,9 @@ String plumTohokuResidualRemainderFamilyAuditMarkdown(
 
 String _mixCell(Map<String, Object?> mix) {
   final entries = mix.entries.toList()
-    ..sort((left, right) => _number(right.value).compareTo(_number(left.value)));
+    ..sort(
+      (left, right) => _number(right.value).compareTo(_number(left.value)),
+    );
   return entries
       .where((entry) => _number(entry.value) > 0)
       .map((entry) => '${entry.key}:${entry.value}')
@@ -835,15 +853,15 @@ class _FamilyAccumulator {
   }
 
   Map<String, Object?> toJson({required String family}) => {
-        'family': family,
-        'count': count,
-        'truePositiveCount': truePositiveCount,
-        'falsePositiveCount': count - truePositiveCount,
-        'precision': count == 0 ? 0.0 : truePositiveCount / count,
-        'middleTransitionCount': middleTransitionCount,
-        'middleTransitionShare': count == 0 ? 0.0 : middleTransitionCount / count,
-        'plumOnlyFalsePositiveCount': plumOnlyFalsePositiveCount,
-      };
+    'family': family,
+    'count': count,
+    'truePositiveCount': truePositiveCount,
+    'falsePositiveCount': count - truePositiveCount,
+    'precision': count == 0 ? 0.0 : truePositiveCount / count,
+    'middleTransitionCount': middleTransitionCount,
+    'middleTransitionShare': count == 0 ? 0.0 : middleTransitionCount / count,
+    'plumOnlyFalsePositiveCount': plumOnlyFalsePositiveCount,
+  };
 }
 
 class _EventAccumulator {
@@ -867,18 +885,18 @@ class _EventAccumulator {
   }
 
   Map<String, Object?> toJson({required String eventId}) => {
-        'eventId': eventId,
-        'count': count,
-        'truePositiveCount': truePositiveCount,
-        'falsePositiveCount': count - truePositiveCount,
-        'precision': count == 0 ? 0.0 : truePositiveCount / count,
-        'middleTransitionCount': middleTransitionCount,
-        'middleTransitionShare': count == 0 ? 0.0 : middleTransitionCount / count,
-        'dominantWinnerFamily': _maxKey(sourceWinnerCounts),
-        'dominantEventFamily': _maxKey(eventFamilyCounts),
-        'sourceTriggerCounts': sourceTriggerCounts,
-        'sourceWinnerCounts': sourceWinnerCounts,
-      };
+    'eventId': eventId,
+    'count': count,
+    'truePositiveCount': truePositiveCount,
+    'falsePositiveCount': count - truePositiveCount,
+    'precision': count == 0 ? 0.0 : truePositiveCount / count,
+    'middleTransitionCount': middleTransitionCount,
+    'middleTransitionShare': count == 0 ? 0.0 : middleTransitionCount / count,
+    'dominantWinnerFamily': _maxKey(sourceWinnerCounts),
+    'dominantEventFamily': _maxKey(eventFamilyCounts),
+    'sourceTriggerCounts': sourceTriggerCounts,
+    'sourceWinnerCounts': sourceWinnerCounts,
+  };
 }
 
 String _maxKey(Map<String, int> counts) {
@@ -1000,7 +1018,10 @@ class _NeighborSummary {
   final int count;
   final double belowThresholdShare;
 
-  const _NeighborSummary({required this.count, required this.belowThresholdShare});
+  const _NeighborSummary({
+    required this.count,
+    required this.belowThresholdShare,
+  });
 }
 
 class _SupportShape {

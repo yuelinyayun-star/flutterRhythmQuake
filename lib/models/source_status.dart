@@ -29,5 +29,5 @@ enum SourceStatus {
   /// 连接中
   ///
   /// 数据源正在尝试建立连接。
-  connecting
+  connecting,
 }

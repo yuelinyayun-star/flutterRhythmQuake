@@ -179,7 +179,8 @@ Map<String, Object?> buildPlumTohokuPropagationShapeDiagnosticJson({
     'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
     'status': errors.isEmpty ? 'pass' : 'fail',
     'policy': {
-      'method': 'PLUM Tohoku strong-nearby-evidence propagation-shape diagnostic',
+      'method':
+          'PLUM Tohoku strong-nearby-evidence propagation-shape diagnostic',
       'rawPredictedIntensityMutated': false,
       'frozenTestEvaluated': true,
       'productionReady': false,
@@ -248,8 +249,8 @@ _ShapeSample _buildShapeSample({
       observed.longitude,
     );
     if (distance > _plumRadiusKm) continue;
-    final propagated = observed.intensity -
-        _plumDampingPer10Km * (distance / 10.0);
+    final propagated =
+        observed.intensity - _plumDampingPer10Km * (distance / 10.0);
     if (propagated >= threshold.value) {
       supportingEvidence.add(
         _EvidenceStation(
@@ -368,9 +369,7 @@ String plumTohokuPropagationShapeDiagnosticMarkdown(
       '- Minimum prediction margin: '
       '`${focusFilter['minimumPredictionMarginShindo']} shindo`',
     )
-    ..writeln(
-      '- Neighbor windows: `${focusFilter['neighborWindowsKm']}`',
-    )
+    ..writeln('- Neighbor windows: `${focusFilter['neighborWindowsKm']}`')
     ..writeln(
       '- Supporting evidence definition: '
       '${focusFilter['supportingEvidenceDefinition']}',
@@ -488,10 +487,12 @@ class _ThresholdAccumulator {
 
   Map<String, Object?> toJson() {
     final truePositives = [
-      for (final sample in focus) if (sample.actualPositive) sample,
+      for (final sample in focus)
+        if (sample.actualPositive) sample,
     ];
     final falsePositives = [
-      for (final sample in focus) if (!sample.actualPositive) sample,
+      for (final sample in focus)
+        if (!sample.actualPositive) sample,
     ];
     return {
       'focusSampleCount': focus.length,
@@ -556,15 +557,16 @@ class _OutcomeSummary {
 }
 
 Iterable<_ShapeSample> _rankExamples(List<_ShapeSample> samples) {
-  final sorted = [...samples]..sort((left, right) {
-    final byGap = right.evidenceTargetGap.compareTo(left.evidenceTargetGap);
-    if (byGap != 0) return byGap;
-    final byLocal = right.localBelowThresholdShare10Km.compareTo(
-      left.localBelowThresholdShare10Km,
-    );
-    if (byLocal != 0) return byLocal;
-    return right.plum.compareTo(left.plum);
-  });
+  final sorted = [...samples]
+    ..sort((left, right) {
+      final byGap = right.evidenceTargetGap.compareTo(left.evidenceTargetGap);
+      if (byGap != 0) return byGap;
+      final byLocal = right.localBelowThresholdShare10Km.compareTo(
+        left.localBelowThresholdShare10Km,
+      );
+      if (byLocal != 0) return byLocal;
+      return right.plum.compareTo(left.plum);
+    });
   return sorted.take(_exampleLimit);
 }
 
@@ -658,7 +660,10 @@ class _NeighborSummary {
   final int count;
   final double belowThresholdShare;
 
-  const _NeighborSummary({required this.count, required this.belowThresholdShare});
+  const _NeighborSummary({
+    required this.count,
+    required this.belowThresholdShare,
+  });
 }
 
 _NeighborSummary _localNeighborSummary(

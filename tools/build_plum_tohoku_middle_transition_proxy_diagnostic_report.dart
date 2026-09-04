@@ -299,10 +299,7 @@ Map<String, Object?> _buildFamilyJson({
 }) {
   final validationBuckets = validation.bucketsForFamily(family);
   final testBuckets = test.bucketsForFamily(family);
-  final keys = {
-    ...validationBuckets.keys,
-    ...testBuckets.keys,
-  }.toList()
+  final keys = {...validationBuckets.keys, ...testBuckets.keys}.toList()
     ..sort();
   return {
     'validationPositiveCount': validation.summary.middleTransitionCount,
@@ -354,7 +351,9 @@ Map<String, Object?> _bucketRow({
     'family': family,
     'bucket': bucket,
     'validationCount': validationCount,
-    'validationShare': validationTotal == 0 ? 0.0 : validationCount / validationTotal,
+    'validationShare': validationTotal == 0
+        ? 0.0
+        : validationCount / validationTotal,
     'validationPositiveCount': validationPositiveCount,
     'validationPositiveRate': validationRate,
     'testCount': testCount,
@@ -362,7 +361,8 @@ Map<String, Object?> _bucketRow({
     'testPositiveCount': testPositiveCount,
     'testPositiveRate': testRate,
     'testPositiveCaptureShare': testCaptureShare,
-    'sampleShareDelta': (testTotal == 0 ? 0.0 : testCount / testTotal) -
+    'sampleShareDelta':
+        (testTotal == 0 ? 0.0 : testCount / testTotal) -
         (validationTotal == 0 ? 0.0 : validationCount / validationTotal),
     'positiveRateDelta': testRate - validationRate,
     'testLift': testLift,
@@ -383,13 +383,17 @@ List<Map<String, Object?>> _buildRankedCandidates(
     }
   }
   rows.sort((left, right) {
-    final scoreCmp =
-        _number(right['proxyScore']).compareTo(_number(left['proxyScore']));
+    final scoreCmp = _number(
+      right['proxyScore'],
+    ).compareTo(_number(left['proxyScore']));
     if (scoreCmp != 0) return scoreCmp;
-    final rateCmp = _number(right['testPositiveRate'])
-        .compareTo(_number(left['testPositiveRate']));
+    final rateCmp = _number(
+      right['testPositiveRate'],
+    ).compareTo(_number(left['testPositiveRate']));
     if (rateCmp != 0) return rateCmp;
-    return _int(right['testPositiveCount']).compareTo(_int(left['testPositiveCount']));
+    return _int(
+      right['testPositiveCount'],
+    ).compareTo(_int(left['testPositiveCount']));
   });
   return rows.take(15).toList();
 }
@@ -444,7 +448,8 @@ _ProxySample _buildProxySample({
     evidenceCount: plum.evidenceCount,
     nearestEvidenceDistanceKm: plum.nearestEvidenceDistanceKm,
     strongestEvidenceIntensity: strongestEvidence?.station.intensity,
-    strongestEvidencePropagatedIntensity: strongestEvidence?.propagatedIntensity,
+    strongestEvidencePropagatedIntensity:
+        strongestEvidence?.propagatedIntensity,
     evidenceTargetGap: strongestEvidence == null
         ? double.nan
         : strongestEvidence.station.intensity - targetStation.intensity,
@@ -472,8 +477,8 @@ List<_EvidenceStation> _supportingEvidence({
       observed.longitude,
     );
     if (distance > _plumRadiusKm) continue;
-    final propagated = observed.intensity -
-        _plumDampingPer10Km * (distance / 10.0);
+    final propagated =
+        observed.intensity - _plumDampingPer10Km * (distance / 10.0);
     if (propagated >= threshold) {
       supportingEvidence.add(
         _EvidenceStation(
@@ -612,7 +617,9 @@ String plumTohokuMiddleTransitionProxyDiagnosticMarkdown(
     ..writeln()
     ..writeln('## Coverage')
     ..writeln()
-    ..writeln('| Split | Variants | Station forecasts | Focus samples | Middle-transition samples | Rate |')
+    ..writeln(
+      '| Split | Variants | Station forecasts | Focus samples | Middle-transition samples | Rate |',
+    )
     ..writeln('| --- | ---: | ---: | ---: | ---: | ---: |');
   for (final split in const ['validation', 'test']) {
     final summary = _map(labelSummary[split]);
@@ -710,7 +717,9 @@ class _SplitAccumulator {
   void add(_ProxySample sample) => samples.add(sample);
 
   _LabelSummary get summary {
-    final middle = samples.where((sample) => sample.isMiddleTransitionZone).length;
+    final middle = samples
+        .where((sample) => sample.isMiddleTransitionZone)
+        .length;
     return _LabelSummary(
       focusSampleCount: samples.length,
       middleTransitionCount: middle,
@@ -721,7 +730,9 @@ class _SplitAccumulator {
     final buckets = <String, _BucketStats>{};
     for (final sample in samples) {
       final key = sample.bucketForFamily(family);
-      buckets.putIfAbsent(key, _BucketStats.new).add(sample.isMiddleTransitionZone);
+      buckets
+          .putIfAbsent(key, _BucketStats.new)
+          .add(sample.isMiddleTransitionZone);
     }
     return buckets;
   }
@@ -736,15 +747,14 @@ class _LabelSummary {
     required this.middleTransitionCount,
   });
 
-  double get middleTransitionRate => focusSampleCount == 0
-      ? 0.0
-      : middleTransitionCount / focusSampleCount;
+  double get middleTransitionRate =>
+      focusSampleCount == 0 ? 0.0 : middleTransitionCount / focusSampleCount;
 
   Map<String, Object?> toJson() => {
-        'focusSampleCount': focusSampleCount,
-        'middleTransitionCount': middleTransitionCount,
-        'middleTransitionRate': middleTransitionRate,
-      };
+    'focusSampleCount': focusSampleCount,
+    'middleTransitionCount': middleTransitionCount,
+    'middleTransitionRate': middleTransitionRate,
+  };
 }
 
 class _BucketStats {
@@ -935,7 +945,10 @@ class _NeighborSummary {
   final int count;
   final double belowThresholdShare;
 
-  const _NeighborSummary({required this.count, required this.belowThresholdShare});
+  const _NeighborSummary({
+    required this.count,
+    required this.belowThresholdShare,
+  });
 }
 
 class _SupportShape {
@@ -964,69 +977,68 @@ Map<String, Object?> _emptyReport({
   required String dataDirectory,
   required String modelPath,
 }) => {
-        'schemaVersion': 'plum_tohoku_middle_transition_proxy_diagnostic_v1',
-        'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
-        'status': 'fail',
-        'policy': {
-          'method': 'PLUM Tohoku middle-transition proxy diagnostic',
-          'rawPredictedIntensityMutated': false,
-          'frozenTestEvaluated': true,
-          'productionReady': false,
-          'productionUiConnected': false,
-          'diagnosticOnly': true,
-          'parametersTuned': false,
-          'suppressionApplied': false,
-          'plumRadiusKm': _plumRadiusKm,
-          'plumDampingPer10Km': _plumDampingPer10Km,
-          'minimumTestSamplesForRanking': _minTestSamplesForRanking,
-        },
-        'inputs': {
-          'dataDirectory': dataDirectory,
-          'modelPath': modelPath,
-          'splits': ['validation', 'test'],
-          'threshold': _threshold.label,
-        },
-        'focusFilter': {
-          'estimatedSourceRegion': _focusRegion,
-          'minimumEvidenceCount': _focusMinimumEvidenceCount,
-          'maximumNearestEvidenceDistanceKm':
-              _focusMaximumNearestEvidenceDistanceKm,
-          'minimumPredictionMarginShindo': _focusMinimumMargin,
-          'baselineThresholdCrossingRequired': true,
-        },
-        'labelDefinition': const {
-          'positiveLabel': 'middle_transition_zone',
-          'truthInputs': [
-            'actualGapBand in {-1.0_to_0.0, 0.0_to_1.0}',
-            'evidenceGapBand in {1.0_to_2.0, 2.0_to_3.0}',
-            'localConsistencyLabel == mismatch',
-          ],
-        },
-        'featureDefinitions': const {},
-        'coverage': {
-          'validationVariants': 0,
-          'testVariants': 0,
-          'validationStationForecasts': 0,
-          'testStationForecasts': 0,
-          'skippedMissingMagnitudeEvents': 0,
-          'skippedNoSourceEstimateVariants': 0,
-        },
-        'labelSummary': const {
-          'validation': {
-            'focusSampleCount': 0,
-            'middleTransitionCount': 0,
-            'middleTransitionRate': 0.0,
-          },
-          'test': {
-            'focusSampleCount': 0,
-            'middleTransitionCount': 0,
-            'middleTransitionRate': 0.0,
-          },
-        },
-        'featureFamilies': const {},
-        'rankedCandidates': const [],
-        'errors': errors,
-      };
+  'schemaVersion': 'plum_tohoku_middle_transition_proxy_diagnostic_v1',
+  'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
+  'status': 'fail',
+  'policy': {
+    'method': 'PLUM Tohoku middle-transition proxy diagnostic',
+    'rawPredictedIntensityMutated': false,
+    'frozenTestEvaluated': true,
+    'productionReady': false,
+    'productionUiConnected': false,
+    'diagnosticOnly': true,
+    'parametersTuned': false,
+    'suppressionApplied': false,
+    'plumRadiusKm': _plumRadiusKm,
+    'plumDampingPer10Km': _plumDampingPer10Km,
+    'minimumTestSamplesForRanking': _minTestSamplesForRanking,
+  },
+  'inputs': {
+    'dataDirectory': dataDirectory,
+    'modelPath': modelPath,
+    'splits': ['validation', 'test'],
+    'threshold': _threshold.label,
+  },
+  'focusFilter': {
+    'estimatedSourceRegion': _focusRegion,
+    'minimumEvidenceCount': _focusMinimumEvidenceCount,
+    'maximumNearestEvidenceDistanceKm': _focusMaximumNearestEvidenceDistanceKm,
+    'minimumPredictionMarginShindo': _focusMinimumMargin,
+    'baselineThresholdCrossingRequired': true,
+  },
+  'labelDefinition': const {
+    'positiveLabel': 'middle_transition_zone',
+    'truthInputs': [
+      'actualGapBand in {-1.0_to_0.0, 0.0_to_1.0}',
+      'evidenceGapBand in {1.0_to_2.0, 2.0_to_3.0}',
+      'localConsistencyLabel == mismatch',
+    ],
+  },
+  'featureDefinitions': const {},
+  'coverage': {
+    'validationVariants': 0,
+    'testVariants': 0,
+    'validationStationForecasts': 0,
+    'testStationForecasts': 0,
+    'skippedMissingMagnitudeEvents': 0,
+    'skippedNoSourceEstimateVariants': 0,
+  },
+  'labelSummary': const {
+    'validation': {
+      'focusSampleCount': 0,
+      'middleTransitionCount': 0,
+      'middleTransitionRate': 0.0,
+    },
+    'test': {
+      'focusSampleCount': 0,
+      'middleTransitionCount': 0,
+      'middleTransitionRate': 0.0,
+    },
+  },
+  'featureFamilies': const {},
+  'rankedCandidates': const [],
+  'errors': errors,
+};
 
 StaticAttenuationModel _modelFromJson(Map<String, Object?> json) {
   return StaticAttenuationModel(

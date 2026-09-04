@@ -75,6 +75,12 @@
   显式 `--allow-frozen-year`，不包含拟合或模型重选。
 - `tool/matsuzaki_2006_finite_fault_distance_catalog.dart`：同时输出既有近场诊断人口与
   六个来源事件的全部接受站距离人口。
+- `tool/matsuzaki_2006_finite_fault_migration_diagnostic.dart`：固定目录震源和系数，比较
+  点源距与已审计有限断层距的逐站前向迁移误差；不进入未知事件搜索或生产。
+- `tool/matsuzaki_2006_source_backed_point_source_inversion_diagnostic.dart`：将六个有来源
+  有限断层几何的事件按未知事件处理，运行候选点源联合搜索并只做事后误差比较。
+- `tool/matsuzaki_2006_source_backed_depth_profile_diagnostic.dart`：固定上一轮返回的水平
+  候选位置，逐 5 km 扫描深度并重新优化共同震级，识别深度边界和不可辨识包络。
 - `tool/matsuzaki_2006_finite_fault_semantic_calibration.dart`：按有限断层/点源混合距离
   语义重跑 2010-2016 固定结构校准和 2017 选模，不读取 2018。
 - `tool/matsuzaki_2006_finite_fault_frozen_2018_evaluation.dart`：读取已冻结选择后，比较
@@ -319,9 +325,96 @@ NIED 修订数字文件逐项给出 `15 x 10` 个曲面子断层，总面积 `47
 因此尚不能称为全局最优，但已确认当前结果没有返回该低 RMS 候选。下一步需要增加只读的
 候选访问轨迹，区分“未被评分”和“评分后被阶段筛选”，不能直接改搜索排序。
 
+候选访问轨迹已经完成：该近场点在无站项和冻结站项两条路径中均为 `evaluated=false`，
+而远处返回点在冻结站项路径的 `stage=2, expansion=4` 被实际评分。因此已确认是自适应
+候选生成路径漏采样，不是评分后排序丢失。下一步统计其他事件的漏采样频率，再做预声明
+搜索覆盖实验。
+
 ## 与现有代码的边界
 
 - `gstsl_*.dart` 是论文算法还原，不是实验 1 的日本模型成品。
 - `ka_intensity_input.dart` 和 `ka_capture_input_extractor.dart` 是输入研究期间的暂存代码，目前不作为实验 1 已确认设计。
 - 实验代码继续保持独立；真实输入适配和生产接入只能在输入数值域、场地修正、距离、
   深度、震级类型、端到端评价门槛和标定资料全部明确后开始。
+
+2022 全事件局部覆盖扫描见
+`.dart_tool/matsuzaki_2006_joint_station_bias_effect_diagnostic_2022_k2_all_neighborhoods/report.{json,md}`。
+该扫描以既有无站项最佳候选为中心，固定其深度，在原始矩形和 250 km 径向合法域内按
+`0.025°` 间隔扫描 `+/-0.25°` 邻域，只计算冻结站项路径。`published` 的 50 个事件中有
+`0/50` 个局部 RMS 低于已返回站项候选；`finiteFaultSemanticFrozen2017` 有 `1/50`
+（2%），即已知的 `2022051806171907-40.9873-143.1635`，局部 RMS 差值为 `-0.042754`，
+且局部最低点落在扫描边缘。该比例是局部覆盖风险指标，不等同于漏采样确认；具体候选
+是否进入评分仍必须使用 `--trace-event` 单事件复核。
+
+全事件候选访问 trace 见
+`.dart_tool/matsuzaki_2006_joint_station_bias_effect_diagnostic_2022_k2_trace_all/report.{json,md}`。
+新增 `--trace-all-events` 后，对每个事件监视无站项返回候选、冻结站项返回候选，以及局部
+扫描最低点。`published` 的局部最低点实际进入评分 `27/50`，未进入 `23/50`；
+`finiteFaultSemanticFrozen2017` 实际进入 `40/50`，未进入 `10/50`。两套模型的冻结站项
+返回候选均为 `50/50` 实际进入评分。该统计证明自适应搜索不是局部邻域全覆盖，但只有
+“局部 RMS 更低且 trace 未评估”同时成立时，才构成当前已确认的覆盖问题。
+
+硬域粗起点对照见
+`.dart_tool/matsuzaki_2006_joint_station_bias_effect_diagnostic_2022_k2_hard_coarse_start_v3/report.{json,md}`。
+该只读策略将第一阶段初始窗口替换为原始硬域，后续阶段、评分函数、径向约束和震级搜索
+不变。2022 结果中，`published` 冻结站项路径的震中误差改善 `29/50`，中位变化
+`-0.075 km`；`finiteFaultSemanticFrozen2017` 改善 `30/50`，中位变化 `-0.121 km`。
+有限断层模型的已知反例从原路径 `447.438 km` 降到 `54.564 km`，但仍未超过无站项路径的
+`38.155 km`。这只是候选策略证据，不是生产参数或生产搜索已经改变的记录。
+
+2019 交叉验证见
+`.dart_tool/matsuzaki_2006_joint_station_bias_effect_diagnostic_2019_k2_hard_coarse_start/report.{json,md}`。
+同一硬域粗起点策略在 44 个既有 2019 事件上，`published` 冻结站项路径震中误差改善
+`25/44`、中位变化 `-0.046 km`；`finiteFaultSemanticFrozen2017` 改善 `23/44`、中位
+变化 `-0.023 km`。2019 曾用于既有审计，因此这里只作为策略交叉验证，不称为新的盲测，
+也不据此重新选择搜索或站项参数。
+
+2020/2021 局部覆盖扫描和全事件 trace 见
+`matsuzaki_2006_joint_station_bias_2020_2021_coverage_trace_diagnostic.md`。2020 的
+`published`、有限断层语义模型分别发现 `0/44`、`1/44` 个低于返回站项 RMS 的局部点；
+2021 两个模型均为 `1/51`。三处低点都确认未进入原始评分循环，但只有两处在硬域粗起点
+对照中改善震中误差，说明局部 RMS 漏采样是低频覆盖风险，不能直接替换为全域细网格。
+当前下一步只允许预声明多起点策略的收益/耗时实验，不从这三处事件调搜索参数。
+
+两路径返回候选 union 对照见
+`matsuzaki_2006_joint_station_bias_two_path_union_diagnostic.md`。它将原始路径与硬域粗
+起点路径各自返回的冻结站项最佳候选按 RMS 取优，不使用目录真值。2020/2021 四个模型
+年度组合的震中误差中位数均未改善，P90 均上升，且额外耗时中位数约 `1.9-2.4 s`；因此
+多起点策略暂不进入生产，也不再从当前年度结果调起点或候选排序。
+
+有限断层距离迁移诊断见
+`matsuzaki_2006_finite_fault_migration_diagnostic.md`。在 2011/2014/2016/2018 的六个
+来源事件、七个几何变体和两套系数上固定目录震源比较点源距与有限断层距：2011 改善、
+2014 两套系数均恶化、2016 方向不一致，2018 双矩形仅在冻结系数下略好。因此距离语义
+与系数存在事件相关耦合，不能把有限断层距无条件替换进未知事件点源搜索；未知事件仍
+使用候选点源三维距，后续若迁移必须建立分层/混合标定和独立留出评价。
+
+有来源有限断层事件的点源联合反演诊断见
+`matsuzaki_2006_source_backed_point_source_inversion_diagnostic.md`。六个事件按未知事件
+输入运行 12 次：冻结系数改善部分水平误差，但 4/6 个事件触及深度或其他硬边界；原系数
+也出现深度边界和明显深度误差。因此这轮只确认距离语义、深度可辨识性和系数存在耦合，
+不支持直接替换系数或将有限断层距写入未知事件搜索。下一步做固定候选位置的深度 RMS
+剖面诊断，区分真实目标面和边界假收敛。
+
+有来源有限断层事件的深度 RMS 剖面见
+`matsuzaki_2006_source_backed_depth_profile_diagnostic.md`。固定上一轮点源候选水平位置
+并逐 5 km 重估共同震级后，原系数和冻结系数分别在不同事件触及浅部或深部边界，多个
+事件的 `RMS + 0.05` 深度包络很宽。因此深度问题不是统一的固定偏移，不能通过扩大范围
+或显示边界值解决；下一步只能用独立深度信息或有物理依据的分层模型验证。
+
+JMA 官方源过程原始包审计见
+`.dart_tool/matsuzaki_2006_jma_source_process_audit/report.{json,md}`，原始 ZIP 保存在
+`tmp/jma_source_process_raw`，解压文本保存在 `tmp/jma_source_process_audit`。该审计解析
+`01event.txt` 的 `M/Mo/Mw/Mxslp`、`02fault.txt` 的有效子断层、`03mom.txt` 的矩量释放
+时间序列和 `04slip.txt` 的滑移/刚度，不把这些波形源过程量当成实时烈度输入。福岛、长野、
+茨城的 JMA 活跃足迹与当前 JMA 修订矩形在尺寸、走向、倾角和参考深度上相符；熊本、鸟取
+分别存在 `24 x 18` 对 `22 x 14 km`、`22 x 16` 对 `16 x 16 km` 的来源差异，因此 JMA
+源过程模型与当前 NIED 几何只允许并列诊断，不能拼接或按单事件 RMS 选择。大阪没有本地
+JMA 源过程索引条目，继续保持独立资料边界。
+
+JMA 源过程矩形与当前几何的逐站距离诊断见
+`.dart_tool/matsuzaki_2006_jma_source_process_distance_diagnostic/report.{json,md}`。
+JMA 矩形的下倾方位由原始 `02fault.txt` 有效子断层中心的 `w -> w+1` 坐标推导，并规范化
+为与走向严格正交的方向。福岛、长野、茨城与当前同源矩形的逐站距离和 RMS 完全一致；
+熊本、鸟取的 JMA/NIED 距离不同，且在原系数和冻结系数下 RMS 改善方向相反。因此这轮
+只支持“来源并列、距离与系数联合诊断”，不支持把 JMA 矩形写入未知事件搜索。

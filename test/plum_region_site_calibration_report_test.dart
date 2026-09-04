@@ -46,8 +46,8 @@ void main() {
     final bandDefs = (report['bandDefinitions'] as Map).cast<String, Object?>();
     expect(bandDefs['minSampleForBandAssignment'], 20);
 
-    final bucketDefs =
-        (report['bucketDefinitions'] as Map).cast<String, Object?>();
+    final bucketDefs = (report['bucketDefinitions'] as Map)
+        .cast<String, Object?>();
     expect(bucketDefs['regionSource'], 'estimated_source_latitude');
     expect(bucketDefs['siteSource'], 'station_latitude');
     expect(bucketDefs['regionBands'], isA<List>());
@@ -64,8 +64,8 @@ void main() {
       expect(threshold['marginalSite'], isA<List>());
       expect(threshold['bandSummary'], isA<Map>());
 
-      final bandSummary =
-          (threshold['bandSummary'] as Map).cast<String, Object?>();
+      final bandSummary = (threshold['bandSummary'] as Map)
+          .cast<String, Object?>();
       expect(
         bandSummary.keys,
         containsAll(['high', 'medium', 'low', 'insufficient']),
@@ -88,10 +88,7 @@ void main() {
         expect(bucket['region'], isA<String>());
         expect(bucket['site'], isA<String>());
         expect(bucket['band'], isA<String>());
-        expect(
-          bucket['band'],
-          isIn(['high', 'medium', 'low', 'insufficient']),
-        );
+        expect(bucket['band'], isIn(['high', 'medium', 'low', 'insufficient']));
       }
     }
 
@@ -102,7 +99,10 @@ void main() {
     expect(markdown, contains('Marginal Site Precision'));
     expect(markdown, contains('Joint Calibration Table'));
     expect(markdown, contains('Band Summary'));
-    expect(markdown, contains('do not replace, cap, or hide predicted intensity'));
+    expect(
+      markdown,
+      contains('do not replace, cap, or hide predicted intensity'),
+    );
   });
 }
 
@@ -134,12 +134,7 @@ Map<String, Object?> _dataset() => {
         {
           'variantId': 'region_site_calibration_event_mask_20pct',
           'requestedMaskRate': 0.2,
-          'retainedStationIds': [
-            'strong_a',
-            'strong_b',
-            'tohoku_a',
-            'west_a',
-          ],
+          'retainedStationIds': ['strong_a', 'strong_b', 'tohoku_a', 'west_a'],
         },
       ],
     },

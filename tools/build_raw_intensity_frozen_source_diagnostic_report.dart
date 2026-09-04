@@ -50,7 +50,9 @@ void main(List<String> args) {
     '${const JsonEncoder.withIndent('  ').convert(report)}\n',
   );
   final markdown = File(markdownPath)..parent.createSync(recursive: true);
-  markdown.writeAsStringSync(rawIntensityFrozenSourceDiagnosticMarkdown(report));
+  markdown.writeAsStringSync(
+    rawIntensityFrozenSourceDiagnosticMarkdown(report),
+  );
 
   stdout.writeln('wrote raw intensity frozen source diagnostic report');
   stdout.writeln('json: ${output.path}');
@@ -445,9 +447,7 @@ String rawIntensityFrozenSourceDiagnosticMarkdown(Map<String, Object?> report) {
       '- Validation station forecasts: '
       '`${coverage['validationStationForecasts']}`',
     )
-    ..writeln(
-      '- Test station forecasts: `${coverage['testStationForecasts']}`',
-    )
+    ..writeln('- Test station forecasts: `${coverage['testStationForecasts']}`')
     ..writeln(
       '- Skipped missing-magnitude events: '
       '`${coverage['skippedMissingMagnitudeEvents']}`',
@@ -494,12 +494,20 @@ String rawIntensityFrozenSourceDiagnosticMarkdown(Map<String, Object?> report) {
       ..writeln()
       ..writeln('### Three-Component P/R/F1 (validation vs test)')
       ..writeln()
-      ..writeln('| Component | Split | TP | FP | FN | TN | Precision | Recall | F1 |')
-      ..writeln('| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
+      ..writeln(
+        '| Component | Split | TP | FP | FN | TN | Precision | Recall | F1 |',
+      )
+      ..writeln(
+        '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
+      );
     final splits = _map(tJson['splits']);
     for (final splitName in const ['validation', 'test']) {
       final split = _map(splits[splitName]);
-      for (final component in const ['jmaStyle', 'plumR30D050', 'baselineMax']) {
+      for (final component in const [
+        'jmaStyle',
+        'plumR30D050',
+        'baselineMax',
+      ]) {
         final c = _map(split[component]);
         buffer.writeln(
           '| `$component` | $splitName | ${c['truePositive']} | '
@@ -534,7 +542,9 @@ String rawIntensityFrozenSourceDiagnosticMarkdown(Map<String, Object?> report) {
       ..writeln()
       ..writeln('### Region Buckets (precision by estimated-source latitude)')
       ..writeln()
-      ..writeln('| Region | Split | jmaStyle P | plumR30D050 P | baselineMax P |')
+      ..writeln(
+        '| Region | Split | jmaStyle P | plumR30D050 P | baselineMax P |',
+      )
       ..writeln('| --- | --- | ---: | ---: | ---: |');
     final regionBuckets = _map(tJson['regionBuckets']);
     final valRegions = _map(regionBuckets['validation']);
@@ -555,9 +565,13 @@ String rawIntensityFrozenSourceDiagnosticMarkdown(Map<String, Object?> report) {
     }
     buffer
       ..writeln()
-      ..writeln('### Distance Buckets (precision by estimated-source → station)')
+      ..writeln(
+        '### Distance Buckets (precision by estimated-source → station)',
+      )
       ..writeln()
-      ..writeln('| Distance | Split | jmaStyle P | plumR30D050 P | baselineMax P |')
+      ..writeln(
+        '| Distance | Split | jmaStyle P | plumR30D050 P | baselineMax P |',
+      )
       ..writeln('| --- | --- | ---: | ---: | ---: |');
     final distanceBuckets = _map(tJson['distanceBuckets']);
     final valDistances = _map(distanceBuckets['validation']);
@@ -596,14 +610,20 @@ String rawIntensityFrozenSourceDiagnosticMarkdown(Map<String, Object?> report) {
   buffer
     ..writeln('## Decision')
     ..writeln()
-    ..writeln('- Non-suppressive: this diagnostic does not modify raw predicted '
-        'intensity, does not connect to UI/notifications/wording, and does not '
-        'tune any parameter.')
-    ..writeln('- One-shot compliance: it does not re-run the confidence band '
-        'wording layer frozen evaluation and therefore does not spend the '
-        'one-shot budget for that layer.')
-    ..writeln('- This is a prerequisite diagnostic for improving raw intensity '
-        'frozen migration; results here do not authorize production UI.')
+    ..writeln(
+      '- Non-suppressive: this diagnostic does not modify raw predicted '
+      'intensity, does not connect to UI/notifications/wording, and does not '
+      'tune any parameter.',
+    )
+    ..writeln(
+      '- One-shot compliance: it does not re-run the confidence band '
+      'wording layer frozen evaluation and therefore does not spend the '
+      'one-shot budget for that layer.',
+    )
+    ..writeln(
+      '- This is a prerequisite diagnostic for improving raw intensity '
+      'frozen migration; results here do not authorize production UI.',
+    )
     ..writeln();
   return buffer.toString();
 }

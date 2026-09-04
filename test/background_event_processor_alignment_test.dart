@@ -276,7 +276,7 @@ void main() {
       expect(processor.acceptedEewReportNums['jmaEew|eew-test'], 6);
     });
 
-    test('allows Wolfx CWA takeover and blocks later FAN overwrite', () {
+    test('follows standard multi-source EEW report ordering for CWA EEW', () {
       final processor = BackgroundEventProcessor(
         sourceInfoMagFilters: const {},
       );
@@ -309,10 +309,12 @@ void main() {
       );
 
       expect(processor.process(fan).type, BackgroundEventResultType.newEvent);
-      expect(processor.process(wolfx).type, BackgroundEventResultType.update);
+      // Same report number from secondary source is dropped as a duplicate
+      expect(processor.process(wolfx).type, BackgroundEventResultType.dropped);
+      // Newer report number (Report 5) from any source successfully updates the slot
       expect(
         processor.process(laterFan).type,
-        BackgroundEventResultType.dropped,
+        BackgroundEventResultType.update,
       );
     });
   });

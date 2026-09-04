@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart'
     show
@@ -16,19 +17,20 @@ import 'providers/quake_provider.dart';
 import 'providers/map_state_provider.dart';
 import 'providers/notification_settings_provider.dart';
 import 'providers/background_settings_provider.dart';
+import 'providers/page_background_provider.dart';
 import 'screens/main_screen.dart';
 import 'widgets/map/map_config.dart';
 import 'core/frame_rate_limiter.dart';
 import 'core/nied_replay_logger.dart';
-import 'core/travel_time_service.dart';
 import 'services/database_helper.dart';
 import 'services/ntp_service.dart';
 import 'services/desktop_init.dart';
 import 'services/location_service.dart';
 import 'services/background_service.dart';
-import 'services/epicenter_region_service.dart';
 import 'services/tts_service.dart';
+import 'services/obs_automation_runtime_service.dart';
 import 'services/wauth_service.dart';
+import 'services/wauth_credential_store.dart';
 import 'services/sources/source_manager.dart';
 import 'services/sources/wolfx_service.dart';
 import 'services/sources/whews_service.dart';
@@ -38,6 +40,7 @@ import 'services/sources/p2pquake_service.dart';
 import 'services/sources/mock_input_service.dart';
 import 'services/sources/global_quake_service.dart';
 import 'services/sources/fdsn_motion_service.dart';
+import 'services/debug/local_inject_server.dart';
 import 'widgets/map/quake_map_view.dart';
 import 'widgets/ui/ui_runtime_flags.dart';
 
@@ -60,6 +63,8 @@ bool get _isMobilePlatform =>
     (defaultTargetPlatform == TargetPlatform.android ||
         defaultTargetPlatform == TargetPlatform.iOS);
 
+const String _fanZxyCacheMigrationKey = 'fan_zxy_tile_cache_cleared_20260822';
+
 Future<void> _preferInitialMobileLandscape() async {
   if (!_isMobilePlatform) return;
   await SystemChrome.setPreferredOrientations(const [
@@ -68,11 +73,25 @@ Future<void> _preferInitialMobileLandscape() async {
   ]);
 }
 
-void _configureMobileImageCache() {
-  if (!_isMobilePlatform) return;
+void _configureImageCache() {
   final cache = PaintingBinding.instance.imageCache;
-  cache.maximumSize = 256;
-  cache.maximumSizeBytes = 64 * 1024 * 1024;
+  if (_isMobilePlatform) {
+    cache.maximumSize = 256;
+    cache.maximumSizeBytes = 64 * 1024 * 1024;
+    return;
+  }
+  // Desktop GIF inject + map tiles otherwise keep the Flutter defaults
+  // (1000 / 100MB) and leave RSS elevated after long tests.
+  cache.maximumSize = 320;
+  cache.maximumSizeBytes = 80 * 1024 * 1024;
+}
+
+Future<void> _clearLegacyFanTileCacheOnce(SharedPreferences prefs) async {
+  if (prefs.getBool(_fanZxyCacheMigrationKey) ?? false) return;
+  final cache = PaintingBinding.instance.imageCache;
+  cache.clear();
+  cache.clearLiveImages();
+  await prefs.setBool(_fanZxyCacheMigrationKey, true);
 }
 
 void _releaseMobileOrientationAfterFirstFrame() {
@@ -85,6 +104,8 @@ void _releaseMobileOrientationAfterFirstFrame() {
 void _startDeferredServices(
   SharedPreferences prefs,
   GlobalQuakeService globalQuake,
+  WhewsService whews,
+  WAuthCredentials whewsCredentials,
 ) {
   WidgetsBinding.instance.addPostFrameCallback((_) {
     unawaited(() async {
@@ -103,14 +124,132 @@ void _startDeferredServices(
         }
       }
 
-      await EpicenterRegionService.instance.load();
-      unawaited(TravelTimeService().load());
-      SourceManager().startAll();
-      if (prefs.getBool(GlobalQuakeService.enabledPreferenceKey) ?? false) {
+      // Epicenter bins + travel times load on first use (see getFEName /
+      // TravelTimeService.ensureLoaded) to keep steady-state RAM lower.
+      if (!BackgroundService().isAndroidConnectionHostedByForegroundService) {
+        SourceManager().startAll();
+      }
+      unawaited(_verifyAndEnableWhews(prefs, whews, whewsCredentials));
+      if (!BackgroundService().isAndroidConnectionHostedByForegroundService &&
+          (prefs.getBool(GlobalQuakeService.enabledPreferenceKey) ?? false)) {
         globalQuake.connect();
       }
     }());
   });
+}
+
+Future<void> _verifyAndEnableWhews(
+  SharedPreferences prefs,
+  WhewsService whews,
+  WAuthCredentials credentials,
+) async {
+  final hasRequestedWhews =
+      (prefs.getBool(WhewsService.enabledPreferenceKey) ?? false) ||
+      (prefs.getBool(QuakeMapView.whewsNiedEnabledPreferenceKey) ?? false) ||
+      (prefs.getBool(QuakeMapView.whewsSnetEnabledPreferenceKey) ?? false) ||
+      (prefs.getBool(QuakeMapView.whewsKmaEnabledPreferenceKey) ?? false);
+  if (!hasRequestedWhews || !credentials.isComplete) {
+    await prefs.setBool(WhewsService.apiAuthorizedPreferenceKey, false);
+    SourceManager().setSourceEnabled('WHEWS', false);
+    return;
+  }
+
+  final auth = WAuthService();
+  final previousApiAuthorized =
+      prefs.getBool(WhewsService.apiAuthorizedPreferenceKey) ?? false;
+  try {
+    final status = await auth.inspectStoredAuthorization(preferences: prefs);
+    if (status.credentials.accessToken != credentials.accessToken ||
+        status.credentials.apiToken != credentials.apiToken) {
+      return;
+    }
+
+    if (status.shouldForgetLogin) {
+      await prefs.setBool(WhewsService.apiAuthorizedPreferenceKey, false);
+      SourceManager().setSourceEnabled('WHEWS', false);
+      whews.setApiToken('');
+      QuakeMapView.whewsApiTokenNotifier.value = '';
+      QuakeMapView.whewsNiedEnabledNotifier.value = false;
+      QuakeMapView.whewsSnetEnabledNotifier.value = false;
+      QuakeMapView.whewsKmaEnabledNotifier.value = false;
+      return;
+    }
+
+    if (status.accessAuthorized && status.userInfo != null) {
+      await prefs.setString(
+        WAuthService.userInfoPreferenceKey,
+        jsonEncode(status.userInfo),
+      );
+    }
+
+    if (status.apiAuthorized) {
+      await prefs.setBool(WhewsService.apiAuthorizedPreferenceKey, true);
+      whews.setApiToken(status.credentials.apiToken);
+      QuakeMapView.whewsApiTokenNotifier.value = status.credentials.apiToken;
+      QuakeMapView.whewsNiedEnabledNotifier.value =
+          prefs.getBool(QuakeMapView.whewsNiedEnabledPreferenceKey) ?? false;
+      QuakeMapView.whewsSnetEnabledNotifier.value =
+          prefs.getBool(QuakeMapView.whewsSnetEnabledPreferenceKey) ?? false;
+      QuakeMapView.whewsKmaEnabledNotifier.value =
+          prefs.getBool(QuakeMapView.whewsKmaEnabledPreferenceKey) ?? false;
+      SourceManager().setSourceEnabled(
+        'WHEWS',
+        prefs.getBool(WhewsService.enabledPreferenceKey) ?? false,
+      );
+      return;
+    }
+
+    if (status.hasTransientVerificationFailure && previousApiAuthorized) {
+      whews.setApiToken(credentials.apiToken);
+      QuakeMapView.whewsApiTokenNotifier.value = credentials.apiToken;
+      QuakeMapView.whewsNiedEnabledNotifier.value =
+          prefs.getBool(QuakeMapView.whewsNiedEnabledPreferenceKey) ?? false;
+      QuakeMapView.whewsSnetEnabledNotifier.value =
+          prefs.getBool(QuakeMapView.whewsSnetEnabledPreferenceKey) ?? false;
+      QuakeMapView.whewsKmaEnabledNotifier.value =
+          prefs.getBool(QuakeMapView.whewsKmaEnabledPreferenceKey) ?? false;
+      SourceManager().setSourceEnabled(
+        'WHEWS',
+        prefs.getBool(WhewsService.enabledPreferenceKey) ?? false,
+      );
+      return;
+    }
+
+    await prefs.setBool(WhewsService.apiAuthorizedPreferenceKey, false);
+    SourceManager().setSourceEnabled('WHEWS', false);
+    whews.setApiToken('');
+    QuakeMapView.whewsApiTokenNotifier.value = '';
+    QuakeMapView.whewsNiedEnabledNotifier.value = false;
+    QuakeMapView.whewsSnetEnabledNotifier.value = false;
+    QuakeMapView.whewsKmaEnabledNotifier.value = false;
+  } catch (error) {
+    if (previousApiAuthorized && credentials.isComplete) {
+      whews.setApiToken(credentials.apiToken);
+      QuakeMapView.whewsApiTokenNotifier.value = credentials.apiToken;
+      QuakeMapView.whewsNiedEnabledNotifier.value =
+          prefs.getBool(QuakeMapView.whewsNiedEnabledPreferenceKey) ?? false;
+      QuakeMapView.whewsSnetEnabledNotifier.value =
+          prefs.getBool(QuakeMapView.whewsSnetEnabledPreferenceKey) ?? false;
+      QuakeMapView.whewsKmaEnabledNotifier.value =
+          prefs.getBool(QuakeMapView.whewsKmaEnabledPreferenceKey) ?? false;
+      SourceManager().setSourceEnabled(
+        'WHEWS',
+        prefs.getBool(WhewsService.enabledPreferenceKey) ?? false,
+      );
+      debugPrint('WHEWS startup authorization kept cached: $error');
+      return;
+    }
+    await prefs.setBool(WhewsService.apiAuthorizedPreferenceKey, false);
+    SourceManager().setSourceEnabled('WHEWS', false);
+    whews.setApiToken('');
+    QuakeMapView.whewsApiTokenNotifier.value = '';
+    QuakeMapView.whewsNiedEnabledNotifier.value = false;
+    QuakeMapView.whewsSnetEnabledNotifier.value = false;
+    QuakeMapView.whewsKmaEnabledNotifier.value = false;
+    debugPrint('WHEWS startup authorization check failed: $error');
+  } finally {
+    auth.close();
+  }
 }
 
 Widget _buildPlatformSemanticsWrapper(BuildContext context, Widget? child) {
@@ -121,7 +260,7 @@ Widget _buildPlatformSemanticsWrapper(BuildContext context, Widget? child) {
 
 void main() async {
   RhythmFrameRateBinding.ensureInitialized();
-  _configureMobileImageCache();
+  _configureImageCache();
 
   FlutterError.onError = (details) {
     final msg = details.exceptionAsString();
@@ -151,6 +290,17 @@ void main() async {
 
   // 2.5 加载持久化设置
   final prefs = await SharedPreferences.getInstance();
+  await _clearLegacyFanTileCacheOnce(prefs);
+  WAuthCredentials whewsCredentials;
+  try {
+    whewsCredentials = await WAuthCredentialStore().readAndMigrate(
+      preferences: prefs,
+    );
+  } catch (error) {
+    whewsCredentials = const WAuthCredentials();
+    await prefs.setBool(WhewsService.apiAuthorizedPreferenceKey, false);
+    debugPrint('WAuth secure credential load failed: $error');
+  }
   await TtsService().init();
   final savedLat = prefs.getDouble('map_view_lat');
   final savedLng = prefs.getDouble('map_view_lng');
@@ -188,9 +338,7 @@ void main() async {
 
   // 3. 注册并启动地震数据源
   final wolfx = WolfxService();
-  final whews = WhewsService(
-    apiToken: prefs.getString(WAuthService.apiTokenPreferenceKey) ?? '',
-  );
+  final whews = WhewsService(apiToken: '');
   final fan = FanService(
     apiKey: prefs.getString(FanService.apiKeyPreferenceKey) ?? '',
   );
@@ -216,6 +364,12 @@ void main() async {
         prefs.getInt(GlobalQuakeService.secondaryPortPreferenceKey) ??
         GlobalQuakeService.defaultPort,
   );
+  globalQuake.configureFirstReportMagnitudeFilter(
+    prefs.getDouble(
+          GlobalQuakeService.firstReportMagnitudeThresholdPreferenceKey,
+        ) ??
+        0,
+  );
   SourceManager().registerSource(wolfx);
   SourceManager().registerSource(whews);
   SourceManager().registerSource(fan);
@@ -223,6 +377,7 @@ void main() async {
   SourceManager().registerSource(p2p);
   SourceManager().registerSource(mock);
   SourceManager().registerSource(globalQuake);
+  unawaited(LocalInjectServer.startIfEnabled(prefs: prefs));
   SourceManager().setSourceEnabled(
     'FAN',
     prefs.getBool('api_source_fan_enabled') ?? true,
@@ -232,22 +387,12 @@ void main() async {
     'Wolfx',
     prefs.getBool('api_source_wolfx_enabled') ?? true,
   );
-  SourceManager().setSourceEnabled(
-    'WHEWS',
-    (prefs.getBool(WhewsService.enabledPreferenceKey) ?? false) &&
-        (prefs.getBool(WhewsService.apiAuthorizedPreferenceKey) ?? false) &&
-        (prefs.getString(WAuthService.accessTokenPreferenceKey) ?? '')
-            .trim()
-            .isNotEmpty &&
-        (prefs.getString(WAuthService.apiTokenPreferenceKey) ?? '')
-            .trim()
-            .isNotEmpty,
-  );
+  SourceManager().setSourceEnabled('WHEWS', false);
   SourceManager().setSourceEnabled(
     'P2P',
     prefs.getBool('api_source_p2pquake_enabled') ?? true,
   );
-  _startDeferredServices(prefs, globalQuake);
+  _startDeferredServices(prefs, globalQuake, whews, whewsCredentials);
 
   // 4. 桌面端窗口初始化（Web 自动跳过）
   initDesktopWindow();
@@ -257,12 +402,15 @@ void main() async {
 
   final backgroundSettings = BackgroundSettingsProvider();
   await backgroundSettings.load(prefs);
+  final pageBackground = PageBackgroundProvider();
+  await pageBackground.load(prefs);
   await BackgroundService().initialize(
     WidgetsBinding.instance,
     settings: backgroundSettings,
   );
   // 配置 Android 前台服务；非 Android 平台自动跳过。
   await BackgroundService().configureForegroundService();
+  await ObsAutomationRuntimeService().initialize(preferences: prefs);
 
   runApp(
     MultiProvider(
@@ -273,6 +421,7 @@ void main() async {
         ),
         ChangeNotifierProvider.value(value: notificationSettings),
         ChangeNotifierProvider.value(value: backgroundSettings),
+        ChangeNotifierProvider.value(value: pageBackground),
       ],
       child: const RhythmQuakeApp(),
     ),
@@ -286,8 +435,8 @@ QuakeProvider _createQuakeProvider(SharedPreferences prefs) {
   );
   for (final source in QuakeProvider.infoMagFilterSources) {
     final key = 'source_mag_filter_${source.name}';
-    final val = prefs.getDouble(key) ?? 0;
-    if (val != 0) {
+    if (prefs.containsKey(key)) {
+      final val = prefs.getDouble(key) ?? 0;
       provider.setSourceInfoMagFilter(source, val);
     }
   }
@@ -321,6 +470,10 @@ MapStateProvider _createMapStateProvider(
     prefs.getBool('map_overlay_radarChinaLayer') ?? false,
   );
   provider.setOverlayEnabled(
+    'jmaRadarLayer',
+    prefs.getBool('map_overlay_jmaRadarLayer') ?? false,
+  );
+  provider.setOverlayEnabled(
     'satelliteCloudLayer',
     prefs.getBool('map_overlay_satelliteCloudLayer') ?? false,
   );
@@ -335,6 +488,13 @@ MapStateProvider _createMapStateProvider(
   provider.setOverlayEnabled(
     'typhoonLayer',
     prefs.getBool('map_overlay_typhoonLayer') ?? false,
+  );
+  provider.setOverlayEnabled(
+    'weatherStationLayer',
+    prefs.getBool('map_overlay_weatherStationLayer') ?? false,
+  );
+  provider.setWeatherStationMode(
+    prefs.getString('map_overlay_weatherStationMode') ?? 'auto',
   );
   provider.setOverlayEnabled(
     'fdsnEarthScope',

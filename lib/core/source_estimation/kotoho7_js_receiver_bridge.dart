@@ -16,4 +16,13 @@ abstract class Kotoho7JsReceiverBridge {
   static Kotoho7ReceiverBridgeQueueStatus queueStatus() {
     return kotoho7JsReceiverBridgeQueueStatus();
   }
+
+  static void clearSessions() {
+    kotoho7JsReceiverBridgeClearSessions();
+  }
+
+  /// Tear down persistent WebView2 used by the JS receiver (native heap).
+  static Future<void> disposePersistentRuntime() {
+    return kotoho7JsReceiverBridgeDisposePersistent();
+  }
 }

@@ -39,6 +39,7 @@ class NiedYahooService {
   String? _siteConfigId;
   bool _isRunning = false;
   bool _stationListReloading = false;
+  bool _stationListFetching = false;
   Timer? _timer;
   int _runGeneration = 0;
   int? _tickingGeneration;
@@ -116,6 +117,8 @@ class NiedYahooService {
     bool publish = true,
     required int generation,
   }) async {
+    if (_stationListFetching) return;
+    _stationListFetching = true;
     try {
       final url =
           '$_stationListUrl?time=${DateTime.now().millisecondsSinceEpoch}';
@@ -145,6 +148,8 @@ class NiedYahooService {
     } catch (e) {
       if (!_isCurrentRun(generation)) return;
       debugPrint('$_tag: ✖ 测站列表获取异常: $e');
+    } finally {
+      _stationListFetching = false;
     }
   }
 
@@ -253,7 +258,11 @@ class NiedYahooService {
   }
 
   Future<void> _tick() async {
-    if (!_isRunning || _stations == null || _stations!.isEmpty) return;
+    if (!_isRunning) return;
+    if (_stations == null || _stations!.isEmpty) {
+      unawaited(_fetchStationList(generation: _runGeneration));
+      return;
+    }
     final generation = _runGeneration;
     if (_tickingGeneration == generation) return;
     _tickingGeneration = generation;

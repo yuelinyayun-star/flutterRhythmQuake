@@ -10,9 +10,7 @@ const _defaultOutputPath =
 const _defaultMarkdownPath =
     'docs/baselines/source_hinet_truth_quality_triage.generated.md';
 
-const _expectedCaseIds = {
-  '20260620_iwate_offshore_m34_ref',
-};
+const _expectedCaseIds = {'20260620_iwate_offshore_m34_ref'};
 
 void main(List<String> args) {
   final metricTriagePath =

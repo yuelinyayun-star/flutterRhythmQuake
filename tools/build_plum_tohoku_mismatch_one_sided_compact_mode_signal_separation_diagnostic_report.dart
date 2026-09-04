@@ -135,8 +135,9 @@ buildPlumTohokuMismatchOneSidedCompactModeSignalSeparationDiagnosticJson({
 
   for (final splitName in const ['validation', 'test']) {
     final dataset = synthetic.datasetsBySplit[splitName]!;
-    final splitAccumulator =
-        splitName == 'validation' ? validationAccumulator : testAccumulator;
+    final splitAccumulator = splitName == 'validation'
+        ? validationAccumulator
+        : testAccumulator;
     for (final rawEvent in _list(dataset['events'])) {
       final event = StaticIntensityEvent.fromJson(_map(rawEvent));
       final magnitude = event.magnitude;
@@ -219,7 +220,8 @@ buildPlumTohokuMismatchOneSidedCompactModeSignalSeparationDiagnosticJson({
   ];
   final remainderFamilySamples = [
     for (final sample in testSamples)
-      if (sample.eventId != dominantEventId && sample.eventFamilyLabel == _focusFamily)
+      if (sample.eventId != dominantEventId &&
+          sample.eventFamilyLabel == _focusFamily)
         sample,
   ];
 
@@ -307,8 +309,7 @@ buildPlumTohokuMismatchOneSidedCompactModeSignalSeparationDiagnosticJson({
           'nearest supporting evidence distance band in km',
       'centroidOffsetBand':
           'distance from target station to support centroid in km',
-      'maxSpreadBand':
-          'supporting evidence maximum pairwise spread band in km',
+      'maxSpreadBand': 'supporting evidence maximum pairwise spread band in km',
       'topContributionShareBand':
           'largest propagated excess share within supporting evidence',
       'contributionHhiBand':
@@ -335,14 +336,18 @@ buildPlumTohokuMismatchOneSidedCompactModeSignalSeparationDiagnosticJson({
       'skippedNoSourceEstimateVariants': skippedNoEstimate,
     },
     'modeFeatureMeans': {
-      'validationNearThresholdPositive':
-          _ModeSummary.fromSamples(validationNearThresholdPositive).toJson(),
-      'validationFalseMiddleTransition':
-          _ModeSummary.fromSamples(validationFalseMiddleTransition).toJson(),
-      'remainderNearThresholdPositive':
-          _ModeSummary.fromSamples(remainderNearThresholdPositive).toJson(),
-      'remainderFalseMiddleTransition':
-          _ModeSummary.fromSamples(remainderFalseMiddleTransition).toJson(),
+      'validationNearThresholdPositive': _ModeSummary.fromSamples(
+        validationNearThresholdPositive,
+      ).toJson(),
+      'validationFalseMiddleTransition': _ModeSummary.fromSamples(
+        validationFalseMiddleTransition,
+      ).toJson(),
+      'remainderNearThresholdPositive': _ModeSummary.fromSamples(
+        remainderNearThresholdPositive,
+      ).toJson(),
+      'remainderFalseMiddleTransition': _ModeSummary.fromSamples(
+        remainderFalseMiddleTransition,
+      ).toJson(),
     },
     'featureFamilies': featureFamilies,
     'rankedSeparators': _buildRankedSeparators(featureFamilies),
@@ -378,14 +383,16 @@ Map<String, Object?> _buildFeatureFamilyJson({
     ...validationFalseBuckets.keys,
     ...remainderNearBuckets.keys,
     ...remainderFalseBuckets.keys,
-  }.toList()
-    ..sort();
+  }.toList()..sort();
   return {
-    'validationNearThresholdPositiveCount': validationNearThresholdPositive.length,
+    'validationNearThresholdPositiveCount':
+        validationNearThresholdPositive.length,
     'validationFalseMiddleTransitionCount':
         validationFalseMiddleTransition.length,
-    'remainderNearThresholdPositiveCount': remainderNearThresholdPositive.length,
-    'remainderFalseMiddleTransitionCount': remainderFalseMiddleTransition.length,
+    'remainderNearThresholdPositiveCount':
+        remainderNearThresholdPositive.length,
+    'remainderFalseMiddleTransitionCount':
+        remainderFalseMiddleTransition.length,
     'buckets': [
       for (final key in keys)
         _bucketRow(
@@ -441,12 +448,14 @@ Map<String, Object?> _bucketRow({
   final remainderTotalModes = remainderNearTotal + remainderFalseTotal;
   final remainderPurity = remainderSupportCount == 0
       ? 0.0
-      : math.max(remainderNearCount, remainderFalseCount) / remainderSupportCount;
+      : math.max(remainderNearCount, remainderFalseCount) /
+            remainderSupportCount;
   final remainderCaptureShare = remainderTotalModes == 0
       ? 0.0
       : remainderSupportCount / remainderTotalModes;
   final remainderShareGap = (remainderNearShare - remainderFalseShare).abs();
-  final proxyScore = remainderShareGap * remainderPurity * remainderCaptureShare;
+  final proxyScore =
+      remainderShareGap * remainderPurity * remainderCaptureShare;
   return {
     'family': family,
     'bucket': bucket,
@@ -464,8 +473,8 @@ Map<String, Object?> _bucketRow({
     'remainderDominantMode': remainderNearCount == remainderFalseCount
         ? 'tied'
         : remainderNearCount > remainderFalseCount
-            ? 'near_threshold_positive'
-            : 'false_middle_transition',
+        ? 'near_threshold_positive'
+        : 'false_middle_transition',
     'remainderPurity': remainderPurity,
     'remainderCaptureShare': remainderCaptureShare,
     'proxyScore': proxyScore,
@@ -487,15 +496,17 @@ List<Map<String, Object?>> _buildRankedSeparators(
     }
   }
   rows.sort((left, right) {
-    final scoreCmp =
-        _number(right['proxyScore']).compareTo(_number(left['proxyScore']));
+    final scoreCmp = _number(
+      right['proxyScore'],
+    ).compareTo(_number(left['proxyScore']));
     if (scoreCmp != 0) return scoreCmp;
-    final gapCmp = _number(_number(right['remainderShareGap']).abs()).compareTo(
-      _number(_number(left['remainderShareGap']).abs()),
-    );
+    final gapCmp = _number(
+      _number(right['remainderShareGap']).abs(),
+    ).compareTo(_number(_number(left['remainderShareGap']).abs()));
     if (gapCmp != 0) return gapCmp;
-    return _int(right['remainderSupportCount'])
-        .compareTo(_int(left['remainderSupportCount']));
+    return _int(
+      right['remainderSupportCount'],
+    ).compareTo(_int(left['remainderSupportCount']));
   });
   return rows.take(20).toList();
 }
@@ -586,8 +597,8 @@ _ContributionSummary _supportContributionSummary({
   final contributionHhi = total <= 0
       ? 0.0
       : margins
-          .map((margin) => margin / total)
-          .fold<double>(0.0, (sum, share) => sum + share * share);
+            .map((margin) => margin / total)
+            .fold<double>(0.0, (sum, share) => sum + share * share);
   final top1 = margins.first;
   return _ContributionSummary(
     topContributionShare: total <= 0 ? 0.0 : top1 / total,
@@ -612,8 +623,8 @@ List<_EvidenceStation> _supportingEvidence({
       observed.longitude,
     );
     if (distance > _plumRadiusKm) continue;
-    final propagated = observed.intensity -
-        _plumDampingPer10Km * (distance / 10.0);
+    final propagated =
+        observed.intensity - _plumDampingPer10Km * (distance / 10.0);
     if (propagated >= threshold) {
       supportingEvidence.add(
         _EvidenceStation(
@@ -774,18 +785,12 @@ String plumTohokuMismatchOneSidedCompactModeSignalSeparationDiagnosticMarkdown(
     ..writeln()
     ..writeln('## Scope')
     ..writeln()
-    ..writeln(
-      '- Removed dominant event: `${scope['removedDominantEvent']}`',
-    )
-    ..writeln(
-      '- Estimated-source region: `${scope['estimatedSourceRegion']}`',
-    )
+    ..writeln('- Removed dominant event: `${scope['removedDominantEvent']}`')
+    ..writeln('- Estimated-source region: `${scope['estimatedSourceRegion']}`')
     ..writeln(
       '- Fixed family: `${report['inputs'] is Map ? _map(report['inputs'])['family'] : _focusFamily}`',
     )
-    ..writeln(
-      '- Minimum evidence count: `${scope['minimumEvidenceCount']}`',
-    )
+    ..writeln('- Minimum evidence count: `${scope['minimumEvidenceCount']}`')
     ..writeln(
       '- Maximum nearest evidence distance: '
       '`${scope['maximumNearestEvidenceDistanceKm']} km`',
@@ -1195,20 +1200,18 @@ class _ModeSummary {
   }
 
   Map<String, Object?> toJson() => {
-        'count': count,
-        'localBelowThresholdShare10Km': localBelowThresholdShare10Km,
-        'evidenceCount': evidenceCount,
-        'nearestEvidenceDistanceKm': nearestEvidenceDistanceKm,
-        'supportingEvidenceQuadrantCoverage':
-            supportingEvidenceQuadrantCoverage,
-        'supportingEvidenceCentroidOffsetKm':
-            supportingEvidenceCentroidOffsetKm,
-        'supportingEvidenceMaxSpreadKm': supportingEvidenceMaxSpreadKm,
-        'topContributionShare': topContributionShare,
-        'contributionHhi': contributionHhi,
-        'meanContributionMargin': meanContributionMargin,
-        'effectiveSupportCount': effectiveSupportCount,
-      };
+    'count': count,
+    'localBelowThresholdShare10Km': localBelowThresholdShare10Km,
+    'evidenceCount': evidenceCount,
+    'nearestEvidenceDistanceKm': nearestEvidenceDistanceKm,
+    'supportingEvidenceQuadrantCoverage': supportingEvidenceQuadrantCoverage,
+    'supportingEvidenceCentroidOffsetKm': supportingEvidenceCentroidOffsetKm,
+    'supportingEvidenceMaxSpreadKm': supportingEvidenceMaxSpreadKm,
+    'topContributionShare': topContributionShare,
+    'contributionHhi': contributionHhi,
+    'meanContributionMargin': meanContributionMargin,
+    'effectiveSupportCount': effectiveSupportCount,
+  };
 }
 
 class _ContributionSummary {
@@ -1241,7 +1244,10 @@ class _NeighborSummary {
   final int count;
   final double belowThresholdShare;
 
-  const _NeighborSummary({required this.count, required this.belowThresholdShare});
+  const _NeighborSummary({
+    required this.count,
+    required this.belowThresholdShare,
+  });
 }
 
 class _SupportShape {
@@ -1268,56 +1274,55 @@ Map<String, Object?> _emptyReport({
   required String dataDirectory,
   required String modelPath,
 }) => {
-      'schemaVersion':
-          'plum_tohoku_mismatch_one_sided_compact_mode_signal_separation_diagnostic_v1',
-      'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
-      'status': 'fail',
-      'policy': {
-        'method':
-            'PLUM Tohoku mismatch/one_sided/compact mode signal separation diagnostic',
-        'rawPredictedIntensityMutated': false,
-        'frozenTestEvaluated': true,
-        'productionReady': false,
-        'productionUiConnected': false,
-        'diagnosticOnly': true,
-        'parametersTuned': false,
-        'suppressionApplied': false,
-        'plumRadiusKm': _plumRadiusKm,
-        'plumDampingPer10Km': _plumDampingPer10Km,
-        'minimumRemainderSupportForRanking': _minRemainderSupportForRanking,
-      },
-      'inputs': {
-        'dataDirectory': dataDirectory,
-        'modelPath': modelPath,
-        'splits': ['validation', 'test'],
-        'threshold': _threshold.label,
-        'family': _focusFamily,
-      },
-      'scope': {
-        'removedDominantEvent': 'none',
-        'estimatedSourceRegion': _focusRegion,
-        'minimumEvidenceCount': _focusMinimumEvidenceCount,
-        'maximumNearestEvidenceDistanceKm':
-            _focusMaximumNearestEvidenceDistanceKm,
-        'baselineThresholdCrossingRequired': true,
-      },
-      'modeDefinitions': const {},
-      'featureDefinitions': const {},
-      'coverage': {
-        'validationFamilySamples': 0,
-        'remainderFamilySamples': 0,
-        'validationNearThresholdPositiveCount': 0,
-        'validationFalseMiddleTransitionCount': 0,
-        'remainderNearThresholdPositiveCount': 0,
-        'remainderFalseMiddleTransitionCount': 0,
-        'skippedMissingMagnitudeEvents': 0,
-        'skippedNoSourceEstimateVariants': 0,
-      },
-      'modeFeatureMeans': const {},
-      'featureFamilies': const {},
-      'rankedSeparators': const [],
-      'errors': errors,
-    };
+  'schemaVersion':
+      'plum_tohoku_mismatch_one_sided_compact_mode_signal_separation_diagnostic_v1',
+  'createdAtUtc': DateTime.now().toUtc().toIso8601String(),
+  'status': 'fail',
+  'policy': {
+    'method':
+        'PLUM Tohoku mismatch/one_sided/compact mode signal separation diagnostic',
+    'rawPredictedIntensityMutated': false,
+    'frozenTestEvaluated': true,
+    'productionReady': false,
+    'productionUiConnected': false,
+    'diagnosticOnly': true,
+    'parametersTuned': false,
+    'suppressionApplied': false,
+    'plumRadiusKm': _plumRadiusKm,
+    'plumDampingPer10Km': _plumDampingPer10Km,
+    'minimumRemainderSupportForRanking': _minRemainderSupportForRanking,
+  },
+  'inputs': {
+    'dataDirectory': dataDirectory,
+    'modelPath': modelPath,
+    'splits': ['validation', 'test'],
+    'threshold': _threshold.label,
+    'family': _focusFamily,
+  },
+  'scope': {
+    'removedDominantEvent': 'none',
+    'estimatedSourceRegion': _focusRegion,
+    'minimumEvidenceCount': _focusMinimumEvidenceCount,
+    'maximumNearestEvidenceDistanceKm': _focusMaximumNearestEvidenceDistanceKm,
+    'baselineThresholdCrossingRequired': true,
+  },
+  'modeDefinitions': const {},
+  'featureDefinitions': const {},
+  'coverage': {
+    'validationFamilySamples': 0,
+    'remainderFamilySamples': 0,
+    'validationNearThresholdPositiveCount': 0,
+    'validationFalseMiddleTransitionCount': 0,
+    'remainderNearThresholdPositiveCount': 0,
+    'remainderFalseMiddleTransitionCount': 0,
+    'skippedMissingMagnitudeEvents': 0,
+    'skippedNoSourceEstimateVariants': 0,
+  },
+  'modeFeatureMeans': const {},
+  'featureFamilies': const {},
+  'rankedSeparators': const [],
+  'errors': errors,
+};
 
 StaticAttenuationModel _modelFromJson(Map<String, Object?> json) {
   return StaticAttenuationModel(

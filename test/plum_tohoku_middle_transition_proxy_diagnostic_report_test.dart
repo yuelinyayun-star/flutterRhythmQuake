@@ -34,19 +34,24 @@ void main() {
       final label = (report['labelDefinition'] as Map).cast<String, Object?>();
       expect(label['positiveLabel'], 'middle_transition_zone');
 
-      final families = (report['featureFamilies'] as Map).cast<String, Object?>();
-      expect(families.keys, containsAll(<String>[
-        'branchAgreement',
-        'robustnessScore',
-        'geometrySpread',
-        'branchAgreement|geometrySpread',
-      ]));
+      final families = (report['featureFamilies'] as Map)
+          .cast<String, Object?>();
+      expect(
+        families.keys,
+        containsAll(<String>[
+          'branchAgreement',
+          'robustnessScore',
+          'geometrySpread',
+          'branchAgreement|geometrySpread',
+        ]),
+      );
 
       final ranked = report['rankedCandidates'];
       expect(ranked, isA<List>());
 
-      final markdown =
-          plumTohokuMiddleTransitionProxyDiagnosticMarkdown(report);
+      final markdown = plumTohokuMiddleTransitionProxyDiagnosticMarkdown(
+        report,
+      );
       expect(
         markdown,
         contains('# PLUM Tohoku Middle-Transition Proxy Diagnostic'),
@@ -57,4 +62,3 @@ void main() {
     timeout: const Timeout(Duration(minutes: 8)),
   );
 }
-

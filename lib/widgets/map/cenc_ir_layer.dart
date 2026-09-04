@@ -27,6 +27,11 @@ double cencIrRomanFontSize(double radius, int length) {
   return (radius * scale).clamp(6.4, 12.0).toDouble();
 }
 
+@visibleForTesting
+bool cencIrLayerDataChanged(CencIrData previous, CencIrData current) {
+  return !identical(previous, current);
+}
+
 class CencIrLayer extends StatelessWidget {
   final CencIrData? data;
 
@@ -393,6 +398,7 @@ class CencIrPainter extends CustomPainter {
   List<InstrumentIntensity> _visibleStations(Size size) {
     final visible = <InstrumentIntensity>[];
     for (final station in data.instrumentIntensities) {
+      if (!station.hasUsableCoordinate) continue;
       final offset = camera.getOffsetFromOrigin(
         LatLng(station.latitude, station.longitude),
       );
@@ -562,9 +568,7 @@ class CencIrPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CencIrPainter oldDelegate) {
-    return oldDelegate.data.reportId != data.reportId ||
-        oldDelegate.data.uniEventId != data.uniEventId ||
-        oldDelegate.data.gmtCreate != data.gmtCreate ||
+    return cencIrLayerDataChanged(oldDelegate.data, data) ||
         oldDelegate.camera != camera ||
         oldDelegate.compact != compact;
   }

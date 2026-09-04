@@ -45,7 +45,9 @@ void main(List<String> args) {
     '${const JsonEncoder.withIndent('  ').convert(report)}\n',
   );
   final markdown = File(markdownPath)..parent.createSync(recursive: true);
-  markdown.writeAsStringSync(plumConfidenceBandFrozenEvaluationMarkdown(report));
+  markdown.writeAsStringSync(
+    plumConfidenceBandFrozenEvaluationMarkdown(report),
+  );
 
   stdout.writeln('wrote PLUM confidence-band frozen evaluation report');
   stdout.writeln('json: ${output.path}');
@@ -88,11 +90,11 @@ Map<String, Object?> buildPlumConfidenceBandFrozenEvaluationJson({
   }
 
   // 1. 在进程内重建 validation 校准查找表(确定性,与 validation split 一致)。
-  final validationCalibration =
-      calibration.buildPlumEvidenceRobustnessCalibrationReportJson(
-    validationDatasetPath: validationDatasetPath,
-    modelPath: modelPath,
-  );
+  final validationCalibration = calibration
+      .buildPlumEvidenceRobustnessCalibrationReportJson(
+        validationDatasetPath: validationDatasetPath,
+        modelPath: modelPath,
+      );
   if (validationCalibration['status'] != 'pass') {
     errors.add('validation_calibration_not_pass');
   }
@@ -111,13 +113,15 @@ Map<String, Object?> buildPlumConfidenceBandFrozenEvaluationJson({
       name: _BandMetrics.fromJson(_map(validationBandSummary[name])),
   };
   final validationBaseline = _map(validationShindo4['baseline']);
-  final validationTotalPred = validationBands.values
-      .fold<int>(0, (sum, band) => sum + band.predictedPositive);
+  final validationTotalPred = validationBands.values.fold<int>(
+    0,
+    (sum, band) => sum + band.predictedPositive,
+  );
   final validationHighMediumShare = validationTotalPred == 0
       ? 0.0
       : (validationBands['high']!.predictedPositive +
-              validationBands['medium']!.predictedPositive) /
-          validationTotalPred;
+                validationBands['medium']!.predictedPositive) /
+            validationTotalPred;
 
   // 2. 构建 frozen test synthetic reveal 数据集(2022 年度事件)。
   final annualDatasets = [
@@ -243,13 +247,15 @@ Map<String, Object?> buildPlumConfidenceBandFrozenEvaluationJson({
     errors.add('no_frozen_station_forecasts');
   }
 
-  final frozenTotalPred = frozenBands.values
-      .fold<int>(0, (sum, band) => sum + band.predictedPositive);
+  final frozenTotalPred = frozenBands.values.fold<int>(
+    0,
+    (sum, band) => sum + band.predictedPositive,
+  );
   final frozenHighMediumShare = frozenTotalPred == 0
       ? 0.0
       : (frozenBands['high']!.predictedPositive +
-              frozenBands['medium']!.predictedPositive) /
-          frozenTotalPred;
+                frozenBands['medium']!.predictedPositive) /
+            frozenTotalPred;
 
   // 5. 检查 F1-F4。
   final checks = <String, Map<String, Object?>>{};
@@ -431,7 +437,9 @@ String plumConfidenceBandFrozenEvaluationMarkdown(Map<String, Object?> report) {
       '${_pct(frozenBaseline['recall'])}`',
     )
     ..writeln()
-    ..writeln('| Band | Frozen pred+ | Frozen TP | Frozen FP | Frozen precision |')
+    ..writeln(
+      '| Band | Frozen pred+ | Frozen TP | Frozen FP | Frozen precision |',
+    )
     ..writeln('| --- | ---: | ---: | ---: | ---: |');
   for (final name in const ['high', 'medium', 'low', 'insufficient']) {
     final band = _map(frozenBands[name]);
@@ -451,8 +459,8 @@ String plumConfidenceBandFrozenEvaluationMarkdown(Map<String, Object?> report) {
     final actual = check['actual'];
     final actualText = actual is Map
         ? 'high=${_pct(_map(actual)['high'])} / '
-            'medium=${_pct(_map(actual)['medium'])} / '
-            'low=${_pct(_map(actual)['low'])}'
+              'medium=${_pct(_map(actual)['medium'])} / '
+              'low=${_pct(_map(actual)['low'])}'
         : _pct(actual);
     buffer.writeln(
       '| `${entry.key}` | `${check['status']}` | '
@@ -463,7 +471,9 @@ String plumConfidenceBandFrozenEvaluationMarkdown(Map<String, Object?> report) {
     ..writeln()
     ..writeln('## Decision')
     ..writeln()
-    ..writeln('- Advance to production UI: `${outcome['advanceToProductionUi']}`')
+    ..writeln(
+      '- Advance to production UI: `${outcome['advanceToProductionUi']}`',
+    )
     ..writeln('- Next action: `${outcome['nextAction']}`')
     ..writeln()
     ..writeln(

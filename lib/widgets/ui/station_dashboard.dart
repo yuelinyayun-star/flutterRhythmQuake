@@ -149,8 +149,12 @@ class StationDashboard extends StatelessWidget {
 
   double _s(double v, BuildContext c) => v * _scale(c);
 
+  double _widthScale(BuildContext c) => UiScale.sidePanelWidthScale(c);
+
+  double _ws(double v, BuildContext c) => v * _widthScale(c);
+
   double _combinedWidth(BuildContext c) =>
-      _s(3.0 * 75.0 + 2.0 * 1.0 + 6.0 + 1.0, c);
+      _ws(3.0 * 75.0 + 2.0 * 1.0 + 6.0 + 1.0, c);
 
   @override
   Widget build(BuildContext context) {
@@ -190,7 +194,7 @@ class StationDashboard extends StatelessWidget {
   Widget _buildTopMaxSection(BuildContext context) {
     return Padding(
       padding: EdgeInsets.symmetric(
-        horizontal: _s(3, context),
+        horizontal: _ws(3, context),
         vertical: _s(5, context),
       ),
       child: Row(
@@ -204,7 +208,7 @@ class StationDashboard extends StatelessWidget {
             valueColor: _niedMaxColor(),
           ),
           Container(
-            width: _s(1, context),
+            width: _ws(1, context),
             height: _s(30, context),
             decoration: BoxDecoration(
               color: Colors.white.withValues(alpha: 0.35),
@@ -219,7 +223,7 @@ class StationDashboard extends StatelessWidget {
             valueColor: _snetMaxColor(),
           ),
           Container(
-            width: _s(1, context),
+            width: _ws(1, context),
             height: _s(30, context),
             decoration: BoxDecoration(
               color: Colors.white.withValues(alpha: 0.35),
@@ -244,7 +248,7 @@ class StationDashboard extends StatelessWidget {
   Widget _buildBottomMaxSection(BuildContext context) {
     return Padding(
       padding: EdgeInsets.symmetric(
-        horizontal: _s(3, context),
+        horizontal: _ws(3, context),
         vertical: _s(5, context),
       ),
       child: Row(
@@ -262,7 +266,7 @@ class StationDashboard extends StatelessWidget {
             ),
           ),
           Container(
-            width: _s(1, context),
+            width: _ws(1, context),
             height: _s(30, context),
             decoration: BoxDecoration(
               color: Colors.white.withValues(alpha: 0.35),
@@ -282,7 +286,7 @@ class StationDashboard extends StatelessWidget {
             valueColor: _tremMaxColor(),
           ),
           Container(
-            width: _s(1, context),
+            width: _ws(1, context),
             height: _s(30, context),
             decoration: BoxDecoration(
               color: Colors.white.withValues(alpha: 0.35),
@@ -310,10 +314,10 @@ class StationDashboard extends StatelessWidget {
     Color? valueColor,
   }) {
     return Container(
-      width: _s(75, context),
+      width: _ws(75, context),
       padding: EdgeInsets.symmetric(
         vertical: _s(2, context),
-        horizontal: _s(4, context),
+        horizontal: _ws(4, context),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,

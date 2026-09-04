@@ -3,6 +3,7 @@ import 'package:flutter_map/flutter_map.dart';
 
 import '../../services/sources/palert_service.dart';
 import 'ka_shindo_marker_style.dart';
+import 'map_style_zoom.dart';
 import 'station_dot_painter_layer.dart';
 
 class PAlertStationLayer extends StatelessWidget {
@@ -22,9 +23,7 @@ class PAlertStationLayer extends StatelessWidget {
   Widget build(BuildContext context) {
     if (stations.isEmpty) return const SizedBox.shrink();
 
-    double zoom = 4.0;
-    final camera = MapCamera.maybeOf(context);
-    if (camera != null) zoom = camera.zoom;
+    final zoom = mapStyleZoomOf(context);
 
     final overview = _overviewFactor(zoom);
     final idleDotSize = (0.9 + (zoom - 3) * 0.95).clamp(0.9, 7.5);
@@ -88,7 +87,7 @@ class PAlertStationLayer extends StatelessWidget {
 
     return Stack(
       children: [
-        StationDotPainterLayer(dots: dots),
+        StationDotPainterLayer(dots: dots, sizeWithCameraZoom: true),
         if (markers.isNotEmpty) MarkerLayer(markers: markers),
       ],
     );
@@ -126,15 +125,18 @@ class _PAlertIntensityMarker extends StatelessWidget {
         ),
       ),
       child: Center(
-        child: Text(
-          label,
-          style: TextStyle(
-            color: KaShindoMarkerStyle.foregroundForLevel(level),
-            fontSize: level >= 16 ? 8 : 7,
-            fontWeight: FontWeight.bold,
-            height: 1.0,
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            label,
+            style: TextStyle(
+              color: KaShindoMarkerStyle.foregroundForLevel(level),
+              fontSize: level >= 16 ? 8 : 7,
+              fontWeight: FontWeight.bold,
+              height: 1.0,
+            ),
+            textAlign: TextAlign.center,
           ),
-          textAlign: TextAlign.center,
         ),
       ),
     );

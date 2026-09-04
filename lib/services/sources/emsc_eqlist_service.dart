@@ -22,6 +22,9 @@ class EmscEqlistService {
   /// 最新官方事件更新回调，字段格式与统一事件适配器的 EMSC 输入一致。
   void Function(Map<String, dynamic>)? onCurrentUpdated;
 
+  /// HTTP 轮询状态回调
+  void Function(bool connected)? onStatusChanged;
+
   void start({Duration interval = const Duration(seconds: 30)}) {
     _timer?.cancel();
     _fetch();
@@ -38,10 +41,14 @@ class EmscEqlistService {
       final resp = await http
           .get(Uri.parse(_url))
           .timeout(const Duration(seconds: 15));
-      if (resp.statusCode != 200) return;
+      if (resp.statusCode != 200) {
+        onStatusChanged?.call(false);
+        return;
+      }
 
       final data = json.decode(resp.body);
       final features = data['features'] as List?;
+      onStatusChanged?.call(true);
       if (features == null || features.isEmpty) return;
 
       final currentPayload = _normalizeFeatureForUnifiedUi(features.first);
@@ -67,10 +74,8 @@ class EmscEqlistService {
 
         final String timeStr = props['time']?.toString() ?? '';
         final DateTime originTimeUtc =
-            DateTime.tryParse(timeStr) ?? DateTime.now();
-        final DateTime originTime = originTimeUtc.toUtc().add(
-          const Duration(hours: 8),
-        );
+            DateTime.tryParse(timeStr)?.toUtc() ?? DateTime.now().toUtc();
+        final DateTime originTime = originTimeUtc.toLocal();
 
         final String eventId =
             props['unid']?.toString() ??
@@ -102,6 +107,7 @@ class EmscEqlistService {
             longitude: longitude,
             depth: depth,
             originTime: originTime,
+            timeZone: _systemTimeZoneHours,
             isHistory: true,
             maxIntensity: maxIntensity,
             reviewType: '自动测定',
@@ -113,7 +119,9 @@ class EmscEqlistService {
 
       if (currentPayload != null) onCurrentUpdated?.call(currentPayload);
       onListUpdated?.call(_latestList);
-    } catch (_) {}
+    } catch (_) {
+      onStatusChanged?.call(false);
+    }
   }
 
   /// 将 EMSC feature 规范成统一 UI 已使用的 EMSC 字段。
@@ -133,7 +141,11 @@ class EmscEqlistService {
     final longitude = double.tryParse(coords[0]?.toString() ?? '');
     final latitude = double.tryParse(coords[1]?.toString() ?? '');
     final depth = double.tryParse(props['depth']?.toString() ?? '');
-    final originTime = _formatTimeAsUtc8(props['time']?.toString());
+    // Preserve the absolute EMSC ISO instant for the adapter. It localizes
+    // direct-source events to the device timezone instead of forcing UTC+8.
+    final originTime = DateTime.tryParse(
+      props['time']?.toString() ?? '',
+    )?.toUtc().toIso8601String();
     final createTime = originTime;
     if (magnitude == null ||
         longitude == null ||
@@ -170,14 +182,5 @@ class EmscEqlistService {
     };
   }
 
-  String? _formatTimeAsUtc8(String? value) {
-    if (value == null || value.isEmpty) return null;
-    final dt = DateTime.tryParse(value);
-    if (dt == null) return null;
-    final utc8 = dt.toUtc().add(const Duration(hours: 8));
-    String two(int part) => part.toString().padLeft(2, '0');
-    return '${utc8.year.toString().padLeft(4, '0')}-'
-        '${two(utc8.month)}-${two(utc8.day)} '
-        '${two(utc8.hour)}:${two(utc8.minute)}:${two(utc8.second)}';
-  }
+  int get _systemTimeZoneHours => DateTime.now().timeZoneOffset.inMinutes ~/ 60;
 }

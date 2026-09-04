@@ -229,7 +229,7 @@ class ShakeDetectionService {
                     station.id,
                     station.coordinate.latitude,
                     station.coordinate.longitude,
-                    _clusterKey(station),
+                    station.code,
                   ],
               ],
             );
@@ -806,68 +806,9 @@ class ShakeDetectionService {
     List<int> stationIds,
     List<NiedStation> stations,
   ) {
-    if (stationIds.length <= 1) return stationIds;
-
-    final bestByCluster = <String, int>{};
-    final orderedClusterKeys = <String>[];
-
-    for (final stationId in stationIds) {
-      final key = _clusterKey(stations[stationId]);
-      final currentBest = bestByCluster[key];
-      if (currentBest == null) {
-        bestByCluster[key] = stationId;
-        orderedClusterKeys.add(key);
-        continue;
-      }
-      bestByCluster[key] = _preferClusterRepresentative(
-        currentBest,
-        stationId,
-        stations,
-      );
-    }
-
-    return orderedClusterKeys
-        .map((key) => bestByCluster[key]!)
-        .toList(growable: false);
-  }
-
-  String _clusterKey(NiedStation station) {
-    final clusterId = station.pixelClusterId;
-    if (clusterId != null && clusterId.isNotEmpty) {
-      return 'pixel:$clusterId';
-    }
-    return 'station:${station.code}';
-  }
-
-  int _preferClusterRepresentative(
-    int currentId,
-    int candidateId,
-    List<NiedStation> stations,
-  ) {
-    final current = stations[currentId];
-    final candidate = stations[candidateId];
-
-    int cmp(double a, double b) => a.compareTo(b);
-
-    final detectCmp = cmp(
-      candidate.kaLevel.toDouble(),
-      current.kaLevel.toDouble(),
-    );
-    if (detectCmp != 0) return detectCmp > 0 ? candidateId : currentId;
-
-    final activityCmp = cmp(candidate.activity, current.activity);
-    if (activityCmp != 0) return activityCmp > 0 ? candidateId : currentId;
-
-    final ascendCmp = cmp(
-      candidate.ascend.toDouble(),
-      current.ascend.toDouble(),
-    );
-    if (ascendCmp != 0) return ascendCmp > 0 ? candidateId : currentId;
-
-    final shindoCmp = cmp(candidate.continuousShindo, current.continuousShindo);
-    if (shindoCmp != 0) return shindoCmp > 0 ? candidateId : currentId;
-
-    return candidate.id < current.id ? candidateId : currentId;
+    // KA treats every mapped station as an independent observation, even
+    // when two stations sample neighboring GIF pixels.
+    return stationIds;
   }
 
   double _haversine(LatLng a, LatLng b) {

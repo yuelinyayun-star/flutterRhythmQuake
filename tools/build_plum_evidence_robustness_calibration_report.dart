@@ -35,9 +35,7 @@ void main(List<String> args) {
     '${const JsonEncoder.withIndent('  ').convert(report)}\n',
   );
   final markdown = File(markdownPath)..parent.createSync(recursive: true);
-  markdown.writeAsStringSync(
-    plumEvidenceRobustnessCalibrationMarkdown(report),
-  );
+  markdown.writeAsStringSync(plumEvidenceRobustnessCalibrationMarkdown(report));
 
   stdout.writeln('wrote PLUM evidence robustness calibration report');
   stdout.writeln('json: ${output.path}');
@@ -184,18 +182,9 @@ Map<String, Object?> buildPlumEvidenceRobustnessCalibrationReportJson({
       'plumDampingPer10Km': 0.50,
     },
     'bandDefinitions': const {
-      'high': {
-        'minPrecision': _highBandMinPrecision,
-        'label': 'high',
-      },
-      'medium': {
-        'minPrecision': _mediumBandMinPrecision,
-        'label': 'medium',
-      },
-      'low': {
-        'minPrecision': 0.0,
-        'label': 'low',
-      },
+      'high': {'minPrecision': _highBandMinPrecision, 'label': 'high'},
+      'medium': {'minPrecision': _mediumBandMinPrecision, 'label': 'medium'},
+      'low': {'minPrecision': 0.0, 'label': 'low'},
       'minSampleForBandAssignment': _minSampleForBandAssignment,
     },
     'coverage': {
@@ -217,9 +206,7 @@ Map<String, Object?> buildPlumEvidenceRobustnessCalibrationReportJson({
   };
 }
 
-String plumEvidenceRobustnessCalibrationMarkdown(
-  Map<String, Object?> report,
-) {
+String plumEvidenceRobustnessCalibrationMarkdown(Map<String, Object?> report) {
   final policy = _map(report['policy']);
   final coverage = _map(report['coverage']);
   final bandDefs = _map(report['bandDefinitions']);

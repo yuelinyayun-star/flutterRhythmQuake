@@ -70,62 +70,184 @@ void _factory91(Thread thread) {
       }
     }
     if ((b1.value.toString().toLowerCase() == 'ok'.toLowerCase())) {
-      callProcedure(thread, 'W%s の %s から %s までの文字 %b', [b0.value, 1, 10, 'false']);
-      if (!compareEqual((b1.value.toString() + (letterOf(b0.value, 45) + letterOf(b0.value, 50))), b10.value)) {
-        b10.value = (b1.value.toString() + (letterOf(b0.value, 45) + letterOf(b0.value, 50)));
+      callProcedure(thread, 'W%s の %s から %s までの文字 %b', [
+        b0.value,
+        1,
+        10,
+        'false',
+      ]);
+      if (!compareEqual(
+        (b1.value.toString() +
+            (letterOf(b0.value, 45) + letterOf(b0.value, 50))),
+        b10.value,
+      )) {
+        b10.value =
+            (b1.value.toString() +
+            (letterOf(b0.value, 45) + letterOf(b0.value, 50)));
         b11.value = b1.value;
         if (compareEqual(b12.value, 0)) {
           b13.value = b1.value;
           listReplace(b14, 11, daysSince2000());
           if ((256 < (b0.value.toString()).length)) {
-            callProcedure(thread, 'W%s の %s から %s までの文字 %b', [b0.value, 263, 274, 'false']);
-            if ((scratchToBoolean(indexGet(b15.value, 70)) && (3600 < (scratchNumber(or0(b16.value))).abs()))) {
+            callProcedure(thread, 'W%s の %s から %s までの文字 %b', [
+              b0.value,
+              263,
+              274,
+              'false',
+            ]);
+            if ((scratchToBoolean(indexGet(b15.value, 70)) &&
+                (3600 < (scratchNumber(or0(b16.value))).abs()))) {
             } else {
-              if ((3 < (scratchNumber(or0(or0(or0(daysSince2000() * 86400) + or0(b16.value)) - or0(or0(b1.value) / 1000)))).abs())) {
-                b16.value = (or0(or0(b1.value) / 1000) - or0(daysSince2000() * 86400));
+              if ((3 <
+                  (scratchNumber(
+                    or0(
+                      or0(or0(daysSince2000() * 86400) + or0(b16.value)) -
+                          or0(or0(b1.value) / 1000),
+                    ),
+                  )).abs())) {
+                b16.value =
+                    (or0(or0(b1.value) / 1000) - or0(daysSince2000() * 86400));
               } else {
-                b16.value = (or0(b16.value) + or0(or0(or0(or0(or0(b1.value) / 1000) - or0(daysSince2000() * 86400)) - or0(b16.value)) / 6));
+                b16.value =
+                    (or0(b16.value) +
+                    or0(
+                      or0(
+                            or0(
+                                  or0(or0(b1.value) / 1000) -
+                                      or0(daysSince2000() * 86400),
+                                ) -
+                                or0(b16.value),
+                          ) /
+                          6,
+                    ));
               }
             }
             if (false) {
             } else {
               if (!compareEqual(letterOf(b0.value, 275), b17.value)) {
                 b17.value = letterOf(b0.value, 275);
-                startHats('event_whenbroadcastreceived', { 'BROADCAST_OPTION': '強震制限更新' });
+                startHats('event_whenbroadcastreceived', {
+                  'BROADCAST_OPTION': '強震制限更新',
+                });
               }
             }
           } else {
-            if ((60 < (scratchNumber(or0(or0(b16.value) - (scratchNumber(or0(or0(or0(b1.value) - or0(daysSince2000() * 86400)) + 0))).floor()))).abs())) {
-              b16.value = (scratchNumber(or0(or0(or0(b1.value) - or0(daysSince2000() * 86400)) + 0))).floor();
+            if ((60 <
+                (scratchNumber(
+                  or0(
+                    or0(b16.value) -
+                        (scratchNumber(
+                          or0(
+                            or0(or0(b1.value) - or0(daysSince2000() * 86400)) +
+                                0,
+                          ),
+                        )).floor(),
+                  ),
+                )).abs())) {
+              b16.value = (scratchNumber(
+                or0(or0(or0(b1.value) - or0(daysSince2000() * 86400)) + 0),
+              )).floor();
             } else {
-              if ((2 < (scratchNumber(or0(or0(b16.value) - (scratchNumber(or0(or0(or0(b1.value) - or0(daysSince2000() * 86400)) + 2))).floor()))).abs())) {
-                b16.value = (scratchNumber(or0(or0(or0(b1.value) - or0(daysSince2000() * 86400)) + 2))).floor();
+              if ((2 <
+                  (scratchNumber(
+                    or0(
+                      or0(b16.value) -
+                          (scratchNumber(
+                            or0(
+                              or0(
+                                    or0(b1.value) -
+                                        or0(daysSince2000() * 86400),
+                                  ) +
+                                  2,
+                            ),
+                          )).floor(),
+                    ),
+                  )).abs())) {
+                b16.value = (scratchNumber(
+                  or0(or0(or0(b1.value) - or0(daysSince2000() * 86400)) + 2),
+                )).floor();
               }
             }
             if (compareLessThan(b17.value, 0)) {
               b17.value = (scratchNumber(b17.value)).abs();
-              startHats('event_whenbroadcastreceived', { 'BROADCAST_OPTION': '強震制限更新' });
+              startHats('event_whenbroadcastreceived', {
+                'BROADCAST_OPTION': '強震制限更新',
+              });
             }
           }
         }
-        callProcedure(thread, 'W%s の %s から %s までの文字 %b', [b0.value, 11, 50, 'false']);
-        callProcedure(thread, 'W雲変化 %s %s %s %b %s', [b11.value, b1.value, 2, !compareEqual(scratchMod(or0(b11.value), 10), 0), '']);
-        callProcedure(thread, 'W%s の %s から %s までの文字 %b', [b0.value, 43, 44, 'false']);
+        callProcedure(thread, 'W%s の %s から %s までの文字 %b', [
+          b0.value,
+          11,
+          50,
+          'false',
+        ]);
+        callProcedure(thread, 'W雲変化 %s %s %s %b %s', [
+          b11.value,
+          b1.value,
+          2,
+          !compareEqual(scratchMod(or0(b11.value), 10), 0),
+          '',
+        ]);
+        callProcedure(thread, 'W%s の %s から %s までの文字 %b', [
+          b0.value,
+          43,
+          44,
+          'false',
+        ]);
         b18.value = b1.value;
-        callProcedure(thread, 'W%s の %s から %s までの文字 %b', [b0.value, 51, 256, 'false']);
-        callProcedure(thread, 'W雲変化 %s %s %s %b %s', [b11.value, b1.value, 5, !compareEqual(scratchMod(or0(b11.value), 10), 0), '']);
+        callProcedure(thread, 'W%s の %s から %s までの文字 %b', [
+          b0.value,
+          51,
+          256,
+          'false',
+        ]);
+        callProcedure(thread, 'W雲変化 %s %s %s %b %s', [
+          b11.value,
+          b1.value,
+          5,
+          !compareEqual(scratchMod(or0(b11.value), 10), 0),
+          '',
+        ]);
         if ((256 < (b0.value.toString()).length)) {
-          callProcedure(thread, 'W%s の %s から %s までの文字 %b', [b0.value, 257, 259, 'false']);
+          callProcedure(thread, 'W%s の %s から %s までの文字 %b', [
+            b0.value,
+            257,
+            259,
+            'false',
+          ]);
           b19.value = (0 + or0(b1.value));
           if ((scratchMod(or0(or0(b13.value) + 20), 40) < 4)) {
             if ((or0(b20.value) == 999)) {
-              b20.value = (4 + or0(scratchMod(or0(runtime.ext_scratch3_operators.random(scratchRandomFloat(-2000, 2000), scratchRandomFloat(-2000, 2000))), 1) * 30));
+              b20.value =
+                  (4 +
+                  or0(
+                    scratchMod(
+                          or0(
+                            runtime.ext_scratch3_operators.random(
+                              scratchRandomFloat(-2000, 2000),
+                              scratchRandomFloat(-2000, 2000),
+                            ),
+                          ),
+                          1,
+                        ) *
+                        30,
+                  ));
             }
           } else {
             if ((scratchMod(or0(or0(b13.value) + 20), 40) < 37)) {
-              if (compareLessThan(b20.value, scratchMod(or0(or0(b13.value) + 20), 40))) {
-                b21.value = (b22.value.toString() + ((0 + or0(indexGet(b15.value, 61))).toString() + (b23.value.toString() + ('' + ('' + ('' + ''))))));
-                runtime.ioDevices['cloud']!.requestUpdateVariable('☁ c2u', b21.value);
+              if (compareLessThan(
+                b20.value,
+                scratchMod(or0(or0(b13.value) + 20), 40),
+              )) {
+                b21.value =
+                    (b22.value.toString() +
+                    ((0 + or0(indexGet(b15.value, 61))).toString() +
+                        (b23.value.toString() + ('' + ('' + ('' + ''))))));
+                runtime.ioDevices['cloud']!.requestUpdateVariable(
+                  '☁ c2u',
+                  b21.value,
+                );
                 b20.value = 999;
               }
             }
@@ -133,58 +255,156 @@ void _factory91(Thread thread) {
         } else {
           if ((scratchMod(or0(or0(b13.value) + 20), 40) < 4)) {
             if ((or0(b20.value) == 999)) {
-              b20.value = (4 + or0(scratchMod(or0(runtime.ext_scratch3_operators.random(scratchRandomFloat(-2000, 2000), scratchRandomFloat(-2000, 2000))), 1) * 30));
+              b20.value =
+                  (4 +
+                  or0(
+                    scratchMod(
+                          or0(
+                            runtime.ext_scratch3_operators.random(
+                              scratchRandomFloat(-2000, 2000),
+                              scratchRandomFloat(-2000, 2000),
+                            ),
+                          ),
+                          1,
+                        ) *
+                        30,
+                  ));
             }
             if (!compareEqual(b21.value, 0)) {
               b21.value = 0;
-              runtime.ioDevices['cloud']!.requestUpdateVariable('☁ c2u', b21.value);
+              runtime.ioDevices['cloud']!.requestUpdateVariable(
+                '☁ c2u',
+                b21.value,
+              );
             }
           } else {
             if ((scratchMod(or0(or0(b13.value) + 20), 40) < 37)) {
-              if (compareLessThan(b20.value, scratchMod(or0(or0(b13.value) + 20), 40))) {
+              if (compareLessThan(
+                b20.value,
+                scratchMod(or0(or0(b13.value) + 20), 40),
+              )) {
                 b21.value = (or0(b21.value) + 1);
-                runtime.ioDevices['cloud']!.requestUpdateVariable('☁ c2u', b21.value);
+                runtime.ioDevices['cloud']!.requestUpdateVariable(
+                  '☁ c2u',
+                  b21.value,
+                );
                 b20.value = 999;
               }
             } else {
               b19.value = b21.value;
             }
           }
-          callProcedure(thread, 'W%s の %s から %s までの文字 %b', [b2.value, 2, 256, 'false']);
+          callProcedure(thread, 'W%s の %s から %s までの文字 %b', [
+            b2.value,
+            2,
+            256,
+            'false',
+          ]);
           b24.value = b1.value;
-          callProcedure(thread, 'W%s の %s から %s までの文字 %b', [b3.value, 2, 256, 'false']);
+          callProcedure(thread, 'W%s の %s から %s までの文字 %b', [
+            b3.value,
+            2,
+            256,
+            'false',
+          ]);
           b24.value = (b24.value.toString() + b1.value.toString());
-          callProcedure(thread, 'W%s の %s から %s までの文字 %b', [b4.value, 2, 256, 'false']);
+          callProcedure(thread, 'W%s の %s から %s までの文字 %b', [
+            b4.value,
+            2,
+            256,
+            'false',
+          ]);
           b24.value = (b24.value.toString() + b1.value.toString());
-          callProcedure(thread, 'W%s の %s から %s までの文字 %b', [b5.value, 2, 256, 'false']);
+          callProcedure(thread, 'W%s の %s から %s までの文字 %b', [
+            b5.value,
+            2,
+            256,
+            'false',
+          ]);
           b24.value = (b24.value.toString() + b1.value.toString());
-          callProcedure(thread, 'W%s の %s から %s までの文字 %b', [b6.value, 2, 256, 'false']);
+          callProcedure(thread, 'W%s の %s から %s までの文字 %b', [
+            b6.value,
+            2,
+            256,
+            'false',
+          ]);
           b24.value = (b24.value.toString() + b1.value.toString());
-          callProcedure(thread, 'W%s の %s から %s までの文字 %b', [b7.value, 2, 256, 'false']);
+          callProcedure(thread, 'W%s の %s から %s までの文字 %b', [
+            b7.value,
+            2,
+            256,
+            'false',
+          ]);
           b24.value = (b24.value.toString() + b1.value.toString());
-          callProcedure(thread, 'W%s の %s から %s までの文字 %b', [b8.value, 2, 256, 'false']);
+          callProcedure(thread, 'W%s の %s から %s までの文字 %b', [
+            b8.value,
+            2,
+            256,
+            'false',
+          ]);
           b24.value = (b24.value.toString() + b1.value.toString());
-          callProcedure(thread, 'W%s の %s から %s までの文字 %b', [b9.value, 2, 256, 'false']);
+          callProcedure(thread, 'W%s の %s から %s までの文字 %b', [
+            b9.value,
+            2,
+            256,
+            'false',
+          ]);
           b24.value = (b24.value.toString() + b1.value.toString());
           if (compareEqual(letterOf(b0.value, 50), 0)) {
-            callProcedure(thread, 'W雲変化 %s %s %s %b %s', [b11.value, b24.value, 3, '', '']);
+            callProcedure(thread, 'W雲変化 %s %s %s %b %s', [
+              b11.value,
+              b24.value,
+              3,
+              '',
+              '',
+            ]);
           } else {
             if ((or0(letterOf(b0.value, 50)) == 1)) {
-              callProcedure(thread, 'W雲変化 %s %s %s %b %s', [b11.value, b24.value, 4, '', '']);
+              callProcedure(thread, 'W雲変化 %s %s %s %b %s', [
+                b11.value,
+                b24.value,
+                4,
+                '',
+                '',
+              ]);
             } else {
               if ((or0(letterOf(b0.value, 50)) == 2)) {
-                callProcedure(thread, 'W雲変化 %s %s %s %b %s', [b11.value, b24.value, 6, !false, '']);
+                callProcedure(thread, 'W雲変化 %s %s %s %b %s', [
+                  b11.value,
+                  b24.value,
+                  6,
+                  !false,
+                  '',
+                ]);
               } else {
                 if ((or0(letterOf(b0.value, 50)) == 3)) {
                 } else {
                   if ((or0(letterOf(b0.value, 50)) == 4)) {
-                    callProcedure(thread, 'W雲変化 %s %s %s %b %s', [b11.value, b24.value, 8, '', '']);
+                    callProcedure(thread, 'W雲変化 %s %s %s %b %s', [
+                      b11.value,
+                      b24.value,
+                      8,
+                      '',
+                      '',
+                    ]);
                   } else {
                     if ((or0(letterOf(b0.value, 50)) == 5)) {
-                      callProcedure(thread, 'W雲変化 %s %s %s %b %s', [b11.value, b24.value, 7, !false, '']);
+                      callProcedure(thread, 'W雲変化 %s %s %s %b %s', [
+                        b11.value,
+                        b24.value,
+                        7,
+                        !false,
+                        '',
+                      ]);
                     } else {
                       if ((or0(letterOf(b0.value, 50)) == 6)) {
-                        callProcedure(thread, 'W雲変化 %s %s %s %b %s', [b11.value, b24.value, 9, !false, '']);
+                        callProcedure(thread, 'W雲変化 %s %s %s %b %s', [
+                          b11.value,
+                          b24.value,
+                          9,
+                          !false,
+                          '',
+                        ]);
                       }
                     }
                   }
@@ -195,12 +415,36 @@ void _factory91(Thread thread) {
         }
       }
       if ((256 < (b0.value.toString()).length)) {
-        callProcedure(thread, 'W雲変化チェック %s %s 内容 %b', [b2.value, 3, 'false']);  // yield*
-        callProcedure(thread, 'W雲変化チェック %s %s 内容 %b', [b3.value, 4, 'false']);  // yield*
-        callProcedure(thread, 'W雲変化チェック %s %s 内容 %b', [b4.value, 6, !false]);  // yield*
-        callProcedure(thread, 'W雲変化チェック %s %s 内容 %b', [b6.value, 8, 'false']);  // yield*
-        callProcedure(thread, 'W雲変化チェック %s %s 内容 %b', [b7.value, 7, !false]);  // yield*
-        callProcedure(thread, 'W雲変化チェック %s %s 内容 %b', [b8.value, 9, !false]);  // yield*
+        callProcedure(thread, 'W雲変化チェック %s %s 内容 %b', [
+          b2.value,
+          3,
+          'false',
+        ]); // yield*
+        callProcedure(thread, 'W雲変化チェック %s %s 内容 %b', [
+          b3.value,
+          4,
+          'false',
+        ]); // yield*
+        callProcedure(thread, 'W雲変化チェック %s %s 内容 %b', [
+          b4.value,
+          6,
+          !false,
+        ]); // yield*
+        callProcedure(thread, 'W雲変化チェック %s %s 内容 %b', [
+          b6.value,
+          8,
+          'false',
+        ]); // yield*
+        callProcedure(thread, 'W雲変化チェック %s %s 内容 %b', [
+          b7.value,
+          7,
+          !false,
+        ]); // yield*
+        callProcedure(thread, 'W雲変化チェック %s %s 内容 %b', [
+          b8.value,
+          9,
+          !false,
+        ]); // yield*
       }
     }
     return '';
@@ -240,41 +484,148 @@ void _factory162(Thread thread) {
     callProcedure(thread, 'W検出id_同一震源統合 %s %s %b', ['', '', 'false']);
     b0.value = 1;
     for (var a0 = (b1.value as List).length; a0 >= 0.5; a0--) {
-      callProcedure(thread, 'W検出id2_各点の許可idと推定用をセット %s %s %s %s', [b0.value, indexGet(b2.value, b0.value), indexGet(b3.value, b0.value), (1 + or0(14 * or0(or0(b0.value) - 1)))]);
+      callProcedure(thread, 'W検出id2_各点の許可idと推定用をセット %s %s %s %s', [
+        b0.value,
+        indexGet(b2.value, b0.value),
+        indexGet(b3.value, b0.value),
+        (1 + or0(14 * or0(or0(b0.value) - 1))),
+      ]);
       b0.value = (or0(b0.value) + 1);
     }
     callProcedure(thread, 'W検出id_グリッド別idと存在idをセット %s %s %s', ['', '', '']);
     callProcedure(thread, 'W検出id_消えたidに対応する検出無効化');
     b0.value = 1;
     for (var a1 = (b4.value as List).length; a1 >= 0.5; a1--) {
-      if (compareLessThan(0, indexGet(b5.value, indexGet(b4.value, b0.value)))) {
-        if ((!scratchToBoolean(indexGet(b6.value, or0(or0(or0(or0(indexGet(b5.value, indexGet(b4.value, b0.value))) - 1) * 20) + 2))) || compareLessThan(indexGet(b7.value, indexGet(b4.value, b0.value)), indexGet(b8.value, 1)))) {
+      if (compareLessThan(
+        0,
+        indexGet(b5.value, indexGet(b4.value, b0.value)),
+      )) {
+        if ((!scratchToBoolean(
+              indexGet(
+                b6.value,
+                or0(
+                  or0(
+                        or0(
+                              or0(
+                                    indexGet(
+                                      b5.value,
+                                      indexGet(b4.value, b0.value),
+                                    ),
+                                  ) -
+                                  1,
+                            ) *
+                            20,
+                      ) +
+                      2,
+                ),
+              ),
+            ) ||
+            compareLessThan(
+              indexGet(b7.value, indexGet(b4.value, b0.value)),
+              indexGet(b8.value, 1),
+            ))) {
           listReplace(b5, indexGet(b4.value, b0.value), '');
           listReplace(b7, indexGet(b4.value, b0.value), 0);
         }
       }
-      callProcedure(thread, 'W検出id海岸補助 %s %s', [indexGet(b4.value, b0.value), (or0(indexGet(b4.value, b0.value)) + 1)]);
-      callProcedure(thread, 'W検出id海岸補助 %s %s', [indexGet(b4.value, b0.value), (or0(indexGet(b4.value, b0.value)) - 1)]);
-      callProcedure(thread, 'W検出id海岸補助 %s %s', [indexGet(b4.value, b0.value), (or0(indexGet(b4.value, b0.value)) + 23)]);
-      callProcedure(thread, 'W検出id海岸補助 %s %s', [indexGet(b4.value, b0.value), (or0(indexGet(b4.value, b0.value)) - 23)]);
+      callProcedure(thread, 'W検出id海岸補助 %s %s', [
+        indexGet(b4.value, b0.value),
+        (or0(indexGet(b4.value, b0.value)) + 1),
+      ]);
+      callProcedure(thread, 'W検出id海岸補助 %s %s', [
+        indexGet(b4.value, b0.value),
+        (or0(indexGet(b4.value, b0.value)) - 1),
+      ]);
+      callProcedure(thread, 'W検出id海岸補助 %s %s', [
+        indexGet(b4.value, b0.value),
+        (or0(indexGet(b4.value, b0.value)) + 23),
+      ]);
+      callProcedure(thread, 'W検出id海岸補助 %s %s', [
+        indexGet(b4.value, b0.value),
+        (or0(indexGet(b4.value, b0.value)) - 23),
+      ]);
       b0.value = (or0(b0.value) + 1);
     }
     b0.value = 0;
     b9.value = 1;
     for (var a2 = (b1.value as List).length; a2 >= 0.5; a2--) {
-      if (!compareEqual(indexGet(b10.value, or0(or0(or0(b0.value) * 10) + 1)), '')) {
+      if (!compareEqual(
+        indexGet(b10.value, or0(or0(or0(b0.value) * 10) + 1)),
+        '',
+      )) {
         b9.value = (or0(b9.value) + 1);
       }
-      if (!compareEqual(indexGet(b10.value, or0(or0(or0(b0.value) * 10) + 3)), '')) {
-        b11.value = (or0(or0(or0(indexGet(b10.value, or0(or0(or0(b0.value) * 10) + 3))) - 1)) * 20);
-        if ((compareEqual(letterOf(indexGet(b6.value, or0(or0(b11.value) + 8)), 2), 0) || (compareLessThan(2, indexGet(b13.value, or0(60 + or0(indexGet(b12.value, or0(or0(b0.value) + 1)))))) || compareLessThan(3, indexGet(b6.value, or0(or0(b11.value) + 4)))))) {
-          if (compareLessThan(indexGet(b6.value, or0(or0(b11.value) + 6)), indexGet(b13.value, or0(60 + or0(indexGet(b12.value, or0(or0(b0.value) + 1))))))) {
-            if ((compareLessThan(indexGet(b15.value, or0(or0(or0(b0.value) * 10) + or0(indexGet(b14.value, 12)))), indexGet(b15.value, or0(or0(or0(b0.value) * 10) + 1))) && (compareLessThan(9, indexGet(b12.value, or0(or0(b0.value) + 1))) || compareLessThan(indexGet(b17.value, indexGet(b16.value, or0(or0(b0.value) + 1))), -1)))) {
-              listReplace(b6, (or0(b11.value) + 6), indexGet(b13.value, or0(60 + or0(indexGet(b12.value, or0(or0(b0.value) + 1))))));
+      if (!compareEqual(
+        indexGet(b10.value, or0(or0(or0(b0.value) * 10) + 3)),
+        '',
+      )) {
+        b11.value =
+            (or0(
+              or0(
+                or0(indexGet(b10.value, or0(or0(or0(b0.value) * 10) + 3))) - 1,
+              ),
+            ) *
+            20);
+        if ((compareEqual(
+              letterOf(indexGet(b6.value, or0(or0(b11.value) + 8)), 2),
+              0,
+            ) ||
+            (compareLessThan(
+                  2,
+                  indexGet(
+                    b13.value,
+                    or0(60 + or0(indexGet(b12.value, or0(or0(b0.value) + 1)))),
+                  ),
+                ) ||
+                compareLessThan(
+                  3,
+                  indexGet(b6.value, or0(or0(b11.value) + 4)),
+                )))) {
+          if (compareLessThan(
+            indexGet(b6.value, or0(or0(b11.value) + 6)),
+            indexGet(
+              b13.value,
+              or0(60 + or0(indexGet(b12.value, or0(or0(b0.value) + 1)))),
+            ),
+          )) {
+            if ((compareLessThan(
+                  indexGet(
+                    b15.value,
+                    or0(or0(or0(b0.value) * 10) + or0(indexGet(b14.value, 12))),
+                  ),
+                  indexGet(b15.value, or0(or0(or0(b0.value) * 10) + 1)),
+                ) &&
+                (compareLessThan(
+                      9,
+                      indexGet(b12.value, or0(or0(b0.value) + 1)),
+                    ) ||
+                    compareLessThan(
+                      indexGet(
+                        b17.value,
+                        indexGet(b16.value, or0(or0(b0.value) + 1)),
+                      ),
+                      -1,
+                    )))) {
+              listReplace(
+                b6,
+                (or0(b11.value) + 6),
+                indexGet(
+                  b13.value,
+                  or0(60 + or0(indexGet(b12.value, or0(or0(b0.value) + 1)))),
+                ),
+              );
               if ((or0(indexGet(b6.value, or0(or0(b11.value) + 7))) == -3)) {
-                callProcedure(thread, 'W震度上昇効果音 %s %s %s', [-4, indexGet(b6.value, or0(or0(b11.value) + 6)), (or0(b0.value) + 1)]);
+                callProcedure(thread, 'W震度上昇効果音 %s %s %s', [
+                  -4,
+                  indexGet(b6.value, or0(or0(b11.value) + 6)),
+                  (or0(b0.value) + 1),
+                ]);
               } else {
-                callProcedure(thread, 'W震度上昇効果音 %s %s %s', [indexGet(b6.value, or0(or0(b11.value) + 7)), indexGet(b6.value, or0(or0(b11.value) + 6)), (or0(b0.value) + 1)]);
+                callProcedure(thread, 'W震度上昇効果音 %s %s %s', [
+                  indexGet(b6.value, or0(or0(b11.value) + 7)),
+                  indexGet(b6.value, or0(or0(b11.value) + 6)),
+                  (or0(b0.value) + 1),
+                ]);
               }
             }
           }
@@ -285,8 +636,13 @@ void _factory162(Thread thread) {
     listReplace(b18, 15, b9.value);
     b0.value = 0;
     while (((b6.value as List).length >= (or0(or0(b0.value) * 20) + 1))) {
-      if (scratchToBoolean(indexGet(b6.value, or0(or0(or0(b0.value) * 20) + 2)))) {
-        if (compareLessThan(indexGet(b6.value, or0(or0(or0(b0.value) * 20) + 4)), 2)) {
+      if (scratchToBoolean(
+        indexGet(b6.value, or0(or0(or0(b0.value) * 20) + 2)),
+      )) {
+        if (compareLessThan(
+          indexGet(b6.value, or0(or0(or0(b0.value) * 20) + 4)),
+          2,
+        )) {
           listReplace(b6, (or0(or0(b0.value) * 20) + 2), (0 == 1));
         }
       }
@@ -320,11 +676,29 @@ void _factory69(Thread thread) {
     if (scratchToBoolean(indexGet(b0.value, 62))) {
       b1.value = 1;
       for (var a0 = (b2.value as List).length; a0 >= 0.5; a0--) {
-        callProcedure(thread, 'W複数トリガ 状態 %s %s %s %s %s %s 番号 %s 7 %s %s', [indexGet(b4.value, indexGet(b3.value, b1.value)), indexGet(b5.value, b1.value), (0 + or0(letterOf(indexGet(b6.value, b1.value), 2))), (0 + or0(letterOf(indexGet(b6.value, b1.value), 1))), (or0(indexGet(b7.value, 1)) - or0(indexGet(b8.value, b1.value))), indexGet(b9.value, b1.value), b1.value, (1 + (14 * or0(or0(b1.value) - 1))), (0 + or0(letterOf(indexGet(b6.value, b1.value), 3)))]);
+        callProcedure(thread, 'W複数トリガ 状態 %s %s %s %s %s %s 番号 %s 7 %s %s', [
+          indexGet(b4.value, indexGet(b3.value, b1.value)),
+          indexGet(b5.value, b1.value),
+          (0 + or0(letterOf(indexGet(b6.value, b1.value), 2))),
+          (0 + or0(letterOf(indexGet(b6.value, b1.value), 1))),
+          (or0(indexGet(b7.value, 1)) - or0(indexGet(b8.value, b1.value))),
+          indexGet(b9.value, b1.value),
+          b1.value,
+          (1 + (14 * or0(or0(b1.value) - 1))),
+          (0 + or0(letterOf(indexGet(b6.value, b1.value), 3))),
+        ]);
         if (scratchToBoolean(indexGet(b0.value, 54))) {
-          if (compareLessThan(0.5, indexGet(b4.value, indexGet(b3.value, b1.value)))) {
+          if (compareLessThan(
+            0.5,
+            indexGet(b4.value, indexGet(b3.value, b1.value)),
+          )) {
             if (compareLessThan(indexGet(b9.value, b1.value), 5)) {
-              callProcedure(thread, 'W点許可状態更新 %s %s %s %b', [b1.value, 5, 'test', 'false']);
+              callProcedure(thread, 'W点許可状態更新 %s %s %s %b', [
+                b1.value,
+                5,
+                'test',
+                'false',
+              ]);
             }
           }
         }
@@ -359,7 +733,13 @@ void _factory216(Thread thread) {
   thread.procedures['W震度復元'] = (args) {
     // fun110_____ — JS: function fun110_____ ()
     if (((indexGet(b0.value, 3)).toString().length == 2040)) {
-      b1.value = (2 * (or0((scratchNumber(or0(letterOf(indexGet(b0.value, 3), 31)) / 4)) == 1 ? 1 : 0)));
+      b1.value =
+          (2 *
+          (or0(
+            (scratchNumber(or0(letterOf(indexGet(b0.value, 3), 31)) / 4)) == 1
+                ? 1
+                : 0,
+          )));
       if (!compareEqual(b2.value, b1.value)) {
         b2.value = b1.value;
         callProcedure(thread, 'W震度履歴リセット');
@@ -370,19 +750,53 @@ void _factory216(Thread thread) {
       listReplace(b4, 4, 0);
       listReplace(b5, 13, 0);
       for (var a0 = 738; a0 >= 0.5; a0--) {
-        b6.value = ((letterOf(indexGet(b0.value, 3), or0(or0(or0(b1.value) * 3) + 1)) + letterOf(indexGet(b0.value, 3), or0(or0(or0(b1.value) * 3) + 2))) + letterOf(indexGet(b0.value, 3), or0(or0(or0(b1.value) * 3) + 3)));
+        b6.value =
+            ((letterOf(indexGet(b0.value, 3), or0(or0(or0(b1.value) * 3) + 1)) +
+                letterOf(
+                  indexGet(b0.value, 3),
+                  or0(or0(or0(b1.value) * 3) + 2),
+                )) +
+            letterOf(indexGet(b0.value, 3), or0(or0(or0(b1.value) * 3) + 3)));
         if (compareLessThan(961, b6.value)) {
           return '';
         }
-        callProcedure(thread, 'W点震度の処理 %s %s %s', [(or0(indexGet(b7.value, or0(1 + or0(or0(b1.value) * 2)))) - 1), scratchMod(or0(b6.value), 31), '']);
-        callProcedure(thread, 'W点震度の処理 %s %s %s', [(or0(indexGet(b7.value, or0(2 + or0(or0(b1.value) * 2)))) - 1), (scratchNumber(or0(or0((letterOf(indexGet(b0.value, 3), or0(or0(or0(b1.value) * 3) + 1)) + letterOf(indexGet(b0.value, 3), or0(or0(or0(b1.value) * 3) + 2))) + letterOf(indexGet(b0.value, 3), or0(or0(or0(b1.value) * 3) + 3))) / 31))).floor(), '']);
+        callProcedure(thread, 'W点震度の処理 %s %s %s', [
+          (or0(indexGet(b7.value, or0(1 + or0(or0(b1.value) * 2)))) - 1),
+          scratchMod(or0(b6.value), 31),
+          '',
+        ]);
+        callProcedure(thread, 'W点震度の処理 %s %s %s', [
+          (or0(indexGet(b7.value, or0(2 + or0(or0(b1.value) * 2)))) - 1),
+          (scratchNumber(
+            or0(
+              or0(
+                    (letterOf(
+                              indexGet(b0.value, 3),
+                              or0(or0(or0(b1.value) * 3) + 1),
+                            ) +
+                            letterOf(
+                              indexGet(b0.value, 3),
+                              or0(or0(or0(b1.value) * 3) + 2),
+                            )) +
+                        letterOf(
+                          indexGet(b0.value, 3),
+                          or0(or0(or0(b1.value) * 3) + 3),
+                        ),
+                  ) /
+                  31,
+            ),
+          )).floor(),
+          '',
+        ]);
         b1.value = (or0(b1.value) + 1);
       }
       if (!compareEqual(b3.value, 0)) {
         b8.value = daysSince2000();
       }
     }
-    if (((3500 < (indexGet(b0.value, 3)).toString().length) && (scratchToBoolean(indexGet(b9.value, 70)) || ((indexGet(b0.value, 3)).toString().length < 3600)))) {
+    if (((3500 < (indexGet(b0.value, 3)).toString().length) &&
+        (scratchToBoolean(indexGet(b9.value, 70)) ||
+            ((indexGet(b0.value, 3)).toString().length < 3600)))) {
       b1.value = letterOf(indexGet(b0.value, 3), 30);
       if (!compareEqual(b2.value, b1.value)) {
         b2.value = b1.value;
@@ -393,24 +807,48 @@ void _factory216(Thread thread) {
       b3.value = 0;
       listReplace(b4, 4, 0);
       listReplace(b5, 13, 0);
-      while ((indexGet(b0.value, 3)).toString().length >= (32 + or0(or0(b1.value) * 2))) {
-        b6.value = (0 + or0(scratchNumber(letterOf(indexGet(b0.value, 3), or0(31 + or0(or0(b1.value) * 2))) + letterOf(indexGet(b0.value, 3), or0(32 + or0(or0(b1.value) * 2))))));
+      while ((indexGet(b0.value, 3)).toString().length >=
+          (32 + or0(or0(b1.value) * 2))) {
+        b6.value =
+            (0 +
+            or0(
+              scratchNumber(
+                letterOf(
+                      indexGet(b0.value, 3),
+                      or0(31 + or0(or0(b1.value) * 2)),
+                    ) +
+                    letterOf(
+                      indexGet(b0.value, 3),
+                      or0(32 + or0(or0(b1.value) * 2)),
+                    ),
+              ),
+            ));
         if ((compareLessThan(b6.value, 99))) {
           b10.value = (or0(or0(b6.value) - 30) / 10);
           if (compareLessThan(b6.value, 15)) {
             b6.value = (1 + (scratchNumber(or0(or0(b6.value) * 0.2))).floor());
           } else {
             if (compareLessThan(b6.value, 75)) {
-              b6.value = (4 + (scratchNumber(or0(or0(or0(b6.value) - 15) * 0.3))).floor());
+              b6.value =
+                  (4 +
+                  (scratchNumber(or0(or0(or0(b6.value) - 15) * 0.3))).floor());
             } else {
               if (compareLessThan(b6.value, 95)) {
-                b6.value = (22 + (scratchNumber(or0(or0(or0(b6.value) - 75) * 0.4))).floor());
+                b6.value =
+                    (22 +
+                    (scratchNumber(
+                      or0(or0(or0(b6.value) - 75) * 0.4),
+                    )).floor());
               } else {
                 b6.value = 30;
               }
             }
           }
-          callProcedure(thread, 'W点震度の処理 %s %s %s', [b1.value, b6.value, b10.value]);
+          callProcedure(thread, 'W点震度の処理 %s %s %s', [
+            b1.value,
+            b6.value,
+            b10.value,
+          ]);
         } else {
           callProcedure(thread, 'W点震度の処理 %s %s %s', [b1.value, 0, '-3.0']);
         }
@@ -419,7 +857,8 @@ void _factory216(Thread thread) {
       if (!compareEqual(b3.value, 0)) {
         b8.value = daysSince2000();
       }
-      if ((compareLessThan(indexGet(b5.value, 16), 10) && compareLessThan(100, indexGet(b5.value, 13)))) {
+      if ((compareLessThan(indexGet(b5.value, 16), 10) &&
+          compareLessThan(100, indexGet(b5.value, 13)))) {
         callProcedure(thread, 'W震度履歴リセット');
       }
     }

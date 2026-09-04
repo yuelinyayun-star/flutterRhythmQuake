@@ -17,12 +17,6 @@ import '../../services/ntp_service.dart';
 /// - UTC+8: 中国标准时间 (北京时间)
 /// - UTC+9: 日本标准时间 (东京时间)
 class QuakeTime {
-  /// UTC+8 时区偏移 (中国标准时间)
-  static const Duration _utc8 = Duration(hours: 8);
-
-  /// UTC+9 时区偏移 (日本标准时间)
-  static const Duration _utc9 = Duration(hours: 9);
-
   /// 判断数据源是否为日本数据源
   ///
   /// 日本数据源包括:
@@ -44,7 +38,6 @@ class QuakeTime {
       case QuakeSourceType.p2p:
       case QuakeSourceType.jma_fan:
       case QuakeSourceType.jmaCmt:
-      case QuakeSourceType.fnetCmt:
       case QuakeSourceType.hinetAquaCmt:
       case QuakeSourceType.kma_eq:
       case QuakeSourceType.kma_eew_fan:
@@ -63,7 +56,82 @@ class QuakeTime {
   /// [event] 地震事件
   /// 返回时区偏移
   static Duration targetOffset(QuakeMessage event) {
-    return isJapanSource(event.source) ? _utc9 : _utc8;
+    return Duration(
+      hours: event.timeZone ?? wallClockOffsetHours(event.source),
+    );
+  }
+
+  /// Source wall-clock offset hours used by adapters / inject rewrites.
+  /// JMA/KMA (+NIED/P2P) → 9; everything else (CEA/CENC/USGS/CWA/…) → 8.
+  static int wallClockOffsetHours(QuakeSourceType source) {
+    return isJapanSource(source) ? 9 : 8;
+  }
+
+  /// 当前设备时区。来源字段的偏移仍由适配器明确提供，这个值只用于
+  /// 绝对时间的本地显示以及没有来源墙钟、直接使用 epoch/ISO 的源。
+  static Duration get systemTimeZoneOffset => DateTime.now().timeZoneOffset;
+
+  static int get systemTimeZoneHours => systemTimeZoneOffset.inMinutes ~/ 60;
+
+  static String formatTimeZone(Duration offset) {
+    final totalMinutes = offset.inMinutes;
+    final sign = totalMinutes >= 0 ? '+' : '-';
+    final absolute = totalMinutes.abs();
+    final hours = absolute ~/ 60;
+    final minutes = absolute % 60;
+    return minutes == 0
+        ? 'UTC$sign$hours'
+        : 'UTC$sign$hours:${minutes.toString().padLeft(2, '0')}';
+  }
+
+  static String get systemZoneLabel => formatTimeZone(systemTimeZoneOffset);
+
+  /// 将来源墙上时间还原成绝对 UTC 时间。不能直接调用 DateTime.toUtc，
+  /// 因为这里的 DateTime 仅承载日期时间分量，不承载来源时区。
+  static DateTime wallClockToUtc(DateTime value, Duration offset) {
+    return DateTime.utc(
+      value.year,
+      value.month,
+      value.day,
+      value.hour,
+      value.minute,
+      value.second,
+      value.millisecond,
+      value.microsecond,
+    ).subtract(offset);
+  }
+
+  static DateTime eventInstantUtc(QuakeMessage event, {DateTime? value}) {
+    return wallClockToUtc(value ?? event.originTime, targetOffset(event));
+  }
+
+  static DateTime unifiedInstantUtc(UnifiedQuakeData event, {DateTime? value}) {
+    final time = value ?? event.originTime;
+    if (time == null) {
+      return DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+    }
+    return wallClockToUtc(time, Duration(hours: event.timeZone));
+  }
+
+  static DateTime unifiedDisplayClock(UnifiedQuakeData event) {
+    final utc = unifiedInstantUtc(event);
+    final display = utc.add(Duration(hours: event.timeZone));
+    return _asWallClock(display);
+  }
+
+  static String formatSourceClockInSystem(
+    DateTime? value,
+    int sourceTimeZone, {
+    bool includeSeconds = true,
+    bool includeZoneLabel = true,
+  }) {
+    if (value == null) return '--:--:--';
+    final display = wallClockToUtc(
+      value,
+      Duration(hours: sourceTimeZone),
+    ).toLocal();
+    final clock = formatWallClock(display, includeSeconds: includeSeconds);
+    return includeZoneLabel ? '$clock ($systemZoneLabel)' : clock;
   }
 
   /// 获取时区标签
@@ -73,7 +141,45 @@ class QuakeTime {
   /// [event] 地震事件
   /// 返回时区标签字符串 (如 "UTC+8", "UTC+9")
   static String zoneLabel(QuakeMessage event) {
-    return isJapanSource(event.source) ? 'UTC+9' : 'UTC+8';
+    return formatTimeZone(targetOffset(event));
+  }
+
+  /// Unified-event timezone label from adapter [UnifiedQuakeData.timeZone].
+  static String unifiedZoneLabel(UnifiedQuakeData event) {
+    return formatTimeZone(Duration(hours: event.timeZone));
+  }
+
+  /// Format a source wall-clock [DateTime] stored by adapters (component values).
+  static String formatWallClock(
+    DateTime? time, {
+    int? timeZone,
+    bool includeSeconds = true,
+    bool includeZoneLabel = false,
+  }) {
+    if (time == null) return '--:--:--';
+    final y = time.year.toString().padLeft(4, '0');
+    final mo = time.month.toString().padLeft(2, '0');
+    final d = time.day.toString().padLeft(2, '0');
+    final h = time.hour.toString().padLeft(2, '0');
+    final mi = time.minute.toString().padLeft(2, '0');
+    final clock = includeSeconds
+        ? '$y-$mo-$d $h:$mi:${time.second.toString().padLeft(2, '0')}'
+        : '$y-$mo-$d $h:$mi';
+    if (!includeZoneLabel || timeZone == null) return clock;
+    return '$clock (${formatTimeZone(Duration(hours: timeZone))})';
+  }
+
+  /// Display text for unified event origin time.
+  static String formatUnifiedOriginClock(
+    UnifiedQuakeData event, {
+    bool includeSeconds = true,
+    bool includeZoneLabel = true,
+  }) {
+    if (event.originTime == null) return '--:--:--';
+    final display = unifiedDisplayClock(event);
+    final clock = formatWallClock(display, includeSeconds: includeSeconds);
+    final zone = formatTimeZone(Duration(hours: event.timeZone));
+    return includeZoneLabel ? '$clock ($zone)' : clock;
   }
 
   /// 标准化发震时刻
@@ -90,18 +196,7 @@ class QuakeTime {
   /// [event] 地震事件
   /// 返回标准化后的本地发震时刻
   static DateTime normalizedOriginLocal(QuakeMessage event) {
-    final t = event.originTime;
-    final utcInstant = DateTime.utc(
-      t.year,
-      t.month,
-      t.day,
-      t.hour,
-      t.minute,
-      t.second,
-      t.millisecond,
-      t.microsecond,
-    ).subtract(targetOffset(event));
-    return utcInstant.toLocal();
+    return eventInstantUtc(event).toLocal();
   }
 
   /// 获取显示用时钟时间
@@ -112,7 +207,22 @@ class QuakeTime {
   /// [event] 地震事件
   /// 返回数据源本地时区的显示时间
   static DateTime displayClock(QuakeMessage event) {
-    return normalizedOriginLocal(event).toUtc().add(targetOffset(event));
+    final utc = eventInstantUtc(event);
+    final display = utc.add(targetOffset(event));
+    return _asWallClock(display);
+  }
+
+  static DateTime _asWallClock(DateTime value) {
+    return DateTime(
+      value.year,
+      value.month,
+      value.day,
+      value.hour,
+      value.minute,
+      value.second,
+      value.millisecond,
+      value.microsecond,
+    );
   }
 
   /// 计算从报告发布时间到当前已过去的时间（秒）
@@ -165,16 +275,7 @@ class QuakeTime {
     Duration tzOffset,
   ) {
     // 将 DateTime 视为数据源本地时间，转为 UTC
-    final utcInstant = DateTime.utc(
-      refTime.year,
-      refTime.month,
-      refTime.day,
-      refTime.hour,
-      refTime.minute,
-      refTime.second,
-      refTime.millisecond,
-      refTime.microsecond,
-    ).subtract(tzOffset);
+    final utcInstant = wallClockToUtc(refTime, tzOffset);
     final elapsed = NtpService().now.toUtc().difference(utcInstant);
     return elapsed.inSeconds.clamp(0, 999999);
   }

@@ -6,8 +6,7 @@ void main() {
   test(
     'PLUM Tohoku mismatch/one_sided/compact sub-regime audit is structured and non-production',
     () {
-      final report =
-          buildPlumTohokuMismatchOneSidedCompactSubregimeAuditJson();
+      final report = buildPlumTohokuMismatchOneSidedCompactSubregimeAuditJson();
 
       expect(
         report['schemaVersion'],
@@ -34,13 +33,12 @@ void main() {
       expect(report['jointSubRegimeRows'], isA<List>());
       expect(report['remainderEventRows'], isA<List>());
 
-      final markdown =
-          plumTohokuMismatchOneSidedCompactSubregimeAuditMarkdown(report);
+      final markdown = plumTohokuMismatchOneSidedCompactSubregimeAuditMarkdown(
+        report,
+      );
       expect(
         markdown,
-        contains(
-          '# PLUM Tohoku mismatch/one_sided/compact Sub-Regime Audit',
-        ),
+        contains('# PLUM Tohoku mismatch/one_sided/compact Sub-Regime Audit'),
       );
       expect(markdown, contains('## Transition Rows'));
       expect(markdown, contains('## Local Mismatch Rows'));

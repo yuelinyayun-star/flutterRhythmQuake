@@ -32,13 +32,16 @@ void main() {
       expect(focus['minimumPredictionMarginShindo'], 1.0);
       expect(focus['baselineThresholdCrossingRequired'], isTrue);
 
-      final definitions =
-          (report['familyDefinitions'] as Map).cast<String, Object?>();
-      expect(definitions.keys, containsAll(<String>[
-        'localConsistencyBand',
-        'geometryBand',
-        'spreadBand',
-      ]));
+      final definitions = (report['familyDefinitions'] as Map)
+          .cast<String, Object?>();
+      expect(
+        definitions.keys,
+        containsAll(<String>[
+          'localConsistencyBand',
+          'geometryBand',
+          'spreadBand',
+        ]),
+      );
 
       final thresholds = (report['thresholds'] as Map).cast<String, Object?>();
       expect(thresholds.keys, containsAll(<String>['shindo4', 'shindo5-']));
@@ -49,10 +52,14 @@ void main() {
         expect(threshold['eventSignatures'], isA<List>());
       }
 
-      final markdown = plumTohokuValidationEventFamilyDiagnosticMarkdown(report);
+      final markdown = plumTohokuValidationEventFamilyDiagnosticMarkdown(
+        report,
+      );
       expect(
         markdown,
-        contains('# PLUM Tohoku Validation Event/Propagation-Family Diagnostic'),
+        contains(
+          '# PLUM Tohoku Validation Event/Propagation-Family Diagnostic',
+        ),
       );
       expect(markdown, contains('### Validation Focus Summary'));
       expect(markdown, contains('### Family Aggregates'));

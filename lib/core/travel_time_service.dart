@@ -49,8 +49,9 @@ class TravelTimeService {
 
   Future<void> _load() async {
     if (_isLoaded) return;
-    final String response =
-        await rootBundle.loadString('assets/travel_times.json');
+    final String response = await rootBundle.loadString(
+      'assets/travel_times.json',
+    );
     final Map<String, dynamic> data = json.decode(response);
 
     final tables = <String, _TravelTable>{};
@@ -63,10 +64,14 @@ class TravelTimeService {
             .map((e) => (e as num).toDouble())
             .toList(),
         pTimes: (value['p_times'] as List)
-            .map((row) => (row as List).map((e) => (e as num).toDouble()).toList())
+            .map(
+              (row) => (row as List).map((e) => (e as num).toDouble()).toList(),
+            )
             .toList(),
         sTimes: (value['s_times'] as List)
-            .map((row) => (row as List).map((e) => (e as num).toDouble()).toList())
+            .map(
+              (row) => (row as List).map((e) => (e as num).toDouble()).toList(),
+            )
             .toList(),
       );
     });
@@ -87,7 +92,11 @@ class TravelTimeService {
   }
 
   WaveResult calcWaveDistance(
-      String tableName, bool isPWave, double depth, double time) {
+    String tableName,
+    bool isPWave,
+    double depth,
+    double time,
+  ) {
     if (depth < 0) depth = 0;
     if (time < 0) time = 0;
     final table = _tables[tableName];
@@ -103,14 +112,12 @@ class TravelTimeService {
     }
     double k1 = depths[i] - depth;
     double k2 = depth - depths[i - 1];
-    List<double> times =
-        List.generate(data[0].length, (j) {
+    List<double> times = List.generate(data[0].length, (j) {
       return (k1 * data[i - 1][j] + k2 * data[i][j]) / (k1 + k2);
     });
 
     if (time <= times[0]) {
-      return WaveResult(
-          reach: times[0] > 0 ? time / times[0] : 0, radius: 0);
+      return WaveResult(reach: times[0] > 0 ? time / times[0] : 0, radius: 0);
     }
 
     int j = 1;
@@ -125,7 +132,11 @@ class TravelTimeService {
   }
 
   double calcReachTime(
-      String tableName, bool isPWave, double depth, double distance) {
+    String tableName,
+    bool isPWave,
+    double depth,
+    double distance,
+  ) {
     if (depth < 0) depth = 0;
     if (distance < 0) distance = 0;
     final table = _tables[tableName];
@@ -141,8 +152,7 @@ class TravelTimeService {
     }
     double k1 = depths[i] - depth;
     double k2 = depth - depths[i - 1];
-    List<double> times =
-        List.generate(data[0].length, (j) {
+    List<double> times = List.generate(data[0].length, (j) {
       return (k1 * data[i - 1][j] + k2 * data[i][j]) / (k1 + k2);
     });
 

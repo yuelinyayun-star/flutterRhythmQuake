@@ -122,10 +122,10 @@ class WhewsStationService {
         ? data['mmi']
         : data['shindo'];
     if (rawValues is! List || rawValues.length != _coordinates.length) return;
-    final values = _readNumbers(rawValues, validateKmaMmiRange: true);
+    final values = _readPrimaryValues(rawValues);
     if (values == null) return;
-    final pga = _readOptionalNumbers(data['pga'], _coordinates.length);
-    final pgv = _readOptionalNumbers(data['pgv'], _coordinates.length);
+    final pga = _readOptionalMotionValues(data['pga'], _coordinates.length);
+    final pgv = _readOptionalMotionValues(data['pgv'], _coordinates.length);
     if (pga == null || pgv == null) return;
 
     _lastDataTime = timestamp;
@@ -151,24 +151,31 @@ class WhewsStationService {
       if (raw is! Map) return;
       final lat = _number(raw['latitude']);
       final lng = _number(raw['longitude']);
-      if (lat == null || lng == null) return;
+      if (lat == null ||
+          lng == null ||
+          !lat.isFinite ||
+          !lng.isFinite ||
+          lat < -90 ||
+          lat > 90 ||
+          lng < -180 ||
+          lng > 180) {
+        return;
+      }
       next.add(LatLng(lat, lng));
     }
     _coordinates = List.unmodifiable(next);
     _lastDataTime = null;
   }
 
-  List<double>? _readNumbers(
-    List<dynamic> raw, {
-    required bool validateKmaMmiRange,
-  }) {
+  List<double>? _readPrimaryValues(List<dynamic> raw) {
     final values = <double>[];
     for (final item in raw) {
       final value = _number(item);
       if (value == null || !value.isFinite) return null;
-      if (validateKmaMmiRange &&
-          kind == WhewsStationKind.kma &&
-          (value < -3 || value > 11)) {
+      final isInRange = kind == WhewsStationKind.kma
+          ? value >= -3 && value <= 11
+          : value >= -3 && value <= 7;
+      if (!isInRange) {
         return null;
       }
       values.add(value);
@@ -176,10 +183,16 @@ class WhewsStationService {
     return List.unmodifiable(values);
   }
 
-  List<double>? _readOptionalNumbers(dynamic raw, int expectedLength) {
+  List<double>? _readOptionalMotionValues(dynamic raw, int expectedLength) {
     if (raw == null) return const [];
     if (raw is! List || raw.length != expectedLength) return null;
-    return _readNumbers(raw, validateKmaMmiRange: false);
+    final values = <double>[];
+    for (final item in raw) {
+      final value = _number(item);
+      if (value == null || !value.isFinite || value < 0) return null;
+      values.add(value);
+    }
+    return List.unmodifiable(values);
   }
 
   double? _number(dynamic raw) {
@@ -210,4 +223,5 @@ class WhewsStationService {
   }
 }
 
-bool whewsNiedSnetValueIsValid(double value) => value > -3.0;
+bool whewsNiedSnetValueIsValid(double value) =>
+    value.isFinite && value > -3.0 && value <= 7.0;

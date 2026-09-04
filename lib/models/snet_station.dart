@@ -132,7 +132,8 @@ class SnetStation {
 
   /// 字符串表示
   @override
-  String toString() => 'SnetStation($code, ${coordinate.latitude}, ${coordinate.longitude}, depth: ${depth}m)';
+  String toString() =>
+      'SnetStation($code, ${coordinate.latitude}, ${coordinate.longitude}, depth: ${depth}m)';
 }
 
 /// S-net 网络配置
@@ -148,17 +149,20 @@ class SnetConfig {
   /// 测站信息 URL
   ///
   /// Hi-net 提供的测站信息 JavaScript 文件。
-  static const String stationInfoUrl = 'https://www.hinet.bosai.go.jp/st_info/snet_station.js';
+  static const String stationInfoUrl =
+      'https://www.hinet.bosai.go.jp/st_info/snet_station.js';
 
   /// 实时数据 URL
   ///
   /// Hi-net 提供的实时数据目录。
-  static const String realtimeDataUrl = 'https://www.hinet.bosai.go.jp/realtime/snet/';
+  static const String realtimeDataUrl =
+      'https://www.hinet.bosai.go.jp/realtime/snet/';
 
   /// 公开数据 URL
   ///
   /// 日本气象厅公开数据接口。
-  static const String publicDataUrl = 'https://www.data.jma.go.jp/svd/eqev/data/daily_map/';
+  static const String publicDataUrl =
+      'https://www.data.jma.go.jp/svd/eqev/data/daily_map/';
 
   /// S-net 测站区域划分
   ///

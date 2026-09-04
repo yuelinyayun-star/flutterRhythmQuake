@@ -18,7 +18,8 @@
 /// (string) and a `variables` map keyed by hashed variable id, with each
 /// entry being `{id, name, type, value}`. Lists are inlined as
 /// `<Object?>[...]` so the const map stays self-contained.
-final Map<String, Map<String, dynamic>> kotoho7Snapshot = <String, Map<String, dynamic>>{
+final Map<String, Map<String, dynamic>>
+kotoho7Snapshot = <String, Map<String, dynamic>>{
   'stage': {
     'name': 'Stage',
     'variables': <String, Map<String, dynamic>>{
@@ -7866,14 +7867,7 @@ final Map<String, Map<String, dynamic>> kotoho7Snapshot = <String, Map<String, d
         'id': 'G.)vEOmG*/LE8@2ev@Aq',
         'name': 'd txt:津波の心配文',
         'type': 'list',
-        'value': <Object?>[
-          '津波の心配なし',
-          '不明',
-          '調査中',
-          '若干の海面変動',
-          '津波注意報',
-          '津波警報',
-        ],
+        'value': <Object?>['津波の心配なし', '不明', '調査中', '若干の海面変動', '津波注意報', '津波警報'],
       },
       'i,S-qa3k]cKJ]vUv\$/{I': {
         'id': 'i,S-qa3k]cKJ]vUv\$/{I',
@@ -34260,13 +34254,7 @@ final Map<String, Map<String, dynamic>> kotoho7Snapshot = <String, Map<String, d
         'id': 'b3GDYQs4T:0syQ,wApn}',
         'name': '3-1設定系からの情報',
         'type': 'list',
-        'value': <Object?>[
-          '',
-          '',
-          180,
-          180,
-          '',
-        ],
+        'value': <Object?>['', '', 180, 180, ''],
       },
       '0NI!7,vV78l^Wy`Ow%.`': {
         'id': '0NI!7,vV78l^Wy`Ow%.`',
@@ -34586,18 +34574,7 @@ final Map<String, Map<String, dynamic>> kotoho7Snapshot = <String, Map<String, d
         'id': 'w(#nQ9k*#@6t_FYZ-Ku=',
         'name': '#r:最新クラウド変数',
         'type': 'list',
-        'value': <Object?>[
-          '',
-          '',
-          '',
-          '',
-          '',
-          '',
-          '',
-          '',
-          '',
-          '',
-        ],
+        'value': <Object?>['', '', '', '', '', '', '', '', '', ''],
       },
       '%nVI-*5D*r7}=(CJFW*`': {
         'id': '%nVI-*5D*r7}=(CJFW*`',
@@ -34615,17 +34592,7 @@ final Map<String, Map<String, dynamic>> kotoho7Snapshot = <String, Map<String, d
         'id': 'CNuOvc+-S@izQHHXe=?`',
         'name': '6UI情報',
         'type': 'list',
-        'value': <Object?>[
-          0,
-          '',
-          0,
-          '',
-          0,
-          0,
-          360,
-          76,
-          '',
-        ],
+        'value': <Object?>[0, '', 0, '', 0, 0, 360, 76, ''],
       },
       'E8?iQt|%kM;nfa3%:I*#': {
         'id': 'E8?iQt|%kM;nfa3%:I*#',
@@ -40301,22 +40268,13 @@ final Map<String, Map<String, dynamic>> kotoho7Snapshot = <String, Map<String, d
         'id': '7M_s]_T5kQI?AcuHZ-`t',
         'name': '5-1受信状況',
         'type': 'list',
-        'value': <Object?>[
-          0,
-          0,
-          '',
-          3,
-          '',
-          '',
-        ],
+        'value': <Object?>[0, 0, '', 3, '', ''],
       },
       'k:@(h./8Vo_]#,^b:GoE': {
         'id': 'k:@(h./8Vo_]#,^b:GoE',
         'name': '6-4地図エリア表示内容',
         'type': 'list',
-        'value': <Object?>[
-          '----/--/-- --:--:--',
-        ],
+        'value': <Object?>['----/--/-- --:--:--'],
       },
       'ZCr:M!/uqY;Dw9jN{5Th': {
         'id': 'ZCr:M!/uqY;Dw9jN{5Th',
@@ -40460,16 +40418,7 @@ final Map<String, Map<String, dynamic>> kotoho7Snapshot = <String, Map<String, d
         'id': '3w+vS9sYAo_uWbLC\$xT^',
         'name': '7-3選択肢',
         'type': 'list',
-        'value': <Object?>[
-          '',
-          '',
-          '',
-          '',
-          '',
-          '',
-          '',
-          '',
-        ],
+        'value': <Object?>['', '', '', '', '', '', '', ''],
       },
       'PNu/\$oXxl)dMh?;Zg-4?': {
         'id': 'PNu/\$oXxl)dMh?;Zg-4?',
@@ -60651,22 +60600,7 @@ final Map<String, Map<String, dynamic>> kotoho7Snapshot = <String, Map<String, d
         'id': '2`OxG=vEfNxKB1.x=g)!',
         'name': '9津波関連',
         'type': 'list',
-        'value': <Object?>[
-          0,
-          0,
-          '',
-          '',
-          0,
-          0,
-          '',
-          '',
-          '',
-          '',
-          '',
-          '',
-          '',
-          0,
-        ],
+        'value': <Object?>[0, 0, '', '', 0, 0, '', '', '', '', '', '', '', 0],
       },
       'CkPWM]fCK4th4@Td{x=l': {
         'id': 'CkPWM]fCK4th4@Td{x=l',
@@ -62828,16 +62762,7 @@ final Map<String, Map<String, dynamic>> kotoho7Snapshot = <String, Map<String, d
         'id': ';eC}S`(`bp-](#*mPD]C',
         'name': '6-1-3タブスクロール最大値',
         'type': 'list',
-        'value': <Object?>[
-          0,
-          372,
-          0,
-          0,
-          0,
-          2255,
-          1767,
-          935,
-        ],
+        'value': <Object?>[0, 372, 0, 0, 0, 2255, 1767, 935],
       },
       'kC%l:wXU9[NN|u*6@=vj': {
         'id': 'kC%l:wXU9[NN|u*6@=vj',
@@ -63083,9 +63008,7 @@ final Map<String, Map<String, dynamic>> kotoho7Snapshot = <String, Map<String, d
         'id': '.zCmL@:/XkuTN^JTqc1t',
         'name': '読み上げタイプ情報',
         'type': 'list',
-        'value': <Object?>[
-          true,
-        ],
+        'value': <Object?>[true],
       },
       'Ub=-y{tgLiXCccl*Un3n': {
         'id': 'Ub=-y{tgLiXCccl*Un3n',
@@ -63148,14 +63071,7 @@ final Map<String, Map<String, dynamic>> kotoho7Snapshot = <String, Map<String, d
         'id': '/C-cgUXE4fnYNKV-Ah]r',
         'name': '1-3表示範囲の震央最短',
         'type': 'list',
-        'value': <Object?>[
-          '',
-          '',
-          999999,
-          '',
-          '',
-          999999,
-        ],
+        'value': <Object?>['', '', 999999, '', '', 999999],
       },
       '%sr#t1.9eV][o;-!?53_': {
         'id': '%sr#t1.9eV][o;-!?53_',
@@ -64402,10 +64318,7 @@ final Map<String, Map<String, dynamic>> kotoho7Snapshot = <String, Map<String, d
         'id': 'QAgb2UEy%R+wk?|sh}?5',
         'name': '7-ccカスタムカラー',
         'type': 'list',
-        'value': <Object?>[
-          '',
-          '',
-        ],
+        'value': <Object?>['', ''],
       },
       '8O;\$3h1qpT]YF-8[-y5_': {
         'id': '8O;\$3h1qpT]YF-8[-y5_',
@@ -65313,11 +65226,7 @@ final Map<String, Map<String, dynamic>> kotoho7Snapshot = <String, Map<String, d
         'id': ':N+7#+l9fvsVg,E#hin5',
         'name': '@1 grid存在id',
         'type': 'list',
-        'value': <Object?>[
-          1,
-          2,
-          1,
-        ],
+        'value': <Object?>[1, 2, 1],
       },
       'h7vqzS7UE*I3Q?ir2(}F': {
         'id': 'h7vqzS7UE*I3Q?ir2(}F',
@@ -65341,18 +65250,7 @@ final Map<String, Map<String, dynamic>> kotoho7Snapshot = <String, Map<String, d
         'id': '?@f{oydND=seqfyHV-Gs',
         'name': '@1 表示する震度EEW',
         'type': 'list',
-        'value': <Object?>[
-          -1,
-          -1,
-          -1,
-          -1,
-          4,
-          5,
-          6,
-          7,
-          8,
-          9,
-        ],
+        'value': <Object?>[-1, -1, -1, -1, 4, 5, 6, 7, 8, 9],
       },
       '5,6.Rr.Zsi6H12mU.E2R': {
         'id': '5,6.Rr.Zsi6H12mU.E2R',
@@ -66742,12 +66640,7 @@ final Map<String, Map<String, dynamic>> kotoho7Snapshot = <String, Map<String, d
         'id': '@Gyw^6]mhpCkOf#VPvv,',
         'name': '@hyp:誤差レベル用PS半径&時間',
         'type': 'list',
-        'value': <Object?>[
-          171.33469626108635,
-          94.0213246961649,
-          '',
-          '',
-        ],
+        'value': <Object?>[171.33469626108635, 94.0213246961649, '', ''],
       },
       'x.)N!juLia09kiW0GZYO': {
         'id': 'x.)N!juLia09kiW0GZYO',

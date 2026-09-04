@@ -1,5 +1,9 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+
+import '../../providers/page_background_provider.dart';
 
 class AppPageBackground extends StatefulWidget {
   static const String assetPath = 'assets/images/madoka_bg.png';
@@ -38,29 +42,53 @@ class _AppPageBackgroundState extends State<AppPageBackground> {
 
   @override
   Widget build(BuildContext context) {
+    final pageBg = context.watch<PageBackgroundProvider>();
+    final customBytes = pageBg.customBytes;
+    final useCustom =
+        !kIsWeb &&
+        pageBg.useCustom &&
+        pageBg.hasCustomImage &&
+        customBytes != null;
+
     return Positioned.fill(
       child: IgnorePointer(
         child: Container(
           color: const Color(0xFF020208),
-          child: FutureBuilder<Uint8List>(
-            future: _bytesFuture,
-            builder: (context, snapshot) {
-              if (!snapshot.hasData) {
-                return const _FallbackBackground();
-              }
-              return Opacity(
-                opacity: widget.opacity,
-                child: Image.memory(
-                  snapshot.data!,
-                  fit: BoxFit.cover,
-                  alignment: widget.alignment,
-                  gaplessPlayback: true,
-                  errorBuilder: (_, _, _) => const _FallbackBackground(),
+          child: useCustom
+              ? _buildCustomImage(customBytes, pageBg.revision)
+              : FutureBuilder<Uint8List>(
+                  future: _bytesFuture,
+                  builder: (context, snapshot) {
+                    if (!snapshot.hasData) {
+                      return const _FallbackBackground();
+                    }
+                    return Opacity(
+                      opacity: widget.opacity,
+                      child: Image.memory(
+                        snapshot.data!,
+                        fit: BoxFit.cover,
+                        alignment: widget.alignment,
+                        gaplessPlayback: true,
+                        errorBuilder: (_, _, _) => const _FallbackBackground(),
+                      ),
+                    );
+                  },
                 ),
-              );
-            },
-          ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildCustomImage(Uint8List bytes, int revision) {
+    return Opacity(
+      opacity: widget.opacity,
+      child: Image.memory(
+        bytes,
+        key: ValueKey('page-bg-custom-$revision-${bytes.length}'),
+        fit: BoxFit.cover,
+        alignment: widget.alignment,
+        gaplessPlayback: true,
+        errorBuilder: (_, _, _) => const _FallbackBackground(),
       ),
     );
   }

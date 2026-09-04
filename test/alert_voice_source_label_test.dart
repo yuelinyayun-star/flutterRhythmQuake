@@ -56,6 +56,103 @@ void main() {
     expect(text, startsWith('cencCmt，'));
   });
 
+  test('WHEWS generic sources use their Chinese institution names', () {
+    const expected = {
+      'whews_bmkg': '印度尼西亚气象气候与地球物理局',
+      'whews_geonet': '新西兰地球科学局',
+      'whews_tmd': '泰国气象局',
+      'whews_ingv': '意大利国家地球物理与火山学研究所',
+      'whews_nrcan': '加拿大自然资源部',
+      'whews_mmd': '马来西亚气象局',
+      'whews_phivolcs': '菲律宾火山与地震研究所',
+      'whews_sgc': '哥伦比亚地质局',
+      'whews_ga': '澳大利亚地质局',
+      'whews_cenais': '古巴国家地震研究中心',
+    };
+
+    for (final entry in expected.entries) {
+      final text = AlertVoiceHelper.generateUnifiedEventText(
+        eventFor(entry.key),
+        phase: 'first',
+      );
+      expect(text, startsWith('${entry.value}，'));
+      expect(text, isNot(contains(entry.key)));
+    }
+  });
+
+  test(
+    'non-P2P information voice reads review status without report serial',
+    () {
+      final jma = eventFor(
+        'jmaEqlist',
+      ).copyWith(origin: 3, reportNumText: '修正');
+      final legacy = eventFor(
+        'jmaEqlist',
+      ).copyWith(origin: 3, reportNumText: '第2報（修正）');
+      final cenc = eventFor('cencEqlist').copyWith(reportNumText: '正式测定');
+
+      final jmaText = AlertVoiceHelper.generateUnifiedEventText(
+        jma,
+        phase: 'first',
+      );
+      final legacyText = AlertVoiceHelper.generateUnifiedEventText(
+        legacy,
+        phase: 'first',
+      );
+      final cencText = AlertVoiceHelper.generateUnifiedEventText(
+        cenc,
+        phase: 'first',
+      );
+
+      expect(jmaText, contains('修正'));
+      expect(jmaText, isNot(contains('第2报')));
+      expect(legacyText, contains('修正'));
+      expect(legacyText, isNot(contains('第2报')));
+      expect(cencText, contains('正式测定'));
+    },
+  );
+
+  test('adapted CENC voice still reads the dedicated title', () {
+    final event = eventFor('cencEqlist').copyWith(titleText: '中国地震台网地震信息');
+    final text = AlertVoiceHelper.generateUnifiedEventText(
+      event,
+      phase: 'first',
+    );
+    expect(text, startsWith('中国地震台网，'));
+    expect(text, contains('中国地震台网地震信息'));
+  });
+
+  test('JMA information voice never reads report serial for any origin', () {
+    final p2p = eventFor('jmaEqlist').copyWith(origin: 2, reportNumText: '第2報');
+    final whews = eventFor(
+      'jmaEqlist',
+    ).copyWith(origin: 3, reportNumText: '第1報');
+    final p2pText = AlertVoiceHelper.generateUnifiedEventText(
+      p2p,
+      phase: 'first',
+    );
+    final whewsText = AlertVoiceHelper.generateUnifiedEventText(
+      whews,
+      phase: 'first',
+    );
+
+    expect(p2pText, isNot(contains('第2报')));
+    expect(p2pText, isNot(contains('第2報')));
+    expect(whewsText, isNot(contains('第1报')));
+    expect(whewsText, isNot(contains('第1報')));
+  });
+
+  test('KMA information title is localized for Chinese voice', () {
+    final event = eventFor('kmaEqlist').copyWith(titleText: '기상청 지진정보正式测定');
+    final text = AlertVoiceHelper.generateUnifiedEventText(
+      event,
+      phase: 'first',
+    );
+
+    expect(text, contains('韩国气象厅地震信息正式测定'));
+    expect(text, isNot(contains('기상청 지진정보')));
+  });
+
   test('legacy EEW voice uses the same report number shown by the UI', () {
     final event = QuakeMessage(
       source: QuakeSourceType.wolfx,
@@ -84,8 +181,26 @@ void main() {
       phase: 'first',
     );
 
-    expect(text, contains('深度 14.9 km'));
+    expect(text, contains('深度14.9公里'));
+    expect(text, isNot(contains('14.9 km')));
     expect(text, isNot(contains('深度15公里')));
+  });
+
+  test('EEW voice localizes CWA name and Japanese UI depth text', () {
+    final event = eventFor(
+      'cwaEew',
+    ).copyWith(isEew: true, reportNumText: '第2报', depthText: '深さ: 40km');
+
+    final text = AlertVoiceHelper.generateUnifiedEventText(
+      event,
+      phase: 'first',
+    );
+
+    expect(text, startsWith('中央气象署，地震预警，第2报，'));
+    expect(text, contains('深度40公里'));
+    expect(text, isNot(contains('台湾中央气象署')));
+    expect(text, isNot(contains('深さ')));
+    expect(text, isNot(contains('40km')));
   });
 
   test('EEW warning phases use natural voice wording', () {
@@ -158,5 +273,32 @@ void main() {
     expect(shakeAlertText, isNot(contains('地震预警发布')));
     expect(shakeAlertText, isNot(contains('发布')));
     expect(shakeAlertText, isNot(contains('更新')));
+  });
+
+  test('unadapted sources speak the API name instead of CENC or FAN', () {
+    final event = UnifiedQuakeData(
+      source: 'unadapted_geonet',
+      origin: 1,
+      eventId: 'voice-unadapted',
+      isEew: false,
+      timeZone: 8,
+      titleText: '新西兰地球科学局地震信息',
+      reportNumText: '',
+      useShindo: false,
+      maxIntensity: '-',
+      className: 'gray',
+      hypocenter: '35 km south-west of Tokoroa',
+      magnitude: 1.5,
+      depth: 192,
+      apiTypeLabel: 'FAN',
+    );
+    final text = AlertVoiceHelper.generateUnifiedEventText(
+      event,
+      phase: 'first',
+    );
+    expect(text, startsWith('geonet，'));
+    expect(text, contains('新西兰地球科学局'));
+    expect(text, isNot(contains('中国地震台网')));
+    expect(text, isNot(contains('unadapted_geonet')));
   });
 }

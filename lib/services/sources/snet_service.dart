@@ -30,6 +30,12 @@ class SnetService {
 
   void Function(List<SnetStation> stations)? onDataUpdated;
   void Function(bool connected)? onStatusChanged;
+  final _stationController = StreamController<List<SnetStation>>.broadcast();
+
+  /// Internal bridge stream used by the Android foreground connection host.
+  /// The existing callback remains the primary UI-isolate API.
+  Stream<List<SnetStation>> get stationStreamFromCallback =>
+      _stationController.stream;
 
   List<SnetStation> _stations = [];
   List<SnetStation> get stations => _stations;
@@ -277,6 +283,7 @@ class SnetService {
     stopwatch.stop();
 
     onDataUpdated?.call(_stations);
+    _stationController.add(List.unmodifiable(_stations));
     return true;
   }
 
@@ -434,11 +441,21 @@ class SnetService {
   void clearStations() {
     _stations.clear();
     onDataUpdated?.call(_stations);
+    _stationController.add(const []);
+  }
+
+  /// Accepts a snapshot fetched by the Android foreground connection host.
+  /// This only replaces the UI-isolate view; the foreground isolate remains
+  /// responsible for the network request and image parsing.
+  void ingestExternalStations(List<SnetStation> stations) {
+    _stations = List<SnetStation>.from(stations);
+    onDataUpdated?.call(_stations);
   }
 
   void dispose() {
     stopMonitoring();
     _stations.clear();
+    _stationController.close();
   }
 }
 

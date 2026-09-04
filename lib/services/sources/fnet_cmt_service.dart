@@ -29,6 +29,7 @@ class FnetCmtService {
   static const String _detailUrl = '$_baseUrl/event/tdmt.php';
 
   void Function(List<Map<String, dynamic>>)? onListUpdated;
+  void Function(bool connected)? onStatusChanged;
 
   Timer? _timer;
   bool _initialized = false;
@@ -92,8 +93,10 @@ class FnetCmtService {
 
       onListUpdated?.call(list);
       _initialized = true;
+      onStatusChanged?.call(true);
     } catch (e) {
       print('F-net CMT fetch error: $e');
+      onStatusChanged?.call(false);
     } finally {
       client.close();
       _fetching = false;

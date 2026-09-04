@@ -3,7 +3,9 @@ import 'package:provider/provider.dart';
 import 'package:latlong2/latlong.dart';
 import '../../providers/quake_provider.dart';
 import '../../providers/map_state_provider.dart';
+import '../../core/calculator.dart';
 import '../../models/eew_event_group.dart';
+import '../../core/utils/quake_time.dart';
 import '../../models/unified_quake_data.dart';
 import 'unified_intensity_format.dart';
 
@@ -28,7 +30,10 @@ class HistoryPanel extends StatelessWidget {
           padding: const EdgeInsets.all(12),
           itemCount: groups.length,
           itemBuilder: (context, index) {
-            return _EewEventGroupCard(group: groups[index]);
+            return _EewEventGroupCard(
+              key: ValueKey(groups[index].eventId),
+              group: groups[index],
+            );
           },
         );
       },
@@ -39,13 +44,14 @@ class HistoryPanel extends StatelessWidget {
 class _EewEventGroupCard extends StatefulWidget {
   final EewEventGroup group;
 
-  const _EewEventGroupCard({required this.group});
+  const _EewEventGroupCard({super.key, required this.group});
 
   @override
   State<_EewEventGroupCard> createState() => _EewEventGroupCardState();
 }
 
 class _EewEventGroupCardState extends State<_EewEventGroupCard> {
+  static const double _badgeSize = 42;
   bool _expanded = false;
 
   Color _colorFromClass(String className) {
@@ -89,7 +95,10 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
       child: InkWell(
         onTap: () {
           final dest = LatLng(latest.lat ?? 0, latest.lng ?? 0);
-          if (dest.latitude != 0 && dest.longitude != 0) {
+          if (QuakeCalculator.isUsableMapCoordinate(
+            dest.latitude,
+            dest.longitude,
+          )) {
             final mapState = context.read<MapStateProvider>();
             mapState.pauseAutoZoom();
             mapState.animatedMove(dest, 7.0);
@@ -115,7 +124,7 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Text(
-                          '${widget.group.reportCount}报',
+                          '${widget.group.latestReportNumber}报',
                           style: TextStyle(
                             color: color.withOpacity(0.8),
                             fontSize: 11,
@@ -162,7 +171,7 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
                         ),
-                        overflow: TextOverflow.ellipsis,
+                        softWrap: true,
                       ),
                     ),
                     if (event.reportNumText.isNotEmpty)
@@ -213,8 +222,6 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
   }
 
   Widget _buildBadge(UnifiedQuakeData event, Color color) {
-    final size = 42.0;
-
     if (event.useShindo) {
       final text = event.maxIntensity;
       final hasSub =
@@ -223,8 +230,8 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
       final subChar = hasSub ? text.substring(1) : '';
 
       return Container(
-        width: size,
-        height: size,
+        width: _badgeSize,
+        height: _badgeSize,
         decoration: BoxDecoration(
           color: color.withOpacity(0.15),
           borderRadius: BorderRadius.circular(6),
@@ -234,41 +241,43 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (subChar.isEmpty)
-              Text(
-                mainChar,
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w900,
-                  color: color,
-                  height: 1,
-                ),
-              )
-            else
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    mainChar,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w900,
-                      color: color,
-                      height: 1,
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: subChar.isEmpty
+                  ? Text(
+                      mainChar,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                        color: color,
+                        height: 1,
+                      ),
+                    )
+                  : Row(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          mainChar,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            color: color,
+                            height: 1,
+                          ),
+                        ),
+                        Text(
+                          subChar,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w900,
+                            color: color,
+                            height: 1,
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                  Text(
-                    subChar,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w900,
-                      color: color,
-                      height: 1,
-                    ),
-                  ),
-                ],
-              ),
+            ),
             Text(
               '震度',
               style: TextStyle(
@@ -289,8 +298,8 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
         : event.maxIntensity;
 
     return Container(
-      width: size,
-      height: size,
+      width: _badgeSize,
+      height: _badgeSize,
       decoration: BoxDecoration(
         color: color.withOpacity(0.15),
         borderRadius: BorderRadius.circular(6),
@@ -348,7 +357,10 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
     return InkWell(
       onTap: () {
         final dest = LatLng(report.lat ?? 0, report.lng ?? 0);
-        if (dest.latitude != 0 && dest.longitude != 0) {
+        if (QuakeCalculator.isUsableMapCoordinate(
+          dest.latitude,
+          dest.longitude,
+        )) {
           final mapState = context.read<MapStateProvider>();
           mapState.pauseAutoZoom();
           mapState.animatedMove(dest, 7.0);
@@ -365,7 +377,9 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
+                  Wrap(
+                    spacing: 4,
+                    runSpacing: 2,
                     children: [
                       if (report.reportNumText.isNotEmpty)
                         Container(
@@ -387,7 +401,6 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
                           ),
                         ),
                       if (report.isFinal) ...[
-                        const SizedBox(width: 4),
                         Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 4,
@@ -408,7 +421,6 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
                         ),
                       ],
                       if (report.isCanceled) ...[
-                        const SizedBox(width: 4),
                         Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 4,
@@ -429,7 +441,6 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
                         ),
                       ],
                       if (report.isWarn) ...[
-                        const SizedBox(width: 4),
                         Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 4,
@@ -461,7 +472,7 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
                       fontSize: 12,
                       fontWeight: FontWeight.w500,
                     ),
-                    overflow: TextOverflow.ellipsis,
+                    softWrap: true,
                   ),
                   const SizedBox(height: 2),
                   Text(
@@ -508,9 +519,10 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
     final depthStr = event.depthText.isNotEmpty
         ? event.depthText
         : (event.depth >= 0 ? '深${event.depth.round()}km' : '深度 --');
-    final timeStr = event.originTime != null
-        ? '${event.originTime!.toLocal().month.toString().padLeft(2, '0')}/${event.originTime!.toLocal().day.toString().padLeft(2, '0')} ${event.originTime!.toLocal().hour.toString().padLeft(2, '0')}:${event.originTime!.toLocal().minute.toString().padLeft(2, '0')}'
-        : '--:--';
+    final timeStr = QuakeTime.formatUnifiedOriginClock(
+      event,
+      includeSeconds: false,
+    );
     final locationText = hypocenterInvestigating ? '' : event.hypocenter;
     return [
       timeStr,

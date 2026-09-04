@@ -1,8 +1,6 @@
 /// Shared gate so HTTP eqlist polls can yield to fresher push updates.
 class EqlistHttpPollGate {
-  EqlistHttpPollGate({
-    this.freshWindow = const Duration(minutes: 2),
-  });
+  EqlistHttpPollGate({this.freshWindow = const Duration(minutes: 2)});
 
   /// Skip HTTP while an external push updated the same list within this window.
   final Duration freshWindow;

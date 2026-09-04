@@ -35,6 +35,9 @@ void main() {
     expect(resolver.lookup(29.5630, 106.5516), '重庆市渝中区');
     expect(resolver.lookup(24.4798, 118.0894), '福建省厦门市');
     expect(resolver.lookup(26.0745, 119.2965), '福建省福州市');
+    expect(resolver.lookup(29.36, 120.17), '浙江省金华市');
+    expect(resolver.lookupChinaPlace(29.36, 120.17), '浙江省金华市义乌市');
+    expect(resolver.lookupChinaPlace(29.272, 120.241), '浙江省金华市东阳市');
   });
 
   test(

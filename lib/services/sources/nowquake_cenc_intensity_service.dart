@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../../models/cenc_ir_data.dart';
@@ -125,8 +126,11 @@ class NowQuakeCencIntensityService extends BaseSourceService {
       if (type != 'data') return;
 
       final detail = CencIrData.fromNowQuakeJson(data);
-      if (detail.reportId.isEmpty || detail.instrumentIntensities.isEmpty) {
-        _log('忽略缺少事件ID或测站数据的推送');
+      final hasDrawableStation = detail.instrumentIntensities.any(
+        (station) => station.hasUsableCoordinate,
+      );
+      if (detail.reportId.isEmpty || !hasDrawableStation) {
+        _log('忽略缺少事件ID或有效测站坐标的推送');
         return;
       }
       _detailCache[detail.reportId] = _NowQuakeDetailCacheEntry(
@@ -145,6 +149,9 @@ class NowQuakeCencIntensityService extends BaseSourceService {
       _log('WebSocket 数据解析失败: $error');
     }
   }
+
+  @visibleForTesting
+  void handleSocketMessageForTest(dynamic raw) => _handleSocketMessage(raw);
 
   Future<void> _refreshListIfNeeded(int serial) async {
     if (_listLoadingSerial == serial) return;

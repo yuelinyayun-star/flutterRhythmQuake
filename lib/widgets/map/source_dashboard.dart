@@ -225,7 +225,7 @@ class _SourceDashboardState extends State<SourceDashboard> {
       if (QuakeMapView.tremStationEnabledNotifier.value)
         _buildStationLine(
           context,
-          'TREM-Net :',
+          'TREM-RTS :',
           provider.sourceStatuses['TREM'],
           time: tremTime,
           utcOffsetHours: 8,

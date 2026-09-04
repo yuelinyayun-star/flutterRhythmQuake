@@ -81,8 +81,10 @@ void main() {
       }
     }
 
-    print('非白色/非透明像素包围盒: left=$colorBarLeft, top=$colorBarTop, '
-        'right=$colorBarRight, bottom=$colorBarBottom');
+    print(
+      '非白色/非透明像素包围盒: left=$colorBarLeft, top=$colorBarTop, '
+      'right=$colorBarRight, bottom=$colorBarBottom',
+    );
 
     // 4. 更精细地找色标条——色标条通常是连续的彩色渐变
     // 扫描每列，找到颜色变化最丰富的列区间
@@ -142,7 +144,9 @@ void main() {
           (y >= gradientTop - 2 && y <= gradientTop + 5) ||
           (y >= gradientBottom - 5 && y <= gradientBottom + 2) ||
           y % 20 == 0) {
-        print('$y\t$r\t$g\t$b\t$a\t${h.toStringAsFixed(3)}\t${s.toStringAsFixed(3)}\t${v.toStringAsFixed(3)}');
+        print(
+          '$y\t$r\t$g\t$b\t$a\t${h.toStringAsFixed(3)}\t${s.toStringAsFixed(3)}\t${v.toStringAsFixed(3)}',
+        );
       }
     }
 
@@ -166,7 +170,9 @@ void main() {
       final a = p.a.toInt();
       final (h, s, v) = rgbToHsv(r, g, b);
       final sva = (pos * 1000).round();
-      print('${pos.toStringAsFixed(4)}\t$sva\t$r\t$g\t$b\t$a\t${h.toStringAsFixed(3)}\t${s.toStringAsFixed(3)}\t${v.toStringAsFixed(3)}');
+      print(
+        '${pos.toStringAsFixed(4)}\t$sva\t$r\t$g\t$b\t$a\t${h.toStringAsFixed(3)}\t${s.toStringAsFixed(3)}\t${v.toStringAsFixed(3)}',
+      );
     }
 
     // 7. 特别关注顶部区域（position 0.9~1.0），逐行打印颜色
@@ -203,7 +209,9 @@ void main() {
         desc = '紫/品红';
       }
 
-      print('$y\t${pos.toStringAsFixed(4)}\t$r\t$g\t$b\t${h.toStringAsFixed(3)}\t${s.toStringAsFixed(3)}\t${v.toStringAsFixed(3)}\t$desc');
+      print(
+        '$y\t${pos.toStringAsFixed(4)}\t$r\t$g\t$b\t${h.toStringAsFixed(3)}\t${s.toStringAsFixed(3)}\t${v.toStringAsFixed(3)}\t$desc',
+      );
     }
 
     // 8. 检查色标条旁边是否有刻度线
@@ -227,7 +235,9 @@ void main() {
         }
       }
       if (darkPixels > 0) {
-        print('  x=$x: $darkPixels 个暗色像素, y范围=${darkYPositions.first}~${darkYPositions.last}');
+        print(
+          '  x=$x: $darkPixels 个暗色像素, y范围=${darkYPositions.first}~${darkYPositions.last}',
+        );
         // 打印刻度线的y位置（连续暗色像素的起始位置）
         final tickYPositions = <int>[];
         int? prevY;
@@ -257,7 +267,9 @@ void main() {
         }
       }
       if (darkPixels > 0) {
-        print('  x=$x: $darkPixels 个暗色像素, y范围=${darkYPositions.first}~${darkYPositions.last}');
+        print(
+          '  x=$x: $darkPixels 个暗色像素, y范围=${darkYPositions.first}~${darkYPositions.last}',
+        );
         final tickYPositions = <int>[];
         int? prevY;
         for (final y in darkYPositions) {
@@ -291,7 +303,11 @@ void main() {
 
     // 11. 综合分析色标条下方区域
     print('\n========== 色标条下方区域分析 ==========');
-    for (int y = gradientBottom - 2; y <= math.min(height - 1, gradientBottom + 10); y++) {
+    for (
+      int y = gradientBottom - 2;
+      y <= math.min(height - 1, gradientBottom + 10);
+      y++
+    ) {
       final colors = <String>[];
       for (int x = barLeft; x <= barRight; x += 3) {
         final p = image.getPixel(x, y);
@@ -313,7 +329,9 @@ void main() {
       final g = p.g.toInt();
       final b = p.b.toInt();
       final (h, s, v) = rgbToHsv(r, g, b);
-      print('$y\t${pos.toStringAsFixed(4)}\t$r\t$g\t$b\t${h.toStringAsFixed(3)}\t${s.toStringAsFixed(3)}\t${v.toStringAsFixed(3)}');
+      print(
+        '$y\t${pos.toStringAsFixed(4)}\t$r\t$g\t$b\t${h.toStringAsFixed(3)}\t${s.toStringAsFixed(3)}\t${v.toStringAsFixed(3)}',
+      );
     }
   });
 }

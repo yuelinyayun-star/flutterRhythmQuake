@@ -9,6 +9,7 @@ import '../../models/source_status.dart';
 import '../../models/unified_quake_data.dart';
 import '../../utils/fe_regions.dart';
 import 'base_source.dart';
+import 'global_quake_first_report_filter.dart';
 
 class GlobalQuakeService extends BaseSourceService {
   static final GlobalQuakeService _instance = GlobalQuakeService._internal();
@@ -22,6 +23,8 @@ class GlobalQuakeService extends BaseSourceService {
   static const primaryPortPreferenceKey = 'global_quake_primary_port';
   static const secondaryHostPreferenceKey = 'global_quake_secondary_host';
   static const secondaryPortPreferenceKey = 'global_quake_secondary_port';
+  static const firstReportMagnitudeThresholdPreferenceKey =
+      'global_quake_first_report_magnitude_threshold';
   static const defaultPrimaryHost = 'server.globalquake.net';
   static const defaultSecondaryHost = 'server-backup.globalquake.net';
   static const defaultPort = 38000;
@@ -36,6 +39,7 @@ class GlobalQuakeService extends BaseSourceService {
 
   final _stateController = StreamController<void>.broadcast();
   final _decoder = _JavaObjectStreamDecoder();
+  final _firstReportMagnitudeFilter = GlobalQuakeFirstReportMagnitudeFilter();
 
   Socket? _socket;
   StreamSubscription<Uint8List>? _socketSub;
@@ -75,6 +79,8 @@ class GlobalQuakeService extends BaseSourceService {
   int get secondaryPort => _secondaryPort;
   String get activeHost => _endpoints[_endpointIndex % _endpoints.length].host;
   int get activePort => _endpoints[_endpointIndex % _endpoints.length].port;
+  double get firstReportMagnitudeThreshold =>
+      _firstReportMagnitudeFilter.threshold;
 
   List<_GlobalQuakeEndpoint> get _endpoints {
     final primary = _GlobalQuakeEndpoint(_primaryHost, _primaryPort);
@@ -98,6 +104,11 @@ class GlobalQuakeService extends BaseSourceService {
     if (_enabled) {
       unawaited(_reconnectNow());
     }
+  }
+
+  void configureFirstReportMagnitudeFilter(double threshold) {
+    _firstReportMagnitudeFilter.configure(threshold);
+    _notifyState();
   }
 
   @override
@@ -202,9 +213,24 @@ class GlobalQuakeService extends BaseSourceService {
     final lon = _asDouble(data.fields['lon']);
     final depth = _asDouble(data.fields['depth']) ?? -1;
     final magnitude = _asDouble(data.fields['magnitude']) ?? -1;
+    final filterDecision = _firstReportMagnitudeFilter.evaluate(
+      eventId: eventId,
+      magnitude: magnitude,
+    );
+    if (filterDecision.isFirstReceivedReport &&
+        _firstReportMagnitudeFilter.threshold > 0) {
+      _lastLog = filterDecision.allowed
+          ? 'GQ first report accepted: $eventId M${magnitude.toStringAsFixed(1)}'
+          : 'GQ first report filtered: $eventId M${magnitude.toStringAsFixed(1)}';
+      _notifyState();
+    }
+    if (!filterDecision.allowed) return null;
     final region = data.fields['region']?.toString().trim();
-    final originTime = _fromEpochMs(data.fields['origin']);
-    final reportTime = _fromEpochMs(data.fields['lastUpdate']);
+    final originInstant = _fromEpochMs(data.fields['origin']);
+    final reportInstant = _fromEpochMs(data.fields['lastUpdate']);
+    final timeZone = DateTime.now().timeZoneOffset.inMinutes ~/ 60;
+    final originTime = originInstant?.toLocal();
+    final reportTime = reportInstant?.toLocal();
     final quality = _qualitySummary(packet.fields['advancedHypocenterData']);
     final hypocenter = _localizedRegion(lat, lon, region);
     final maxIntensity = IntensityCalculator.calcCsisLevel(magnitude, depth, 0);
@@ -218,6 +244,7 @@ class GlobalQuakeService extends BaseSourceService {
       depth: depth,
       originTime: originTime ?? DateTime.now(),
       reportTime: reportTime,
+      timeZone: timeZone,
       infoTypeName: 'GlobalQuake 地震预警',
       reviewType: quality,
       isInfoEvent: false,
@@ -232,7 +259,7 @@ class GlobalQuakeService extends BaseSourceService {
       origin: 3,
       eventId: eventId,
       isEew: true,
-      timeZone: 8,
+      timeZone: timeZone,
       titleText: 'GlobalQuake 地震预警',
       reportNumText: '第$revision报',
       useShindo: false,
@@ -388,21 +415,9 @@ class GlobalQuakeService extends BaseSourceService {
   DateTime? _fromEpochMs(dynamic value) {
     final ms = _asInt(value);
     if (ms == null || ms <= 0) return null;
-    // The app's QuakeTime helpers treat source times as UTC+8 wall-clock values.
-    final beijingClock = DateTime.fromMillisecondsSinceEpoch(
-      ms,
-      isUtc: true,
-    ).add(const Duration(hours: 8));
-    return DateTime(
-      beijingClock.year,
-      beijingClock.month,
-      beijingClock.day,
-      beijingClock.hour,
-      beijingClock.minute,
-      beijingClock.second,
-      beijingClock.millisecond,
-      beijingClock.microsecond,
-    );
+    // GlobalQuake sends epoch milliseconds, which already identify an
+    // absolute instant. Keep it UTC until the event is localized for display.
+    return DateTime.fromMillisecondsSinceEpoch(ms, isUtc: true);
   }
 
   String _classNameForIntensity(int intensity) {

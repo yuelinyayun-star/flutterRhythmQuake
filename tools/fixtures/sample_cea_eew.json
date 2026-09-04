@@ -1,0 +1,14 @@
+{
+  "source": "cea",
+  "eventId": "cea20260811223000",
+  "updates": 2,
+  "shockTime": "2026-08-11 22:30:00",
+  "createTime": "2026-08-11 22:30:08",
+  "placeName": "四川雅安市附近",
+  "location": "四川雅安市附近",
+  "magnitude": 5.6,
+  "depth": 12,
+  "latitude": 30.12,
+  "longitude": 103.05,
+  "epiIntensity": 7.2
+}
