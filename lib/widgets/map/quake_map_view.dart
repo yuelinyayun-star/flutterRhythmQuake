@@ -48,6 +48,9 @@ import 'fan_radar_layer.dart';
 import 'jma_radar_layer.dart';
 import 'fan_satellite_cloud_layer.dart';
 import 'weather_station_map_layer.dart';
+import 'weather_alert_map_layer.dart';
+import '../../models/weather_alert_map_item.dart';
+import '../../services/sources/china_weather_alert_map_service.dart';
 import 'eew_wave_camera_follow_gate.dart';
 import 'cenc_ir_focus.dart';
 import 'jma_info_focus.dart';
@@ -330,6 +333,11 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   String _kmaSource = 'pews';
   String _snetSource = 'msil';
 
+  /// 当前地图上选中的气象预警条目（驱动 WeatherAlertMapLayer 弹窗）
+  WeatherAlertMapItem? _selectedWeatherAlert;
+  DateTime? _popupClosedAt;
+
+
   /// KMA 监测服务实例
 
   final KmaMonitorService _kmaService = KmaMonitorService();
@@ -571,16 +579,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   final AllowAnyCertTileProvider _tileProvider = AllowAnyCertTileProvider();
   final StreamController<void> _tileResetController =
       StreamController<void>.broadcast();
-  Timer? _tileRetryTimer;
-  Timer? _tileRetryBackoffResetTimer;
-  int _tileRetryAttempt = 0;
-  static const List<Duration> _tileRetryDelays = [
-    Duration(seconds: 2),
-    Duration(seconds: 5),
-    Duration(seconds: 10),
-    Duration(seconds: 20),
-    Duration(seconds: 30),
-  ];
 
   void _handleTileLoadError(
     TileImage tile,
@@ -590,17 +588,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     // 瓦片底层 RetryClient 已在 HTTP 层面进行 3 次重试。
     // 避免在此处调用全局 _tileResetController.add(null) 导致全图重置风暴（销毁所有已加载瓦片）。
     debugPrint('[MapTile] tile load error (${tile.coordinates}): $error');
-  }
-
-  bool _isRetryableTileError(Object error) {
-    if (error is! NetworkImageLoadException) return true;
-    final statusCode = error.statusCode;
-    return statusCode == 408 ||
-        statusCode == 429 ||
-        statusCode == 500 ||
-        statusCode == 502 ||
-        statusCode == 503 ||
-        statusCode == 504;
   }
 
   bool get _showNiedEstimatedEpicenter =>
@@ -1076,7 +1063,17 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     QuakeMapView.whewsSnetEnabledNotifier.value = _whewsSnetEnabled;
     QuakeMapView.whewsKmaEnabledNotifier.value = _whewsKmaEnabled;
     _resumeMapDataServices();
-    _initNiedFromImage();
+    // _initNiedFromImage() 已纳入 T1 阶梯（700ms 后异步执行），避免在启动首帧与地图瓦片争抢网络与计算
+  }
+
+  Timer? _staggeredStartupTimerT1;
+  Timer? _staggeredStartupTimerT2;
+
+  void _cancelStaggeredStartupTimers() {
+    _staggeredStartupTimerT1?.cancel();
+    _staggeredStartupTimerT1 = null;
+    _staggeredStartupTimerT2?.cancel();
+    _staggeredStartupTimerT2 = null;
   }
 
   /// 后台状态变化回调
@@ -1091,6 +1088,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
 
   /// 进入后台时暂停地图/测站等高功耗数据源
   void _pauseMapDataServices() {
+    _cancelStaggeredStartupTimers();
     if (_backgroundPaused) return;
     _backgroundPaused = true;
     _kmaService.disconnect();
@@ -1113,24 +1111,38 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _whewsKmaService.stop();
   }
 
-  /// 回到前台时根据当前设置恢复地图/测站数据源
+  /// 回到前台或启动时根据当前设置阶梯化恢复地图/测站数据源（Staggered Loading，彻底消除启动峰值）
   void _resumeMapDataServices() {
     if (!_backgroundPaused) return;
     _backgroundPaused = false;
     if (!mounted) return;
-    _syncLiveWeatherTileRefresh();
-    _syncVolcanoMapServiceWithOverlay();
-    _syncFanRadarServiceWithOverlay();
-    _syncJmaRadarServiceWithOverlay();
-    _syncFanSatelliteCloudServiceWithOverlay();
+    _cancelStaggeredStartupTimers();
+
+    // 【T0 首屏：0ms】立即接入核心活跃地震测站（NIED, S-net, KMA, CWA），无卡顿
     _syncNiedMonitorService();
-    _syncLpgmMonitorService();
     _syncSnetService();
     _syncKmaPewsService();
-    _syncPAlertService();
     _syncTremStationService();
-    _syncWolfxSeisJsService();
-    _syncFdsnServicesWithOverlay();
+
+    // 【T1 核心测站网络接入：700ms】在首屏完全稳定就绪后，接入 NIED 图像切片解析与次级测站
+    _staggeredStartupTimerT1 = Timer(const Duration(milliseconds: 700), () {
+      if (!mounted || _backgroundPaused) return;
+      _initNiedFromImage();
+      _syncLpgmMonitorService();
+      _syncPAlertService();
+      _syncWolfxSeisJsService();
+    });
+
+    // 【T2 重型气象与辅助环境数据：1800ms】平滑接入雷达、云图、火山与天气切片
+    _staggeredStartupTimerT2 = Timer(const Duration(milliseconds: 1800), () {
+      if (!mounted || _backgroundPaused) return;
+      _syncVolcanoMapServiceWithOverlay();
+      _syncFanRadarServiceWithOverlay();
+      _syncJmaRadarServiceWithOverlay();
+      _syncFanSatelliteCloudServiceWithOverlay();
+      _syncLiveWeatherTileRefresh();
+      _syncFdsnServicesWithOverlay();
+    });
   }
 
   void _onTremStationEnabledChanged() {
@@ -2137,6 +2149,43 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       },
     );
   }
+
+  Widget _buildWeatherAlertMapLayer() {
+    return Selector<MapStateProvider, bool>(
+      selector: (context, mapState) =>
+          mapState.isOverlayEnabled('weatherAlertLayer'),
+      builder: (context, enabled, child) {
+        if (!enabled) {
+          // 图层关闭时清除选中状态
+          ChinaWeatherAlertMapService().stop();
+          if (_selectedWeatherAlert != null) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) setState(() => _selectedWeatherAlert = null);
+            });
+          }
+          return const SizedBox.shrink();
+        }
+        if (!ChinaWeatherAlertMapService().isRunning) {
+          ChinaWeatherAlertMapService().start();
+        }
+        return ValueListenableBuilder<List<WeatherAlertMapItem>>(
+          valueListenable: ChinaWeatherAlertMapService.alertItemsNotifier,
+          builder: (context, alerts, child) {
+            if (alerts.isEmpty) return const SizedBox.shrink();
+            return WeatherAlertMapLayer(
+              alerts: alerts,
+              selectedAlert: _selectedWeatherAlert,
+              onDismiss: () {
+                _popupClosedAt = DateTime.now();
+                setState(() => _selectedWeatherAlert = null);
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
 
   Widget _buildNiedStationLayer() {
     return ValueListenableBuilder<int>(
@@ -5182,8 +5231,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _jmaRadarLayerRevision.dispose();
     _fanSatelliteCloudLayerRevision.dispose();
     _blinkNotifier.dispose();
-    _tileRetryTimer?.cancel();
-    _tileRetryBackoffResetTimer?.cancel();
+    _cancelStaggeredStartupTimers();
     _tileResetController.close();
     if (BackgroundService().isBackgroundHandlingEnabled) {
       BackgroundService().removeStateListener(_onBackgroundStateChanged);
@@ -5240,7 +5288,47 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                           ),
                         ),
                         onMapEvent: _handleMapEvent,
+                        onTap: (tapPosition, latLng) {
+                          // 0. 关闭防穿透：刚点击关闭按钮 350ms 内忽略地图穿透事件
+                          if (_popupClosedAt != null &&
+                              DateTime.now().difference(_popupClosedAt!).inMilliseconds < 350) {
+                            return;
+                          }
+
+                          // 气象预警图层点击命中测试
+                          // 必须从 MapOptions.onTap 处理，避免 FlutterMap 手势竞技场抢占
+                          final mapState = context.read<MapStateProvider>();
+                          if (!mapState.isOverlayEnabled('weatherAlertLayer')) return;
+                          final alerts = ChinaWeatherAlertMapService.alertItemsNotifier.value;
+                          if (alerts.isEmpty) return;
+                          final camera = widget.mapController.camera;
+                          final offset = tapPosition.relative ?? Offset.zero;
+
+                          // 检查是否点击在当前打开的弹窗卡片矩形区域内
+                          final cardRect = WeatherAlertMapLayer.getPopupCardRect(
+                            _selectedWeatherAlert,
+                            camera,
+                          );
+                          if (cardRect != null && cardRect.inflate(4.0).contains(offset)) {
+                            return; // 弹窗卡片内点击直接拦截
+                          }
+
+                          final hit = WeatherAlertMapLayer.hitTest(
+                            alerts,
+                            camera,
+                            offset,
+                            selectedAlert: _selectedWeatherAlert,
+                          );
+                          if (hit != null) {
+                            if (hit.id != _selectedWeatherAlert?.id) {
+                              setState(() => _selectedWeatherAlert = hit);
+                            }
+                          } else if (_selectedWeatherAlert != null) {
+                            setState(() => _selectedWeatherAlert = null);
+                          }
+                        },
                       ),
+
                       children: [
                         TileLayer(
                           urlTemplate: tileState.tileUrl,
@@ -5699,6 +5787,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                             );
                           },
                         ),
+                        _buildWeatherAlertMapLayer(),
                       ],
                     ),
                   ),

@@ -38,10 +38,6 @@ class HistoryMarkerLayer extends StatelessWidget {
     return Builder(
       builder: (innerContext) {
         final camera = MapCamera.of(innerContext);
-        final centerLatLng = WorldWrap.latLngClosestToCamera(
-          LatLng(event!.latitude, event!.longitude),
-          camera,
-        );
         return Stack(
           children: [
             CustomPaint(
@@ -167,9 +163,12 @@ class HistoryCrossPainter extends CustomPainter {
   /// 在震中上方显示震级信息
   void _drawLabel(Canvas canvas, Offset center) {
     final title = infoTypeName?.trim() ?? '';
+    final isForeignVolcano = title.contains('遠地噴火');
     final isForeign = title.contains('遠地地震') || title.contains('海外');
     String label;
-    if (isForeign) {
+    if (isForeignVolcano) {
+      label = '遠地噴火に関する情報';
+    } else if (isForeign) {
       label = '遠地地震に関する情報';
     } else if (magnitude < 0) {
       label = '規模 調査中';

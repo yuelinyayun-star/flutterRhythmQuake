@@ -8,6 +8,59 @@ import 'package:flutterrhythmquake/widgets/ui/alert_module.dart';
 import 'package:provider/provider.dart';
 
 void main() {
+  for (final size in [const Size(900, 500), const Size(390, 844)]) {
+    testWidgets('foreign eruption badge reuses volcano artwork at $size', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(size);
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final now = DateTime.now();
+      final provider = QuakeProvider();
+      final mapState = MapStateProvider()..setShowEstimatedEpicenter(false);
+      final event = UnifiedQuakeData(
+        source: 'jmaEqlist',
+        origin: 2,
+        eventId: 'foreign_eruption_badge',
+        isEew: false,
+        timeZone: 9,
+        titleText: '遠地噴火に関する情報',
+        reportNumText: '',
+        useShindo: true,
+        maxIntensity: '不明',
+        className: 'gray',
+        hypocenter: 'カムチャツカ半島',
+        originTime: now,
+        reportTime: now,
+        arrivedAt: now,
+      );
+      provider.handleUnifiedEventForTest(event);
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider<QuakeProvider>.value(value: provider),
+            ChangeNotifierProvider<MapStateProvider>.value(value: mapState),
+          ],
+          child: const MaterialApp(home: Scaffold(body: AlertModule())),
+        ),
+      );
+      await tester.pump();
+      final image = tester.widget<Image>(
+        find.byKey(const ValueKey('volcano_badge_icon')),
+      );
+      expect(
+        (image.image as AssetImage).assetName,
+        'assets/images/volcano/vol.png',
+      );
+      expect(find.text('噴火'), findsOneWidget);
+      expect(event.volcanoEvent, isNull);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      provider.dispose();
+      mapState.dispose();
+      await tester.pump();
+    });
+  }
+
   testWidgets('compact volcano card reuses the map icon without overflow', (
     tester,
   ) async {

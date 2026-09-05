@@ -121,14 +121,22 @@ class UnifiedEventPresentation {
         ? event.maxIntensity
         : unifiedRomanIntensityLabel(event.maxIntensity);
 
+    final isForeignVolcano = event.titleText.contains('遠地噴火');
+    final intensityLabel = isForeignVolcano
+        ? '噴火'
+        : (event.useShindo ? '震度' : '烈度');
+    final displayIntensityValue = isForeignVolcano && (intensityValue == '不明' || intensityValue == '-')
+        ? '噴火'
+        : intensityValue;
+
     return UnifiedEventPresentation(
       title: title,
       primaryText: primaryText,
       secondaryText: secondaryText,
       compactSecondaryText: secondaryText,
       timeText: timeText,
-      intensityLabel: event.useShindo ? '震度' : '烈度',
-      intensityValue: intensityValue,
+      intensityLabel: intensityLabel,
+      intensityValue: displayIntensityValue,
       apiTypeLabel: event.apiTypeLabel,
     );
   }

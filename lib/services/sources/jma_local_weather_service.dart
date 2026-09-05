@@ -479,7 +479,6 @@ String? jmaForecastSummaryFromOverview(Map<String, dynamic> raw) {
   return lines.length <= 2 ? lines.join(' ') : lines[1];
 }
 
-@visibleForTesting
 WeatherAlarm? jmaBestWeatherAlarmForDisplay(
   JmaLocalWeatherObservation? observation,
 ) {

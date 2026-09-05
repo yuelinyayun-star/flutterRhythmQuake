@@ -20,7 +20,7 @@ class AllowAnyCertTileProvider extends NetworkTileProvider {
         true)
     ..connectionTimeout = const Duration(seconds: 10)
     ..idleTimeout = const Duration(seconds: 15)
-    ..maxConnectionsPerHost = 28;
+    ..maxConnectionsPerHost = 8;
 
   static final Client _client = RetryClient(
     IOClient(_httpClient),

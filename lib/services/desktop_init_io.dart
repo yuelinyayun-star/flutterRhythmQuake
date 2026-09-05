@@ -12,17 +12,20 @@ void initDesktopDatabase() {
 }
 
 /// 桌面端窗口初始化（仅 Windows）
-void initDesktopWindow() {
+Future<void> initDesktopWindow() async {
   if (Platform.isWindows) {
-    windowManager.ensureInitialized();
+    await windowManager.ensureInitialized();
     const windowOptions = WindowOptions(
       size: Size(1280, 720),
       center: true,
       title: "RhythmQuake",
     );
-    windowManager.waitUntilReadyToShow(windowOptions, () async {
+    await windowManager.waitUntilReadyToShow(windowOptions, () async {
       await windowManager.show();
       await windowManager.focus();
     });
+    // 确保时序错失时也能可靠显示窗口
+    await windowManager.show();
+    await windowManager.focus();
   }
 }

@@ -91,6 +91,7 @@ class _SettingsPageState extends State<SettingsPage>
   bool _overlayJmaVolcano = false;
   bool _overlayTyphoon = false;
   bool _overlayWeatherStation = false;
+  bool _overlayWeatherAlert = false;
   String _weatherStationMode = 'auto';
   bool _overlayFdsnEarthScope = false;
   bool _overlayFdsnGeofon = false;
@@ -153,6 +154,8 @@ class _SettingsPageState extends State<SettingsPage>
   static const String _overlayTyphoonKey = 'map_overlay_typhoonLayer';
   static const String _overlayWeatherStationKey =
       'map_overlay_weatherStationLayer';
+  static const String _overlayWeatherAlertKey =
+      'map_overlay_weatherAlertLayer';
   static const String _weatherStationModeKey = 'map_overlay_weatherStationMode';
   static const String _overlayFdsnEarthScopeKey = 'map_overlay_fdsnEarthScope';
   static const String _overlayFdsnGeofonKey = 'map_overlay_fdsnGeofon';
@@ -489,6 +492,8 @@ class _SettingsPageState extends State<SettingsPage>
       _overlayTyphoon = prefs.getBool(_overlayTyphoonKey) ?? false;
       _overlayWeatherStation =
           prefs.getBool(_overlayWeatherStationKey) ?? false;
+      _overlayWeatherAlert =
+          prefs.getBool(_overlayWeatherAlertKey) ?? true;
       _weatherStationMode =
           prefs.getString(_weatherStationModeKey) ?? 'auto';
       _overlayFdsnEarthScope =
@@ -604,6 +609,7 @@ class _SettingsPageState extends State<SettingsPage>
     mapState.setOverlayEnabled('volcanoLayer', _overlayJmaVolcano);
     mapState.setOverlayEnabled('typhoonLayer', _overlayTyphoon);
     mapState.setOverlayEnabled('weatherStationLayer', _overlayWeatherStation);
+    mapState.setOverlayEnabled('weatherAlertLayer', _overlayWeatherAlert);
     mapState.setWeatherStationMode(_weatherStationMode);
     mapState.setOverlayEnabled('fdsnEarthScope', _overlayFdsnEarthScope);
     mapState.setOverlayEnabled('fdsnGeofon', _overlayFdsnGeofon);
@@ -2215,6 +2221,8 @@ class _SettingsPageState extends State<SettingsPage>
                 const _SettingsDivider(),
                 _buildWeatherStationModeSelector(),
               ],
+              const _SettingsDivider(),
+              _buildWeatherAlertMapLayerSwitch(),
             ],
           ),
         ];
@@ -4000,6 +4008,32 @@ class _SettingsPageState extends State<SettingsPage>
           });
           context.read<MapStateProvider>().setWeatherStationMode(val);
         },
+      ),
+    );
+  }
+
+  Widget _buildWeatherAlertMapLayerSwitch() {
+    return _buildSettingRow(
+      title: '气象灾害预警图层',
+      subtitle: '在地图上绘制全国突发气象灾害预警多边形区域与灾害等级色标',
+      leading: Icons.notifications_active_outlined,
+      control: Align(
+        alignment: Alignment.centerRight,
+        child: Switch(
+          value: _overlayWeatherAlert,
+          activeThumbColor: _accentColor,
+          activeTrackColor: _accentColor.withValues(alpha: 0.38),
+          inactiveThumbColor: Colors.white70,
+          inactiveTrackColor: Colors.white24,
+          onChanged: (val) {
+            setState(() => _overlayWeatherAlert = val);
+            _saveOverlayState(_overlayWeatherAlertKey, val);
+            context.read<MapStateProvider>().setOverlayEnabled(
+              'weatherAlertLayer',
+              val,
+            );
+          },
+        ),
       ),
     );
   }

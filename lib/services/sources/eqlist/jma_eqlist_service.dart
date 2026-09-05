@@ -139,10 +139,10 @@ class JmaEqlistService {
 
       final int maxScale =
           int.tryParse(earthquake['maxScale']?.toString() ?? '') ?? 0;
-      final String? jmaShindo = _scaleToShindo(maxScale);
+      final String? jmaShindo = _scaleToShindo(maxScale) ?? (issueType == 'Foreign' ? '不明' : null);
       if (jmaShindo == null) return null;
 
-      final String title = _getIssueTitle(issueType);
+      final String title = _getIssueTitle(issueType, item);
 
       return QuakeMessage(
         source: QuakeSourceType.wolfx,
@@ -166,7 +166,21 @@ class JmaEqlistService {
   }
 
   /// 获取情报类型标题
-  String _getIssueTitle(String type) {
+  String _getIssueTitle(String type, [Map<String, dynamic>? item]) {
+    if (type == 'Foreign') {
+      final comments = item?['comments'];
+      final commentText = comments is Map
+          ? '${comments['freeFormComment'] ?? ''} ${comments['forecast'] ?? ''}'
+          : '';
+      final eq = item?['earthquake'];
+      final eqComment = eq is Map ? '${eq['freeFormComment'] ?? ''}' : '';
+      final fullText = '$commentText $eqComment';
+      if (fullText.contains('大規模な噴火') ||
+          (fullText.contains('噴火') && (fullText.contains('火山') || fullText.contains('VAAC')))) {
+        return '遠地噴火に関する情報';
+      }
+      return '遠地地震に関する情報';
+    }
     switch (type) {
       case 'ScalePrompt':
         return '震度速報';

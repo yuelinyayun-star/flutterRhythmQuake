@@ -350,7 +350,6 @@ List<CmaWeatherAlarm> cmaAlarmsFromRaw(Object? raw) {
   return List<CmaWeatherAlarm>.unmodifiable(alarms);
 }
 
-@visibleForTesting
 WeatherAlarm? cmaBestWeatherAlarmForDisplay(
   CmaLocalWeatherObservation? observation,
 ) {

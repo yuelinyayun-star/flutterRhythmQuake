@@ -33,6 +33,7 @@
 ///   print('${update.sourceName}: ${update.status}');
 /// });
 /// ```
+library;
 
 import 'dart:async';
 import 'base_source.dart';
@@ -197,14 +198,25 @@ class SourceManager {
   /// 1. 调用数据源的 connect() 方法建立连接
   /// 2. 订阅数据源的 onEvent 流接收消息
   /// 3. 消息经过去重后发布到事件总线
-  void startAll() {
+  /// 4. 采用 80ms 错峰握手，避免 6 个 WSS/TLS 连接同时发起造成 CPU 瞬时飙升
+  void startAll({Duration stagger = const Duration(milliseconds: 80)}) {
     if (_started) return;
     _started = true;
+    var delayIndex = 0;
     for (var source in _sources) {
-      if (source.autoStart && isSourceEnabled(source.name)) {
-        source.connect();
-      }
       _sourceSubscriptions.add(source.onEvent.listen(_handleIncomingEvent));
+      if (source.autoStart && isSourceEnabled(source.name)) {
+        if (delayIndex == 0 || stagger == Duration.zero) {
+          source.connect();
+        } else {
+          final delayMs = delayIndex * stagger.inMilliseconds;
+          Timer(Duration(milliseconds: delayMs), () {
+            if (!_started || !isSourceEnabled(source.name)) return;
+            source.connect();
+          });
+        }
+        delayIndex++;
+      }
     }
   }
 

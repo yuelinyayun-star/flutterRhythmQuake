@@ -550,11 +550,14 @@ class WavePainter extends CustomPainter {
   void _drawEpicenterLabel(Canvas canvas, Offset center) {
     String label;
     final title = event.infoTypeName?.trim() ?? '';
+    final isForeignVolcano = title.contains('遠地噴火');
     final isForeign = title.contains('遠地地震') || title.contains('海外');
     if (event.isCanceled) {
       label = '已取消';
     } else if (event.isAssumption) {
       label = '假定震源';
+    } else if (isForeignVolcano) {
+      label = '遠地噴火に関する情報';
     } else if (isForeign) {
       label = '遠地地震に関する情報';
     } else if (event.magnitude < 0) {

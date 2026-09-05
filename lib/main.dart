@@ -9,7 +9,6 @@ import 'package:flutter/foundation.dart'
         kIsWeb,
         kReleaseMode;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -41,6 +40,7 @@ import 'services/sources/mock_input_service.dart';
 import 'services/sources/global_quake_service.dart';
 import 'services/sources/fdsn_motion_service.dart';
 import 'services/debug/local_inject_server.dart';
+import 'services/sources/china_weather_alert_map_service.dart';
 import 'widgets/map/quake_map_view.dart';
 import 'widgets/ui/ui_runtime_flags.dart';
 
@@ -65,14 +65,6 @@ bool get _isMobilePlatform =>
 
 const String _fanZxyCacheMigrationKey = 'fan_zxy_tile_cache_cleared_20260822';
 
-Future<void> _preferInitialMobileLandscape() async {
-  if (!_isMobilePlatform) return;
-  await SystemChrome.setPreferredOrientations(const [
-    DeviceOrientation.landscapeLeft,
-    DeviceOrientation.landscapeRight,
-  ]);
-}
-
 void _configureImageCache() {
   final cache = PaintingBinding.instance.imageCache;
   if (_isMobilePlatform) {
@@ -94,13 +86,6 @@ Future<void> _clearLegacyFanTileCacheOnce(SharedPreferences prefs) async {
   await prefs.setBool(_fanZxyCacheMigrationKey, true);
 }
 
-void _releaseMobileOrientationAfterFirstFrame() {
-  if (!_isMobilePlatform) return;
-  WidgetsBinding.instance.addPostFrameCallback((_) {
-    SystemChrome.setPreferredOrientations(DeviceOrientation.values);
-  });
-}
-
 void _startDeferredServices(
   SharedPreferences prefs,
   GlobalQuakeService globalQuake,
@@ -115,15 +100,6 @@ void _startDeferredServices(
         unawaited(LocationService().requestCurrentPosition());
       }
 
-      if (!kIsWeb) {
-        try {
-          await DatabaseHelper().database;
-          unawaited(DatabaseHelper().cleanOldData());
-        } catch (e) {
-          debugPrint('Deferred database init failed: $e');
-        }
-      }
-
       // Epicenter bins + travel times load on first use (see getFEName /
       // TravelTimeService.ensureLoaded) to keep steady-state RAM lower.
       if (!BackgroundService().isAndroidConnectionHostedByForegroundService) {
@@ -133,6 +109,23 @@ void _startDeferredServices(
       if (!BackgroundService().isAndroidConnectionHostedByForegroundService &&
           (prefs.getBool(GlobalQuakeService.enabledPreferenceKey) ?? false)) {
         globalQuake.connect();
+      }
+
+      // NTP 网络对时与本地注入服务延迟 2 秒后台启动，彻底释放冷启动 CPU
+      Timer(const Duration(seconds: 2), () {
+        NtpService().startPeriodicSync();
+        unawaited(LocalInjectServer.startIfEnabled(prefs: prefs));
+      });
+
+      if (!kIsWeb) {
+        try {
+          await DatabaseHelper().database;
+          Timer(const Duration(seconds: 4), () {
+            unawaited(DatabaseHelper().cleanOldData());
+          });
+        } catch (e) {
+          debugPrint('Deferred database init failed: $e');
+        }
       }
     }());
   });
@@ -278,15 +271,8 @@ void main() async {
   // 1. 桌面端数据库初始化（Web 自动跳过——条件导入走 stub）
   initDesktopDatabase();
 
-  // 2. 基础服务初始化
+  // 2. 基础服务初始化（已在 _startDeferredServices 延迟异步启动）
   if (!kIsWeb) {}
-
-  // 启动 NTP 同步
-  NtpService().startPeriodicSync();
-
-  // 加载走时表
-
-  // 初始化位置服务
 
   // 2.5 加载持久化设置
   final prefs = await SharedPreferences.getInstance();
@@ -377,7 +363,6 @@ void main() async {
   SourceManager().registerSource(p2p);
   SourceManager().registerSource(mock);
   SourceManager().registerSource(globalQuake);
-  unawaited(LocalInjectServer.startIfEnabled(prefs: prefs));
   SourceManager().setSourceEnabled(
     'FAN',
     prefs.getBool('api_source_fan_enabled') ?? true,
@@ -395,7 +380,7 @@ void main() async {
   _startDeferredServices(prefs, globalQuake, whews, whewsCredentials);
 
   // 4. 桌面端窗口初始化（Web 自动跳过）
-  initDesktopWindow();
+  await initDesktopWindow();
 
   final notificationSettings = NotificationSettingsProvider();
   await notificationSettings.load(prefs);
@@ -493,6 +478,12 @@ MapStateProvider _createMapStateProvider(
     'weatherStationLayer',
     prefs.getBool('map_overlay_weatherStationLayer') ?? false,
   );
+  final weatherAlertEnabled =
+      prefs.getBool('map_overlay_weatherAlertLayer') ?? true;
+  provider.setOverlayEnabled('weatherAlertLayer', weatherAlertEnabled);
+  if (weatherAlertEnabled) {
+    ChinaWeatherAlertMapService().start();
+  }
   provider.setWeatherStationMode(
     prefs.getString('map_overlay_weatherStationMode') ?? 'auto',
   );

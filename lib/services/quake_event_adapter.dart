@@ -1255,7 +1255,12 @@ class QuakeEventAdapter {
     final shindo = data['shindo'] as String?;
     final useShindo = true;
     var title = '${data['Title'] ?? '地震情報'}';
-    if (title == '遠地地震情報' || title == '遠地地震') {
+    final isVolcanoWolfx = _isForeignVolcanoEruption(data['Title']) ||
+        _isForeignVolcanoEruption(data['Comments']) ||
+        _isForeignVolcanoEruption(data['location']);
+    if (isVolcanoWolfx) {
+      title = '遠地噴火に関する情報';
+    } else if (title == '遠地地震情報' || title == '遠地地震') {
       title = '遠地地震に関する情報';
     }
     final depthRaw =
@@ -1350,7 +1355,7 @@ class QuakeEventAdapter {
       eventId: eventId,
       isEew: false,
       timeZone: 9,
-      titleText: _p2pTitleText(issueType),
+      titleText: _p2pTitleText(issueType, data),
       reportNumText: '',
       useShindo: useShindo,
       maxIntensity: _normalizeJmaShindo(maxIntensityStr),
@@ -1426,7 +1431,28 @@ class QuakeEventAdapter {
     return _p2pScaleToShindo(maxScale);
   }
 
-  static String _p2pTitleText(String issueType) {
+  static bool _isForeignVolcanoEruption(dynamic text) {
+    if (text == null) return false;
+    final s = text.toString();
+    if (s.isEmpty) return false;
+    return s.contains('大規模な噴火') ||
+        (s.contains('噴火') && (s.contains('火山') || s.contains('VAAC')));
+  }
+
+  static String _p2pTitleText(String issueType, [Map<String, dynamic>? data]) {
+    if (issueType == 'Foreign') {
+      final comments = data?['comments'];
+      final commentText = comments is Map
+          ? '${comments['freeFormComment'] ?? ''} ${comments['forecast'] ?? ''}'
+          : '';
+      final eq = data?['earthquake'];
+      final eqComment = eq is Map ? '${eq['freeFormComment'] ?? ''}' : '';
+      if (_isForeignVolcanoEruption(commentText) ||
+          _isForeignVolcanoEruption(eqComment)) {
+        return '遠地噴火に関する情報';
+      }
+      return '遠地地震に関する情報';
+    }
     switch (issueType) {
       case 'ScalePrompt':
         return '震度速報';

@@ -1027,6 +1027,9 @@ class _AlertModuleState extends State<AlertModule> {
     if (event.isVolcanoEvent) {
       return _buildVolcanoBadge(event, color);
     }
+    if (!event.isEew && event.titleText.contains('遠地噴火')) {
+      return _buildVolcanoBadge(event, color, label: '噴火');
+    }
     if (event.isJmaLpgm) {
       return _buildUnifiedListStyleBadge(
         color: color,
@@ -1045,7 +1048,11 @@ class _AlertModuleState extends State<AlertModule> {
     );
   }
 
-  Widget _buildVolcanoBadge(UnifiedQuakeData event, Color color) {
+  Widget _buildVolcanoBadge(
+    UnifiedQuakeData event,
+    Color color, {
+    String label = '火山',
+  }) {
     final volcano = event.volcanoEvent;
     final iconAsset = volcano == null
         ? VolcanoIconAssets.generic
@@ -1075,7 +1082,7 @@ class _AlertModuleState extends State<AlertModule> {
             ),
           ),
           Text(
-            '火山',
+            label,
             style: TextStyle(
               fontSize: _s(10.5, context),
               color: color.withValues(alpha: 0.7),
