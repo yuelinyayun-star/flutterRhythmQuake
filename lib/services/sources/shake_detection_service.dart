@@ -10,6 +10,7 @@ import 'jp_shindo_scale.dart';
 import 'nied_background_worker.dart';
 import 'nied_detection_rules.dart';
 import 'nied_monitor.dart';
+import 'shake_alert_gate.dart';
 
 enum ShakeDetectStage { idle, weak, detected, strong }
 
@@ -102,6 +103,7 @@ class ShakeDetectionService {
 
   int _sensitivity = 2;
   int _prevMaxShindo = -1;
+  final _alertGate = ShakeAlertGate();
   String _lastStationSignature = '';
   String _lastSnapshotKey = '';
   bool _shake1Notified = false;
@@ -146,6 +148,7 @@ class ShakeDetectionService {
     _gridCells.clear();
     _gridDecimal = const [0.0, 0.0];
     _prevMaxShindo = -1;
+    _alertGate.reset();
     _lastSnapshotKey = '';
     _shake1Notified = false;
     _shake2Notified = false;
@@ -191,6 +194,7 @@ class ShakeDetectionService {
   }
 
   void setStations(List<NiedStation> stations, {bool background = false}) {
+    final previousStations = _stations;
     _stations = stations;
     _useBackgroundWorker =
         background && NiedBackgroundWorker.instance.supported;
@@ -208,16 +212,39 @@ class ShakeDetectionService {
       final signature = stations
           .map(
             (s) =>
-                '${s.id}:${s.code}:${s.coordinate.latitude.toStringAsFixed(3)},'
-                '${s.coordinate.longitude.toStringAsFixed(3)}',
+                '${s.id}:${s.code}:${s.coordinate.latitude},'
+                '${s.coordinate.longitude}:${s.pixelClusterId}',
           )
           .join('|');
-      _lastStationSignature = signature;
+      final sameLayout =
+          signature == _lastStationSignature &&
+          _configuredForBackground == _useBackgroundWorker;
       _configuredStationCount = stations.length;
       _configuredFirstStation = stations.isEmpty ? null : stations.first;
       _configuredMiddleStation = middleStation;
       _configuredLastStation = stations.isEmpty ? null : stations.last;
       _configuredForBackground = _useBackgroundWorker;
+      if (sameLayout && previousStations != null) {
+        for (var i = 0; i < stations.length; i++) {
+          if (identical(stations[i], previousStations[i])) continue;
+          stations[i].adoptDetectionHold(
+            previousStations[i],
+            _handleStationExpired,
+          );
+          stations[i].defaultExpireSeconds =
+              previousStations[i].defaultExpireSeconds;
+          stations[i].expireSeconds = previousStations[i].expireSeconds;
+        }
+        _startExpireCheck();
+        return;
+      }
+      _lastStationSignature = signature;
+      for (final station in previousStations ?? <NiedStation>[]) {
+        station.activeTimer?.cancel();
+        station.isActive = false;
+        station.detectState = 0;
+        station.detectReason = '';
+      }
       _backgroundExpireApplied = false;
       if (_useBackgroundWorker) {
         _backgroundDetectorInit = NiedBackgroundWorker.instance
@@ -242,6 +269,7 @@ class ShakeDetectionService {
       _gridCells.clear();
       _gridDecimal = const [0.0, 0.0];
       _prevMaxShindo = -1;
+      _alertGate.reset();
       _lastSnapshotKey = '';
       _shake1Notified = false;
       _shake2Notified = false;
@@ -748,7 +776,7 @@ class ShakeDetectionService {
     _refreshDetectionGrids();
     final currentMaxShindo = _currentMaxShindo();
 
-    if (currentMaxShindo > _prevMaxShindo) {
+    if (_alertGate.accept(currentMaxShindo)) {
       onShakeDetected?.call(currentMaxShindo);
 
       if (currentMaxShindo >= 1 && currentMaxShindo <= 3 && !_shake1Notified) {
@@ -766,10 +794,6 @@ class ShakeDetectionService {
       }
     } else if (currentMaxShindo == -1 && _prevMaxShindo >= 0) {
       onShakeExpired?.call();
-      _shake1Notified = false;
-      _shake2Notified = false;
-      _focused = false;
-    } else if (currentMaxShindo <= _prevMaxShindo) {
       _shake1Notified = false;
       _shake2Notified = false;
       _focused = false;

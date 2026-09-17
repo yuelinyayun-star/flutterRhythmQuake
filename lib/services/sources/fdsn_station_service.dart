@@ -86,7 +86,10 @@ class FdsnStationEndpoint {
 }
 
 class FdsnStationService {
-  FdsnStationService({required this.endpoint});
+  FdsnStationService({
+    required this.endpoint,
+    this.retryInterval = const Duration(seconds: 30),
+  });
 
   static final earthScope = FdsnStationService(
     endpoint: const FdsnStationEndpoint(
@@ -103,18 +106,52 @@ class FdsnStationService {
   );
 
   final FdsnStationEndpoint endpoint;
+  final Duration retryInterval;
   final _controller = StreamController<List<FdsnStation>>.broadcast();
 
   Stream<List<FdsnStation>> get stationStream => _controller.stream;
 
   List<FdsnStation> _stations = const [];
+  final _supplementalStations = <String, FdsnStation>{};
+  final _pendingSupplementalStations = <FdsnStation>[];
+  Timer? _supplementalPublishTimer;
+  Set<String> _stationCodes = {};
   List<FdsnStation> get stations => _stations;
+
+  // Coordinates come from the matched channel epoch at the official metadata
+  // owner. The displayed source remains the SeedLink relay selected by the user.
+  void acceptChannelStation(FdsnStation station) {
+    if (!_running ||
+        station.source != endpoint.name ||
+        _stationCodes.contains(station.code)) {
+      return;
+    }
+    _supplementalStations[station.code] = station;
+    _stationCodes.add(station.code);
+    _pendingSupplementalStations.add(station);
+    // Metadata arrives in bursts. Publish one immutable snapshot for the map
+    // and Android bridge, rather than copying/serializing the catalogue per station.
+    _supplementalPublishTimer ??= Timer(
+      const Duration(milliseconds: 100),
+      _publishSupplementalStations,
+    );
+  }
+
+  void _publishSupplementalStations({bool notify = true}) {
+    _supplementalPublishTimer?.cancel();
+    _supplementalPublishTimer = null;
+    if (_pendingSupplementalStations.isEmpty) return;
+    _stations = [..._stations, ..._pendingSupplementalStations];
+    _pendingSupplementalStations.clear();
+    if (notify && _running) _controller.add(_stations);
+  }
 
   bool _running = false;
   int _runGeneration = 0;
   int? _loadingGeneration;
   http.Client? _client;
   Timer? _refreshTimer;
+  Timer? _retryTimer;
 
   void Function(bool connected)? onStatusChanged;
 
@@ -158,7 +195,27 @@ class FdsnStationService {
         throw Exception('HTTP ${response.statusCode}');
       }
 
-      _stations = _parseStationText(utf8.decode(response.bodyBytes));
+      final stations = await compute(_parseStationText, (
+        utf8.decode(response.bodyBytes),
+        endpoint.name,
+      ));
+      if (!_isCurrentRun(generation) || !identical(client, _client)) return;
+      if (stations.isEmpty) {
+        throw const FormatException('Empty station catalogue');
+      }
+      _stationCodes = stations.map((s) => s.code).toSet();
+      _stations = [
+        ...stations,
+        ..._supplementalStations.values.where(
+          (s) => !_stationCodes.contains(s.code),
+        ),
+      ];
+      _stationCodes.addAll(_supplementalStations.keys);
+      _supplementalPublishTimer?.cancel();
+      _supplementalPublishTimer = null;
+      _pendingSupplementalStations.clear();
+      _retryTimer?.cancel();
+      _retryTimer = null;
       _controller.add(_stations);
       onStatusChanged?.call(true);
       debugPrint('FDSN ${endpoint.name}: ${_stations.length} stations loaded');
@@ -166,6 +223,11 @@ class FdsnStationService {
       if (!_isCurrentRun(generation) || !identical(client, _client)) return;
       debugPrint('FDSN ${endpoint.name}: station load failed: $e');
       onStatusChanged?.call(false);
+      _retryTimer?.cancel();
+      _retryTimer = Timer(retryInterval, () {
+        _retryTimer = null;
+        if (_isCurrentRun(generation)) unawaited(_refresh(generation));
+      });
     } finally {
       if (_loadingGeneration == generation) {
         _loadingGeneration = null;
@@ -174,10 +236,13 @@ class FdsnStationService {
   }
 
   void stop() {
+    _publishSupplementalStations(notify: false);
     _running = false;
     _runGeneration++;
     _refreshTimer?.cancel();
     _refreshTimer = null;
+    _retryTimer?.cancel();
+    _retryTimer = null;
     _loadingGeneration = null;
     _client?.close();
     _client = null;
@@ -198,12 +263,14 @@ class FdsnStationService {
       'level': 'station',
       'format': 'text',
       'nodata': '204',
+      'endafter': DateTime.now().toUtc().toIso8601String(),
       ...endpoint.query,
     };
     return base.replace(queryParameters: {...base.queryParameters, ...query});
   }
 
-  List<FdsnStation> _parseStationText(String text) {
+  static List<FdsnStation> _parseStationText((String, String) input) {
+    final (text, source) = input;
     final stations = <String, FdsnStation>{};
 
     for (final rawLine in const LineSplitter().convert(text)) {
@@ -229,9 +296,9 @@ class FdsnStationService {
         coordinate: LatLng(lat, lon),
         elevation: cols.length > 4 ? double.tryParse(cols[4].trim()) : null,
         siteName: cols.length > 5 ? cols[5].trim() : '',
-        startTime: cols.length > 6 ? DateTime.tryParse(cols[6].trim()) : null,
-        endTime: cols.length > 7 ? DateTime.tryParse(cols[7].trim()) : null,
-        source: endpoint.name,
+        startTime: cols.length > 6 ? _parseUtc(cols[6].trim()) : null,
+        endTime: cols.length > 7 ? _parseUtc(cols[7].trim()) : null,
+        source: source,
       );
       final existing = stations[parsed.code];
       if (existing == null || _isPreferredStation(parsed, existing)) {
@@ -242,7 +309,7 @@ class FdsnStationService {
     return stations.values.toList(growable: false);
   }
 
-  bool _isPreferredStation(FdsnStation candidate, FdsnStation current) {
+  static bool _isPreferredStation(FdsnStation candidate, FdsnStation current) {
     final now = DateTime.now().toUtc();
     final candidateActive =
         candidate.endTime == null || candidate.endTime!.toUtc().isAfter(now);
@@ -256,4 +323,8 @@ class FdsnStationService {
     if (currentStart == null) return true;
     return candidateStart.isAfter(currentStart);
   }
+
+  static DateTime? _parseUtc(String text) => text.isEmpty
+      ? null
+      : DateTime.tryParse(text.endsWith('Z') ? text : '${text}Z');
 }

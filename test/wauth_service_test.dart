@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -86,21 +87,28 @@ void main() {
     },
   );
 
-  test('fetches user information with a Bearer access token', () async {
-    late http.Request captured;
-    final client = MockClient((request) async {
-      captured = request;
-      return http.Response(jsonEncode({'sub': '72'}), 200);
-    });
-    final service = WAuthService(client: client);
+  test(
+    'fetches user information through the gateway with a Bearer token',
+    () async {
+      late http.Request captured;
+      final client = MockClient((request) async {
+        captured = request;
+        return http.Response(jsonEncode({'sub': '72'}), 200);
+      });
+      final service = WAuthService(
+        client: client,
+        gatewayBaseUrl: 'https://gateway.test',
+      );
 
-    final user = await service.fetchUserInfo('access-token');
+      final user = await service.fetchUserInfo('access-token');
 
-    expect(user['sub'], '72');
-    expect(captured.method, 'GET');
-    expect(captured.url.path, WAuthService.userInfoPath);
-    expect(captured.headers['authorization'], 'Bearer access-token');
-  });
+      expect(user['sub'], '72');
+      expect(captured.method, 'GET');
+      expect(captured.url.host, 'gateway.test');
+      expect(captured.url.path, WAuthService.gatewayUserInfoPath);
+      expect(captured.headers['authorization'], 'Bearer access-token');
+    },
+  );
 
   test('creates a gateway session with state and PKCE fields', () async {
     late http.Request captured;
@@ -175,6 +183,121 @@ void main() {
     expect(result.userInfo, {'sub': '72', 'name': 'Rhythm'});
   });
 
+  test(
+    'keeps the same authorization after transient polling failures',
+    () async {
+      var calls = 0;
+      final service = WAuthService(
+        client: MockClient((request) async {
+          expect(request.method, 'GET');
+          expect(request.url.queryParameters['state'], 'same-attempt');
+          calls++;
+          if (calls == 1) {
+            throw http.ClientException('Connection reset by peer');
+          }
+          if (calls == 2) throw TimeoutException('temporary timeout');
+          if (calls == 3) return http.Response('<html>Bad Gateway</html>', 502);
+          if (calls == 4) return http.Response('{"status":"pending"}', 202);
+          return http.Response(
+            jsonEncode({
+              'token': {'access_token': 'test-access', 'api_token': 'test-api'},
+              'userinfo': {'sub': 'test-user'},
+            }),
+            200,
+          );
+        }),
+      );
+      addTearDown(service.close);
+
+      final result = await service.waitForGatewayResult(
+        state: 'same-attempt',
+        timeout: const Duration(seconds: 1),
+        pollInterval: Duration.zero,
+      );
+      expect(calls, 5);
+      expect(result.token.apiToken, 'test-api');
+    },
+  );
+
+  for (final status in [401, 403, 410]) {
+    test(
+      'does not retry a rejected or consumed authorization: $status',
+      () async {
+        var calls = 0;
+        final service = WAuthService(
+          client: MockClient((_) async {
+            calls++;
+            return http.Response(
+              '{"error":"authorization_unavailable"}',
+              status,
+            );
+          }),
+        );
+        addTearDown(service.close);
+        await expectLater(
+          service.waitForGatewayResult(
+            state: 'attempt',
+            pollInterval: Duration.zero,
+          ),
+          throwsA(
+            isA<WAuthApiException>().having(
+              (e) => e.statusCode,
+              'status',
+              status,
+            ),
+          ),
+        );
+        expect(calls, 1);
+      },
+    );
+  }
+
+  test(
+    'continuous network failure ends at the authorization deadline',
+    () async {
+      var calls = 0;
+      final service = WAuthService(
+        client: MockClient((_) async {
+          calls++;
+          throw http.ClientException('offline');
+        }),
+      );
+      addTearDown(service.close);
+      await expectLater(
+        service.waitForGatewayResult(
+          state: 'attempt',
+          timeout: const Duration(milliseconds: 25),
+          pollInterval: const Duration(milliseconds: 10),
+        ),
+        throwsA(
+          isA<WAuthApiException>().having((e) => e.statusCode, 'status', 408),
+        ),
+      );
+      expect(calls, greaterThan(0));
+      expect(calls, lessThanOrEqualTo(3));
+    },
+  );
+
+  test('closing the service does not retry a failed polling request', () async {
+    var calls = 0;
+    late WAuthService service;
+    service = WAuthService(
+      client: MockClient((_) async {
+        calls++;
+        service.close();
+        throw http.ClientException('closed');
+      }),
+    );
+    await expectLater(
+      service.waitForGatewayResult(
+        state: 'attempt',
+        pollInterval: Duration.zero,
+      ),
+      throwsA(isA<WAuthApiException>()),
+    );
+    expect(calls, 1);
+  });
+
   test('rejects a gateway result without an official access token', () {
     expect(
       () => WAuthGatewayResult.fromJson({
@@ -228,26 +351,29 @@ void main() {
     );
   });
 
-  test(
-    'verifies an access token with the official userinfo endpoint',
-    () async {
-      late http.Request captured;
-      final client = MockClient((request) async {
-        captured = request;
-        return http.Response(jsonEncode({'sub': '72', 'name': 'Rhythm'}), 200);
-      });
-      final service = WAuthService(client: client);
+  test('verifies an access token through the WAuth gateway', () async {
+    late http.Request captured;
+    final client = MockClient((request) async {
+      captured = request;
+      return http.Response(jsonEncode({'sub': '72', 'name': 'Rhythm'}), 200);
+    });
+    final service = WAuthService(
+      client: client,
+      gatewayBaseUrl: 'https://gateway.test',
+    );
 
-      final authorized = await service.requireAuthorizedAccessToken(
-        'official-access-token',
-      );
+    final authorized = await service.requireAuthorizedAccessToken(
+      'official-access-token',
+    );
 
-      expect(captured.url.toString(), '${WAuthService.issuer}/oauth2/userinfo');
-      expect(captured.headers['authorization'], 'Bearer official-access-token');
-      expect(authorized.accessToken, 'official-access-token');
-      expect(authorized.userInfo['sub'], '72');
-    },
-  );
+    expect(
+      captured.url.toString(),
+      'https://gateway.test${WAuthService.gatewayUserInfoPath}',
+    );
+    expect(captured.headers['authorization'], 'Bearer official-access-token');
+    expect(authorized.accessToken, 'official-access-token');
+    expect(authorized.userInfo['sub'], '72');
+  });
 
   test('stored access token is verified before protected API use', () async {
     SharedPreferences.setMockInitialValues({
@@ -258,7 +384,10 @@ void main() {
       captured = request;
       return http.Response(jsonEncode({'sub': '72'}), 200);
     });
-    final service = WAuthService(client: client);
+    final service = WAuthService(
+      client: client,
+      gatewayBaseUrl: 'https://gateway.test',
+    );
 
     final authorized = await service.requireStoredAuthorizedAccessToken();
 
@@ -278,7 +407,10 @@ void main() {
         401,
       );
     });
-    final service = WAuthService(client: client);
+    final service = WAuthService(
+      client: client,
+      gatewayBaseUrl: 'https://gateway.test',
+    );
 
     await expectLater(
       service.requireAuthorizedAccessToken('expired-access-token'),
@@ -309,14 +441,18 @@ void main() {
         200,
       );
     });
-    final service = WAuthService(client: client);
+    final service = WAuthService(
+      client: client,
+      gatewayBaseUrl: 'https://gateway.test',
+    );
 
     final verified = await service.requireAuthorizedApiToken(
       'official-api-token',
     );
 
     expect(captured.method, 'POST');
-    expect(captured.url.path, WAuthService.verifyApiTokenPath);
+    expect(captured.url.host, 'gateway.test');
+    expect(captured.url.path, WAuthService.gatewayVerifyApiTokenPath);
     expect(captured.headers['authorization'], 'Bearer official-api-token');
     expect(verified.claims['valid'], isTrue);
     expect(verified.claims['user_id'], 72);
@@ -367,10 +503,10 @@ void main() {
         WAuthService.apiTokenPreferenceKey: 'still-valid-api-token',
       });
       final client = MockClient((request) async {
-        if (request.url.path == WAuthService.userInfoPath) {
+        if (request.url.path == WAuthService.gatewayUserInfoPath) {
           return http.Response(jsonEncode({'error': 'invalid_token'}), 401);
         }
-        expect(request.url.path, WAuthService.verifyApiTokenPath);
+        expect(request.url.path, WAuthService.gatewayVerifyApiTokenPath);
         return http.Response(jsonEncode({'valid': true}), 200);
       });
       final service = WAuthService(client: client);
@@ -395,7 +531,7 @@ void main() {
         WAuthService.userInfoPreferenceKey: jsonEncode({'name': 'Rhythm'}),
       });
       final client = MockClient((request) async {
-        if (request.url.path == WAuthService.userInfoPath) {
+        if (request.url.path == WAuthService.gatewayUserInfoPath) {
           return http.Response(jsonEncode({'name': 'Rhythm'}), 200);
         }
         return http.Response(jsonEncode({'error': 'timeout'}), 408);
@@ -419,7 +555,7 @@ void main() {
       WAuthService.apiTokenPreferenceKey: 'dead-api-token',
     });
     final client = MockClient((request) async {
-      if (request.url.path == WAuthService.userInfoPath) {
+      if (request.url.path == WAuthService.gatewayUserInfoPath) {
         return http.Response(jsonEncode({'sub': '72'}), 200);
       }
       return http.Response(jsonEncode({'valid': false}), 200);

@@ -34,6 +34,8 @@ class NiedSourceEstimationDriver {
   final SourceTriggerContinuityGate sourceContinuityGate;
   final StationEventTracker stationEventTracker;
   final String sourceId;
+  final void Function(String?, DateTime, String, Map<String, Object?>)?
+  onSourceTrigger;
 
   EventDetection? _lastEventDetection;
   String? _directReceiverEventId;
@@ -74,6 +76,7 @@ class NiedSourceEstimationDriver {
     SourceTriggerContinuityGate? sourceContinuityGate,
     StationEventTracker? stationEventTracker,
     this.sourceId = StationEventTracker.niedSourceId,
+    this.onSourceTrigger,
   }) : stationTriggerDetector =
            stationTriggerDetector ?? RobustStationTriggerDetector(),
        eventDetector =
@@ -172,7 +175,7 @@ class NiedSourceEstimationDriver {
     if (shouldIngestFrame) {
       final replayLogger = NiedReplayLogger.instance;
       if (trackerStageName != 'idle') {
-        replayLogger.startForSourceTrigger(
+        _startForSourceTrigger(
           eventId: trackerEventId,
           observedAt: resolvedObservedAt,
           stageName: trackerStageName,
@@ -271,6 +274,25 @@ class NiedSourceEstimationDriver {
     }
 
     return eventDetection;
+  }
+
+  void _startForSourceTrigger({
+    required String? eventId,
+    required DateTime observedAt,
+    required String stageName,
+    required Map<String, Object?> metadata,
+  }) {
+    final callback = onSourceTrigger;
+    if (callback != null) {
+      callback(eventId, observedAt, stageName, metadata);
+    } else {
+      NiedReplayLogger.instance.startForSourceTrigger(
+        eventId: eventId,
+        observedAt: observedAt,
+        stageName: stageName,
+        metadata: metadata,
+      );
+    }
   }
 
   EventDetection _continuityAwareDetection(

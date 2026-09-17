@@ -1,6 +1,6 @@
 # RhythmQuake WAuth Gateway
 
-WAuth OAuth 2.0 Authorization Code + PKCE 的服务端网关。它只负责保存 AppSecret、交换授权码，并把 WAuth 官方 token 与 userinfo 通过一次性结果交给 RhythmQuake 客户端。
+WAuth OAuth 2.0 Authorization Code + PKCE 的服务端网关。它负责保存 AppSecret、交换授权码、把 WAuth 官方 token 与 userinfo 通过一次性结果交给 RhythmQuake 客户端，并代理后续的 userinfo 与 API token 校验。
 
 固定回调地址：
 
@@ -17,7 +17,7 @@ https://quake.yuelinrhythm.top/wauth/callback
 - 回调和结果响应都使用 `Cache-Control: no-store`。
 - Nginx 必须关闭 `/wauth/callback` 和 `/wauth/result` 的访问日志，避免查询参数进入日志。
 - 每个授权结果只允许读取一次，默认 10 分钟过期。
-- 客户端使用官方 access token 请求 WAuth `/oauth2/userinfo` 确认账号登录状态；业务 API 另需通过 `POST /api/token/verify` 校验 api_token。
+- 客户端把官方 token 放在 `Authorization: Bearer ...` 请求头中，通过网关代理调用 WAuth `/oauth2/userinfo` 与 `POST /api/token/verify`；token 不进入 URL 或日志。
 - 本地缓存的 `userinfo` 只用于显示，不能单独作为业务 API 的启用条件。
 
 ## 客户端流程
@@ -61,7 +61,7 @@ GET /wauth/result?state=...
 }
 ```
 
-6. 客户端保存官方 access token。启动、恢复应用或开启受保护 API 前，必须使用该 token 请求 WAuth 官方 `/oauth2/userinfo`。验证失败、超时或没有 token 时，API 保持关闭。
+6. 客户端保存官方 access token。启动、恢复应用或开启受保护 API 前，必须使用该 token 请求网关 `GET /wauth/userinfo`，由网关调用 WAuth 官方 `/oauth2/userinfo`。验证失败、超时或没有 token 时，API 保持关闭。
 7. 退出登录只清理客户端保存的官方 token 和用户资料。本地网关不签发自己的会话，也没有 `/wauth/status` 或 `/wauth/logout` 路由。
 
 ## API token 校验
@@ -69,11 +69,11 @@ GET /wauth/result?state=...
 真实授权结果中可能同时包含 `access_token` 与 `api_token`，两者用途不同：
 
 - `access_token` 只用于请求 WAuth 官方 `/oauth2/userinfo`。
-- `api_token` 用于业务 API 的官方校验端点 `POST /api/token/verify`。
+- `api_token` 通过网关 `POST /wauth/api/token/verify` 调用官方校验端点 `POST /api/token/verify`。
 - 只有校验响应中的 `valid` 严格等于 `true`，业务 API 才允许开启。
 - 未登录、缺少 api_token、校验返回 `valid: false`、令牌过期或校验超时时，都必须保持关闭。
 
-本地网关只原样转发官方 token 字段，不自行生成或替换令牌。
+网关不自行生成或替换令牌，也不把令牌写入日志。官方 `401/403` 会保持为授权拒绝，其他上游错误会转换为临时的 `502`，避免客户端把网络故障误判成登录失效。
 ## 本地测试
 
 ```powershell

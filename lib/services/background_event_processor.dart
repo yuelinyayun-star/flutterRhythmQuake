@@ -1,11 +1,13 @@
 import 'dart:collection';
 
 import '../core/utils/quake_time.dart';
+import '../core/utils/catalog_event_identity.dart';
 import '../models/quake_message.dart';
+import '../models/whews_catalog.dart';
 import '../models/unified_quake_data.dart';
 import 'sources/whews_service.dart';
 
-enum BackgroundEventResultType { newEvent, update, dropped }
+enum BackgroundEventResultType { newEvent, update, dropped, history }
 
 class BackgroundEventResult {
   const BackgroundEventResult({
@@ -95,6 +97,15 @@ class BackgroundEventProcessor {
 
   BackgroundEventResult process(UnifiedQuakeData event) {
     _pruneSeenState(notify: false);
+    if (event.isHistory) {
+      if (event.isEew || event.originTime == null ||
+          !_passesInfoMagnitudeFilter(event)) {
+        return _dropped;
+      }
+      return BackgroundEventResult(
+        type: BackgroundEventResultType.history, event: event,
+      );
+    }
     return event.isEew ? _processEew(event) : _processInfo(event);
   }
 
@@ -199,7 +210,8 @@ class BackgroundEventProcessor {
 
     if (index < 0) {
       final reportNum = _extractReportNum(event.reportNumText);
-      final storedReportNum = _acceptedEewReportNums[eventKey];
+      final storedReportNum = event.hasReportSequence
+          ? _acceptedEewReportNums[eventKey] : null;
       if (storedReportNum != null && reportNum <= storedReportNum) {
         return _dropped;
       }
@@ -223,13 +235,13 @@ class BackgroundEventProcessor {
 
     final reportNum = _extractReportNum(event.reportNumText);
     final storedReportNum = _acceptedEewReportNums[oldKey];
-    final canApplyWhewsRevision = _isWhewsSameReportEewRevision(
+    final canApplyRevision = _isSameReportEewRevision(
       oldEvent,
       event,
     );
     if (storedReportNum != null &&
         reportNum <= storedReportNum &&
-        !canApplyWhewsRevision) {
+        !canApplyRevision) {
       return _dropped;
     }
 
@@ -290,7 +302,7 @@ class BackgroundEventProcessor {
       final digits = event.eventId.replaceAll(RegExp(r'[^0-9]'), '');
       if (digits.length >= 12) return digits;
     }
-    return event.eventId;
+    return catalogEventId(event.source, event.eventId);
   }
 
   String _jmaInfoTimeToken(DateTime time) {
@@ -325,13 +337,22 @@ class BackgroundEventProcessor {
   }
 
   bool _usesReportTimeDisplayWindow(UnifiedQuakeData event) {
-    return event.origin == WhewsService.adapterOrigin ||
+    return event.useSourceTimeForExpiry ||
+        event.origin == WhewsService.adapterOrigin ||
         event.source == 'usgsEqlist' ||
         event.source == 'cwaEqlist' ||
         event.source == 'cencEqlist';
   }
 
   int _remainingInfoDisplaySeconds(UnifiedQuakeData event) {
+    if (event.useSourceTimeForExpiry && event.originTime == null &&
+        event.reportTime == null) {
+      return 0;
+    }
+    if (unifiedCatalogSources.containsKey(event.source) &&
+        event.originTime == null) {
+      return 0;
+    }
     var seconds = 300;
     if (event.className.contains('orange') || event.magnitude >= 6.0) {
       seconds = 600;
@@ -342,7 +363,17 @@ class BackgroundEventProcessor {
     if (event.className == 'purple' || event.magnitude >= 7.5) {
       seconds = 1200;
     }
+    if (event.isVolcanoEvent) seconds = 900;
     if (event.isCanceled) seconds = 60;
+    final current = _infoSlots[_infoSlotSource(event)]?.event;
+    final catalogRemaining = QuakeTime.catalogInformationRemainingSeconds(
+      event,
+      seconds,
+      firstArrivedAt: current != null && _isSameInfoEvent(current, event)
+          ? current.arrivedAt
+          : null,
+    );
+    if (catalogRemaining != null) return catalogRemaining;
     final referenceTime = QuakeTime.informationDisplayReference(event);
     if (referenceTime == null) return seconds;
     final elapsed = QuakeTime.calcPassedSecondsFromDateTime(
@@ -436,7 +467,10 @@ class BackgroundEventProcessor {
     UnifiedQuakeData oldEvent,
     UnifiedQuakeData event,
   ) {
-    if (event.source != 'cencEqlist') return false;
+    if (event.source != 'cencEqlist' ||
+        event.origin == WhewsService.adapterOrigin) {
+      return false;
+    }
     final oldReportTime = oldEvent.reportTime;
     final newReportTime = event.reportTime;
     if (oldReportTime == null || newReportTime == null) return false;
@@ -535,6 +569,10 @@ class BackgroundEventProcessor {
   }
 
   bool _shouldSuppressSeenUnifiedInfoEvent(UnifiedQuakeData event) {
+    final reportKey = catalogReportKey(event);
+    if (reportKey != null && _seenUnifiedInfoEvents.containsKey(reportKey)) {
+      return true;
+    }
     final key = _seenUnifiedInfoEventKey(event);
     if (!_seenUnifiedInfoEvents.containsKey(key)) return false;
     final current = _infoSlots[_infoSlotSource(event)]?.event;
@@ -545,7 +583,13 @@ class BackgroundEventProcessor {
     final key = _seenUnifiedInfoEventKey(event);
     final isNew = !_seenUnifiedInfoEvents.containsKey(key);
     _seenUnifiedInfoEvents[key] = DateTime.now().toUtc();
-    if (isNew) onSeenStateChanged?.call();
+    final reportKey = catalogReportKey(event);
+    final isNewReport = reportKey != null &&
+        !_seenUnifiedInfoEvents.containsKey(reportKey);
+    if (reportKey != null) {
+      _seenUnifiedInfoEvents[reportKey] = DateTime.now().toUtc();
+    }
+    if (isNew || isNewReport) onSeenStateChanged?.call();
   }
 
   UnifiedQuakeData _mergeUnifiedInfoEvent(
@@ -711,17 +755,20 @@ class BackgroundEventProcessor {
     return (oldLat - newLat).abs() <= 0.05 && (oldLng - newLng).abs() <= 0.05;
   }
 
-  bool _isWhewsSameReportEewRevision(
+  bool _isSameReportEewRevision(
     UnifiedQuakeData oldEvent,
     UnifiedQuakeData event,
   ) {
-    if (event.origin != WhewsService.adapterOrigin ||
-        !_isSameUnifiedEewEvent(oldEvent, event) ||
+    if (!_isSameUnifiedEewEvent(oldEvent, event) ||
         _extractReportNum(oldEvent.reportNumText) !=
             _extractReportNum(event.reportNumText) ||
         _isSameInfoBody(oldEvent, event)) {
       return false;
     }
+    if (!event.hasReportSequence && !oldEvent.hasReportSequence) {
+      return !event.isSnapshot && event.origin == oldEvent.origin;
+    }
+    if (event.origin != WhewsService.adapterOrigin) return false;
     final oldReportTime = oldEvent.reportTime;
     final newReportTime = event.reportTime;
     if (oldReportTime == null || newReportTime == null) return false;
@@ -748,6 +795,7 @@ class BackgroundEventProcessor {
       _noUpdateTimeFanInfoSourceKey(source) != null;
 
   QuakeSourceType? _sourceType(UnifiedQuakeData event) {
+    if (event.isVolcanoEvent) return null;
     if (event.source == 'jmaEqlist' && event.origin == 2) {
       return QuakeSourceType.p2p;
     }
@@ -782,16 +830,7 @@ class BackgroundEventProcessor {
       'shanxi': QuakeSourceType.shanxi,
       'beijing': QuakeSourceType.beijing,
       'yunnan': QuakeSourceType.yunnan,
-      'whews_bmkg': QuakeSourceType.bmkg,
-      'whews_geonet': QuakeSourceType.geonet,
-      'whews_tmd': QuakeSourceType.tmd,
-      'whews_ingv': QuakeSourceType.ingv,
-      'whews_nrcan': QuakeSourceType.nrcan,
-      'whews_mmd': QuakeSourceType.mmd,
-      'whews_phivolcs': QuakeSourceType.phivolcs,
-      'whews_sgc': QuakeSourceType.sgc,
-      'whews_ga': QuakeSourceType.ga,
-      'whews_cenais': QuakeSourceType.cenais,
+      ...unifiedCatalogSources,
     };
     final mapped = map[event.source];
     if (mapped != null) return mapped;

@@ -20,6 +20,42 @@ void main() {
     expect(CmaLocalWeatherService.refreshInterval, const Duration(minutes: 5));
   });
 
+  test(
+    'hosted snapshot survives page changes without local requests',
+    () async {
+      var requests = 0;
+      final service = CmaLocalWeatherService(
+        client: MockClient((_) async {
+          requests++;
+          return http.Response('', 500);
+        }),
+      );
+      addTearDown(service.dispose);
+      final state = CmaLocalWeatherState(
+        status: CmaLocalWeatherStatus.ready,
+        station: station,
+        observation: cmaObservationFromJson(_observationPayload(), station),
+      );
+      service.ingestExternalState(state);
+      for (var i = 0; i < 3; i++) {
+        service.pause(clearState: false);
+        expect(service.stateNotifier.value, same(state));
+      }
+      await service.refreshNow();
+      expect(requests, 0);
+      final update = CmaLocalWeatherState(
+        status: CmaLocalWeatherStatus.ready,
+        station: station,
+        observation: cmaObservationFromJson(_observationPayload(), station),
+      );
+      service.ingestExternalState(update);
+      expect(service.stateNotifier.value, same(update));
+      service.pause();
+      expect(service.stateNotifier.value.status, CmaLocalWeatherStatus.idle);
+      expect(service.stateNotifier.value.observation, isNull);
+    },
+  );
+
   test('parses the official CMA current weather payload', () {
     final observation = cmaObservationFromJson(_observationPayload(), station);
 
@@ -93,26 +129,29 @@ void main() {
     expect(single.single.effective, DateTime(2026, 8, 14, 10, 40));
   });
 
-  test('selects the nearest CMA station including alphanumeric regional IDs', () {
-    final selected = cmaNearestStationFromRows(
-      _stationRows(),
-      latitude: 29.84,
-      longitude: 106.08,
-    );
+  test(
+    'selects the nearest CMA station including alphanumeric regional IDs',
+    () {
+      final selected = cmaNearestStationFromRows(
+        _stationRows(),
+        latitude: 29.84,
+        longitude: 106.08,
+      );
 
-    expect(selected, isNotNull);
-    expect(selected!.id, '57510');
-    expect(selected.name, '铜梁');
+      expect(selected, isNotNull);
+      expect(selected!.id, '57510');
+      expect(selected.name, '铜梁');
 
-    final regionalSelected = cmaNearestStationFromRows(
-      _stationRows(),
-      latitude: 30.55,
-      longitude: 119.97,
-    );
-    expect(regionalSelected, isNotNull);
-    expect(regionalSelected!.id, 'K5079');
-    expect(regionalSelected.name, '德清');
-  });
+      final regionalSelected = cmaNearestStationFromRows(
+        _stationRows(),
+        latitude: 30.55,
+        longitude: 119.97,
+      );
+      expect(regionalSelected, isNotNull);
+      expect(regionalSelected!.id, 'K5079');
+      expect(regionalSelected.name, '德清');
+    },
+  );
 
   test('reuses the cached station for the same saved location', () async {
     SharedPreferences.setMockInitialValues({});

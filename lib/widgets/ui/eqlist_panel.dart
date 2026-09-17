@@ -5,7 +5,9 @@ import 'package:provider/provider.dart';
 import '../../providers/quake_provider.dart';
 import '../../providers/map_state_provider.dart';
 import '../../models/quake_message.dart';
+import '../../models/whews_catalog.dart';
 import '../../core/utils/quake_time.dart';
+import '../../utils/kma_location.dart';
 import 'package:intl/intl.dart';
 import 'ui_scale.dart';
 
@@ -220,6 +222,9 @@ class _EqlistPanelState extends State<EqlistPanel> {
       'kmaEqlist': 'KMA',
       'cwaEqlist': 'CWA',
       'emscEqlist': 'EMSC',
+      for (final entry in unifiedCatalogSources.entries)
+        if (buckets[entry.key]?.isNotEmpty == true)
+          entry.key: whewsCatalogLabel(entry.value),
     };
     final sourceColors = {
       'jmaEqlist': 0xFFE74C3C,
@@ -313,7 +318,7 @@ class _EqlistPanelState extends State<EqlistPanel> {
                             padding: EdgeInsets.only(right: _s(5, context)),
                             child: _sourceChip(
                               label: '${e.value}($count)',
-                              color: Color(sourceColors[e.key]!),
+                              color: Color(sourceColors[e.key] ?? 0xFF59B8BA),
                               selected: enabled,
                               onTap: () => provider.toggleSource(e.key),
                               scale: scale,
@@ -487,8 +492,13 @@ class _EqCardState extends State<_EqCard> {
         location == 'unknown';
   }
 
-  String get _locationText =>
-      _isJmaHypocenterInvestigating ? '震源 調査中' : eq.location;
+  String get _locationText {
+    if (_isJmaHypocenterInvestigating) return '震源 調査中';
+    if (eq.source == QuakeSourceType.kma_eq) {
+      return kmaDisplayLocation(eq.location, eq.latitude, eq.longitude);
+    }
+    return eq.location;
+  }
 
   Color get _borderColor {
     if (_isJma && eq.jmaShindo != null) {
@@ -549,6 +559,7 @@ class _EqCardState extends State<_EqCard> {
   }
 
   static String _sourceLabelStatic(QuakeSourceType s) {
+    if (unifiedCatalogSources.containsValue(s)) return whewsCatalogLabel(s);
     switch (s) {
       case QuakeSourceType.cenc:
       case QuakeSourceType.cea:

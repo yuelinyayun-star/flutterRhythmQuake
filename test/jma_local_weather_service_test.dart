@@ -21,6 +21,35 @@ void main() {
     expect(JmaLocalWeatherService.refreshInterval, const Duration(minutes: 10));
   });
 
+  test(
+    'hosted snapshot survives page changes without local requests',
+    () async {
+      var requests = 0;
+      final service = JmaLocalWeatherService(
+        client: MockClient((_) async {
+          requests++;
+          return http.Response('', 500);
+        }),
+      );
+      addTearDown(service.dispose);
+      final state = JmaLocalWeatherState(
+        status: JmaLocalWeatherStatus.ready,
+        station: station,
+        observation: jmaObservationFromPointJson(_pointPayload(), station),
+      );
+      service.ingestExternalState(state);
+      for (var i = 0; i < 3; i++) {
+        service.pause(clearState: false);
+        expect(service.stateNotifier.value, same(state));
+      }
+      await service.refreshNow();
+      expect(requests, 0);
+      service.pause();
+      expect(service.stateNotifier.value.status, JmaLocalWeatherStatus.idle);
+      expect(service.stateNotifier.value.observation, isNull);
+    },
+  );
+
   test('parses JST latest_time with an explicit offset', () {
     final parsed = jmaParseLatestTime('2026-08-14T23:50:00+09:00');
     expect(parsed, DateTime(2026, 8, 14, 23, 50));

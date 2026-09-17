@@ -6,6 +6,8 @@
 /// - 在前后台切换时发布状态变更，供地图/数据源组件响应
 /// - 在后台收到 EEW / 信息事件时弹出系统通知
 /// - 在 Android 上启动前台服务，保证切后台后 EEW / 信息源仍能连接
+library;
+
 import 'dart:async';
 import 'dart:io' show Platform;
 import 'dart:ui' show DartPluginRegistrant;
@@ -14,6 +16,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart'
     show
         AndroidFlutterLocalNotificationsPlugin,
@@ -433,12 +436,12 @@ class BackgroundService {
       androidConfiguration: AndroidConfiguration(
         onStart: backgroundEntryPoint,
         autoStart: false,
-        autoStartOnBoot: autoStartOnBoot,
+        autoStartOnBoot: autoStartOnBoot && (_settings?.enabled ?? false),
         isForegroundMode: true,
         notificationChannelId: _foregroundChannelId,
         initialNotificationTitle: _foregroundNotificationTitle,
         initialNotificationContent: _foregroundNotificationContent,
-        foregroundServiceTypes: [AndroidForegroundType.dataSync],
+        foregroundServiceTypes: [AndroidForegroundType.specialUse],
       ),
       iosConfiguration: IosConfiguration(
         autoStart: false,
@@ -546,12 +549,18 @@ class BackgroundService {
     });
   }
 
+  /// 只回传前台服务已有气象实况，不发起 HTTP 请求或重建连接。
+  void requestLocalWeatherState() {
+    if (!isAndroidConnectionHostedByForegroundService) return;
+    FlutterBackgroundService().invoke('requestLocalWeatherState');
+  }
+
   /// 设置改变后要求前台服务重新读取 SharedPreferences 并重建连接。
-  Future<void> requestSourceReload() async {
+  Future<void> requestSourceReload({bool force = false}) async {
     if (!isAndroidConnectionHostedByForegroundService) return;
     final service = FlutterBackgroundService();
     if (await service.isRunning()) {
-      service.invoke('reloadSources');
+      service.invoke('reloadSources', {'force': force});
     }
   }
 
@@ -630,6 +639,14 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
   WidgetsFlutterBinding.ensureInitialized();
   DartPluginRegistrant.ensureInitialized();
 
+  // Boot/watchdog starts have no UI provider; consult persisted user consent.
+  final preferences = await SharedPreferences.getInstance();
+  await preferences.reload();
+  if (preferences.getBool('background_enabled') != true) {
+    await service.stopSelf();
+    return;
+  }
+
   Future<void> sendUnifiedEvent(UnifiedQuakeData event) async {
     service.invoke('foregroundUnifiedEvent', event.toMap());
   }
@@ -695,18 +712,37 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
   }
 
   Future<void>? reloadFuture;
-  Future<void> reloadSources() {
+  bool reloadPending = false;
+  bool forceReloadPending = false;
+  Future<void> reloadSources({bool force = false}) {
+    reloadPending = true;
+    forceReloadPending = forceReloadPending || force;
     return reloadFuture ??= () async {
-      await stopBackgroundSources();
-      await startSources();
-      reloadFuture = null;
+      try {
+        while (reloadPending) {
+          reloadPending = false;
+          final forceReload = forceReloadPending;
+          forceReloadPending = false;
+          if (forceReload || !await reloadBackgroundStationSettings()) {
+            await startSources();
+          }
+        }
+      } finally {
+        reloadFuture = null;
+      }
     }();
   }
 
+  service.on('requestLocalWeatherState').listen((_) {
+    for (final payload in backgroundLocalWeatherSnapshots()) {
+      unawaited(sendAuxData(payload));
+    }
+  });
+
   await startSources();
 
-  service.on('reloadSources').listen((_) {
-    unawaited(reloadSources());
+  service.on('reloadSources').listen((event) {
+    unawaited(reloadSources(force: event?['force'] == true));
   });
 
   // 接收主 isolate 的停止指令

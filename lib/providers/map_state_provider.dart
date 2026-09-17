@@ -15,7 +15,73 @@ import 'dart:math';
 
 enum MapCameraMode { autoFollow, manualLocked }
 
+enum MapViewport { seismic, weather }
+
 class MapStateProvider with ChangeNotifier {
+  bool _mobileViewportIsolation = false;
+  bool _viewportVisible = true;
+  MapViewport _viewport = MapViewport.seismic;
+  final _viewportCameras = <MapViewport, ({LatLng center, double zoom})>{};
+
+  bool get isSeismicViewportVisible =>
+      !_mobileViewportIsolation ||
+      (_viewportVisible && _viewport == MapViewport.seismic);
+
+  bool _acceptsCamera(MapViewport owner) => !_mobileViewportIsolation
+      ? owner == MapViewport.seismic
+      : _viewportVisible && owner == _viewport;
+
+  /// Only mobile tabs use isolated cameras. Connections and the map stay shared.
+  void configureMobileViewport({
+    required bool enabled,
+    required MapViewport viewport,
+    required bool visible,
+  }) {
+    if (_mobileViewportIsolation == enabled &&
+        (!enabled || (_viewport == viewport && _viewportVisible == visible))) {
+      return;
+    }
+    final controller = _mapController;
+    if (controller != null && (!_mobileViewportIsolation || _viewportVisible)) {
+      _viewportCameras[_viewport] = (
+        center: controller.camera.center,
+        zoom: controller.camera.zoom,
+      );
+    }
+    _stopMoveAnimation();
+    _mobileViewportIsolation = enabled;
+    _viewport = enabled ? viewport : MapViewport.seismic;
+    _viewportVisible = !enabled || visible;
+    if (controller != null && _viewportVisible) {
+      final saved = _viewportCameras[_viewport];
+      if (saved != null) {
+        controller.move(saved.center, saved.zoom);
+      } else if (_viewport == MapViewport.weather) {
+        final position = LocationService().currentPosition;
+        controller.move(
+          position == null
+              ? fallbackCenter
+              : LatLng(position.latitude, position.longitude),
+          fallbackZoom,
+        );
+      }
+    }
+    notifyListeners();
+  }
+
+  bool moveWeatherToLocationView({bool animate = true}) {
+    final position = LocationService().currentPosition;
+    if (position == null || !_acceptsCamera(MapViewport.weather)) return false;
+    _doAnimatedMove(
+      LatLng(position.latitude, position.longitude),
+      fallbackZoom,
+      animate,
+      wrapLongitude: false,
+      owner: MapViewport.weather,
+    );
+    return true;
+  }
+
   static const LatLng fallbackCenter = LatLng(34.34127, 108.93984);
   static const double fallbackZoom = 4.0;
   static const String preferredViewModeKey = 'map_preferred_view_mode';
@@ -55,6 +121,14 @@ class MapStateProvider with ChangeNotifier {
   bool moveToLocationView({bool animate = true}) {
     final pos = LocationService().currentPosition;
     if (pos == null) return false;
+    if (!isSeismicViewportVisible) {
+      _viewportCameras[MapViewport.seismic] = (
+        center: LatLng(pos.latitude, pos.longitude),
+        zoom: fallbackZoom,
+      );
+      unawaited(setPreferredViewMode('location'));
+      return true;
+    }
     pauseAutoZoom();
     _doAnimatedMove(
       LatLng(pos.latitude, pos.longitude),
@@ -68,6 +142,14 @@ class MapStateProvider with ChangeNotifier {
 
   /// 把地图切换到“默认视野”（系统默认中心 + 缩放）。
   void moveToSystemDefaultView({bool animate = true}) {
+    if (!isSeismicViewportVisible) {
+      _viewportCameras[MapViewport.seismic] = (
+        center: fallbackCenter,
+        zoom: fallbackZoom,
+      );
+      unawaited(setPreferredViewMode('system_default'));
+      return;
+    }
     pauseAutoZoom();
     _doAnimatedMove(
       fallbackCenter,
@@ -79,6 +161,34 @@ class MapStateProvider with ChangeNotifier {
   }
 
   MapController? _mapController;
+  ({LatLng center, double zoom})? _animationDestination;
+
+  bool isPointInEventViewport(LatLng point, {required EdgeInsets padding}) {
+    final controller = _mapController;
+    if (controller == null ||
+        !QuakeCalculator.isUsableMapCoordinate(point.latitude, point.longitude)) {
+      return false;
+    }
+    final destination = _animationDestination;
+    final camera = destination == null
+        ? controller.camera
+        : controller.camera.withPosition(
+            center: destination.center,
+            zoom: destination.zoom,
+          );
+    final size = camera.nonRotatedSize;
+    if (size.width <= padding.horizontal || size.height <= padding.vertical) {
+      return false;
+    }
+    final wrapped = LatLng(
+      point.latitude,
+      WorldWrap.longitudeClosestTo(point.longitude, camera.center.longitude),
+    );
+    return padding
+        .deflateRect(Offset.zero & size)
+        .contains(camera.latLngToScreenOffset(wrapped));
+  }
+
   QuakeMessage? _selectedHistoryEvent;
   String _tileKey = 'petalLight';
   final Map<String, bool> _overlayEnabled = {
@@ -89,6 +199,8 @@ class MapStateProvider with ChangeNotifier {
     'jmaRadarLayer': false,
     'satelliteCloudLayer': false,
     'cnContour': false,
+    'cnFault': false,
+    'jpFault': false,
     'volcanoLayer': false,
     'typhoonLayer': false,
     'weatherStationLayer': false,
@@ -208,6 +320,7 @@ class MapStateProvider with ChangeNotifier {
   }
 
   void pauseAutoZoom({Duration resumeAfter = const Duration(seconds: 60)}) {
+    if (!isSeismicViewportVisible) return;
     _gestureAutoFollowResumeTimer?.cancel();
     _isGestureAutoFollowPaused = false;
     _pauseAutoZoom(resumeAfter);
@@ -232,7 +345,7 @@ class MapStateProvider with ChangeNotifier {
     _autoZoomResumeAt = resumeAt;
     _autoZoomResumeTimer?.cancel();
     _autoZoomResumeTimer = Timer(resumeAt.difference(now), () {
-      resumeAutoZoom();
+      _resumeSeismicAutoZoom();
     });
     if (wasAutoFollow) {
       notifyListeners();
@@ -241,6 +354,7 @@ class MapStateProvider with ChangeNotifier {
 
   void pauseAutoZoomForGesture() {
     _stopMoveAnimation();
+    if (!isSeismicViewportVisible) return;
     _isGestureAutoFollowPaused = true;
     _gestureAutoFollowResumeTimer?.cancel();
     _gestureAutoFollowResumeTimer = Timer(gestureAutoFollowResumeDelay, () {
@@ -252,6 +366,11 @@ class MapStateProvider with ChangeNotifier {
   }
 
   void resumeAutoZoom() {
+    if (!isSeismicViewportVisible) return;
+    _resumeSeismicAutoZoom();
+  }
+
+  void _resumeSeismicAutoZoom() {
     _gestureAutoFollowResumeTimer?.cancel();
     _isGestureAutoFollowPaused = false;
     _isAutoZoom = true;
@@ -287,6 +406,7 @@ class MapStateProvider with ChangeNotifier {
   }
 
   void moveToDefaultView({bool animate = true, bool pauseAuto = true}) {
+    if (!isSeismicViewportVisible) return;
     if (pauseAuto) {
       pauseAutoZoom();
     } else {
@@ -302,6 +422,7 @@ class MapStateProvider with ChangeNotifier {
     Offset screenOffset, {
     bool continuousFollow = false,
   }) {
+    if (!isSeismicViewportVisible) return;
     if (_mapController == null) return;
     final adjustedCenter = _centerForScreenOffset(
       focusLocation,
@@ -322,8 +443,9 @@ class MapStateProvider with ChangeNotifier {
     bool animate, {
     bool wrapLongitude = true,
     bool continuousFollow = false,
+    MapViewport owner = MapViewport.seismic,
   }) {
-    if (_mapController == null) return;
+    if (_mapController == null || !_acceptsCamera(owner)) return;
 
     final currCenter = _mapController!.camera.center;
     final dest = wrapLongitude
@@ -346,6 +468,7 @@ class MapStateProvider with ChangeNotifier {
       _mapController!.move(dest, destZoom);
       return;
     }
+    _animationDestination = (center: dest, zoom: destZoom);
 
     final latTween = Tween<double>(
       begin: currCenter.latitude,
@@ -373,6 +496,10 @@ class MapStateProvider with ChangeNotifier {
     final stopwatch = Stopwatch()..start();
 
     void tick() {
+      if (!_acceptsCamera(owner)) {
+        _stopMoveAnimation();
+        return;
+      }
       final rawT = stopwatch.elapsedMicroseconds / duration.inMicroseconds;
       final t = rawT.clamp(0.0, 1.0);
       final panT = plan.panProgress(t);
@@ -432,6 +559,7 @@ class MapStateProvider with ChangeNotifier {
   }
 
   void _stopMoveAnimation() {
+    _animationDestination = null;
     final timer = _moveAnimationTimer;
     if (timer == null) return;
     _moveAnimationTimer = null;
@@ -498,7 +626,7 @@ class MapStateProvider with ChangeNotifier {
         : epicenterView;
 
     final fittedCamera = followWaves
-        ? _fitWaveViewToViewport(view, minZoom: minZoom, maxZoom: maxZoom)
+        ? _fitViewToViewport(view, minZoom: minZoom, maxZoom: maxZoom)
         : null;
     final center = fittedCamera?.center ?? view.center;
     final zoom =
@@ -553,6 +681,7 @@ class MapStateProvider with ChangeNotifier {
     double padding = 1.5,
     double minZoom = 3.0,
     double maxZoom = 8.0,
+    EdgeInsets? viewportPadding,
     Offset screenOffset = Offset.zero,
     bool respectAutoZoom = true,
     String sourceTag = 'points',
@@ -567,10 +696,20 @@ class MapStateProvider with ChangeNotifier {
     if (view == null) return;
 
     final maxDiff = max(view.latDiff, view.lngDiff) + padding * 2;
-    final zoom = _zoomForDiff(maxDiff).clamp(minZoom, maxZoom).toDouble();
+    final fitted = viewportPadding == null
+        ? null
+        : _fitViewToViewport(
+            view,
+            minZoom: minZoom,
+            maxZoom: maxZoom,
+            padding: viewportPadding,
+          );
+    final center = fitted?.center ?? view.center;
+    final zoom =
+        fitted?.zoom ?? _zoomForDiff(maxDiff).clamp(minZoom, maxZoom).toDouble();
     final targetCenter = screenOffset == Offset.zero
-        ? view.center
-        : _centerForScreenOffset(view.center, zoom, screenOffset);
+        ? center
+        : _centerForScreenOffset(center, zoom, screenOffset);
     final currCenter = _mapController!.camera.center;
     final currZoom = _mapController!.camera.zoom;
     final err = 1 / pow(2, zoom);
@@ -590,9 +729,9 @@ class MapStateProvider with ChangeNotifier {
     }
 
     if (screenOffset == Offset.zero) {
-      animatedMove(view.center, zoom);
+      animatedMove(center, zoom);
     } else {
-      animatedMoveWithScreenOffset(view.center, zoom, screenOffset);
+      animatedMoveWithScreenOffset(center, zoom, screenOffset);
     }
   }
 
@@ -813,10 +952,11 @@ class MapStateProvider with ChangeNotifier {
     longitudes.add(_toPositiveLongitude(longitude));
   }
 
-  MapCamera? _fitWaveViewToViewport(
+  MapCamera? _fitViewToViewport(
     _WrappedEventView view, {
     required double minZoom,
     required double maxZoom,
+    EdgeInsets padding = const EdgeInsets.all(50),
   }) {
     final camera = _mapController!.camera;
     final size = camera.nonRotatedSize;
@@ -824,6 +964,9 @@ class MapStateProvider with ChangeNotifier {
         !size.height.isFinite ||
         size.width <= 100 ||
         size.height <= 100) {
+      return null;
+    }
+    if (size.width <= padding.horizontal || size.height <= padding.vertical) {
       return null;
     }
 
@@ -845,7 +988,7 @@ class MapStateProvider with ChangeNotifier {
         east: east,
         west: west,
       ),
-      padding: const EdgeInsets.all(50),
+      padding: padding,
       minZoom: minZoom,
       maxZoom: maxZoom,
     ).fit(camera);
@@ -890,6 +1033,7 @@ class MapStateProvider with ChangeNotifier {
   }
 
   bool _canApplyAutoMove(bool respectAutoZoom) {
+    if (!isSeismicViewportVisible) return false;
     if (!respectAutoZoom) return true;
     return canAutoFollow;
   }

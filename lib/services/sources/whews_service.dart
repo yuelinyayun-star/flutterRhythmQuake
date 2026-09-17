@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../../models/weather_alarm.dart';
 import '../../models/unified_quake_data.dart';
+import '../../models/whews_catalog.dart';
 import '../../models/volcano_event_data.dart';
 import '../../models/source_status.dart';
 import '../../models/tsunami_message.dart';
@@ -270,7 +271,11 @@ class WhewsService extends BaseSourceService {
     }
     final event = QuakeEventAdapter.convertWhews(source, data);
     if (event == null) return;
-    _emitUnifiedWithAshfallEnrichment(event);
+    _emitUnifiedWithAshfallEnrichment(
+      unifiedCatalogSources.containsKey(event.source)
+          ? event.copyWith(isSnapshot: isInitialSnapshot)
+          : event,
+    );
   }
 
   void _emitUnifiedWithAshfallEnrichment(UnifiedQuakeData event) {

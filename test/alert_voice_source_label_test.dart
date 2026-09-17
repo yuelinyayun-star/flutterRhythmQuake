@@ -43,7 +43,8 @@ void main() {
         eventFor(entry.key),
         phase: 'first',
       );
-      expect(text, startsWith('${entry.value}，'));
+      expect(text, startsWith('地震信息，测试地点，震级3.0'));
+      expect(text, endsWith('${entry.value}。'));
       expect(text, isNot(contains(entry.key)));
     }
   });
@@ -53,7 +54,7 @@ void main() {
       eventFor('cencCmt'),
       phase: 'first',
     );
-    expect(text, startsWith('cencCmt，'));
+    expect(text, endsWith('cencCmt。'));
   });
 
   test('WHEWS generic sources use their Chinese institution names', () {
@@ -75,7 +76,8 @@ void main() {
         eventFor(entry.key),
         phase: 'first',
       );
-      expect(text, startsWith('${entry.value}，'));
+      expect(text, startsWith('地震信息，测试地点，震级3.0'));
+      expect(text, endsWith('${entry.value}。'));
       expect(text, isNot(contains(entry.key)));
     }
   });
@@ -112,14 +114,15 @@ void main() {
     },
   );
 
-  test('adapted CENC voice still reads the dedicated title', () {
+  test('CENC voice reports the quake before naming its source only once', () {
     final event = eventFor('cencEqlist').copyWith(titleText: '中国地震台网地震信息');
     final text = AlertVoiceHelper.generateUnifiedEventText(
       event,
       phase: 'first',
     );
-    expect(text, startsWith('中国地震台网，'));
-    expect(text, contains('中国地震台网地震信息'));
+    expect(text, startsWith('地震信息，测试地点，震级3.0'));
+    expect('中国地震台网'.allMatches(text), hasLength(1));
+    expect(text, isNot(contains('发布地震信息')));
   });
 
   test('JMA information voice never reads report serial for any origin', () {
@@ -149,7 +152,8 @@ void main() {
       phase: 'first',
     );
 
-    expect(text, contains('韩国气象厅地震信息正式测定'));
+    expect(text, startsWith('地震信息，测试地点，震级3.0'));
+    expect(text, contains('韩国气象厅'));
     expect(text, isNot(contains('기상청 지진정보')));
   });
 
@@ -167,12 +171,13 @@ void main() {
     );
 
     final text = AlertVoiceHelper.generateLegacyAlertText(event, 12, 3.0);
-    expect(text, contains('地震速报，第2报'));
+    expect(text, startsWith('地震速报，测试地点，震级4.0'));
+    expect(text, endsWith('第2报。'));
     expect(text, isNot(contains('发布')));
     expect(text, isNot(contains('更新')));
   });
 
-  test('EEW voice text reuses the UI depth text', () {
+  test('EEW voice includes depth without rounding away reported decimals', () {
     final event = eventFor(
       'jmaEew',
     ).copyWith(isEew: true, depth: 14.9, depthText: '深度 14.9 km');
@@ -196,8 +201,9 @@ void main() {
       phase: 'first',
     );
 
-    expect(text, startsWith('中央气象署，地震预警，第2报，'));
-    expect(text, contains('深度40公里'));
+    expect(text, startsWith('地震预警，测试地点，震级3.0'));
+    expect(text, endsWith('中央气象署，第2报。'));
+    expect(text, contains('深度10公里'));
     expect(text, isNot(contains('台湾中央气象署')));
     expect(text, isNot(contains('深さ')));
     expect(text, isNot(contains('40km')));
@@ -214,7 +220,8 @@ void main() {
       warning,
       phase: 'warn',
     );
-    expect(warnText, contains('紧急地震警报，第3报'));
+    expect(warnText, startsWith('紧急地震警报，测试地点'));
+    expect(warnText, endsWith('第3报。'));
     expect(warnText, isNot(contains('发布')));
     expect(warnText, isNot(contains('更新')));
     expect(warnText, isNot(contains('警报警报')));
@@ -224,7 +231,8 @@ void main() {
       caution,
       phase: 'caution',
     );
-    expect(cautionText, contains('紧急地震速报，第3报'));
+    expect(cautionText, startsWith('紧急地震速报，测试地点'));
+    expect(cautionText, endsWith('第3报。'));
     expect(cautionText, isNot(contains('注意信息')));
     expect(cautionText, isNot(contains('发布')));
     expect(cautionText, isNot(contains('更新')));
@@ -236,7 +244,8 @@ void main() {
       jma,
       phase: 'first',
     );
-    expect(jmaText, contains('紧急地震速报，第1报'));
+    expect(jmaText, startsWith('紧急地震速报，测试地点'));
+    expect(jmaText, endsWith('第1报。'));
     expect(jmaText, isNot(contains('发布')));
     expect(jmaText, isNot(contains('更新')));
 
@@ -255,7 +264,8 @@ void main() {
         event,
         phase: 'first',
       );
-      expect(text, contains('地震预警，第2报'));
+      expect(text, startsWith('地震预警，测试地点'));
+      expect(text, endsWith('第2报。'));
       expect(text, isNot(contains('紧急地震速报')));
       expect(text, isNot(contains('紧急地震警报')));
       expect(text, isNot(contains('发布')));
@@ -296,8 +306,8 @@ void main() {
       event,
       phase: 'first',
     );
-    expect(text, startsWith('geonet，'));
-    expect(text, contains('新西兰地球科学局'));
+    expect(text, startsWith('地震信息，35 km south-west of Tokoroa'));
+    expect(text, endsWith('geonet。'));
     expect(text, isNot(contains('中国地震台网')));
     expect(text, isNot(contains('unadapted_geonet')));
   });

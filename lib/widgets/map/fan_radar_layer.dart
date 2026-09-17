@@ -19,7 +19,7 @@ class FanRadarLayer extends StatelessWidget {
           key: ValueKey('fan-radar-${data.time.toIso8601String()}'),
           bounds: bounds,
           imageProvider: MemoryImage(data.imageBytes),
-          opacity: 0.78,
+          opacity: 0.60,
           gaplessPlayback: true,
           filterQuality: FilterQuality.medium,
         ),

@@ -1,0 +1,293 @@
+[
+  {
+    "Data": {
+      "id": "2026-07-22T12:18:23+08:00",
+      "infoTypeName": "",
+      "magnitude": 5.6,
+      "placeName": "41 km TimurLaut KAB-GAYOLUES-ACEH",
+      "shockTime": "2026-07-22 12:18:23",
+      "updateTime": "2026-07-22 12:18:23",
+      "longitude": 97.62,
+      "latitude": 4.25,
+      "depth": 10
+    },
+    "md5": "...",
+    "source": "bmkg"
+  },
+  {
+    "Data": {
+      "id": "2026p123456",
+      "infoTypeName": "best",
+      "magnitude": 3.4,
+      "placeName": "10 km east of Wellington",
+      "shockTime": "2026-07-23 14:00:00",
+      "updateTime": "2026-07-23 14:00:00",
+      "longitude": 174.8,
+      "latitude": -41.3,
+      "depth": 20,
+      "maxIntensity": "4"
+    },
+    "md5": "...",
+    "source": "geonet"
+  },
+  {
+    "Data": {
+      "id": "16871",
+      "infoTypeName": "",
+      "magnitude": 2.6,
+      "placeName": "ประเทศเมียนมา",
+      "shockTime": "2026-07-23 04:57:43",
+      "updateTime": "2026-07-23 04:57:43",
+      "longitude": 98.058,
+      "latitude": 19.944,
+      "depth": 5
+    },
+    "md5": "...",
+    "source": "tmd"
+  },
+  {
+    "Data": {
+      "id": "46630772",
+      "infoTypeName": "",
+      "magnitude": 0.6,
+      "placeName": "5 km NE Nocera Umbra (PG)",
+      "shockTime": "2026-07-23 10:16:26",
+      "updateTime": "2026-07-23 10:46:18",
+      "longitude": 12.8352,
+      "latitude": 43.1395,
+      "depth": 17.3
+    },
+    "md5": "...",
+    "source": "ingv"
+  },
+  {
+    "Data": {
+      "id": "20263550",
+      "magnitude": 4.8,
+      "placeName": "东新几内亚地区",
+      "shockTime": "2026-07-23 12:00:00",
+      "updateTime": "2026-07-23 12:00:00",
+      "longitude": 147,
+      "latitude": -5,
+      "depth": 40,
+      "maxIntensity": "5"
+    },
+    "md5": "...",
+    "source": "gsras"
+  },
+  {
+    "Data": {
+      "id": "bgs_20260723101500",
+      "magnitude": 2.4,
+      "placeName": "NORWICH, NORFOLK",
+      "shockTime": "2026-07-23 18:15:00",
+      "updateTime": "2026-07-23 18:15:00",
+      "longitude": 1.29,
+      "latitude": 52.63,
+      "depth": 8
+    },
+    "md5": "...",
+    "source": "bgs"
+  },
+  {
+    "Data": {
+      "id": "ipma_20240723050043",
+      "magnitude": 2.1,
+      "placeName": "NW Alcoutim",
+      "shockTime": "2024-07-23 13:00:43",
+      "updateTime": "2024-07-23 13:00:43",
+      "longitude": -7.52,
+      "latitude": 37.51,
+      "depth": 10
+    },
+    "md5": "...",
+    "source": "ipma"
+  },
+  {
+    "Data": {
+      "id": "ssn_20260723101234",
+      "magnitude": 3.5,
+      "placeName": "12 km al SURESTE de PINOTIPA NACIONAL, OAX",
+      "shockTime": "2026-07-23 18:12:34",
+      "updateTime": "2026-07-23 18:12:34",
+      "longitude": -98.12,
+      "latitude": 16.34,
+      "depth": 12
+    },
+    "md5": "...",
+    "source": "ssn"
+  },
+  {
+    "Data": {
+      "id": "123456",
+      "infoTypeName": "ML",
+      "magnitude": 3.2,
+      "placeName": "Aegean Sea",
+      "shockTime": "2026-07-23 18:20:00",
+      "updateTime": "2026-07-23 18:20:00",
+      "longitude": 26.5,
+      "latitude": 38.2,
+      "depth": 7
+    },
+    "md5": "...",
+    "source": "afad"
+  },
+  {
+    "Data": {
+      "id": "smi:ch.ethz.sed/...",
+      "magnitude": 1.8,
+      "placeName": "Near Zurich",
+      "shockTime": "2026-07-23 18:05:00",
+      "updateTime": "2026-07-23 18:05:00",
+      "longitude": 8.54,
+      "latitude": 47.38,
+      "depth": 5
+    },
+    "md5": "...",
+    "source": "sed"
+  },
+  {
+    "Data": {
+      "id": "noa2026....",
+      "magnitude": 2.9,
+      "placeName": "12 km S of Athens",
+      "shockTime": "2026-07-23 17:40:00",
+      "updateTime": "2026-07-23 17:40:00",
+      "longitude": 23.73,
+      "latitude": 37.98,
+      "depth": 10
+    },
+    "md5": "...",
+    "source": "noa"
+  },
+  {
+    "Data": {
+      "id": "ci41026127",
+      "magnitude": 2.6,
+      "placeName": "5km NE of Anza, CA",
+      "shockTime": "2026-07-23 10:16:14",
+      "updateTime": "2026-07-23 10:16:14",
+      "longitude": -116.77,
+      "latitude": 33.7,
+      "depth": 16.3
+    },
+    "md5": "...",
+    "source": "scsn"
+  },
+  {
+    "Data": {
+      "id": "20260723.0001",
+      "magnitude": 2.8,
+      "placeName": "Off Vancouver Island, BC",
+      "shockTime": "2026-07-23 08:00:00",
+      "updateTime": "2026-07-23 08:00:00",
+      "longitude": -129,
+      "latitude": 49,
+      "depth": 15
+    },
+    "md5": "...",
+    "source": "nrcan"
+  },
+  {
+    "Data": {
+      "id": "mmd_20260723120000",
+      "infoTypeName": "mb",
+      "magnitude": 4,
+      "placeName": "Sabah",
+      "shockTime": "2026-07-23 20:00:00",
+      "updateTime": "2026-07-23 20:00:00",
+      "longitude": 117,
+      "latitude": 5,
+      "depth": 10
+    },
+    "md5": "...",
+    "source": "mmd"
+  },
+  {
+    "Data": {
+      "id": "SGC2026pvumwd",
+      "infoTypeName": "manual/MLr_1",
+      "magnitude": 2.4,
+      "placeName": "Sipí - Chocó, Colombia",
+      "shockTime": "2026-08-13 15:57:00",
+      "updateTime": "2026-08-13 15:57:00",
+      "longitude": -76.587,
+      "latitude": 4.6295,
+      "depth": 113
+    },
+    "md5": "...",
+    "source": "sgc"
+  },
+  {
+    "Data": {
+      "id": "ga2026pmefnv",
+      "infoTypeName": "manual/Mw",
+      "magnitude": 5.15,
+      "placeName": "Off East Coast of Honshu, Japan",
+      "shockTime": "2026-08-07 01:43:39",
+      "updateTime": "2026-08-07 01:43:39",
+      "longitude": 143.465,
+      "latitude": 39.603,
+      "depth": 22.1
+    },
+    "md5": "...",
+    "source": "ga"
+  },
+  {
+    "Data": {
+      "id": "cenais_20260813043125_19p801_m72p770",
+      "magnitude": 2.9,
+      "placeName": "163 km Sureste de Maisí, Guantanamo",
+      "shockTime": "2026-08-13 12:31:25",
+      "updateTime": "2026-08-13 12:31:25",
+      "longitude": -72.77,
+      "latitude": 19.801,
+      "depth": 40
+    },
+    "md5": "...",
+    "source": "cenais"
+  },
+  {
+    "Data": {
+      "id": "iag_20260723120000",
+      "magnitude": 3,
+      "placeName": "Mongolia",
+      "shockTime": "2026-07-23 20:00:00",
+      "updateTime": "2026-07-23 20:00:00",
+      "longitude": 106.9,
+      "latitude": 47.9,
+      "depth": 10
+    },
+    "md5": "...",
+    "source": "iag"
+  },
+  {
+    "Data": {
+      "id": "igp_20260723120000",
+      "magnitude": 3.2,
+      "placeName": "Vietnam",
+      "shockTime": "2026-07-23 19:00:00",
+      "updateTime": "2026-07-23 19:00:00",
+      "longitude": 105.8,
+      "latitude": 21,
+      "depth": 10
+    },
+    "md5": "...",
+    "source": "igp"
+  },
+  {
+    "Data": {
+      "id": "nepal_20260723120000",
+      "infoTypeName": "ML",
+      "magnitude": 4.1,
+      "placeName": "Nepal",
+      "shockTime": "2026-07-23 18:00:00",
+      "updateTime": "2026-07-23 18:00:00",
+      "longitude": 85.3,
+      "latitude": 27.7,
+      "depth": 0
+    },
+    "md5": "...",
+    "source": "nepal"
+  }
+]

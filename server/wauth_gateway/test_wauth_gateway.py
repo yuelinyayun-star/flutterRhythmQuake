@@ -7,7 +7,13 @@ from urllib.parse import parse_qs, urlparse
 
 from aiohttp.test_utils import AioHTTPTestCase
 
-from wauth_gateway import AuthorizationStore, _callback_page, _is_base64url, create_app
+from wauth_gateway import (
+    AuthorizationStore,
+    WAuthUpstreamError,
+    _callback_page,
+    _is_base64url,
+    create_app,
+)
 
 
 class AuthorizationStoreTest(unittest.TestCase):
@@ -157,8 +163,79 @@ class GatewayHttpTest(AioHTTPTestCase):
         self.assertEqual(payload["session"], "/wauth/session")
         self.assertEqual(payload["callback"], "/wauth/callback")
         self.assertEqual(payload["result"], "/wauth/result")
+        self.assertEqual(payload["userinfo"], "/wauth/userinfo")
+        self.assertEqual(
+            payload["verifyApiToken"],
+            "/wauth/api/token/verify",
+        )
         self.assertNotIn("status", payload)
         self.assertNotIn("logout", payload)
+
+    async def test_userinfo_proxy_requires_bearer_token(self) -> None:
+        response = await self.client.get("/wauth/userinfo")
+
+        self.assertEqual(response.status, 401)
+        self.assertEqual((await response.json())["error"], "missing_token")
+
+    async def test_userinfo_proxy_forwards_access_token_in_header(self) -> None:
+        async def fetch_userinfo(_request, access_token):
+            self.assertEqual(access_token, "official-access-token")
+            return {"sub": "72", "name": "Rhythm"}
+
+        self.app["userinfo_fetcher"] = fetch_userinfo
+        response = await self.client.get(
+            "/wauth/userinfo",
+            headers={"Authorization": "Bearer official-access-token"},
+        )
+        payload = await response.json()
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(payload["sub"], "72")
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+
+    async def test_api_token_proxy_forwards_api_token_in_header(self) -> None:
+        async def verify_api_token(_request, api_token):
+            self.assertEqual(api_token, "official-api-token")
+            return {"valid": True, "user_id": 72}
+
+        self.app["api_token_verifier"] = verify_api_token
+        response = await self.client.post(
+            "/wauth/api/token/verify",
+            headers={"Authorization": "Bearer official-api-token"},
+        )
+        payload = await response.json()
+
+        self.assertEqual(response.status, 200)
+        self.assertTrue(payload["valid"])
+        self.assertEqual(payload["user_id"], 72)
+
+    async def test_proxy_preserves_auth_rejection_without_upstream_detail(self) -> None:
+        async def reject_token(_request, _api_token):
+            raise WAuthUpstreamError(status=401, message="secret upstream detail")
+
+        self.app["api_token_verifier"] = reject_token
+        response = await self.client.post(
+            "/wauth/api/token/verify",
+            headers={"Authorization": "Bearer rejected-token"},
+        )
+        body = await response.text()
+
+        self.assertEqual(response.status, 401)
+        self.assertNotIn("secret upstream detail", body)
+
+    async def test_proxy_maps_non_auth_upstream_failure_to_bad_gateway(self) -> None:
+        async def fail_userinfo(_request, _access_token):
+            raise WAuthUpstreamError(status=500, message="private upstream detail")
+
+        self.app["userinfo_fetcher"] = fail_userinfo
+        response = await self.client.get(
+            "/wauth/userinfo",
+            headers={"Authorization": "Bearer access-token"},
+        )
+        body = await response.text()
+
+        self.assertEqual(response.status, 502)
+        self.assertNotIn("private upstream detail", body)
 
     async def test_session_uses_fixed_callback(self) -> None:
         verifier = "v" * 43

@@ -1,0 +1,1 @@
+var dataSK={"nameen":"beijing","cityname":"北京","city":"101010100","temp":"28.3","tempf":"82.9","WD":"东风","wde":"E","WS":"2级","wse":"7km\/h","SD":"61%","sd":"61%","qy":"1006","njd":"19km","time":"14:25","rain":"0","rain24h":"0","aqi":"37","aqi_pm25":"37","weather":"阴","weathere":"Overcast","weathercode":"d02","limitnumber":"1和6","date":"09月07日(星期一)"}

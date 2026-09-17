@@ -10,7 +10,12 @@ import 'shindo_color_util.dart';
 class SnetService {
   static final SnetService _instance = SnetService._internal();
   factory SnetService() => _instance;
-  SnetService._internal();
+  SnetService._internal() : _client = http.Client();
+
+  @visibleForTesting
+  SnetService.forTesting({required http.Client client}) : _client = client;
+
+  final http.Client _client;
 
   static const String _baseUrl = 'https://www.msil.go.jp/data/tiles/smoni';
   static const int _z = 5;
@@ -45,6 +50,9 @@ class SnetService {
   int _consecutiveFailures = 0;
 
   String? _lastBasetime;
+  String? _lastValidtime;
+  int _generation = 0;
+  Future<void>? _fetchFuture;
 
   static const List<Map<String, dynamic>> _stationDefs = [
     {"code": "N.S1N01", "lat": 35.8968, "lng": 141.0535, "x": 137, "y": 403},
@@ -227,8 +235,9 @@ class SnetService {
     if (_isMonitoring) return;
     _initStations();
     _isMonitoring = true;
-    onStatusChanged?.call(true);
+    final generation = _generation;
     await fetchLatestData();
+    if (!_isMonitoring || generation != _generation) return;
     _updateTimer = Timer.periodic(
       Duration(seconds: intervalSeconds),
       (_) => fetchLatestData(),
@@ -240,14 +249,28 @@ class SnetService {
     _updateTimer?.cancel();
     _updateTimer = null;
     _isMonitoring = false;
+    _generation++;
+    _fetchFuture = null;
     onStatusChanged?.call(false);
     debugPrint('[S-net] Monitoring stopped');
   }
 
-  Future<void> fetchLatestData() async {
+  Future<void> fetchLatestData() {
+    final pending = _fetchFuture;
+    if (pending != null) return pending;
+    late final Future<void> request;
+    request = _fetchLatestData(_generation).whenComplete(() {
+      if (identical(_fetchFuture, request)) _fetchFuture = null;
+    });
+    _fetchFuture = request;
+    return request;
+  }
+
+  Future<void> _fetchLatestData(int generation) async {
     _initStations();
     try {
-      final success = await _fetchAndParseTiles();
+      final success = await _fetchAndParseTiles(generation);
+      if (generation != _generation) return;
       if (success) {
         _consecutiveFailures = 0;
         onStatusChanged?.call(true);
@@ -256,30 +279,32 @@ class SnetService {
     } catch (e) {
       debugPrint('[S-net] 数据获取失败: $e');
     }
-    _onFetchFailed();
+    if (generation == _generation) _onFetchFailed();
   }
 
-  Future<bool> _fetchAndParseTiles() async {
+  Future<bool> _fetchAndParseTiles(int generation) async {
     final stopwatch = Stopwatch()..start();
     final times = await _fetchTargetTimes();
+    if (generation != _generation) return false;
     if (times == null) {
       debugPrint('[S-net] ✗ targetTimes.json 获取失败');
       return false;
     }
     final basetime = times['basetime'] as String;
     final validtime = times['validtime'] as String;
-    if (basetime == _lastBasetime) {
+    if (basetime == _lastBasetime && validtime == _lastValidtime) {
       return true;
     }
-    _lastBasetime = basetime;
-
-    final rawRgba = await _downloadAndStitch(basetime, validtime);
+    final rawRgba = await _downloadAndStitch(basetime, validtime, generation);
+    if (generation != _generation) return false;
     if (rawRgba == null) {
       debugPrint('[S-net] ✗ 瓦片下载/拼接失败');
       return false;
     }
     stopwatch.reset();
     _processImageData(rawRgba);
+    _lastBasetime = basetime;
+    _lastValidtime = validtime;
     stopwatch.stop();
 
     onDataUpdated?.call(_stations);
@@ -289,7 +314,7 @@ class SnetService {
 
   Future<Map<String, String>?> _fetchTargetTimes() async {
     try {
-      final response = await http
+      final response = await _client
           .get(Uri.parse('$_baseUrl/targetTimes.json'), headers: _headers)
           .timeout(const Duration(seconds: 20));
       if (response.statusCode != 200) return null;
@@ -309,16 +334,18 @@ class SnetService {
   Future<Int32List?> _downloadAndStitch(
     String basetime,
     String validtime,
+    int generation,
   ) async {
     final result = Int32List(_imgW * _imgH);
     int usedTiles = 0;
     try {
       for (int y = _yMin; y <= _yMax; y++) {
         for (int x = _xMin; x <= _xMax; x++) {
+          if (generation != _generation) return null;
           final tileData = await _downloadTile(basetime, validtime, _z, x, y);
           if (tileData == null) {
             debugPrint('[S-net] ✗ tile z=$_z x=$x y=$y 下载失败');
-            continue;
+            return null;
           }
           final tileX = (x - _xMin) * _tileSize;
           final tileY = (y - _yMin) * _tileSize;
@@ -353,7 +380,7 @@ class SnetService {
   ) async {
     try {
       final url = '$_baseUrl/tileimage/$basetime/$validtime/$z/$x/$y.png';
-      final response = await http
+      final response = await _client
           .get(Uri.parse(url), headers: _headers)
           .timeout(const Duration(seconds: 15));
       if (response.statusCode != 200 || response.bodyBytes.isEmpty) {
@@ -363,12 +390,19 @@ class SnetService {
         return null;
       }
       final codec = await ui.instantiateImageCodec(response.bodyBytes);
-      final frame = await codec.getNextFrame();
+      final ui.FrameInfo frame;
+      try {
+        frame = await codec.getNextFrame();
+      } finally {
+        codec.dispose();
+      }
       final image = frame.image;
-      final byteData = await image.toByteData(
-        format: ui.ImageByteFormat.rawRgba,
-      );
-      image.dispose();
+      final ByteData? byteData;
+      try {
+        byteData = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      } finally {
+        image.dispose();
+      }
       if (byteData == null) {
         debugPrint('[S-net] ✗ tile z=$z x=$x y=$y byteData is null');
         return null;
@@ -439,6 +473,8 @@ class SnetService {
   bool get isMonitoring => _isMonitoring;
 
   void clearStations() {
+    _lastBasetime = null;
+    _lastValidtime = null;
     _stations.clear();
     onDataUpdated?.call(_stations);
     _stationController.add(const []);
@@ -454,6 +490,7 @@ class SnetService {
 
   void dispose() {
     stopMonitoring();
+    _client.close();
     _stations.clear();
     _stationController.close();
   }

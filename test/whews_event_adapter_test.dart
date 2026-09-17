@@ -10,6 +10,76 @@ import 'package:flutterrhythmquake/services/sources/whews_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  test('VXSE51 headline time is not confused with report time', () {
+    // Headline and times from JMA 20260907142301_0_VXSE51_270000.xml.
+    final raw = <String, dynamic>{
+      'id': '20260907232129',
+      'title': '震度速報',
+      'shockTime': '',
+      'originTime': '',
+      'createTime': '2026-09-07 23:23:00',
+      'maxIntensity': '3',
+      'placeName': '調査中',
+      'headline': '　７日２３時２１分ころ、地震による強い揺れを感じました。震度３以上が観測された地域をお知らせします。',
+    };
+    final event = QuakeEventAdapter.convertWhews('jma', raw)!;
+    expect(event.originTime, DateTime(2026, 9, 7, 23, 21));
+    expect(event.reportTime, DateTime(2026, 9, 7, 23, 23));
+    expect(event.timeZone, 9);
+    expect(
+      UnifiedEventPresentation.fromEvent(event).timeText,
+      contains('23:21:00'),
+    );
+    expect(UnifiedEventPresentation.fromEvent(event).primaryText, '震源 調査中');
+    expect(raw['shockTime'], '');
+  });
+
+  test(
+    'JMA structured shockTime has priority over empty aliases and headline',
+    () {
+      final event = QuakeEventAdapter.convertWhews('jma', {
+        'title': '震源・震度に関する情報',
+        'originTime': '',
+        'reportTime': '',
+        'shockTime': '2026-09-07T14:21:00Z',
+        'createTime': '2026-09-07T23:25:00+09:00',
+        'headline': '７日２３時２０分ころ、地震がありました。',
+      })!;
+      expect(event.originTime, DateTime(2026, 9, 7, 23, 21));
+      expect(event.reportTime, DateTime(2026, 9, 7, 23, 25));
+    },
+  );
+
+  test(
+    'VXSE51 month/year rollover uses report calendar, never device time',
+    () {
+      final event = QuakeEventAdapter.convertWhews('jma', {
+        'title': '震度速報',
+        'createTime': '2027-01-01 00:01:00',
+        'headline': '３１日２３時５９分ころ、地震による強い揺れを感じました。',
+      })!;
+      expect(event.originTime, DateTime(2026, 12, 31, 23, 59));
+    },
+  );
+
+  test('missing, invalid or unrelated headline never fabricates an origin', () {
+    for (final headline in [
+      '',
+      '今後の情報に注意してください。',
+      '７日２５時９９分ころ',
+      '１日００時００分ころ',
+    ]) {
+      final event = QuakeEventAdapter.convertWhews('jma', {
+        'title': '震度速報',
+        'createTime': '2026-09-07 23:23:00',
+        'headline': headline,
+      })!;
+      expect(event.originTime, isNull);
+      expect(event.reportTime, DateTime(2026, 9, 7, 23, 23));
+    }
+  });
+
   test('WHEWS JMA information preserves official area intensities', () {
     final raw = <String, dynamic>{
       'id': '20260809140518',

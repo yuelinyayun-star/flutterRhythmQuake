@@ -1,12 +1,13 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter_map/flutter_map.dart';
 import 'package:http/http.dart';
 import 'package:http/io_client.dart';
 import 'package:http/retry.dart';
 
-class AllowAnyCertTileProvider extends NetworkTileProvider {
+import 'shared_cancellable_tile_provider.dart';
+
+class AllowAnyCertTileProvider extends SharedCancellableTileProvider {
   AllowAnyCertTileProvider()
     : super(
         httpClient: _client,

@@ -1,7 +1,21 @@
+import 'package:flutter/widgets.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../core/calculator.dart';
 import '../../models/cenc_ir_data.dart';
+import '../ui/ui_scale.dart';
+
+EdgeInsets? cencIrViewportPadding(BuildContext context) {
+  if (UiScale.isPhone(context)) return null;
+  // Match the desktop list (including its collapse tab), right dashboard and
+  // top chrome. Pixel margins also keep station circles clear of the panels.
+  return EdgeInsets.fromLTRB(
+    UiScale.s(context, 20 + 420 + 26) + 24,
+    UiScale.belowTopBar(context, 64),
+    UiScale.sc(context, 20) + UiScale.sidePanelWidth(context, 234) + 24,
+    32,
+  );
+}
 
 List<LatLng> cencIrFocusPoints({
   required CencIrData data,

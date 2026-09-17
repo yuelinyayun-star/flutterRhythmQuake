@@ -27,12 +27,14 @@ import 'services/desktop_init.dart';
 import 'services/location_service.dart';
 import 'services/background_service.dart';
 import 'services/tts_service.dart';
+import 'services/sound_effect_service.dart';
 import 'services/obs_automation_runtime_service.dart';
 import 'services/wauth_service.dart';
 import 'services/wauth_credential_store.dart';
 import 'services/sources/source_manager.dart';
 import 'services/sources/wolfx_service.dart';
 import 'services/sources/whews_service.dart';
+import 'services/sources/jian_service.dart';
 import 'services/sources/fan_service.dart';
 import 'services/sources/nowquake_cenc_intensity_service.dart';
 import 'services/sources/p2pquake_service.dart';
@@ -93,6 +95,7 @@ void _startDeferredServices(
   WAuthCredentials whewsCredentials,
 ) {
   WidgetsBinding.instance.addPostFrameCallback((_) {
+    unawaited(SoundEffectService().warmUp());
     unawaited(() async {
       // A saved/manual location is restored before this callback. Only new
       // mobile installs need an automatic request after the first UI frame.
@@ -325,6 +328,7 @@ void main() async {
   // 3. 注册并启动地震数据源
   final wolfx = WolfxService();
   final whews = WhewsService(apiToken: '');
+  final jian = JianService();
   final fan = FanService(
     apiKey: prefs.getString(FanService.apiKeyPreferenceKey) ?? '',
   );
@@ -358,6 +362,9 @@ void main() async {
   );
   SourceManager().registerSource(wolfx);
   SourceManager().registerSource(whews);
+  SourceManager().registerSource(jian);
+  SourceManager().setSourceEnabled(jian.name,
+    prefs.getBool(JianService.enabledPreferenceKey) ?? false);
   SourceManager().registerSource(fan);
   SourceManager().registerSource(nowQuakeCencIr);
   SourceManager().registerSource(p2p);
@@ -465,6 +472,14 @@ MapStateProvider _createMapStateProvider(
   provider.setOverlayEnabled(
     'cnContour',
     prefs.getBool('map_overlay_cnContour') ?? false,
+  );
+  provider.setOverlayEnabled(
+    'cnFault',
+    prefs.getBool('map_overlay_cnFault') ?? false,
+  );
+  provider.setOverlayEnabled(
+    'jpFault',
+    prefs.getBool('map_overlay_jpFault') ?? false,
   );
   provider.setOverlayEnabled(
     'volcanoLayer',

@@ -20,11 +20,20 @@ import 'background_service.dart';
 class NotificationService {
   final QuakeProvider _quakeProvider;
   final NotificationSettingsProvider _settings;
+  final void Function(String) _playSound;
 
   final Set<String> _focusedEventIds = <String>{};
   final Map<String, _EewSoundFlags> _eewSoundFlags = <String, _EewSoundFlags>{};
 
-  NotificationService(this._quakeProvider, this._settings) {
+  NotificationService(
+    this._quakeProvider,
+    this._settings, {
+    void Function(String)? playSound,
+  }) : _playSound =
+           playSound ??
+           ((key) {
+             SoundEffectService().play(key);
+           }) {
     _quakeProvider.onUnifiedEventNotified = _handleEvent;
   }
 
@@ -73,29 +82,33 @@ class NotificationService {
 
   void _playEewSound(UnifiedQuakeData event, String eventKey) {
     if (event.isCanceled) {
-      SoundEffectService().play('cancel');
+      _playSound('cancel');
       return;
     }
 
     final flags = _eewSoundFlags.putIfAbsent(eventKey, _EewSoundFlags.new);
 
     if (!flags.firstSound) {
-      SoundEffectService().play('issue');
+      _playSound('issue');
       flags.firstSound = true;
     } else if (event.isFinal) {
-      SoundEffectService().play('final');
+      _playSound('final');
     } else {
-      SoundEffectService().play('update');
+      _playSound('update');
     }
 
     if (event.isWarn) {
       if (!flags.warnSound) {
-        SoundEffectService().play('warn');
+        if (_quakeProvider.claimEewThresholdSound(event, warn: true)) {
+          _playSound('warn');
+        }
         flags.warnSound = true;
         flags.cautionSound = true;
       }
     } else if (_isCautionClass(event.className) && !flags.cautionSound) {
-      SoundEffectService().play('caution');
+      if (_quakeProvider.claimEewThresholdSound(event, warn: false)) {
+        _playSound('caution');
+      }
       flags.cautionSound = true;
     }
 

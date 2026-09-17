@@ -144,6 +144,7 @@ class StationDashboard extends StatelessWidget {
   });
 
   double _scale(BuildContext c) {
+    if (phoneMode) return 1;
     return UiScale.compact(c);
   }
 
@@ -158,6 +159,14 @@ class StationDashboard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (phoneMode) {
+      return Column(
+        children: [
+          Expanded(child: _buildTopMaxSection(context)),
+          Expanded(child: _buildBottomMaxSection(context)),
+        ],
+      );
+    }
     return Positioned(
       top: UiScale.topBarHeight(context) + _s(phoneMode ? 8 : 12, context),
       left: phoneMode ? _s(10, context) : null,
@@ -192,116 +201,139 @@ class StationDashboard extends StatelessWidget {
   }
 
   Widget _buildTopMaxSection(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: _ws(3, context),
-        vertical: _s(5, context),
+    return _maxSection(context, [
+      _maxCard(
+        context,
+        'NIED',
+        '当前最大震度',
+        _niedMaxLabel(data.niedMaxStation),
+        const Color(0xFF00DC8C),
+        valueColor: _niedMaxColor(),
       ),
-      child: Row(
-        children: [
-          _maxCard(
-            context,
-            'NIED',
-            '当前最大震度',
-            _niedMaxLabel(data.niedMaxStation),
-            const Color(0xFF00DC8C),
-            valueColor: _niedMaxColor(),
+      if (!phoneMode)
+        Container(
+          width: _ws(1, context),
+          height: _s(30, context),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.35),
           ),
-          Container(
-            width: _ws(1, context),
-            height: _s(30, context),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.35),
-            ),
-          ),
-          _maxCard(
-            context,
-            'S-net',
-            '当前最大震度',
-            _snetMaxLabel(),
-            const Color(0xFF00E5FF),
-            valueColor: _snetMaxColor(),
-          ),
-          Container(
-            width: _ws(1, context),
-            height: _s(30, context),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.35),
-            ),
-          ),
-          _maxCard(
-            context,
-            'KMA',
-            '当前最大烈度',
-            data.kmaMaxStation?.heldIntensity != null &&
-                    data.kmaMaxStation!.heldIntensity >= 0
-                ? data.kmaMaxStation!.heldIntensity.toString()
-                : '--',
-            const Color(0xFFE67E22),
-            valueColor: _csisValueColor(data.kmaMaxStation?.heldIntensity),
-          ),
-        ],
+        ),
+      _maxCard(
+        context,
+        'S-net',
+        '当前最大震度',
+        _snetMaxLabel(),
+        const Color(0xFF00E5FF),
+        valueColor: _snetMaxColor(),
       ),
-    );
+      if (!phoneMode)
+        Container(
+          width: _ws(1, context),
+          height: _s(30, context),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.35),
+          ),
+        ),
+      _maxCard(
+        context,
+        'KMA',
+        '当前最大烈度',
+        data.kmaMaxStation?.heldIntensity != null &&
+                data.kmaMaxStation!.heldIntensity >= 0
+            ? data.kmaMaxStation!.heldIntensity.toString()
+            : '--',
+        const Color(0xFFE67E22),
+        valueColor: _csisValueColor(data.kmaMaxStation?.heldIntensity),
+      ),
+    ]);
   }
 
   Widget _buildBottomMaxSection(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: _ws(3, context),
-        vertical: _s(5, context),
+    return _maxSection(context, [
+      _maxCard(
+        context,
+        'SeisJS',
+        '当前最大烈度',
+        data.seisJsMaxStation != null
+            ? data.seisJsMaxStation!.intensity.round().toString()
+            : '--',
+        const Color(0xFFFF9142),
+        valueColor: _csisValueColor(data.seisJsMaxStation?.intensity.round()),
       ),
-      child: Row(
-        children: [
-          _maxCard(
-            context,
-            'SeisJS',
-            '当前最大烈度',
-            data.seisJsMaxStation != null
-                ? data.seisJsMaxStation!.intensity.round().toString()
-                : '--',
-            const Color(0xFFFF9142),
-            valueColor: _csisValueColor(
-              data.seisJsMaxStation?.intensity.round(),
-            ),
+      if (!phoneMode)
+        Container(
+          width: _ws(1, context),
+          height: _s(30, context),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.35),
           ),
-          Container(
-            width: _ws(1, context),
-            height: _s(30, context),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.35),
-            ),
-          ),
-          _maxCard(
-            context,
-            'TREM',
-            '当前最大震度',
-            data.treaMaxStation?.currentIntensity != null &&
-                    data.treaMaxStation!.currentIntensity >= 0
-                ? tremDashboardShindoLabel(
-                    data.treaMaxStation!.currentIntensity,
-                  )
-                : '--',
-            const Color(0xFF1ABC9C),
-            valueColor: _tremMaxColor(),
-          ),
-          Container(
-            width: _ws(1, context),
-            height: _s(30, context),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.35),
-            ),
-          ),
-          _maxCard(
-            context,
-            'P-Alert',
-            '当前最大震度',
-            data.pAlertMaxStation?.shindoLabel ?? '--',
-            const Color(0xFFE74C3C),
-            valueColor: _pAlertMaxColor(),
-          ),
-        ],
+        ),
+      _maxCard(
+        context,
+        'TREM',
+        '当前最大震度',
+        data.treaMaxStation?.currentIntensity != null &&
+                data.treaMaxStation!.currentIntensity >= 0
+            ? tremDashboardShindoLabel(data.treaMaxStation!.currentIntensity)
+            : '--',
+        const Color(0xFF1ABC9C),
+        valueColor: _tremMaxColor(),
       ),
+      if (!phoneMode)
+        Container(
+          width: _ws(1, context),
+          height: _s(30, context),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.35),
+          ),
+        ),
+      _maxCard(
+        context,
+        'P-Alert',
+        '当前最大震度',
+        data.pAlertMaxStation?.shindoLabel ?? '--',
+        const Color(0xFFE74C3C),
+        valueColor: _pAlertMaxColor(),
+      ),
+    ]);
+  }
+
+  Widget _maxSection(BuildContext context, List<Widget> children) {
+    if (!phoneMode) {
+      return Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: _ws(3, context),
+          vertical: _s(5, context),
+        ),
+        child: Row(children: children),
+      );
+    }
+    return Column(
+      children: [
+        for (final child in children)
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              child: RepaintBoundary(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                    child: Container(
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: .45),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.white12, width: .5),
+                      ),
+                      child: FittedBox(fit: BoxFit.scaleDown, child: child),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -326,7 +358,8 @@ class StationDashboard extends StatelessWidget {
             source,
             style: TextStyle(
               color: accent,
-              fontSize: _s(8, context),
+              fontSize: phoneMode ? 10 : _s(8, context),
+              height: phoneMode ? 1 : null,
               fontWeight: FontWeight.w700,
               letterSpacing: 0,
             ),
@@ -343,14 +376,18 @@ class StationDashboard extends StatelessWidget {
           SizedBox(height: _s(2, context)),
           Text(
             label,
-            style: TextStyle(color: Colors.white38, fontSize: _s(6, context)),
+            style: TextStyle(
+              color: Colors.white38,
+              fontSize: phoneMode ? 8 : _s(6, context),
+              height: phoneMode ? 1 : null,
+            ),
           ),
           SizedBox(height: _s(1, context)),
           Text(
             value,
             style: TextStyle(
               color: valueColor ?? Colors.white.withValues(alpha: 0.9),
-              fontSize: _s(14, context),
+              fontSize: phoneMode ? 18 : _s(14, context),
               fontWeight: FontWeight.w800,
               height: 1.0,
             ),

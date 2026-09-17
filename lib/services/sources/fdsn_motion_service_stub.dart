@@ -67,6 +67,14 @@ class FdsnMotionService {
 
   void Function(bool connected)? onStatusChanged;
 
+  void recordDataTime(DateTime timestamp) {
+    if (timestamp.isAfter(DateTime.now().toUtc())) return;
+    final previous = dataTimeNotifier.value;
+    if (previous == null || timestamp.isAfter(previous)) {
+      dataTimeNotifier.value = timestamp;
+    }
+  }
+
   void connect({
     int stationLimit = defaultStationLimit,
     Set<String> enabledSources = const {'EarthScope', 'GEOFON'},
@@ -82,6 +90,7 @@ class FdsnMotionService {
 
   void disconnect() {
     linkedStationCountNotifier.value = 0;
+    dataTimeNotifier.value = null;
     onStatusChanged?.call(false);
   }
 

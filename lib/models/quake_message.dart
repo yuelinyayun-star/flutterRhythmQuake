@@ -222,6 +222,28 @@ enum QuakeSourceType {
   /// 标题和角标直接使用报文里的机构字段与 API 字段，
   /// 不再回落到中国地震台网 / FAN 等默认文案。
   unadapted,
+  // Append new identities to preserve persisted enum indexes.
+  gsras,
+  bgs,
+  ipma,
+  ssn,
+  afad,
+  sed,
+  noa,
+  scsn,
+  iag,
+  igp,
+  nepal,
+  ipgp,
+  infp,
+  isc,
+  knmi,
+  ncedc,
+  lmu,
+  koeri,
+  csn,
+  igepn,
+  earlyEst,
 }
 
 /// QuakeSourceType 扩展方法
@@ -308,6 +330,48 @@ extension QuakeSourceTypeExtension on QuakeSourceType {
         return '澳大利亚地质局';
       case QuakeSourceType.cenais:
         return '古巴国家地震研究中心';
+      case QuakeSourceType.gsras:
+        return '俄罗斯地球物理局';
+      case QuakeSourceType.bgs:
+        return '英国地质调查局';
+      case QuakeSourceType.ipma:
+        return '葡萄牙气象局';
+      case QuakeSourceType.ssn:
+        return '墨西哥国家地震局';
+      case QuakeSourceType.afad:
+        return '土耳其灾害与应急管理局';
+      case QuakeSourceType.sed:
+        return '瑞士地震服务中心';
+      case QuakeSourceType.noa:
+        return '希腊国家天文台';
+      case QuakeSourceType.scsn:
+        return '南加州地震台网';
+      case QuakeSourceType.iag:
+        return '蒙古地球物理与天文研究所';
+      case QuakeSourceType.igp:
+        return '秘鲁地球物理研究所';
+      case QuakeSourceType.nepal:
+        return '尼泊尔地震信息';
+      case QuakeSourceType.ipgp:
+        return '巴黎地球物理研究所';
+      case QuakeSourceType.infp:
+        return '罗马尼亚国家地球物理研究所';
+      case QuakeSourceType.isc:
+        return '国际地震中心';
+      case QuakeSourceType.knmi:
+        return '荷兰皇家气象研究所';
+      case QuakeSourceType.ncedc:
+        return '北加州地震数据中心';
+      case QuakeSourceType.lmu:
+        return '慕尼黑大学地震服务';
+      case QuakeSourceType.koeri:
+        return '坎迪利天文台地震研究所';
+      case QuakeSourceType.csn:
+        return '智利国家地震中心';
+      case QuakeSourceType.igepn:
+        return '厄瓜多尔地球物理研究所';
+      case QuakeSourceType.earlyEst:
+        return 'INGV Early-est 快速定位';
       case QuakeSourceType.cencIr:
         return '中国地震台网烈度速报';
       case QuakeSourceType.fssnCmt:
@@ -407,6 +471,28 @@ extension QuakeSourceTypeExtension on QuakeSourceType {
         return '澳大利亚地质局 地震情报';
       case QuakeSourceType.cenais:
         return '古巴国家地震研究中心 地震情报';
+      case QuakeSourceType.gsras:
+      case QuakeSourceType.bgs:
+      case QuakeSourceType.ipma:
+      case QuakeSourceType.ssn:
+      case QuakeSourceType.afad:
+      case QuakeSourceType.sed:
+      case QuakeSourceType.noa:
+      case QuakeSourceType.scsn:
+      case QuakeSourceType.iag:
+      case QuakeSourceType.igp:
+      case QuakeSourceType.nepal:
+      case QuakeSourceType.ipgp:
+      case QuakeSourceType.infp:
+      case QuakeSourceType.isc:
+      case QuakeSourceType.knmi:
+      case QuakeSourceType.ncedc:
+      case QuakeSourceType.lmu:
+      case QuakeSourceType.koeri:
+      case QuakeSourceType.csn:
+      case QuakeSourceType.igepn:
+      case QuakeSourceType.earlyEst:
+        return '$displayName 地震情报';
       case QuakeSourceType.cencIr:
         return '中国地震台网烈度速报';
       case QuakeSourceType.fssnCmt:

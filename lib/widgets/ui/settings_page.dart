@@ -18,8 +18,10 @@ import '../../services/background_service.dart';
 import '../../services/tts_service.dart';
 import '../../services/sources/fan_service.dart';
 import '../../services/sources/whews_service.dart';
+import '../../services/sources/jian_service.dart';
 import '../../services/sources/nowquake_cenc_intensity_service.dart';
 import '../../services/sources/fdsn_motion_service.dart';
+import '../../core/fdsn_intensity.dart';
 import '../../services/sources/nied_monitor.dart';
 import '../../services/sources/source_manager.dart';
 import '../../services/sources/eqlist/eqlist_manager.dart';
@@ -29,14 +31,25 @@ import '../map/map_config.dart';
 import '../map/quake_map_view.dart';
 import '../../models/quake_message.dart';
 import 'app_page_background.dart';
+import 'android_background_power_settings.dart';
 import 'debug_page.dart';
+import 'manual_location_dialog.dart';
 import 'obs_automation_presets_page.dart';
 import 'ui_runtime_flags.dart';
 import 'package:flutter/foundation.dart';
 import 'package:file_picker/file_picker.dart';
 
 class SettingsPage extends StatefulWidget {
-  const SettingsPage({super.key});
+  const SettingsPage({
+    super.key,
+    this.onBack,
+    this.contentTopInset = 0,
+    this.weatherOnly = false,
+  });
+
+  final VoidCallback? onBack;
+  final double contentTopInset;
+  final bool weatherOnly;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -44,14 +57,15 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage>
     with WidgetsBindingObserver {
-  void _requestForegroundConnectionReload() {
-    unawaited(BackgroundService().requestSourceReload());
+  void _requestForegroundConnectionReload({bool force = false}) {
+    unawaited(BackgroundService().requestSourceReload(force: force));
   }
 
   _SettingsCategory _selectedCategory = _SettingsCategory.data;
   String _settingsQuery = '';
   bool _fanEnabled = true;
   bool _whewsEnabled = false;
+  bool _jianEnabled = false;
   bool _whewsNiedEnabled = false;
   bool _whewsSnetEnabled = false;
   bool _whewsKmaEnabled = false;
@@ -88,6 +102,8 @@ class _SettingsPageState extends State<SettingsPage>
   bool _overlayJmaRadar = false;
   bool _overlaySatelliteCloud = false;
   bool _overlayCnContour = false;
+  bool _overlayCnFault = false;
+  bool _overlayJpFault = false;
   bool _overlayJmaVolcano = false;
   bool _overlayTyphoon = false;
   bool _overlayWeatherStation = false;
@@ -150,12 +166,13 @@ class _SettingsPageState extends State<SettingsPage>
   static const String _overlaySatelliteCloudKey =
       'map_overlay_satelliteCloudLayer';
   static const String _overlayCnContourKey = 'map_overlay_cnContour';
+  static const String _overlayCnFaultKey = 'map_overlay_cnFault';
+  static const String _overlayJpFaultKey = 'map_overlay_jpFault';
   static const String _overlayJmaVolcanoKey = 'map_overlay_volcanoLayer';
   static const String _overlayTyphoonKey = 'map_overlay_typhoonLayer';
   static const String _overlayWeatherStationKey =
       'map_overlay_weatherStationLayer';
-  static const String _overlayWeatherAlertKey =
-      'map_overlay_weatherAlertLayer';
+  static const String _overlayWeatherAlertKey = 'map_overlay_weatherAlertLayer';
   static const String _weatherStationModeKey = 'map_overlay_weatherStationMode';
   static const String _overlayFdsnEarthScopeKey = 'map_overlay_fdsnEarthScope';
   static const String _overlayFdsnGeofonKey = 'map_overlay_fdsnGeofon';
@@ -297,6 +314,9 @@ class _SettingsPageState extends State<SettingsPage>
         '降水',
         '雷达',
         '等高线',
+        '断层',
+        '中国断层',
+        '日本断层',
         '火山',
         '定位',
         '经纬度',
@@ -412,6 +432,9 @@ class _SettingsPageState extends State<SettingsPage>
   @override
   void initState() {
     super.initState();
+    // The weather shortcut only references live controls. Opening it must not
+    // initialize TTS, log in, reload sources, or reapply unrelated preferences.
+    if (widget.weatherOnly) return;
     WidgetsBinding.instance.addObserver(this);
     _loadSettings();
     _refreshNotificationPermission();
@@ -449,6 +472,7 @@ class _SettingsPageState extends State<SettingsPage>
     setState(() {
       _fanEnabled = prefs.getBool(_fanEnabledKey) ?? true;
       _whewsEnabled = prefs.getBool(_whewsEnabledKey) ?? false;
+      _jianEnabled = prefs.getBool(JianService.enabledPreferenceKey) ?? false;
       _whewsNiedEnabled = prefs.getBool(_whewsNiedEnabledKey) ?? false;
       _whewsSnetEnabled = prefs.getBool(_whewsSnetEnabledKey) ?? false;
       _whewsKmaEnabled = prefs.getBool(_whewsKmaEnabledKey) ?? false;
@@ -488,20 +512,23 @@ class _SettingsPageState extends State<SettingsPage>
       _overlaySatelliteCloud =
           prefs.getBool(_overlaySatelliteCloudKey) ?? false;
       _overlayCnContour = prefs.getBool(_overlayCnContourKey) ?? false;
+      _overlayCnFault = prefs.getBool(_overlayCnFaultKey) ?? false;
+      _overlayJpFault = prefs.getBool(_overlayJpFaultKey) ?? false;
       _overlayJmaVolcano = prefs.getBool(_overlayJmaVolcanoKey) ?? false;
       _overlayTyphoon = prefs.getBool(_overlayTyphoonKey) ?? false;
       _overlayWeatherStation =
           prefs.getBool(_overlayWeatherStationKey) ?? false;
-      _overlayWeatherAlert =
-          prefs.getBool(_overlayWeatherAlertKey) ?? true;
-      _weatherStationMode =
-          prefs.getString(_weatherStationModeKey) ?? 'auto';
+      _overlayWeatherAlert = prefs.getBool(_overlayWeatherAlertKey) ?? true;
+      _weatherStationMode = prefs.getString(_weatherStationModeKey) ?? 'auto';
       _overlayFdsnEarthScope =
           prefs.getBool(_overlayFdsnEarthScopeKey) ?? false;
       _overlayFdsnGeofon = prefs.getBool(_overlayFdsnGeofonKey) ?? false;
       _fdsnStationLimit = FdsnMotionService.normalizeStationLimit(
         prefs.getInt(_fdsnStationLimitKey) ??
             FdsnMotionService.defaultStationLimit,
+      );
+      FdsnIntensity.scale.value = FdsnIntensity.parseScale(
+        prefs.getString(FdsnIntensity.preferenceKey),
       );
       _niedDataSource = prefs.getString(_niedDataSourceKey) ?? 'lmoni';
       final savedKmaDataSource = prefs.getString(_kmaDataSourceKey);
@@ -586,6 +613,7 @@ class _SettingsPageState extends State<SettingsPage>
     SourceManager().setSourceEnabled('FAN', _fanEnabled);
     SourceManager().setSourceEnabled('WHEWS', false);
     SourceManager().setSourceEnabled('NowQuake', _nowQuakeCencIrEnabled);
+    SourceManager().setSourceEnabled(JianService.sourceName, _jianEnabled);
     if (!_cencCmtEnabled) EqlistManager().cencCmt.stop();
     if (!_usgsCmtEnabled) EqlistManager().usgsCmt.stop();
     if (!_jmaCmtEnabled) EqlistManager().jmaCmt.stop();
@@ -606,6 +634,8 @@ class _SettingsPageState extends State<SettingsPage>
     mapState.setOverlayEnabled('jmaRadarLayer', _overlayJmaRadar);
     mapState.setOverlayEnabled('satelliteCloudLayer', _overlaySatelliteCloud);
     mapState.setOverlayEnabled('cnContour', _overlayCnContour);
+    mapState.setOverlayEnabled('cnFault', _overlayCnFault);
+    mapState.setOverlayEnabled('jpFault', _overlayJpFault);
     mapState.setOverlayEnabled('volcanoLayer', _overlayJmaVolcano);
     mapState.setOverlayEnabled('typhoonLayer', _overlayTyphoon);
     mapState.setOverlayEnabled('weatherStationLayer', _overlayWeatherStation);
@@ -1000,21 +1030,24 @@ class _SettingsPageState extends State<SettingsPage>
     return false;
   }
 
-  void _setNiedDataSource(String source) {
+  Future<void> _setNiedDataSource(String source) async {
     setState(() => _niedDataSource = source);
-    _saveNiedDataSource(source);
+    await _saveNiedDataSource(source);
+    if (!mounted || _niedDataSource != source) return;
     QuakeMapView.niedSourceNotifier.value = source;
   }
 
-  void _setKmaDataSource(String source) {
+  Future<void> _setKmaDataSource(String source) async {
     setState(() => _kmaDataSource = source);
-    _saveKmaDataSource(source);
+    await _saveKmaDataSource(source);
+    if (!mounted || _kmaDataSource != source) return;
     QuakeMapView.kmaSourceNotifier.value = source;
   }
 
-  void _setSnetDataSource(String source) {
+  Future<void> _setSnetDataSource(String source) async {
     setState(() => _snetDataSource = source);
-    _saveSnetDataSource(source);
+    await _saveSnetDataSource(source);
+    if (!mounted || _snetDataSource != source) return;
     QuakeMapView.snetSourceNotifier.value = source;
   }
 
@@ -1063,7 +1096,7 @@ class _SettingsPageState extends State<SettingsPage>
       if (!mounted) return;
       QuakeMapView.whewsApiTokenNotifier.value = apiToken;
       SourceManager().getSource<WhewsService>()?.setApiToken(apiToken);
-      _requestForegroundConnectionReload();
+      _requestForegroundConnectionReload(force: true);
       setState(() {
         _wauthAccessToken = result.token.accessToken;
         _wauthUserInfo = result.userInfo;
@@ -1375,200 +1408,16 @@ class _SettingsPageState extends State<SettingsPage>
   }
 
   Future<void> _openManualCenterDialog() async {
-    final latCtl = TextEditingController(
-      text: _mapViewLat?.toStringAsFixed(6) ?? '',
-    );
-    final lngCtl = TextEditingController(
-      text: _mapViewLng?.toStringAsFixed(6) ?? '',
-    );
-    String? errorText;
-
-    await showDialog<void>(
+    final coordinates = await showDialog<ManualLocationCoordinates>(
       context: context,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setDialogState) {
-            return Dialog(
-              backgroundColor: Colors.transparent,
-              insetPadding: const EdgeInsets.symmetric(
-                horizontal: 22,
-                vertical: 24,
-              ),
-              child: Container(
-                constraints: const BoxConstraints(maxWidth: 420),
-                decoration: BoxDecoration(
-                  color: _panelColor,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: _borderColor),
-                ),
-                padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: const [
-                        Icon(
-                          Icons.edit_location_alt_outlined,
-                          color: _accentColor,
-                          size: 18,
-                        ),
-                        SizedBox(width: 8),
-                        Text(
-                          '手动输入定位',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      '请输入经纬度，保存后将作为所在地（本地预警与距离计算的参考点）。',
-                      style: TextStyle(color: _mutedTextColor, fontSize: 12),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: latCtl,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                        signed: true,
-                      ),
-                      style: const TextStyle(color: Colors.white, fontSize: 13),
-                      decoration: InputDecoration(
-                        labelText: '纬度 (Latitude)',
-                        labelStyle: const TextStyle(color: _mutedTextColor),
-                        filled: true,
-                        fillColor: _fieldColor,
-                        isDense: true,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 12,
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: const BorderSide(color: _dividerColor),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: const BorderSide(color: _accentColor),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: lngCtl,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                        signed: true,
-                      ),
-                      style: const TextStyle(color: Colors.white, fontSize: 13),
-                      decoration: InputDecoration(
-                        labelText: '经度 (Longitude)',
-                        labelStyle: const TextStyle(color: _mutedTextColor),
-                        filled: true,
-                        fillColor: _fieldColor,
-                        isDense: true,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 12,
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: const BorderSide(color: _dividerColor),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: const BorderSide(color: _accentColor),
-                        ),
-                      ),
-                    ),
-                    if (errorText != null) ...[
-                      const SizedBox(height: 10),
-                      Text(
-                        errorText!,
-                        style: const TextStyle(
-                          color: Colors.redAccent,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 14),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: SizedBox(
-                            height: 38,
-                            child: OutlinedButton(
-                              style: OutlinedButton.styleFrom(
-                                side: const BorderSide(color: _dividerColor),
-                                foregroundColor: Colors.white70,
-                              ),
-                              onPressed: () => Navigator.of(ctx).pop(),
-                              child: const Text('取消'),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: SizedBox(
-                            height: 38,
-                            child: ElevatedButton(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: _accentColor.withValues(
-                                  alpha: 0.22,
-                                ),
-                                foregroundColor: Colors.white,
-                                side: const BorderSide(color: _accentColor),
-                                elevation: 0,
-                              ),
-                              onPressed: () async {
-                                final lat = double.tryParse(latCtl.text.trim());
-                                final lng = double.tryParse(lngCtl.text.trim());
-                                if (lat == null || lng == null) {
-                                  setDialogState(
-                                    () => errorText = '请输入有效的数字坐标',
-                                  );
-                                  return;
-                                }
-                                if (lat < -90 || lat > 90) {
-                                  setDialogState(
-                                    () => errorText = '纬度范围必须在 -90 ~ 90',
-                                  );
-                                  return;
-                                }
-                                if (lng < -180 || lng > 180) {
-                                  setDialogState(
-                                    () => errorText = '经度范围必须在 -180 ~ 180',
-                                  );
-                                  return;
-                                }
-                                await _saveMapViewCenter(lat, lng);
-                                if (ctx.mounted) Navigator.of(ctx).pop();
-                                _showToast(
-                                  '已保存所在地：${lat.toStringAsFixed(4)}, ${lng.toStringAsFixed(4)}',
-                                );
-                              },
-                              child: const Text('保存'),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
+      builder: (_) =>
+          ManualLocationDialog(latitude: _mapViewLat, longitude: _mapViewLng),
     );
-
-    latCtl.dispose();
-    lngCtl.dispose();
+    if (coordinates == null || !mounted) return;
+    await _saveMapViewCenter(coordinates.latitude, coordinates.longitude);
+    _showToast(
+      '已保存所在地：${coordinates.latitude.toStringAsFixed(4)}, ${coordinates.longitude.toStringAsFixed(4)}',
+    );
   }
 
   /// Design canvas (logical px) — landscape panel ≈ 16:9.
@@ -1580,6 +1429,90 @@ class _SettingsPageState extends State<SettingsPage>
 
   @override
   Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        context.read<MapStateProvider>(),
+        context.read<QuakeProvider>().weatherListenable,
+        UiRuntimeFlags.weatherMarqueeEnabledNotifier,
+      ]),
+      builder: (context, _) {
+        if (_initialized || widget.weatherOnly) _readLiveWeatherSettings();
+        return widget.weatherOnly
+            ? _buildWeatherShortcut()
+            : _buildPage(context);
+      },
+    );
+  }
+
+  void _readLiveWeatherSettings() {
+    final map = context.read<MapStateProvider>();
+    _overlayCloud = map.isOverlayEnabled('cloudLayer');
+    _overlayWind = map.isOverlayEnabled('windLayer');
+    _overlayRain = map.isOverlayEnabled('rainLayer');
+    _overlayRadarChina = map.isOverlayEnabled('radarChinaLayer');
+    _overlayJmaRadar = map.isOverlayEnabled('jmaRadarLayer');
+    _overlaySatelliteCloud = map.isOverlayEnabled('satelliteCloudLayer');
+    _overlayTyphoon = map.isOverlayEnabled('typhoonLayer');
+    _overlayWeatherStation = map.isOverlayEnabled('weatherStationLayer');
+    _overlayWeatherAlert = map.isOverlayEnabled('weatherAlertLayer');
+    _weatherStationMode = map.weatherStationMode;
+    _weatherLocalOnly = context.read<QuakeProvider>().weatherLocalOnly;
+    _weatherLocalLevel = context.read<QuakeProvider>().weatherLocalAdminLevel;
+    _weatherMarqueeEnabled = UiRuntimeFlags.weatherMarqueeEnabledNotifier.value;
+  }
+
+  Widget _buildWeatherShortcut() => ClipRRect(
+    borderRadius: BorderRadius.circular(10),
+    child: BackdropFilter(
+      filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+      child: Material(
+        color: const Color(0xD91C2328),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(left: 16, right: 4),
+                child: Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        '气象图层与预警',
+                        style: TextStyle(color: Colors.white, fontSize: 16),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: '关闭',
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close, color: Colors.white70),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: ListView(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  children: [
+                    _buildMapOverlaySelector(weatherOnly: true),
+                    const _SettingsDivider(),
+                    _buildWeatherAlarmScopeSelector(),
+                    if (_weatherLocalOnly)
+                      _buildWeatherAlarmLocalLevelSelector(),
+                    _buildWeatherMarqueeEnabledSwitch(),
+                    if (_overlayWeatherStation)
+                      _buildWeatherStationModeSelector(),
+                    _buildWeatherAlertMapLayerSwitch(),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+
+  Widget _buildPage(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF020208),
       body: Stack(
@@ -1587,6 +1520,9 @@ class _SettingsPageState extends State<SettingsPage>
           const AppPageBackground(),
           if (_initialized)
             SafeArea(
+              minimum: EdgeInsets.only(
+                top: MediaQuery.paddingOf(context).top + widget.contentTopInset,
+              ),
               child: LayoutBuilder(
                 builder: (context, constraints) {
                   final sideBySide = constraints.maxWidth >= 600;
@@ -1736,7 +1672,8 @@ class _SettingsPageState extends State<SettingsPage>
                 children: [
                   IconButton(
                     tooltip: '返回',
-                    onPressed: () => Navigator.of(context).maybePop(),
+                    onPressed:
+                        widget.onBack ?? () => Navigator.of(context).maybePop(),
                     icon: const Icon(Icons.arrow_back, size: 20),
                     color: _accentColor,
                     visualDensity: VisualDensity.compact,
@@ -2146,6 +2083,8 @@ class _SettingsPageState extends State<SettingsPage>
               _buildFdsnStationSelector(),
               const _SettingsDivider(),
               _buildFdsnStationLimitSelector(),
+              const _SettingsDivider(),
+              _buildFdsnIntensitySelector(),
             ],
           ),
           const Padding(
@@ -2163,7 +2102,38 @@ class _SettingsPageState extends State<SettingsPage>
           _buildSectionPanel(
             icon: Icons.layers_outlined,
             title: '地图外观',
-            children: [_buildTileSelector()],
+            children: [
+              _buildTileSelector(),
+              const _SettingsDivider(),
+              _buildInfoLayerSwitch(
+                title: '中国断层',
+                value: _overlayCnFault,
+                leading: Icons.show_chart,
+                onChanged: (val) {
+                  setState(() => _overlayCnFault = val);
+                  _saveOverlayState(_overlayCnFaultKey, val);
+                  context.read<MapStateProvider>().setOverlayEnabled(
+                    'cnFault',
+                    val,
+                  );
+                },
+              ),
+              const _SettingsDivider(),
+              _buildInfoLayerSwitch(
+                title: '日本断层',
+                subtitle: '来源：日本产总研地质调查综合中心（GSJ）活断层数据库；概略位置',
+                value: _overlayJpFault,
+                leading: Icons.show_chart,
+                onChanged: (val) {
+                  setState(() => _overlayJpFault = val);
+                  _saveOverlayState(_overlayJpFaultKey, val);
+                  context.read<MapStateProvider>().setOverlayEnabled(
+                    'jpFault',
+                    val,
+                  );
+                },
+              ),
+            ],
           ),
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 6),
@@ -2312,6 +2282,16 @@ class _SettingsPageState extends State<SettingsPage>
 
   Widget _buildApiInterfaceSwitches() {
     final rows = [
+      _buildApiSwitch(
+        title: 'Jian Project 地震预警/情报',
+        value: _jianEnabled,
+        onChanged: (val) async {
+          setState(() => _jianEnabled = val);
+          await _saveApiSourceEnabled(JianService.enabledPreferenceKey, val);
+          SourceManager().setSourceEnabled(JianService.sourceName, val);
+          _requestForegroundConnectionReload();
+        },
+      ),
       _buildApiSwitch(
         title: 'FAN Studio',
         value: _fanEnabled,
@@ -2741,7 +2721,9 @@ class _SettingsPageState extends State<SettingsPage>
   Widget _buildTileSelector() {
     return _buildSettingRow(
       title: '地图底图',
-      subtitle: '调整主地图底图样式',
+      subtitle: _tileKey == MapConfig.vectorBasemapKey
+          ? '数据来源：KA · DataV、GeoJSON、JMA、GeoJSON Maps'
+          : '调整主地图底图样式',
       leading: Icons.layers_outlined,
       control: _buildDropdown<String>(
         value: _tileKey,
@@ -2758,7 +2740,7 @@ class _SettingsPageState extends State<SettingsPage>
     );
   }
 
-  Widget _buildMapOverlaySelector() {
+  Widget _buildMapOverlaySelector({bool weatherOnly = false}) {
     final rows = [
       _buildInfoLayerSwitch(
         title: '实况云图',
@@ -2829,29 +2811,34 @@ class _SettingsPageState extends State<SettingsPage>
           );
         },
       ),
-      _buildInfoLayerSwitch(
-        title: '中国等高线',
-        value: _overlayCnContour,
-        leading: Icons.terrain_outlined,
-        onChanged: (val) {
-          setState(() => _overlayCnContour = val);
-          _saveOverlayState(_overlayCnContourKey, val);
-          context.read<MapStateProvider>().setOverlayEnabled('cnContour', val);
-        },
-      ),
-      _buildInfoLayerSwitch(
-        title: 'JMA 火山',
-        value: _overlayJmaVolcano,
-        leading: Icons.local_fire_department_outlined,
-        onChanged: (val) {
-          setState(() => _overlayJmaVolcano = val);
-          _saveOverlayState(_overlayJmaVolcanoKey, val);
-          context.read<MapStateProvider>().setOverlayEnabled(
-            'volcanoLayer',
-            val,
-          );
-        },
-      ),
+      if (!weatherOnly)
+        _buildInfoLayerSwitch(
+          title: '中国等高线',
+          value: _overlayCnContour,
+          leading: Icons.terrain_outlined,
+          onChanged: (val) {
+            setState(() => _overlayCnContour = val);
+            _saveOverlayState(_overlayCnContourKey, val);
+            context.read<MapStateProvider>().setOverlayEnabled(
+              'cnContour',
+              val,
+            );
+          },
+        ),
+      if (!weatherOnly)
+        _buildInfoLayerSwitch(
+          title: 'JMA 火山',
+          value: _overlayJmaVolcano,
+          leading: Icons.local_fire_department_outlined,
+          onChanged: (val) {
+            setState(() => _overlayJmaVolcano = val);
+            _saveOverlayState(_overlayJmaVolcanoKey, val);
+            context.read<MapStateProvider>().setOverlayEnabled(
+              'volcanoLayer',
+              val,
+            );
+          },
+        ),
       _buildInfoLayerSwitch(
         title: '台风路径',
         value: _overlayTyphoon,
@@ -2892,13 +2879,14 @@ class _SettingsPageState extends State<SettingsPage>
 
   Widget _buildInfoLayerSwitch({
     required String title,
+    String? subtitle,
     required bool value,
     required IconData leading,
     required ValueChanged<bool> onChanged,
   }) {
     return _buildSettingRow(
       title: title,
-      subtitle: value ? '已启用，显示该信息' : '已关闭，隐藏该信息',
+      subtitle: subtitle ?? (value ? '已启用，显示该信息' : '已关闭，隐藏该信息'),
       leading: leading,
       control: Align(
         alignment: Alignment.centerRight,
@@ -3400,10 +3388,19 @@ class _SettingsPageState extends State<SettingsPage>
                 label: '开机自动启动前台服务',
                 value: bg.autoStartOnBoot,
                 onChanged: (value) async {
-                  await bg.setAutoStartOnBoot(value);
-                  await BackgroundService().setAutoStartOnBoot(value);
+                  try {
+                    await BackgroundService().setAutoStartOnBoot(value);
+                    await bg.setAutoStartOnBoot(value);
+                  } catch (_) {
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('开机自启设置失败，请重试。')),
+                    );
+                  }
                 },
               ),
+              const Divider(height: 1, color: _dividerColor),
+              const AndroidBackgroundPowerSettings(),
             ],
             if (bg.eewEnabled) ...[
               const Divider(height: 1, color: _dividerColor),
@@ -3666,6 +3663,28 @@ class _SettingsPageState extends State<SettingsPage>
       ),
     );
   }
+
+  Widget _buildFdsnIntensitySelector() => _buildSettingRow(
+    title: 'FDSN 烈度显示',
+    subtitle: '仪器烈度估算',
+    leading: Icons.palette_outlined,
+    control: ValueListenableBuilder<FdsnIntensityScale>(
+      valueListenable: FdsnIntensity.scale,
+      builder: (context, scale, child) => _buildDropdown<FdsnIntensityScale>(
+        value: scale,
+        options: const [
+          _SelectOption(FdsnIntensityScale.mmi, 'MMI'),
+          _SelectOption(FdsnIntensityScale.csis, '中国烈度（估算）'),
+        ],
+        onChanged: (value) async {
+          if (value == null) return;
+          FdsnIntensity.scale.value = value;
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString(FdsnIntensity.preferenceKey, value.name);
+        },
+      ),
+    ),
+  );
 
   Widget _buildNiedDataSourceSelector() {
     final options = [

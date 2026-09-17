@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import '../../../core/utils/quake_time.dart';
+import '../../../core/utils/catalog_event_identity.dart';
 import '../../../models/quake_message.dart';
+import '../../../models/whews_catalog.dart';
 import 'jma_eqlist_service.dart';
 import 'cenc_eqlist_service.dart';
 import 'cwa_eqlist_service.dart';
@@ -86,6 +88,8 @@ class EqlistManager {
 
   /// EMSC地震列表缓存
   final List<QuakeMessage> _emscList = [];
+  final Map<String, List<QuakeMessage>> _whewsCatalogLists = {};
+  final Map<String, Map<String, String>> _catalogIdAliases = {};
 
   /// CENC CMT 震源机制解缓存
   final List<QuakeMessage> _cencCmtList = [];
@@ -465,7 +469,7 @@ class EqlistManager {
     onAnyUpdated?.call();
   }
 
-  void upsertBucketItem(String bucket, QuakeMessage e) {
+  void upsertBucketItem(String bucket, QuakeMessage e, {bool replayOnly = false}) {
     if (bucket == 'jmaEqlist') {
       jma.noteExternalUpdate();
     } else if (bucket == 'cencEqlist') {
@@ -486,16 +490,59 @@ class EqlistManager {
       'jmaCmt' => _jmaCmtList,
       'fnetCmt' => _fnetCmtList,
       'hinetAquaCmt' => _hinetAquaCmtList,
-      _ => null,
+      _ => unifiedCatalogSources.containsKey(bucket)
+          ? _whewsCatalogLists.putIfAbsent(bucket, () => []) : null,
     };
     if (list == null) return;
-    list.removeWhere(
-      (item) =>
-          item.eventId == e.eventId ||
-          (bucket == 'jmaEqlist' && _sameJmaHistoryEvent(item, e)),
-    );
+    final aliases = unifiedCatalogSources.containsKey(bucket)
+        ? _catalogIdAliases.putIfAbsent(bucket, () => {}) : null;
+    String identity(QuakeMessage item) {
+      final id = catalogEventId(bucket, item.eventId);
+      return aliases?[id] ?? id;
+    }
+    bool sameEvent(QuakeMessage item) =>
+        item.eventId == e.eventId ||
+        (aliases != null && identity(item).isNotEmpty && identity(item) == identity(e)) ||
+        sameCatalogHistoryEvent(bucket, item, e) ||
+        (bucket == 'jmaEqlist' && _sameJmaHistoryEvent(item, e));
+    final oldIndex = list.indexWhere(sameEvent);
+    if (oldIndex >= 0) {
+      final old = list[oldIndex];
+      if (aliases != null) {
+        // Retain both proven IDs so later parameter revisions still update
+        // the same row, whichever transport supplies them.
+        final root = identity(old);
+        final incomingRoot = identity(e);
+        if (root.isNotEmpty && incomingRoot.isNotEmpty) {
+          aliases.updateAll((_, value) => value == incomingRoot ? root : value);
+          aliases[catalogEventId(bucket, old.eventId)] = root;
+          aliases[catalogEventId(bucket, e.eventId)] = root;
+          while (aliases.length > 1000) { aliases.remove(aliases.keys.first); }
+        }
+      }
+      final oldReport = old.reportTime == null ? null
+          : QuakeTime.eventInstantUtc(old, value: old.reportTime);
+      final newReport = e.reportTime == null ? null
+          : QuakeTime.eventInstantUtc(e, value: e.reportTime);
+      if (replayOnly && (newReport == null ||
+          (oldReport != null && !newReport.isAfter(oldReport)))) {
+        return;
+      }
+      if (oldReport != null &&
+          (newReport == null || newReport.isBefore(oldReport))) {
+        return;
+      }
+    }
+    list.removeWhere(sameEvent);
     list.insert(0, e);
+    // A history response can arrive newest-first after a live update. Sort
+    // before trimming so replay cannot evict recent observations.
+    list.sort((a, b) => _toComparableUtc(b).compareTo(_toComparableUtc(a)));
     _trim(list);
+    if (aliases != null) {
+      final retained = list.map(identity).toSet();
+      aliases.removeWhere((_, root) => !retained.contains(root));
+    }
     onAnyUpdated?.call();
   }
 
@@ -574,5 +621,6 @@ class EqlistManager {
     'jmaCmt': _jmaCmtList,
     'fnetCmt': _fnetCmtList,
     'hinetAquaCmt': _hinetAquaCmtList,
+    ..._whewsCatalogLists,
   };
 }

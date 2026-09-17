@@ -6,10 +6,14 @@ import '../models/unified_quake_data.dart';
 import '../models/cmt_moment_tensor.dart';
 import '../models/cmt_solution_metadata.dart';
 import '../models/quake_message.dart';
+import '../models/whews_catalog.dart';
+import '../models/jian_sources.dart';
+import '../utils/catalog_location.dart';
 import '../models/volcano_event_data.dart';
 import '../core/intensity_calculator.dart';
 import '../core/utils/jma_seis_int_loc.dart';
 import '../core/utils/quake_time.dart';
+import '../utils/kma_location.dart';
 
 class QuakeEventAdapter {
   static const _originWolfx = 0;
@@ -18,6 +22,122 @@ class QuakeEventAdapter {
   static const _originWhews = 3;
 
   QuakeEventAdapter._();
+
+  static const jianOrigin = 4;
+
+  /// Jian has its own wire contract, but emits the same agency identities as
+  /// the other APIs. Never mutate raw data or manufacture a report timestamp.
+  static UnifiedQuakeData? convertJian(
+    String type,
+    Map<String, dynamic> raw, {
+    bool isHistory = false,
+    bool isSnapshot = false,
+  }) {
+    final source = jianEarthquakeSources[type];
+    if (source == null || raw['isTraining'] == true) return null;
+    final id = _stringValue(raw['id']);
+    if (id == null || id.isEmpty) return null;
+    final eew = jianEewTypes.contains(type);
+    final japanese = type == 'jma' || type == 'jma-eew';
+    final korean = type == 'kma' || type == 'kma-eew';
+    final useShindo = japanese || type == 'cwa' || type == 'cwa-eew';
+    final zone = japanese || korean ? 9 : 8;
+    final originTime = _parseTime(raw['originTime'], zone);
+    final reportTime = _parseTime(raw['reportTime'], zone);
+    final canceled = raw['isCancel'] == true || raw['infoType'] == '取消';
+    final magnitude = raw['magnitudeUnknown'] == true
+        ? -1.0
+        : (_catalogNumber(raw['magnitude']) ?? -1.0);
+    var depth = _catalogNumber(raw['depth']) ?? -1.0;
+    if (korean && depth == 0) depth = -1;
+    final lat = _catalogNumber(raw['latitude']);
+    final lng = _catalogNumber(raw['longitude']);
+    final hasLocation =
+        raw['hypocenterUnknown'] != true && hasCatalogCoordinates(lat, lng);
+    final originalLocation = _stringValue(raw['placeName']) ?? '';
+    final location = korean
+        ? (_stringValue(raw['placename_zh']) ??
+              kmaDisplayLocation(originalLocation, lat, lng))
+        : japanese
+        ? originalLocation
+        : catalogDisplayLocation(originalLocation, lat, lng);
+    final intensityValue = raw['intensity'] ?? raw['maxMMI'];
+    final intensity = useShindo
+        ? _normalizeJmaShindo(_stringValue(intensityValue))
+        : parseReportedIntensity(intensityValue)?.toString() ??
+              (eew ? '-' : _whewsFallbackIntensity(magnitude, depth));
+    final serial = _parseInt(raw['serial'] ?? raw['number']);
+    final review = _stringValue(raw['infoTypeName']) ?? '';
+    final sourceType = jianSourceType(source)!;
+    final title = switch (type) {
+      'jma-eew' =>
+        '緊急地震速報（${canceled
+            ? 'キャンセル'
+            : raw['isWarn'] == true
+            ? '警報'
+            : '予報'}）',
+      'jma' => _stringValue(raw['title']) ?? '地震情報',
+      'cwa-eew' => '中央氣象署 地震預警',
+      'cwa' => '中央氣象署 地震報告',
+      'cea' || 'cea-pr' => '中国地震预警网地震预警',
+      'kma-eew' => '韩国气象厅地震预警',
+      'sa' => 'ShakeAlert Earthquake Early Warning',
+      'cenc' => '中国地震台网地震信息',
+      _ => '${sourceType.displayName}地震信息',
+    };
+    final areaData = raw[eew ? 'warnArea' : 'intensityAreas'];
+    final areas = <Map<String, dynamic>>[];
+    if (areaData is List) {
+      for (final area in areaData.whereType<Map>()) {
+        final name = _stringValue(area['name']);
+        final value = _stringValue(area['intensityTo'] ?? area['intensity']);
+        if (name == null || value == null) continue;
+        areas.add({
+          'name': name,
+          'intensity': value,
+          'className': _setClassName(value, true, false),
+        });
+      }
+    }
+    return UnifiedQuakeData(
+      source: source,
+      origin: jianOrigin,
+      eventId: id,
+      isEew: eew,
+      timeZone: zone,
+      titleText: title,
+      reportNumText: type == 'cenc'
+          ? review
+          : serial == null
+          ? ''
+          : '第$serial報${raw['isFinal'] == true ? '（最終）' : ''}',
+      useShindo: useShindo,
+      maxIntensity: canceled ? '-' : intensity,
+      className: canceled
+          ? 'dark-gray'
+          : _setClassName(intensity, useShindo, false),
+      hypocenter: raw['hypocenterUnknown'] == true ? '' : location,
+      originTime: originTime,
+      reportTime: reportTime,
+      magnitude: magnitude,
+      depth: depth,
+      depthText: _formatDepthText(depth, zone),
+      lat: hasLocation ? lat : null,
+      lng: hasLocation ? lng : null,
+      isWarn: raw['isWarn'] == true,
+      isFinal: raw['isFinal'] == true,
+      isCanceled: canceled,
+      isAssumption: raw['isPLUM'] == true,
+      warnArea: canceled || areas.isEmpty ? '' : jsonEncode(areas),
+      apiTypeLabel: 'Jian Project',
+      isJmaLpgm: type == 'jma' && raw['telegram'] == 'VXSE62',
+      isHistory: isHistory,
+      isSnapshot: isSnapshot,
+      hasReportSequence: serial != null,
+      useSourceTimeForExpiry: true,
+      sourcePayload: Map<String, dynamic>.unmodifiable(raw),
+    );
+  }
 
   static String _apiTypeLabel(String source, int origin) {
     if (origin == _originWhews) return 'WHEWS';
@@ -306,6 +426,10 @@ class QuakeEventAdapter {
     final depth = _parseJmaDepth(data['depth']);
     final infoTypeName = _stringValue(data['infoTypeName']) ?? '';
     final isCanceled = data['cancel'] == true || infoTypeName == '取消';
+    final reportTime =
+        _parseTime(data['createTime'], 9) ??
+        _parseTime(data['reportTime'], 9) ??
+        _parseTime(data['updateTime'], 9);
     return UnifiedQuakeData(
       source: 'jmaEqlist',
       origin: _originWhews,
@@ -320,11 +444,8 @@ class QuakeEventAdapter {
           ? 'dark-gray'
           : _setClassName(normalizedShindo, true, false),
       hypocenter: hypocenter,
-      originTime: _parseTime(data['originTime'] ?? data['shockTime'], 9),
-      reportTime: _parseTime(
-        data['reportTime'] ?? data['createTime'] ?? data['updateTime'],
-        9,
-      ),
+      originTime: _whewsJmaOriginTime(data, reportTime),
+      reportTime: reportTime,
       magnitude: magnitude,
       depth: depth,
       depthText: _formatDepthText(depth, 9),
@@ -334,6 +455,38 @@ class QuakeEventAdapter {
       warnArea: isCanceled ? '' : intensityDetails.warnArea,
       apiTypeLabel: 'WHEWS',
     );
+  }
+
+  static DateTime? _whewsJmaOriginTime(
+    Map<String, dynamic> data,
+    DateTime? reportTime,
+  ) {
+    final origin =
+        _parseTime(data['shockTime'], 9) ?? _parseTime(data['originTime'], 9);
+    if (origin != null) return origin;
+    if (data['title'] != '震度速報' || reportTime == null) return null;
+
+    // VXSE51 has no Earthquake/OriginTime. Its official Headline describes
+    // the observed shaking time; use the report only to resolve year/month.
+    final headline = (_stringValue(data['headline']) ?? '').replaceAllMapped(
+      RegExp('[０-９]'),
+      (match) => String.fromCharCode(match[0]!.codeUnitAt(0) - 0xfee0),
+    );
+    final match = RegExp(
+      r'(\d{1,2})日\s*(\d{1,2})時\s*(\d{1,2})分ころ',
+    ).firstMatch(headline);
+    if (match == null) return null;
+    final day = int.parse(match[1]!);
+    final hour = int.parse(match[2]!);
+    final minute = int.parse(match[3]!);
+    if (day < 1 || day > 31 || hour > 23 || minute > 59) return null;
+    for (final month in [reportTime.month, reportTime.month - 1]) {
+      final candidate = DateTime(reportTime.year, month, day, hour, minute);
+      if (candidate.day != day) continue;
+      final age = reportTime.difference(candidate);
+      if (!age.isNegative && age <= const Duration(days: 1)) return candidate;
+    }
+    return null;
   }
 
   static String _whewsJmaReportText(
@@ -598,20 +751,8 @@ class QuakeEventAdapter {
     String source,
     Map<String, dynamic> data,
   ) {
-    final adaptedTitle = switch (source) {
-      'bmkg' => '印度尼西亚气象气候与地球物理局地震信息',
-      'geonet' => '新西兰地球科学局地震信息',
-      'tmd' => '泰国气象局地震信息',
-      'ingv' => '意大利国家地球物理与火山学研究所地震信息',
-      'nrcan' => '加拿大自然资源部地震信息',
-      'mmd' => '马来西亚气象局地震信息',
-      'phivolcs' => '菲律宾火山与地震研究所地震信息',
-      'sgc' => '哥伦比亚地质局地震信息',
-      'ga' => '澳大利亚地质局地震信息',
-      'cenais' => '古巴国家地震研究中心地震信息',
-      _ => null,
-    };
-    if (adaptedTitle == null) {
+    final sourceType = whewsCatalogSources['whews_$source'];
+    if (sourceType == null) {
       return convertUnadapted(
         apiName: source,
         origin: _originWhews,
@@ -620,35 +761,46 @@ class QuakeEventAdapter {
       );
     }
 
-    // Already-adapted WHEWS catalog sources keep their dedicated titles.
-    final depth = _parseDouble(data['depth']) ?? -1;
-    final magnitude = _parseDouble(data['magnitude']) ?? -1;
-    final rawMaxIntensity = _stringValue(data['maxIntensity']);
-    final maxIntensity = rawMaxIntensity?.isNotEmpty == true
-        ? rawMaxIntensity!
+    final depth = _catalogNumber(data['depth']) ?? _catalogNumber(data['depthKm']) ?? -1;
+    final magnitude = _catalogNumber(data['magnitude']) ?? _catalogNumber(data['mag']) ?? -1;
+    final reportedIntensity = parseReportedIntensity(data['maxIntensity']);
+    final maxIntensity = reportedIntensity != null
+        ? (reportedIntensity == reportedIntensity.roundToDouble()
+              ? reportedIntensity.toInt().toString() : reportedIntensity.toString())
         : _whewsFallbackIntensity(magnitude, depth);
-    final title = _stringValue(data['title']);
+    final lat = _catalogNumber(data['latitude']) ?? _catalogNumber(data['lat']);
+    final lng = _catalogNumber(data['longitude']) ?? _catalogNumber(data['lng']);
+    final hasLocation = hasCatalogCoordinates(lat, lng);
+    final location = _stringValue(data['location']) ??
+        _stringValue(data['placeName']) ?? '';
     return UnifiedQuakeData(
       source: 'whews_$source',
       origin: _originWhews,
-      eventId: _stringValue(data['eventId'] ?? data['id']) ?? '',
+      eventId: _stringValue(data['id']) ?? _stringValue(data['eventId']) ?? '',
       isEew: false,
       timeZone: 8,
-      titleText: title?.isNotEmpty == true ? title! : adaptedTitle,
+      titleText: _stringValue(data['title']) ?? '${sourceType.displayName}地震信息',
       reportNumText: whewsCatalogReportText(data),
       useShindo: false,
       maxIntensity: maxIntensity,
       className: _setClassName(maxIntensity, false, false),
-      hypocenter: _stringValue(data['location'] ?? data['placeName']) ?? '',
-      originTime: _parseTime(_stringValue(data['originTime']), 8),
-      reportTime: _parseTime(_stringValue(data['reportTime']), 8),
+      hypocenter: catalogDisplayLocation(location, lat, lng),
+      originTime: _parseTime(data['shockTime'], 8) ?? _parseTime(data['originTime'], 8),
+      reportTime: _parseTime(data['updateTime'], 8) ??
+          _parseTime(data['createTime'], 8) ?? _parseTime(data['reportTime'], 8),
       magnitude: magnitude,
       depth: depth,
       depthText: _formatDepthText(depth, 8),
-      lat: _parseDouble(data['latitude']) ?? 0,
-      lng: _parseDouble(data['longitude']) ?? 0,
+      lat: hasLocation ? lat : null,
+      lng: hasLocation ? lng : null,
+      isCanceled: data['cancel'] == true || data['isCancel'] == true,
       apiTypeLabel: 'WHEWS',
     );
+  }
+
+  static double? _catalogNumber(dynamic value) {
+    final number = _parseDouble(value);
+    return number != null && number.isFinite ? number : null;
   }
 
   /// Converts a feed that has no dedicated adapter.
@@ -732,21 +884,9 @@ class QuakeEventAdapter {
   static bool _isUnadaptedSourceKey(String source) {
     return source.startsWith('unadapted_') ||
         (source.startsWith('whews_') &&
-            !_unifiedAdaptedWhewsSources.contains(source));
+            !whewsCatalogSources.containsKey(source) && source != 'whews_va');
   }
 
-  static const _unifiedAdaptedWhewsSources = <String>{
-    'whews_bmkg',
-    'whews_geonet',
-    'whews_tmd',
-    'whews_ingv',
-    'whews_nrcan',
-    'whews_mmd',
-    'whews_phivolcs',
-    'whews_sgc',
-    'whews_ga',
-    'whews_cenais',
-  };
 
   // ═══════════════════════════════════════════════════════════════════════════
   // EEW 预警源
@@ -1255,7 +1395,8 @@ class QuakeEventAdapter {
     final shindo = data['shindo'] as String?;
     final useShindo = true;
     var title = '${data['Title'] ?? '地震情報'}';
-    final isVolcanoWolfx = _isForeignVolcanoEruption(data['Title']) ||
+    final isVolcanoWolfx =
+        _isForeignVolcanoEruption(data['Title']) ||
         _isForeignVolcanoEruption(data['Comments']) ||
         _isForeignVolcanoEruption(data['location']);
     if (isVolcanoWolfx) {
@@ -1636,6 +1777,8 @@ class QuakeEventAdapter {
     final magnitude = _parseDouble(data['magnitude']) ?? -1;
     final depth = _parseDouble(data['depth']) ?? -1;
     final timeZone = origin == _originWhews ? 8 : 9;
+    final latitude = _parseDouble(data['latitude']);
+    final longitude = _parseDouble(data['longitude']);
 
     String maxIntensityStr;
     String className;
@@ -1666,7 +1809,11 @@ class QuakeEventAdapter {
       useShindo: false,
       maxIntensity: maxIntensityStr,
       className: className,
-      hypocenter: '${data['location'] ?? ''}',
+      hypocenter: kmaDisplayLocation(
+        '${data['location'] ?? ''}',
+        latitude,
+        longitude,
+      ),
       originTime: _parseTime(data['originTime'] ?? data['shockTime'], timeZone),
       reportTime: _parseTime(
         origin == _originWhews
@@ -1677,8 +1824,8 @@ class QuakeEventAdapter {
       magnitude: magnitude,
       depth: depth,
       depthText: _formatDepthText(depth, timeZone),
-      lat: _parseDouble(data['latitude']) ?? 0,
-      lng: _parseDouble(data['longitude']) ?? 0,
+      lat: latitude ?? 0,
+      lng: longitude ?? 0,
     );
   }
 
@@ -1853,12 +2000,9 @@ class QuakeEventAdapter {
     String source,
     Map<String, dynamic> data,
     int origin,
-  ) => _genericInfo(
-    source: source,
+  ) => _whewsGenericInfo('geonet', data).copyWith(
     origin: origin,
-    data: data,
-    title: '新西兰地球科学局地震信息',
-    timeZone: 8,
+    sourcePayload: Map<String, dynamic>.unmodifiable(data),
   );
 
   static UnifiedQuakeData? _ningxia(
@@ -2527,6 +2671,12 @@ class QuakeEventAdapter {
       'Ⅻ': 12,
     };
     return romanLevels[normalized];
+  }
+
+  static double? parseReportedIntensity(dynamic value) {
+    final intensity = _parseIntensityValue(value);
+    return intensity != null && intensity.isFinite &&
+        intensity >= 0 && intensity <= 12 ? intensity : null;
   }
 
   static int? _parseInt(dynamic value) {

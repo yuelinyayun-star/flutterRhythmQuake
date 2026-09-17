@@ -1,6 +1,10 @@
+import 'dart:convert';
+
 import '../../models/quake_message.dart';
+import '../../models/whews_catalog.dart';
 import '../../models/tsunami_message.dart';
 import '../../models/unified_quake_data.dart';
+import 'jma_voice_location.dart';
 
 class AlertVoiceHelper {
   static String generateLegacyAlertText(
@@ -12,32 +16,38 @@ class AlertVoiceHelper {
     final report = event.reportNumber != null && event.reportNumber! > 0
         ? '第${event.reportNumber}报'
         : '';
-    final location = _fallback(event.location, '震源附近');
+    final isJma = switch (event.source) {
+      QuakeSourceType.wolfx ||
+      QuakeSourceType.p2p ||
+      QuakeSourceType.jma_fan => true,
+      _ => false,
+    };
+    final location = _voiceLocation(event.location, isJma: isJma);
     final mag = _magText(event.magnitude);
     final shindo = _legacyIntensityText(event, intensity);
     final depth = _depthText(event.depth);
-
-    final parts = <String>[
+    return _sentence([
       levelText,
-      if (report.isNotEmpty) report,
-      '$location发生地震。',
+      location,
       if (mag.isNotEmpty) mag,
-      if (depth.isNotEmpty) depth,
       if (shindo.isNotEmpty) shindo,
-    ];
-
-    if (countdown > 0) {
-      parts.add('预计地震波将在$countdown秒后到达。');
-    } else {
-      parts.add('地震波已经到达。');
-    }
-    return parts.join('，');
+      if (depth.isNotEmpty) depth,
+      if (countdown > 0) '预计$countdown秒后到达' else '地震波已经到达',
+      if (report.isNotEmpty) report,
+    ]);
   }
 
   static String generateUnifiedEventText(
     UnifiedQuakeData event, {
     required String phase,
   }) {
+    final volcano = event.volcanoEvent;
+    if (volcano != null) {
+      final action = event.isCanceled
+          ? '已取消'
+          : (phase == 'first' ? '发布' : '更新');
+      return '日本气象厅，$action火山情报。${volcano.displayLocation}。';
+    }
     if (event.isEew) {
       return _generateEewText(event, phase: phase);
     }
@@ -87,32 +97,29 @@ class AlertVoiceHelper {
     }
 
     final isJmaEew = event.source == 'jmaEew';
-    final isShakeAlert = event.source == 'sa';
     // 报次完全复用 UI 的 reportNumText。phase 只用于播报去重和调用路径，
     // 不再在语音中拼接“发布/更新”等动作词。
     final type = switch (true) {
       _ when isJmaEew => event.isWarn ? '紧急地震警报' : '紧急地震速报',
-      _ when isShakeAlert => '',
       _ => '地震预警',
     };
-    final location = _fallback(event.hypocenter, '震源附近');
+    final location = _voiceLocation(event.hypocenter, isJma: isJmaEew);
     final mag = _magText(event.magnitude);
-    // 复用 UI 的深度数值，但将日文标签和 km 单位转成自然中文语音。
-    final depth = _unifiedDepthVoiceText(event.depthText);
     final maxIntensity = _unifiedIntensityText(event);
+    final depth = _depthText(event.depth);
     final report = _reportText(event.reportNumText);
-    final area = event.warnArea.trim().isEmpty ? '' : '预警区域：${event.warnArea}。';
-    final parts = <String>[
-      source,
-      if (type.isNotEmpty) type,
-      if (report.isNotEmpty) report,
-      '$location发生地震。',
-      if (mag.isNotEmpty) mag,
-      if (depth.isNotEmpty) depth,
-      if (maxIntensity.isNotEmpty) maxIntensity,
-      if (area.isNotEmpty) area,
-    ];
-    return parts.join('，');
+    return _sentence([
+          type,
+          location,
+          if (mag.isNotEmpty) mag,
+          if (maxIntensity.isNotEmpty) maxIntensity,
+          if (depth.isNotEmpty) depth,
+        ]) +
+        _sentence([
+          source,
+          if (report.isNotEmpty) report,
+          if (event.isFinal && !report.contains('最终')) '最终报',
+        ]);
   }
 
   static String _generateInfoText(
@@ -124,30 +131,41 @@ class AlertVoiceHelper {
       return '$source，地震信息已取消。';
     }
 
-    final action = phase == 'first' ? '发布地震信息' : '更新地震信息';
-    final title = _infoTitleForVoice(event);
+    final title = event.isJmaLpgm
+        ? '长周期地震动情报'
+        : event.titleText.contains('矩心矩张量')
+        ? '震源机制解'
+        : event.source == 'nowQuakeCencIr'
+        ? '烈度速报'
+        : event.source == 'jmaEqlist'
+        ? _jmaInfoTitle(event.titleText)
+        : '地震信息';
     final report = _infoReportText(event);
-    final location = _fallback(event.hypocenter, '震源附近');
+    final hasObservationLocation =
+        event.source == 'jmaEqlist' && _isUnknownJmaLocation(event.hypocenter);
+    final observations = hasObservationLocation
+        ? _jmaObservedAreas(event.warnArea, event.maxIntensity)
+        : (text: '', includesMaximum: false);
+    final location = hasObservationLocation
+        ? observations.text
+        : _voiceLocation(event.hypocenter, isJma: event.source == 'jmaEqlist');
     final mag = _magText(event.magnitude);
     final depth = _depthText(event.depth);
     final intensity = _unifiedIntensityText(event);
 
-    final skipDuplicateTitle =
-        _isUnadaptedVoiceSource(event.source) && title == source;
-    final parts = <String>[
-      source,
-      action,
-      if (title.isNotEmpty && !skipDuplicateTitle) title,
-      if (report.isNotEmpty) report,
-      '$location。',
-      if (mag.isNotEmpty) mag,
-      if (depth.isNotEmpty) depth,
-      if (intensity.isNotEmpty) intensity,
-    ];
-    return parts.join('，');
+    return _sentence([
+          phase == 'first' ? title : '$title更新',
+          if (location.isNotEmpty) location,
+          if (mag.isNotEmpty) mag,
+          if (intensity.isNotEmpty && !observations.includesMaximum) intensity,
+          if (depth.isNotEmpty) depth,
+        ]) +
+        _sentence([source, if (report.isNotEmpty) report]);
   }
 
   static String _sourceLabel(String source) {
+    final catalogSource = unifiedCatalogSources[source];
+    if (catalogSource != null) return catalogSource.displayName;
     return switch (source) {
       'jmaEew' || 'jmaEqlist' => '日本气象厅',
       'cwaEew' || 'cwaEqlist' => '中央气象署',
@@ -189,21 +207,8 @@ class AlertVoiceHelper {
   static bool _isUnadaptedVoiceSource(String source) {
     return source.startsWith('unadapted_') ||
         (source.startsWith('whews_') &&
-            !_adaptedWhewsVoiceSources.contains(source));
+            !unifiedCatalogSources.containsKey(source));
   }
-
-  static const _adaptedWhewsVoiceSources = <String>{
-    'whews_bmkg',
-    'whews_geonet',
-    'whews_tmd',
-    'whews_ingv',
-    'whews_nrcan',
-    'whews_mmd',
-    'whews_phivolcs',
-    'whews_sgc',
-    'whews_ga',
-    'whews_cenais',
-  };
 
   static String _unadaptedSourceLabel(String source) {
     if (!_isUnadaptedVoiceSource(source)) {
@@ -220,15 +225,15 @@ class AlertVoiceHelper {
     return source.isEmpty ? '地震信息源' : source;
   }
 
-  static String _infoTitleForVoice(UnifiedQuakeData event) {
-    final title = _fallback(event.titleText, '地震信息');
-    if (event.source != 'kmaEqlist') return title;
-    return title.replaceFirst('기상청 지진정보', '韩国气象厅地震信息');
-  }
-
   static String _infoReportText(UnifiedQuakeData event) {
     final text = event.reportNumText.trim().replaceAll('報', '报');
-    if (text.isEmpty) return '';
+    if (text.isEmpty) {
+      // These adapters carry review status in the title, not reportNumText.
+      for (final status in ['正式测定', '自动测定', '已核实', '待核实']) {
+        if (event.titleText.contains(status)) return status;
+      }
+      return '';
+    }
 
     // JMA 情报不播报次；仅保留取消/订正等状态。
     if (!event.isEew && event.source == 'jmaEqlist') {
@@ -253,30 +258,15 @@ class AlertVoiceHelper {
   static String _unifiedIntensityText(UnifiedQuakeData event) {
     final value = event.maxIntensity.trim();
     if (value.isEmpty || value == '-' || value == '--') return '';
-    return event.useShindo ? '最大震度$value。' : '最大烈度$value。';
-  }
-
-  static String _unifiedDepthVoiceText(String depthText) {
-    final trimmed = depthText.trim();
-    if (trimmed.isEmpty) return '';
-    if (trimmed.contains('ごく浅い') || trimmed.contains('很浅')) {
-      return '深度很浅。';
-    }
-
-    final value = RegExp(
-      r'(-?\d+(?:\.\d+)?)\s*(?:km|公里)?',
-      caseSensitive: false,
-    ).firstMatch(trimmed)?.group(1);
-    if (value != null) return '深度$value公里。';
-
-    return trimmed
-        .replaceAll('深さ', '深度')
-        .replaceAll(RegExp(r'\s*km\b', caseSensitive: false), '公里');
+    final prefix = event.isEew ? '预计最大' : '最大';
+    return event.useShindo
+        ? '$prefix震度${_intensityReading(value)}'
+        : '$prefix烈度${_intensityReading(value)}';
   }
 
   static String _legacyIntensityText(QuakeMessage event, double intensity) {
     if (event.jmaShindo != null && event.jmaShindo!.trim().isNotEmpty) {
-      return '最大震度${event.jmaShindo}.';
+      return '最大震度${_intensityReading(event.jmaShindo!.trim())}';
     }
     if (event.maxIntensity != null && event.maxIntensity! > 0) {
       return '最大烈度${event.maxIntensity}.';
@@ -293,9 +283,91 @@ class AlertVoiceHelper {
   }
 
   static String _depthText(double depth) {
-    if (depth < 0) return '';
+    if (!depth.isFinite || depth < 0) return '';
     if (depth == 0) return '深度很浅。';
-    return '深度${depth.round()}公里。';
+    final value = depth == depth.roundToDouble()
+        ? depth.toStringAsFixed(0)
+        : depth.toString();
+    return '深度$value公里。';
+  }
+
+  static String _jmaInfoTitle(String title) => switch (title.trim()) {
+    '震度速報' || '震度速报' => '震度速报',
+    '震源に関する情報' => '震源信息',
+    '震度・震源に関する情報' || '震源・震度に関する情報' => '震源震度信息',
+    '各地の震度に関する情報' => '各地震度信息',
+    '遠地地震に関する情報' || '遠地地震情報' => '远地地震信息',
+    '遠地噴火に関する情報' => '远地火山喷发信息',
+    _ => '地震信息',
+  };
+
+  static bool _isUnknownJmaLocation(String name) => const {
+    '',
+    '-',
+    '--',
+    '不明',
+    '不詳',
+    '調査中',
+    '调查中',
+    '震源調査中',
+    '震源调查中',
+    '震源待定',
+    'unknown',
+  }.contains(name.trim().toLowerCase());
+
+  static ({String text, bool includesMaximum}) _jmaObservedAreas(
+    String encoded,
+    String maximum,
+  ) {
+    const empty = (text: '', includesMaximum: false);
+    if (encoded.trim().isEmpty) return empty;
+    final dynamic decoded;
+    try {
+      decoded = jsonDecode(encoded);
+    } on FormatException {
+      return empty;
+    }
+    if (decoded is! List) return empty;
+    const levels = ['0', '1', '2', '3', '4', '5弱', '5强', '6弱', '6强', '7'];
+    final areas = <String, ({String intensity, int rank, int order})>{};
+    for (final item in decoded.whereType<Map>()) {
+      final name = item['name'];
+      if (name is! String || _isUnknownJmaLocation(name)) continue;
+      final intensity = _intensityReading('${item['intensity'] ?? ''}'.trim());
+      final rank = levels.indexOf(intensity);
+      final key = name.trim();
+      final previous = areas[key];
+      if (previous == null || rank > previous.rank) {
+        areas[key] = (
+          intensity: intensity,
+          rank: rank,
+          order: previous?.order ?? areas.length,
+        );
+      }
+    }
+    // Work on a derived list only; never reorder or overwrite event data.
+    final ranked = areas.entries.toList()
+      ..sort((a, b) {
+        final byIntensity = b.value.rank.compareTo(a.value.rank);
+        return byIntensity != 0
+            ? byIntensity
+            : a.value.order.compareTo(b.value.order);
+      });
+    final groups = <int, List<String>>{};
+    for (final area in ranked) {
+      (groups[area.value.rank] ??= []).add(jmaVoiceLocation(area.key));
+    }
+    final phrases = groups.entries.map((group) {
+      final names = group.value.join('、');
+      return group.key < 0
+          ? '震度尚未明确的报告地区：$names'
+          : '观测到震度${levels[group.key]}的地区：$names';
+    });
+    final maximumRank = levels.indexOf(_intensityReading(maximum.trim()));
+    return (
+      text: phrases.join('。'),
+      includesMaximum: maximumRank >= 0 && groups.containsKey(maximumRank),
+    );
   }
 
   static String _fallback(String value, String fallback) {
@@ -304,4 +376,32 @@ class AlertVoiceHelper {
         ? fallback
         : trimmed;
   }
+
+  static String _voiceLocation(String value, {required bool isJma}) {
+    final location = _fallback(value, '震源待定');
+    return isJma ? jmaVoiceLocation(location) : location;
+  }
+
+  static String _intensityReading(String value) => switch (value) {
+    '5-' || '5弱' => '5弱',
+    '5+' || '5強' || '5强' => '5强',
+    '6-' || '6弱' => '6弱',
+    '6+' || '6強' || '6强' => '6强',
+    'I' || 'Ⅰ' => '1',
+    'II' || 'Ⅱ' => '2',
+    'III' || 'Ⅲ' => '3',
+    'IV' || 'Ⅳ' => '4',
+    'V' || 'Ⅴ' => '5',
+    'VI' || 'Ⅵ' => '6',
+    'VII' || 'Ⅶ' => '7',
+    'VIII' || 'Ⅷ' => '8',
+    'IX' || 'Ⅸ' => '9',
+    'X' || 'Ⅹ' => '10',
+    'XI' || 'Ⅺ' => '11',
+    'XII' || 'Ⅻ' => '12',
+    _ => value,
+  };
+
+  static String _sentence(List<String> parts) =>
+      '${parts.map((part) => part.replaceAll(RegExp(r'[。，,.]+$'), '').trim()).where((part) => part.isNotEmpty).join('，')}。';
 }

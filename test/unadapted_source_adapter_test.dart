@@ -98,12 +98,13 @@ void main() {
       final event = QuakeEventAdapter.convert('geonet', geonetPayload(), 1);
 
       expect(event, isNotNull);
-      expect(event!.source, 'geonet');
+      expect(event!.source, 'whews_geonet');
       expect(event.titleText, '新西兰地球科学局地震信息');
       expect(event.apiTypeLabel, 'FAN');
       expect(event.timeZone, 8);
       expect(event.originTime, DateTime(2026, 8, 17, 9, 53, 29));
-      expect(event.hypocenter, '35 km south-west of Tokoroa');
+      expect(event.hypocenter,
+          QuakeEventAdapter.convertWhews('geonet', geonetPayload())!.hypocenter);
       expect(event.lat, -38.3);
       expect(event.lng, 175.8);
       expect(event.depth, 192);

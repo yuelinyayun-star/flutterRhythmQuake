@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'dart:ui';
 import 'dart:async';
 import 'dart:math' as math;
-import 'package:flutter/foundation.dart' show compute, visibleForTesting;
+import 'package:flutter/foundation.dart'
+    show compute, visibleForTesting, defaultTargetPlatform, TargetPlatform;
 import 'package:provider/provider.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -26,12 +27,17 @@ import '../widgets/ui/jma_megaquake_sidebar_panel.dart';
 import '../widgets/ui/volcano_sidebar_panel.dart';
 import '../widgets/ui/ui_runtime_flags.dart';
 import '../widgets/ui/ui_scale.dart';
+import '../widgets/ui/mobile_sections.dart';
+import '../widgets/ui/mobile_weather_panel.dart';
+import '../widgets/ui/mobile_weather_home_details.dart';
 import '../core/source_estimation/source_estimation_models.dart';
 import '../core/source_estimation/station_event_tracker.dart';
 import '../services/sources/shake_detection_service.dart';
 import '../services/sources/global_quake_service.dart';
 import '../core/local_weather_region.dart';
 import '../services/sources/cma_local_weather_service.dart';
+import '../services/sources/china_weather_hourly_service.dart';
+import '../widgets/ui/china_weather_hourly_panel.dart';
 import '../services/sources/jma_local_weather_service.dart';
 import '../services/sources/jma_lpgm_service.dart';
 import '../services/sources/jma_megaquake_advisory_service.dart';
@@ -60,6 +66,8 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   final ValueNotifier<StationSummaryData> _stationDataNotifier =
       ValueNotifier<StationSummaryData>(StationSummaryData());
   final CmaLocalWeatherService _cmaWeatherService = CmaLocalWeatherService();
+  final ChinaWeatherHourlyService _hourlyWeatherService =
+      ChinaWeatherHourlyService();
   final JmaLocalWeatherService _jmaWeatherService = JmaLocalWeatherService();
   final JmaLpgmService _jmaLpgmService = JmaLpgmService();
   final JmaMegaquakeAdvisoryService _jmaMegaquakeService =
@@ -70,8 +78,12 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   bool _showInfoDrawer = true;
   bool _cmaWeatherLayoutEnabled = false;
+  MobileSection _mobileSection = MobileSection.seismic;
+  MapViewport _mobileMapViewport = MapViewport.seismic;
+  bool get _weatherVisible => _cmaWeatherLayoutEnabled
+      ? _showInfoDrawer
+      : _mobileSection == MobileSection.weather;
   bool _sideInfoSettingLoaded = false;
-  bool _phoneActionsExpanded = false;
   bool _sideInfoAutoShowBeta = true;
   String? _lastAutoTriggerSignature;
   String _lastNiedInfoSignature = '-';
@@ -98,7 +110,6 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   String _lastStationDataUiSignature = '';
 
   static const double _refWidth = 1700.0;
-  static const double _stationPanelVisualHeight = 104.0;
   static const double _infoPanelHeight = 186.0;
   static const double _stationPanelWidth = 234.0;
   static const double _rightActionButtonSize = 52.0;
@@ -121,6 +132,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   static const String _infoPageJmaMegaquakeHokkaido = 'jmaMegaquakeHokkaido';
 
   double _scale(BuildContext c) {
+    if (UiScale.isPhone(c)) return 1;
     return UiScale.factor(c, refWidth: _refWidth, min: 0.55);
   }
 
@@ -213,9 +225,24 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   void didChangeDependencies() {
     super.didChangeDependencies();
     final enabled = !UiScale.isPhone(context);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _syncMobileMapViewport();
+    });
     if (_cmaWeatherLayoutEnabled == enabled) return;
     _cmaWeatherLayoutEnabled = enabled;
     _syncLocalWeatherActivity();
+  }
+
+  void _syncMobileMapViewport() {
+    context.read<QuakeProvider>().configureMobileEewCarousel(
+      UiScale.isPhone(context),
+    );
+    context.read<MapStateProvider>().configureMobileViewport(
+      enabled: UiScale.isPhone(context),
+      viewport: _mobileMapViewport,
+      visible: _mobileSection != MobileSection.settings,
+    );
   }
 
   @override
@@ -230,6 +257,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     _jmaWeatherService.stateNotifier.removeListener(_onJmaWeatherStateChanged);
     _jmaLpgmService.latestNotifier.removeListener(_onJmaLpgmChanged);
     _cmaWeatherService.dispose();
+    _hourlyWeatherService.dispose();
     _jmaWeatherService.dispose();
     _jmaLpgmService.dispose();
     _jmaMegaquakeService.dispose();
@@ -300,270 +328,379 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
           ],
         ),
       ),
-      body: Stack(
-        children: [
-          // 1. 地图视图
-          QuakeMapView(
-            mapController: _mapController,
-            onStationDataChanged: _onStationDataChanged,
-          ),
+      body: _buildSectionBody(
+        context,
+        isPhone,
+        Stack(
+          children: [
+            // 1. 地图视图
+            QuakeMapView(
+              mapController: _mapController,
+              weatherOnly: isPhone && _mobileMapViewport == MapViewport.weather,
+              onStationDataChanged: _onStationDataChanged,
+            ),
 
-          // 2. 顶部状态栏
-          const Positioned(top: 0, left: 0, right: 0, child: TopStatusBar()),
+            // 2. 顶部状态栏
+            if (!isPhone)
+              const Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: TopStatusBar(),
+              ),
 
-          // 3. 数据源状态面板
-          if (!isPhone) const SourceDashboard(),
+            // 3. 数据源状态面板
+            if (!isPhone) const SourceDashboard(),
 
-          // Station summary panel
-          ValueListenableBuilder<StationSummaryData>(
-            valueListenable: _stationDataNotifier,
-            builder: (context, data, child) =>
-                StationDashboard(data: data, phoneMode: isPhone),
-          ),
+            // Station summary panel
+            if (!isPhone)
+              ValueListenableBuilder<StationSummaryData>(
+                valueListenable: _stationDataNotifier,
+                builder: (context, data, child) =>
+                    StationDashboard(data: data, phoneMode: isPhone),
+              ),
 
-          if (!isPhone)
-            Positioned(
-              top: _rightInfoPanelTop(context),
-              right: _sideS(20, context),
-              bottom: _rightInfoPanelBottom(context),
-              child: AnimatedSlide(
-                duration: const Duration(milliseconds: 320),
-                curve: Curves.easeOutCubic,
-                offset: _showInfoDrawer ? Offset.zero : const Offset(1.05, 0),
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 260),
-                  opacity: _showInfoDrawer ? 1 : 0,
-                  child: IgnorePointer(
-                    ignoring: !_showInfoDrawer,
-                    child: ValueListenableBuilder<StationSummaryData>(
-                      valueListenable: _stationDataNotifier,
-                      builder: (context, data, child) {
-                        return ValueListenableBuilder<JmaLpgmBulletin?>(
-                          valueListenable: _jmaLpgmService.latestNotifier,
-                          builder: (context, _, child) {
-                            return ValueListenableBuilder<
-                              List<JmaMegaquakeAdvisory>
-                            >(
-                              valueListenable:
-                                  _jmaMegaquakeService.activeNotifier,
-                              builder: (context, _, child) =>
-                                  _buildRightInfoDrawer(),
-                            );
-                          },
-                        );
-                      },
+            if (!isPhone)
+              Positioned(
+                top: _rightInfoPanelTop(context),
+                right: _sideS(20, context),
+                bottom: _rightInfoPanelBottom(context),
+                child: AnimatedSlide(
+                  duration: const Duration(milliseconds: 320),
+                  curve: Curves.easeOutCubic,
+                  offset: _showInfoDrawer ? Offset.zero : const Offset(1.05, 0),
+                  child: AnimatedOpacity(
+                    duration: const Duration(milliseconds: 260),
+                    opacity: _showInfoDrawer ? 1 : 0,
+                    child: IgnorePointer(
+                      ignoring: !_showInfoDrawer,
+                      child: ValueListenableBuilder<StationSummaryData>(
+                        valueListenable: _stationDataNotifier,
+                        builder: (context, data, child) {
+                          return ValueListenableBuilder<JmaLpgmBulletin?>(
+                            valueListenable: _jmaLpgmService.latestNotifier,
+                            builder: (context, _, child) {
+                              return ValueListenableBuilder<
+                                List<JmaMegaquakeAdvisory>
+                              >(
+                                valueListenable:
+                                    _jmaMegaquakeService.activeNotifier,
+                                builder: (context, _, child) =>
+                                    _buildRightInfoDrawer(),
+                              );
+                            },
+                          );
+                        },
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
 
-          // 3.5 天气预警跑马灯
-          if (!isPhone)
-            Positioned(
-              top: UiScale.belowTopBar(context, 12),
-              left: _s(450, context),
-              right: _s(350, context),
-              child: const WeatherMarquee(),
-            ),
-
-          // 4. 左侧预警模块和地震列表
-          if (!isPhone)
-            Positioned(
-              top: UiScale.belowTopBar(context, 12),
-              left: _s(20, context),
-              bottom: _s(20, context),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const AlertModule(),
-                  SizedBox(height: _s(12, context)),
-                  const Expanded(child: EqlistPanel()),
-                ],
+            // 3.5 天气预警跑马灯
+            if (!isPhone)
+              Positioned(
+                top: UiScale.belowTopBar(context, 12),
+                left: _s(450, context),
+                right: _s(350, context),
+                child: const WeatherMarquee(),
               ),
-            ),
 
-          const _NiedHypCurveOverlay(),
-
-          // 6. 功能按钮
-          Positioned(
-            bottom: _s(30, context),
-            right: _s(20, context),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _buildCircularButton(
-                  context: context,
-                  icon: Icons.settings,
-                  tooltip: '设置',
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const SettingsPage()),
-                    );
-                  },
+            // 4. 左侧预警模块和地震列表
+            if (!isPhone)
+              Positioned(
+                top: UiScale.belowTopBar(context, 12),
+                left: _s(20, context),
+                bottom: _s(20, context),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const AlertModule(),
+                    SizedBox(height: _s(12, context)),
+                    const Expanded(child: EqlistPanel()),
+                  ],
                 ),
-                SizedBox(height: _s(12, context)),
-                Selector<QuakeProvider, bool>(
-                  selector: (context, provider) =>
-                      provider.isManualCencIrActive,
-                  builder: (context, isManualActive, _) {
-                    return _buildCircularButton(
+              ),
+
+            if (!isPhone || _mobileSection == MobileSection.seismic)
+              const _NiedHypCurveOverlay(),
+
+            // 6. 功能按钮
+            if (!isPhone)
+              Positioned(
+                bottom: _s(30, context),
+                right: _s(20, context),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildCircularButton(
                       context: context,
-                      icon: isManualActive ? Icons.waves : Icons.waves_outlined,
-                      tooltip: isManualActive
-                          ? '关闭手动 CENC 烈度速报'
-                          : '手动查看 CENC 烈度速报',
-                      color: isManualActive
-                          ? const Color(0xFF2ECC71)
-                          : Colors.blueAccent,
+                      icon: Icons.settings,
+                      tooltip: '设置',
                       onPressed: () {
-                        final provider = context.read<QuakeProvider>();
-                        if (isManualActive) {
-                          provider.clearCencIrData();
-                        } else {
-                          _showCencIrSheet(context);
-                        }
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const SettingsPage(),
+                          ),
+                        );
                       },
-                    );
-                  },
+                    ),
+                    SizedBox(height: _s(12, context)),
+                    Selector<QuakeProvider, bool>(
+                      selector: (context, provider) =>
+                          provider.isManualCencIrActive,
+                      builder: (context, isManualActive, _) {
+                        return _buildCircularButton(
+                          context: context,
+                          icon: isManualActive
+                              ? Icons.waves
+                              : Icons.waves_outlined,
+                          tooltip: isManualActive
+                              ? '关闭手动 CENC 烈度速报'
+                              : '手动查看 CENC 烈度速报',
+                          color: isManualActive
+                              ? const Color(0xFF2ECC71)
+                              : Colors.blueAccent,
+                          onPressed: () {
+                            final provider = context.read<QuakeProvider>();
+                            if (isManualActive) {
+                              provider.clearCencIrData();
+                            } else {
+                              _showCencIrSheet(context);
+                            }
+                          },
+                        );
+                      },
+                    ),
+                    SizedBox(height: _s(12, context)),
+                    _buildCircularButton(
+                      context: context,
+                      icon: Icons.history,
+                      tooltip: '查看历史',
+                      onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+                    ),
+                    SizedBox(height: _s(12, context)),
+                    _buildCircularButton(
+                      context: context,
+                      icon: Icons.my_location,
+                      tooltip: '回到中心',
+                      onPressed: () {
+                        context
+                            .read<MapStateProvider>()
+                            .moveToSystemDefaultView();
+                      },
+                    ),
+                  ],
                 ),
-                SizedBox(height: _s(12, context)),
-                _buildCircularButton(
-                  context: context,
-                  icon: Icons.history,
-                  tooltip: '查看历史',
-                  onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+              ),
+            if (isPhone)
+              Positioned.fill(
+                child: Offstage(
+                  offstage: _mobileSection != MobileSection.seismic,
+                  child: Stack(children: _buildPhoneOverlays(context)),
                 ),
-                SizedBox(height: _s(12, context)),
-                _buildCircularButton(
-                  context: context,
-                  icon: Icons.my_location,
-                  tooltip: '回到中心',
-                  onPressed: () {
-                    context.read<MapStateProvider>().moveToSystemDefaultView();
-                  },
-                ),
-              ],
-            ),
-          ),
-          if (isPhone) ..._buildPhoneOverlays(context),
-
-          // 应用内轻通知覆盖层
-          const InAppNotificationOverlay(),
-        ],
+              ),
+          ],
+        ),
       ),
     );
   }
 
-  List<Widget> _buildPhoneOverlays(BuildContext context) {
-    final scale = UiScale.phone(context);
-    double s(double value) => value * scale;
-    final stationScale = UiScale.compact(context);
-    final stationTop = UiScale.topBarHeight(context) + 8 * stationScale;
-    final stationHeight = _stationPanelVisualHeight * stationScale;
-    final actionGap = s(8);
-    final actionSize = ((stationHeight - actionGap) / 2).clamp(s(30), s(42));
-    final actionIconSize = (actionSize * 0.52).clamp(s(16), s(22));
+  Widget _buildSectionBody(BuildContext context, bool isPhone, Widget mapPage) {
+    return Stack(
+      children: [
+        if (isPhone)
+          MobileSectionHost(
+            seismic: mapPage,
+            weather: _buildPhoneWeather(context),
+            onSectionChanged: (section) {
+              setState(() {
+                _mobileSection = section;
+                if (section != MobileSection.settings) {
+                  _mobileMapViewport = section == MobileSection.weather
+                      ? MapViewport.weather
+                      : MapViewport.seismic;
+                }
+              });
+              _syncMobileMapViewport();
+              _syncLocalWeatherActivity();
+            },
+            settingsBuilder: (onBack) =>
+                SettingsPage(onBack: onBack, contentTopInset: 66),
+          )
+        else
+          mapPage,
+        const InAppNotificationOverlay(),
+      ],
+    );
+  }
 
+  List<Widget> _buildPhoneOverlays(BuildContext context) {
     return [
-      Positioned(
-        right: s(10),
-        top: stationTop,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _buildPhoneActionButton(
-              context,
-              icon: Icons.settings,
-              tooltip: '设置',
-              buttonSize: actionSize,
-              iconSize: actionIconSize,
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const SettingsPage()),
-                );
-              },
+      Positioned.fill(
+        child: MobileSeismicOverlays(
+          stations: Tooltip(
+            message: '数据源状态',
+            child: GestureDetector(
+              onTap: () => showDialog<void>(
+                context: context,
+                builder: (context) => Dialog(
+                  backgroundColor: const Color(0xDD141416),
+                  child: SizedBox(
+                    height: MediaQuery.sizeOf(context).height * .6,
+                    child: _buildPhoneStatusTab(context, (v) => v),
+                  ),
+                ),
+              ),
+              child: ValueListenableBuilder<StationSummaryData>(
+                valueListenable: _stationDataNotifier,
+                builder: (context, data, _) =>
+                    StationDashboard(data: data, phoneMode: true),
+              ),
             ),
-            SizedBox(height: actionGap),
-            _buildPhoneActionButton(
-              context,
-              icon: _phoneActionsExpanded ? Icons.close : Icons.add,
-              tooltip: _phoneActionsExpanded ? '收起' : '更多',
-              buttonSize: actionSize,
-              iconSize: actionIconSize,
-              onPressed: () {
-                setState(() => _phoneActionsExpanded = !_phoneActionsExpanded);
-              },
+          ),
+          sidebar: ValueListenableBuilder<StationSummaryData>(
+            valueListenable: _stationDataNotifier,
+            builder: (context, data, _) =>
+                ValueListenableBuilder<JmaLpgmBulletin?>(
+                  valueListenable: _jmaLpgmService.latestNotifier,
+                  builder: (context, _, _) =>
+                      ValueListenableBuilder<List<JmaMegaquakeAdvisory>>(
+                        valueListenable: _jmaMegaquakeService.activeNotifier,
+                        builder: (context, _, _) => _buildRightInfoDrawer(),
+                      ),
+                ),
+          ),
+          events: AlertModule(
+            layoutBuilder: (content, strip) => MobileEventListLayout(
+              alert: content,
+              divider: strip,
+              list: const EqlistPanel(embedded: true),
+              actions: _buildPhoneActions(context),
             ),
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 180),
-              switchInCurve: Curves.easeOutCubic,
-              switchOutCurve: Curves.easeInCubic,
-              child: _phoneActionsExpanded
-                  ? Column(
-                      key: const ValueKey('phone-actions-expanded'),
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SizedBox(height: s(8)),
-                        _buildPhoneActionButton(
-                          context,
-                          icon: Icons.my_location,
-                          tooltip: '回到中心',
-                          onPressed: () {
-                            context
-                                .read<MapStateProvider>()
-                                .moveToSystemDefaultView();
-                          },
-                        ),
-                        SizedBox(height: s(8)),
-                        _buildPhoneActionButton(
-                          context,
-                          icon: Icons.history,
-                          tooltip: '查看历史',
-                          onPressed: () =>
-                              _scaffoldKey.currentState?.openDrawer(),
-                        ),
-                        SizedBox(height: s(8)),
-                        Selector<QuakeProvider, bool>(
-                          selector: (context, provider) =>
-                              provider.isManualCencIrActive,
-                          builder: (context, isManualActive, _) {
-                            return _buildPhoneActionButton(
-                              context,
-                              icon: isManualActive
-                                  ? Icons.waves
-                                  : Icons.waves_outlined,
-                              tooltip: isManualActive
-                                  ? '关闭手动 CENC 烈度速报'
-                                  : '手动查看 CENC 烈度速报',
-                              color: isManualActive
-                                  ? const Color(0xFF2ECC71)
-                                  : Colors.blueAccent,
-                              onPressed: () {
-                                final provider = context.read<QuakeProvider>();
-                                if (isManualActive) {
-                                  provider.clearCencIrData();
-                                } else {
-                                  _showCencIrSheet(context);
-                                }
-                              },
-                            );
-                          },
-                        ),
-                      ],
-                    )
-                  : const SizedBox.shrink(
-                      key: ValueKey('phone-actions-collapsed'),
-                    ),
-            ),
-          ],
+          ),
         ),
       ),
-      _buildPhoneBottomSheet(context),
     ];
+  }
+
+  Widget _buildPhoneWeather(BuildContext context) {
+    final position = LocationService().currentPosition;
+    final china =
+        position != null &&
+        LocalWeatherRegion.usesChina(position.latitude, position.longitude);
+    final japan =
+        position != null &&
+        LocalWeatherRegion.usesJapan(position.latitude, position.longitude);
+    return MobileWeatherPanel(
+      onLayers: () => showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        backgroundColor: Colors.transparent,
+        builder: (_) => const FractionallySizedBox(
+          heightFactor: .85,
+          child: SettingsPage(weatherOnly: true),
+        ),
+      ),
+      onLocate: () {
+        if (!context.read<MapStateProvider>().moveWeatherToLocationView()) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('等待定位信息')));
+        }
+      },
+      current: china ? _cmaWeatherState.observation : null,
+      sourceText: china ? '数据来源：中国天气网、中国气象局、FAN Studio' : null,
+      advice: china
+          ? ValueListenableBuilder<ChinaWeatherHourlyState>(
+              valueListenable: _hourlyWeatherService.state,
+              builder: (context, state, _) => MobileWeatherAdvice(state: state),
+            )
+          : const SizedBox.shrink(),
+      details: china
+          ? ValueListenableBuilder<ChinaWeatherHourlyState>(
+              valueListenable: _hourlyWeatherService.state,
+              builder: (context, state, _) => MobileWeatherHomeDetails(
+                state: state,
+                observation: _cmaWeatherState.observation,
+              ),
+            )
+          : const SizedBox.shrink(),
+      conditions: china
+          ? ValueListenableBuilder<ChinaWeatherHourlyState>(
+              valueListenable: _hourlyWeatherService.state,
+              builder: (context, state, _) =>
+                  MobileWeatherConditions(state: state),
+            )
+          : const SizedBox.shrink(),
+      forecast: china
+          ? ValueListenableBuilder<ChinaWeatherHourlyState>(
+              valueListenable: _hourlyWeatherService.state,
+              builder: (context, state, _) => ChinaWeatherHourlyPanel(
+                state: state,
+                showChart: true,
+                showSource: false,
+              ),
+            )
+          : Text(
+              position == null
+                  ? '等待定位信息'
+                  : japan
+                  ? '日本气象厅预报见下方气象站信息'
+                  : '当地天气预报暂未覆盖',
+              style: const TextStyle(color: Colors.white70),
+            ),
+      station: china
+          ? _buildCmaWeatherPanel(context)
+          : japan
+          ? _buildJmaWeatherPanel(context)
+          : _buildWeatherStatus(
+              context,
+              position == null ? '等待定位信息' : '当地气象暂未覆盖',
+            ),
+    );
+  }
+
+  Widget _buildPhoneActions(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _buildPhoneActionButton(
+          context,
+          icon: Icons.my_location,
+          tooltip: '回到中心',
+          onPressed: () =>
+              context.read<MapStateProvider>().moveToSystemDefaultView(),
+        ),
+        const SizedBox(width: 7),
+        _buildPhoneActionButton(
+          context,
+          icon: Icons.history,
+          tooltip: '查看历史',
+          onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+        ),
+        const SizedBox(width: 7),
+        Selector<QuakeProvider, bool>(
+          selector: (context, provider) => provider.isManualCencIrActive,
+          builder: (context, active, _) => _buildPhoneActionButton(
+            context,
+            icon: active ? Icons.waves : Icons.waves_outlined,
+            tooltip: active ? '关闭手动 CENC 烈度速报' : '手动查看 CENC 烈度速报',
+            color: active ? const Color(0xFF2ECC71) : Colors.blueAccent,
+            onPressed: () {
+              if (active) {
+                context.read<QuakeProvider>().clearCencIrData();
+              } else {
+                _showCencIrSheet(context);
+              }
+            },
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _buildPhoneActionButton(
@@ -577,8 +714,8 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   }) {
     final scale = UiScale.phone(context);
     double s(double value) => value * scale;
-    final resolvedButtonSize = buttonSize ?? s(42);
-    final resolvedIconSize = iconSize ?? s(22);
+    final resolvedButtonSize = buttonSize ?? s(36);
+    final resolvedIconSize = iconSize ?? s(20);
     return Tooltip(
       message: tooltip ?? '',
       child: RepaintBoundary(
@@ -599,121 +736,6 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
             ),
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildPhoneBottomSheet(BuildContext context) {
-    final scale = UiScale.phone(context);
-    double s(double value) => value * scale;
-    final height = MediaQuery.sizeOf(context).height;
-
-    return DraggableScrollableSheet(
-      initialChildSize: 0.32,
-      minChildSize: 0.24,
-      maxChildSize: 0.86,
-      snap: true,
-      snapSizes: const [0.32, 0.58, 0.86],
-      builder: (context, scrollController) {
-        return RepaintBoundary(
-          child: ClipRRect(
-            borderRadius: BorderRadius.vertical(top: Radius.circular(s(16))),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: const Color(0xE6141820),
-                  borderRadius: BorderRadius.vertical(
-                    top: Radius.circular(s(16)),
-                  ),
-                  border: Border(
-                    top: BorderSide(
-                      color: Colors.white.withValues(alpha: 0.12),
-                      width: s(0.7),
-                    ),
-                  ),
-                ),
-                child: SingleChildScrollView(
-                  controller: scrollController,
-                  physics: const ClampingScrollPhysics(),
-                  child: SizedBox(
-                    height: height * 0.86,
-                    child: DefaultTabController(
-                      length: 3,
-                      child: Column(
-                        children: [
-                          SizedBox(height: s(8)),
-                          Container(
-                            width: s(42),
-                            height: s(4),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.28),
-                              borderRadius: BorderRadius.circular(s(999)),
-                            ),
-                          ),
-                          SizedBox(height: s(8)),
-                          Padding(
-                            padding: EdgeInsets.symmetric(horizontal: s(14)),
-                            child: TabBar(
-                              indicatorColor: Colors.blueAccent,
-                              labelColor: Colors.white,
-                              unselectedLabelColor: Colors.white54,
-                              labelStyle: TextStyle(
-                                fontSize: s(13),
-                                fontWeight: FontWeight.w700,
-                              ),
-                              unselectedLabelStyle: TextStyle(
-                                fontSize: s(13),
-                                fontWeight: FontWeight.w600,
-                              ),
-                              tabs: const [
-                                Tab(text: '预警'),
-                                Tab(text: '地震列表'),
-                                Tab(text: '状态'),
-                              ],
-                            ),
-                          ),
-                          Expanded(
-                            child: TabBarView(
-                              physics: const NeverScrollableScrollPhysics(),
-                              children: [
-                                _buildPhoneAlertTab(context, s),
-                                Padding(
-                                  padding: EdgeInsets.fromLTRB(
-                                    s(10),
-                                    s(8),
-                                    s(10),
-                                    s(10),
-                                  ),
-                                  child: const EqlistPanel(embedded: true),
-                                ),
-                                _buildPhoneStatusTab(context, s),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildPhoneAlertTab(BuildContext context, double Function(double) s) {
-    return SingleChildScrollView(
-      padding: EdgeInsets.fromLTRB(s(10), s(8), s(10), s(24)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const WeatherMarquee(),
-          SizedBox(height: s(8)),
-          const AlertModule(),
-        ],
       ),
     );
   }
@@ -925,7 +947,9 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
           mainPages.add(
             _InfoDrawerPage(
               key: _infoPageSnet,
-              child: _buildSnetSection(context),
+              child: UiScale.isPhone(context)
+                  ? SingleChildScrollView(child: _buildSnetSection(context))
+                  : _buildSnetSection(context),
             ),
           );
         }
@@ -949,7 +973,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
           mainPages.add(
             _InfoDrawerPage(
               key: _infoPagePtwcTsunami,
-              child: _buildTsunamiSection(context, ptwc!, 'PTWC'),
+              child: _buildTsunamiSection(context, ptwc, 'PTWC'),
             ),
           );
         }
@@ -957,7 +981,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
           mainPages.add(
             _InfoDrawerPage(
               key: _infoPageNtwcTsunami,
-              child: _buildTsunamiSection(context, ntwc!, 'NTWC'),
+              child: _buildTsunamiSection(context, ntwc, 'NTWC'),
             ),
           );
         }
@@ -965,13 +989,17 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
           mainPages.add(
             _InfoDrawerPage(
               key: _infoPageIncoisTsunami,
-              child: _buildTsunamiSection(context, incois!, 'INCOIS'),
+              child: _buildTsunamiSection(context, incois, 'INCOIS'),
             ),
           );
         }
         _syncInfoCarouselPages(mainPages);
 
         final showCarousel = mainPages.isNotEmpty;
+        if (UiScale.isPhone(context) &&
+            (!showCarousel || !_sideInfoAutoShowBeta)) {
+          return const SizedBox.shrink();
+        }
         if (showCarousel && _infoPageIndex >= mainPages.length) {
           _infoPageIndex = 0;
         }
@@ -987,9 +1015,9 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                   minHeight: _infoPanelHeightForLayout(context),
                 ),
                 padding: EdgeInsets.fromLTRB(
-                  _s(12, context),
+                  _s(UiScale.isPhone(context) ? 6 : 12, context),
                   _s(10, context),
-                  _s(12, context),
+                  _s(UiScale.isPhone(context) ? 6 : 12, context),
                   _s(10, context),
                 ),
                 decoration: BoxDecoration(
@@ -1067,7 +1095,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       width: double.infinity,
       height: double.infinity,
       padding: EdgeInsets.symmetric(
-        horizontal: _s(8, context),
+        horizontal: _s(UiScale.isPhone(context) ? 4 : 8, context),
         vertical: _s(7, context),
       ),
       child: child,
@@ -1100,8 +1128,10 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                 fontSize: _s(11, context),
                 height: 1.2,
               ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              maxLines: UiScale.isPhone(context) ? null : 1,
+              overflow: UiScale.isPhone(context)
+                  ? TextOverflow.visible
+                  : TextOverflow.ellipsis,
             ),
           );
         }),
@@ -1300,21 +1330,32 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
             ),
           ),
           SizedBox(height: _s(4, context)),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.centerLeft,
-            child: Text(
-              '最大 SVA: $svaText    最大阶级: $classText',
+          if (UiScale.isPhone(context))
+            Text(
+              '最大 SVA: $svaText\n最大阶级: $classText',
               style: TextStyle(
                 color: Colors.white.withValues(alpha: 0.9),
                 fontSize: _s(11.5, context),
                 fontWeight: FontWeight.w600,
                 height: 1.22,
               ),
-              maxLines: 1,
-              overflow: TextOverflow.visible,
+            )
+          else
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                '最大 SVA: $svaText    最大阶级: $classText',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.9),
+                  fontSize: _s(11.5, context),
+                  fontWeight: FontWeight.w600,
+                  height: 1.22,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.visible,
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -1329,7 +1370,24 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       return _buildJmaWeatherPanel(context);
     }
     if (LocalWeatherRegion.usesChina(position.latitude, position.longitude)) {
-      return _buildCmaWeatherPanel(context);
+      return SingleChildScrollView(
+        key: const PageStorageKey('desktop-local-weather'),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildCmaWeatherPanel(context),
+            if (!UiScale.isPhone(context) &&
+                defaultTargetPlatform != TargetPlatform.windows)
+              ValueListenableBuilder<ChinaWeatherHourlyState>(
+                valueListenable: _hourlyWeatherService.state,
+                builder: (context, state, _) => ChinaWeatherHourlyPanel(
+                  state: state,
+                  scale: _scale(context),
+                ),
+              ),
+          ],
+        ),
+      );
     }
     return _buildWeatherStatus(context, '当地气象暂未覆盖');
   }
@@ -1997,6 +2055,22 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     final lines = <String>[];
     var current = '';
     for (final label in labels) {
+      if (UiScale.isPhone(context)) {
+        if (current.isNotEmpty) {
+          lines.add(current);
+          current = '';
+        }
+        var line = '';
+        for (final char in label.characters) {
+          if (line.isNotEmpty && !fits('$line$char')) {
+            lines.add(line);
+            line = '';
+          }
+          line += char;
+        }
+        if (line.isNotEmpty) lines.add(line);
+        continue;
+      }
       final candidate = current.isEmpty ? label : '$current  $label';
       if (current.isNotEmpty && !fits(candidate)) {
         lines.add(current);
@@ -2126,7 +2200,11 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   }
 
   void _onLocalWeatherPositionChanged() {
-    if (!_cmaWeatherLayoutEnabled || !_showInfoDrawer) return;
+    _syncHourlyWeatherActivity();
+    if (!_weatherVisible) return;
+    if (BackgroundService().isAndroidConnectionHostedByForegroundService) {
+      return;
+    }
     final position = LocationService().currentPosition;
     if (position == null) {
       _cmaWeatherService.clearLocation();
@@ -2150,19 +2228,38 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   }
 
   void _syncLocalWeatherActivity() {
+    _syncHourlyWeatherActivity();
     if (BackgroundService().isAndroidConnectionHostedByForegroundService) {
-      _cmaWeatherService.pause();
-      _jmaWeatherService.pause();
+      _cmaWeatherService.pause(clearState: false);
+      _jmaWeatherService.pause(clearState: false);
+      if (_weatherVisible) BackgroundService().requestLocalWeatherState();
       return;
     }
-    if (!_sideInfoSettingLoaded ||
-        !_cmaWeatherLayoutEnabled ||
-        !_showInfoDrawer) {
+    if (!_sideInfoSettingLoaded || !_weatherVisible) {
       _cmaWeatherService.pause();
       _jmaWeatherService.pause();
       return;
     }
     _onLocalWeatherPositionChanged();
+  }
+
+  void _syncHourlyWeatherActivity() {
+    final position = LocationService().currentPosition;
+    if (!_sideInfoSettingLoaded || !_weatherVisible) {
+      _hourlyWeatherService.pause();
+      return;
+    }
+    if (position == null ||
+        !LocalWeatherRegion.usesChina(position.latitude, position.longitude)) {
+      _hourlyWeatherService.pause(clear: true);
+      return;
+    }
+    unawaited(
+      _hourlyWeatherService.startForLocation(
+        position.latitude,
+        position.longitude,
+      ),
+    );
   }
 
   void _onStationDataChanged(StationSummaryData data) {

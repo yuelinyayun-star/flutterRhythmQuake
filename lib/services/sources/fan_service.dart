@@ -38,7 +38,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
-import 'package:flutter/foundation.dart' show ValueNotifier;
+import 'package:flutter/foundation.dart' show ValueNotifier, visibleForTesting;
 import 'base_source.dart';
 import 'fan_socket_connection.dart';
 import 'fan_socket_factory.dart';
@@ -579,6 +579,9 @@ class FanService extends BaseSourceService {
   ///
   /// 参数：
   /// - [rawData]: 原始消息数据
+  @visibleForTesting
+  void handleMessageForTesting(String rawData) => _dispatch(rawData);
+
   void _dispatch(dynamic rawData) {
     try {
       final json = jsonDecode(rawData.toString());

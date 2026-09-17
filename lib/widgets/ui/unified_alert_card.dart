@@ -3,6 +3,7 @@ import 'dart:ui';
 import '../../core/utils/quake_time.dart';
 import '../../models/unified_quake_data.dart';
 import 'unified_intensity_format.dart';
+import 'cmt_badge.dart';
 
 class UnifiedAlertCard extends StatelessWidget {
   final UnifiedQuakeData event;
@@ -165,6 +166,13 @@ class UnifiedAlertCard extends StatelessWidget {
   }
 
   Widget _buildBadge(BuildContext context) {
+    if (CmtBadge.supports(event)) {
+      return CmtBadge(
+        event: event,
+        size: _s(48, context),
+        color: _colorFromClass(event.className),
+      );
+    }
     if (event.useShindo) {
       return _buildShindoBadge(context);
     }

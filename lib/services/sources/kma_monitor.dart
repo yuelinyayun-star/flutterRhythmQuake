@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'shake_alert_gate.dart';
 
 class KmaStation {
   final int id;
@@ -131,6 +132,7 @@ class KmaMonitorService {
   final ValueNotifier<DateTime?> dataTimeNotifier = ValueNotifier(null);
   DateTime _lastInvalidMmiLogAt = DateTime.fromMillisecondsSinceEpoch(0);
   int _prevMaxActiveShindo = -1;
+  final _alertGate = ShakeAlertGate();
   bool get isConnected => _isConnected;
 
   List<List<int>> _adjStationIds = [];
@@ -392,6 +394,7 @@ class KmaMonitorService {
     _lastStationCount = 0;
     _lastDataTimestamp = null;
     _prevMaxActiveShindo = -1;
+    _alertGate.reset();
     dataTimeNotifier.value = null;
   }
 
@@ -407,6 +410,7 @@ class KmaMonitorService {
     _lastDataTimestamp = null;
     _hasRealtimeData = false;
     _prevMaxActiveShindo = -1;
+    _alertGate.reset();
     dataTimeNotifier.value = null;
     if (clearStations) {
       for (final station in _stations) {
@@ -634,7 +638,7 @@ class KmaMonitorService {
     }
 
     final currentMaxShindo = shindoFromLevel(currentMaxLevel);
-    if (currentMaxShindo >= 0 && currentMaxShindo > _prevMaxActiveShindo) {
+    if (_alertGate.accept(currentMaxShindo)) {
       onShakeDetected?.call(currentMaxShindo);
     } else if (currentMaxShindo < 0 && _prevMaxActiveShindo >= 0) {
       onShakeExpired?.call();

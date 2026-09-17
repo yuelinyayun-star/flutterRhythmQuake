@@ -174,6 +174,8 @@ class _SourceDashboardState extends State<SourceDashboard> {
       if (SourceManager().isSourceEnabled('FAN'))
         (_fanLabel(fanAuthStatus, fanConnectionStatus), 'FAN'),
       if (SourceManager().isSourceEnabled('WHEWS')) ('WHEWS', 'WHEWS'),
+      if (SourceManager().isSourceEnabled('Jian Project'))
+        ('Jian', 'Jian Project'),
       if (SourceManager().isSourceEnabled('NowQuake')) ('NowQuake', 'NowQuake'),
       if (SourceManager().isSourceEnabled('P2P')) ('P2PQ', 'P2P'),
       if (GlobalQuakeService().isEnabled) ('GQ', 'GlobalQuake'),
@@ -281,7 +283,7 @@ class _SourceDashboardState extends State<SourceDashboard> {
       if (QuakeMapView.fdsnSeedLinkEnabledNotifier.value)
         _buildStationLine(
           context,
-          'FDSN:',
+          'FDSN ($fdsnCount):',
           fdsnTime != null
               ? SourceStatus.connected
               : (fdsnCount > 0
@@ -328,10 +330,20 @@ class _SourceDashboardState extends State<SourceDashboard> {
   }
 
   Widget _buildSourceRow(BuildContext context, List<Widget> children) {
-    return Wrap(
-      spacing: _s(7, context),
-      runSpacing: _s(2, context),
-      children: children,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var start = 0; start < children.length; start += 4)
+          Padding(
+            padding: EdgeInsets.only(top: start == 0 ? 0 : _s(2, context)),
+            child: Wrap(
+              spacing: _s(7, context),
+              runSpacing: _s(2, context),
+              children: children.skip(start).take(4).toList(),
+            ),
+          ),
+      ],
     );
   }
 

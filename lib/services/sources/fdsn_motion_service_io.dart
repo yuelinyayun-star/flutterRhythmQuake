@@ -5,6 +5,13 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'fdsn_channel_sensitivity.dart';
+import 'fdsn_channel_catalog.dart';
+import 'fdsn_stream_catalog.dart';
+import 'fdsn_seedlink_info.dart';
+import 'fdsn_station_service.dart';
+import 'fdsn_metadata_routing.dart';
+import 'package:latlong2/latlong.dart';
 
 class FdsnMotionSample {
   final String source;
@@ -40,6 +47,7 @@ class FdsnSeedLinkStream {
   final String network;
   final String station;
   final String selector;
+  final bool secure;
 
   const FdsnSeedLinkStream({
     required this.source,
@@ -48,6 +56,7 @@ class FdsnSeedLinkStream {
     required this.network,
     required this.station,
     required this.selector,
+    this.secure = false,
   });
 }
 
@@ -56,19 +65,66 @@ class _SeedLinkSource {
   final String host;
   final int port;
   final Set<String> allowedNetworks;
+  final bool secure;
 
   const _SeedLinkSource({
     required this.source,
     required this.host,
     required this.port,
     required this.allowedNetworks,
+    this.secure = false,
   });
 }
 
 class FdsnMotionService {
   static final FdsnMotionService _instance = FdsnMotionService._();
   factory FdsnMotionService() => _instance;
-  FdsnMotionService._();
+  FdsnMotionService._()
+    : _sources = _seedLinkSources,
+      _defaults = defaultStreams,
+      _responseClientFactory = http.Client.new,
+      _useChannelCatalog = true,
+      _watchdogInterval = const Duration(seconds: 15),
+      _networkTimeout = const Duration(minutes: 3),
+      _liveReconnectSources = const {'EarthScope'},
+      _reconnectDelay = const Duration(seconds: 10);
+
+  @visibleForTesting
+  FdsnMotionService.forTesting({
+    required List<FdsnSeedLinkStream> streams,
+    http.Client Function()? responseClientFactory,
+    bool useChannelCatalog = false,
+    Duration watchdogInterval = const Duration(seconds: 15),
+    Duration networkTimeout = const Duration(minutes: 3),
+    Set<String> liveReconnectSources = const {'EarthScope'},
+    Duration reconnectDelay = const Duration(seconds: 10),
+  }) : _defaults = streams,
+       _sources = {
+         for (final s in streams)
+           s.source: _SeedLinkSource(
+             source: s.source,
+             host: s.host,
+             port: s.port,
+             allowedNetworks: {},
+             secure: s.secure,
+           ),
+       }.values.toList(),
+       _responseClientFactory = responseClientFactory ?? http.Client.new,
+       _useChannelCatalog = useChannelCatalog,
+       _watchdogInterval = watchdogInterval,
+       _networkTimeout = networkTimeout,
+       _liveReconnectSources = Set.unmodifiable(liveReconnectSources),
+       _reconnectDelay = reconnectDelay;
+
+  final List<_SeedLinkSource> _sources;
+  final List<FdsnSeedLinkStream> _defaults;
+  final http.Client Function() _responseClientFactory;
+  final bool _useChannelCatalog;
+  final Duration _watchdogInterval;
+  final Duration _networkTimeout;
+  final Set<String> _liveReconnectSources;
+  final Duration _reconnectDelay;
+  FdsnChannelCatalog? _channelCatalog;
 
   static const int defaultStationLimit = 300;
   static const String stationLimitPreferenceKey = 'fdsn_station_limit';
@@ -94,7 +150,8 @@ class FdsnMotionService {
     _SeedLinkSource(
       source: 'EarthScope',
       host: 'rtserve.earthscope.org',
-      port: 18000,
+      port: 18500,
+      secure: true,
       allowedNetworks: {},
     ),
     _SeedLinkSource(
@@ -109,26 +166,29 @@ class FdsnMotionService {
     FdsnSeedLinkStream(
       source: 'EarthScope',
       host: 'rtserve.earthscope.org',
-      port: 18000,
+      port: 18500,
       network: 'IU',
       station: 'ANMO',
       selector: 'BH?',
+      secure: true,
     ),
     FdsnSeedLinkStream(
       source: 'EarthScope',
       host: 'rtserve.earthscope.org',
-      port: 18000,
+      port: 18500,
       network: 'IU',
       station: 'COLA',
       selector: 'BH?',
+      secure: true,
     ),
     FdsnSeedLinkStream(
       source: 'EarthScope',
       host: 'rtserve.earthscope.org',
-      port: 18000,
+      port: 18500,
       network: 'II',
       station: 'PFO',
       selector: 'BH?',
+      secure: true,
     ),
     FdsnSeedLinkStream(
       source: 'GEOFON',
@@ -168,12 +228,49 @@ class FdsnMotionService {
 
   final List<_SeedLinkConnection> _connections = [];
   final Set<Socket> _discoverySockets = {};
+  Timer? _discoveryRetry;
+  final Map<String, List<FdsnSeedLinkStream>> _discovered = {};
+  final Map<String, bool> _discoveryComplete = {};
   bool _running = false;
   int _currentStationLimit = defaultStationLimit;
   Set<String> _currentEnabledSources = const {'EarthScope', 'GEOFON'};
   int _connectionGeneration = 0;
 
   void Function(bool connected)? onStatusChanged;
+
+  @visibleForTesting
+  List<Map<String, Object>> get connectionDiagnostics => [
+    for (final c in _connections)
+      {
+        'host': c.host,
+        'selected': c.streams.length,
+        'accepted': c._acceptedStations.length,
+        'packets': c._packetCount,
+        'decodeRejected': c._decodeRejected,
+        'stale': c._staleCount,
+        'received': c._receivedStations.length,
+        'pending': c._pendingPackets.length,
+        'socketOpen': c._socket != null,
+        'connected': c._connected,
+        'connectAttempts': c._connectAttempts,
+        'reconnectPending': c._reconnectTimer != null,
+        'lastCloseReason': c._lastCloseReason,
+        'lastReceiveAgeSeconds': c._lastReceivedAt == null
+            ? -1
+            : DateTime.now().difference(c._lastReceivedAt!).inSeconds,
+        'lastValidAgeSeconds': c._lastPacketAt == null
+            ? -1
+            : DateTime.now().difference(c._lastPacketAt!).inSeconds,
+      },
+  ];
+
+  // Freeze the injected selection for connection-only live comparisons.
+  @visibleForTesting
+  void connectProvidedStreamsForTesting() {
+    disconnect();
+    _running = true;
+    _installStreams(_defaults);
+  }
 
   void connect({
     int stationLimit = defaultStationLimit,
@@ -196,6 +293,9 @@ class FdsnMotionService {
       disconnect();
     }
     _running = true;
+    if (_useChannelCatalog) {
+      _channelCatalog = FdsnChannelCatalog(_responseClientFactory());
+    }
     final generation = ++_connectionGeneration;
     _currentStationLimit = normalizedLimit;
     _currentEnabledSources = normalizedSources;
@@ -203,6 +303,12 @@ class FdsnMotionService {
       targetStationLimitNotifier.value = normalizedLimit;
     }
     _setLinkedStationCount(0);
+    _installStreams(
+      _defaults
+          .where((s) => normalizedSources.contains(s.source))
+          .take(normalizedLimit)
+          .toList(),
+    );
     unawaited(
       _startConnections(normalizedLimit, normalizedSources, generation),
     );
@@ -225,6 +331,18 @@ class FdsnMotionService {
       return;
     }
 
+    _installStreams(streams);
+    final incomplete = enabledSources.any((s) => _discoveryComplete[s] != true);
+    _discoveryRetry?.cancel();
+    _discoveryRetry = Timer(Duration(minutes: incomplete ? 1 : 15), () {
+      _discoveryRetry = null;
+      if (_isCurrentRun(generation)) {
+        unawaited(_startConnections(stationLimit, enabledSources, generation));
+      }
+    });
+  }
+
+  void _installStreams(List<FdsnSeedLinkStream> streams) {
     final groups = <String, List<FdsnSeedLinkStream>>{};
     for (final stream in streams) {
       groups.putIfAbsent('${stream.host}:${stream.port}', () => []).add(stream);
@@ -232,12 +350,37 @@ class FdsnMotionService {
 
     for (final entry in groups.entries) {
       final first = entry.value.first;
+      final previous = _connections
+          .where((c) => c.host == first.host)
+          .firstOrNull;
+      final wanted = entry.value
+          .map((s) => '${s.network}.${s.station}:${s.selector}')
+          .toSet();
+      if (previous != null) {
+        final existing = previous.streams
+            .map((s) => '${s.network}.${s.station}:${s.selector}')
+            .toSet();
+        if (setEquals(wanted, existing) &&
+            previous.port == first.port &&
+            previous.secure == first.secure) {
+          continue;
+        }
+        _connections.remove(previous);
+        previous.stop();
+      }
       final connection = _SeedLinkConnection(
         host: first.host,
         port: first.port,
+        secure: first.secure,
         streams: entry.value,
         onSample: _emitSample,
         onStatusChanged: _emitStatus,
+        responseClientFactory: _responseClientFactory,
+        channelCatalog: _channelCatalog,
+        watchdogInterval: _watchdogInterval,
+        networkTimeout: _networkTimeout,
+        resumeAfterDisconnect: !_liveReconnectSources.contains(first.source),
+        reconnectDelay: _reconnectDelay,
       );
       _connections.add(connection);
       connection.start();
@@ -247,6 +390,12 @@ class FdsnMotionService {
   void disconnect() {
     _running = false;
     _connectionGeneration++;
+    _discoveryRetry?.cancel();
+    _discoveryRetry = null;
+    _discovered.clear();
+    _discoveryComplete.clear();
+    _channelCatalog?.dispose();
+    _channelCatalog = null;
     for (final connection in _connections) {
       connection.stop();
     }
@@ -262,8 +411,18 @@ class FdsnMotionService {
 
   void _emitSample(FdsnMotionSample sample) {
     if (!_running) return;
-    dataTimeNotifier.value = sample.timestamp;
+    recordDataTime(sample.timestamp);
     _controller.add(sample);
+  }
+
+  // This is a latest-observation summary, not the time of the last arrival.
+  // Keep the sample timestamp untouched for downstream processing.
+  void recordDataTime(DateTime timestamp) {
+    if (timestamp.isAfter(DateTime.now().toUtc())) return;
+    final previous = dataTimeNotifier.value;
+    if (previous == null || timestamp.isAfter(previous)) {
+      dataTimeNotifier.value = timestamp;
+    }
   }
 
   Future<List<FdsnSeedLinkStream>> _streamsForLimit(
@@ -271,7 +430,7 @@ class FdsnMotionService {
     Set<String> enabledSources,
     int generation,
   ) async {
-    final defaultForSources = defaultStreams
+    final defaultForSources = _defaults
         .where((stream) => enabledSources.contains(stream.source))
         .toList(growable: false);
     if (stationLimit <= defaultForSources.length) {
@@ -292,26 +451,77 @@ class FdsnMotionService {
     Set<String> enabledSources,
     int generation,
   ) async {
+    final targets = {for (final source in enabledSources) source: stationLimit};
     final lists = await Future.wait(
-      _seedLinkSources
-          .where((source) => enabledSources.contains(source.source))
-          .map((source) => _loadSeedLinkStreams(source, generation)),
+      _sources.where((source) => enabledSources.contains(source.source)).map((
+        source,
+      ) async {
+        final loaded = await _loadSeedLinkStreams(
+          source,
+          generation,
+          targets[source.source]!,
+        );
+        if (!_isCurrentRun(generation)) return <FdsnSeedLinkStream>[];
+        if (loaded.isNotEmpty) {
+          final previous = _discovered[source.source];
+          _discovered[source.source] =
+              _discoveryComplete[source.source] == true || previous == null
+              ? loaded
+              : {
+                  for (final stream in previous)
+                    '${stream.network}.${stream.station}': stream,
+                  for (final stream in loaded)
+                    '${stream.network}.${stream.station}': stream,
+                }.values.toList();
+        }
+        final available =
+            _discovered[source.source] ??
+            _defaults.where((s) => s.source == source.source).toList();
+        if (available.isNotEmpty) {
+          _installStreams(_selectDiscovered(stationLimit, enabledSources));
+        }
+        return available;
+      }),
     );
     if (!_isCurrentRun(generation)) return const [];
+    return _selectStreams(lists, stationLimit);
+  }
+
+  List<FdsnSeedLinkStream> _selectDiscovered(int limit, Set<String> sources) =>
+      _selectStreams([
+        for (final source in sources)
+          _discovered[source] ??
+              _defaults.where((s) => s.source == source).toList(),
+      ], limit);
+
+  List<FdsnSeedLinkStream> _selectStreams(
+    List<List<FdsnSeedLinkStream>> lists,
+    int stationLimit,
+  ) {
+    final available = <String, FdsnSeedLinkStream>{
+      for (final list in lists)
+        for (final stream in list)
+          '${stream.source}:${stream.network}.${stream.station}:${stream.selector}':
+              stream,
+    };
+    final preferred = <String, FdsnSeedLinkStream>{};
+    // A later catalogue must not move still-available stations between servers.
+    for (final connection in _connections) {
+      for (final stream in connection.streams) {
+        final candidate =
+            available['${stream.source}:${stream.network}.${stream.station}:${stream.selector}'];
+        if (candidate != null) {
+          preferred['${stream.network}.${stream.station}'] = candidate;
+        }
+      }
+    }
     final seen = <String>{};
     final merged = <FdsnSeedLinkStream>[];
 
     void addStream(FdsnSeedLinkStream stream) {
-      final key =
-          '${stream.source}:${stream.host}:${stream.network}.${stream.station}:${stream.selector}';
+      final key = '${stream.network}.${stream.station}';
       if (!seen.add(key)) return;
-      merged.add(stream);
-    }
-
-    for (final stream in defaultStreams.where(
-      (stream) => enabledSources.contains(stream.source),
-    )) {
-      addStream(stream);
+      merged.add(preferred[key] ?? stream);
     }
 
     final indices = List<int>.filled(lists.length, 0);
@@ -338,18 +548,72 @@ class FdsnMotionService {
   Future<List<FdsnSeedLinkStream>> _loadSeedLinkStreams(
     _SeedLinkSource source,
     int generation,
+    int limit,
   ) async {
+    _discoveryComplete[source.source] = false;
+    if (source.host == 'rtserve.earthscope.org' && _channelCatalog != null) {
+      try {
+        final response = await _channelCatalog!.client
+            .get(
+              Uri.https(source.host, '/streams'),
+              headers: const {'User-Agent': 'FlutterRhythmQuake/1.0'},
+            )
+            .timeout(const Duration(seconds: 60));
+        if (!_isCurrentRun(generation)) return const [];
+        if (response.statusCode == 200) {
+          final stations = await compute(parseFdsnStreamCatalog, (
+            utf8.decode(response.bodyBytes),
+            DateTime.now().toUtc(),
+            limit,
+          ));
+          if (!_isCurrentRun(generation)) return const [];
+          if (stations.isNotEmpty) {
+            _discoveryComplete[source.source] = true;
+            for (final network in stations.map((s) => s.network).toSet()) {
+              unawaited(_channelCatalog!.load(source.source, network));
+            }
+            debugPrint(
+              'SeedLink ${source.source}: ${stations.length} live stations from complete HTTP stream catalogue',
+            );
+            return [
+              for (final s in stations)
+                FdsnSeedLinkStream(
+                  source: source.source,
+                  host: source.host,
+                  port: source.port,
+                  secure: source.secure,
+                  network: s.network,
+                  station: s.station,
+                  selector: s.selector,
+                ),
+            ];
+          }
+        }
+      } catch (error) {
+        if (!_isCurrentRun(generation)) return const [];
+        debugPrint('SeedLink ${source.source} HTTP catalogue failed: $error');
+      }
+    }
     Socket? socket;
     Timer? timeoutTimer;
-    final bytes = <int>[];
+    Timer? deadline;
+    final info = FdsnSeedLinkInfo(
+      now: DateTime.now().toUtc(),
+      limit: limit,
+      clock: () => DateTime.now().toUtc(),
+    );
     final done = Completer<void>();
+    var preparedStations = 0;
+    final preparedNetworks = <String>{};
+    var finishReason = 'socket-closed';
+    var bytesReceived = 0;
 
     void complete() {
       if (!done.isCompleted) done.complete();
     }
 
     try {
-      socket = await Socket.connect(
+      socket = await (source.secure ? SecureSocket.connect : Socket.connect)(
         source.host,
         source.port,
         timeout: const Duration(seconds: 12),
@@ -359,24 +623,52 @@ class FdsnMotionService {
         return const [];
       }
       _discoverySockets.add(socket);
-      timeoutTimer = Timer(const Duration(seconds: 10), complete);
+      deadline = Timer(const Duration(minutes: 8), () {
+        finishReason = 'deadline';
+        complete();
+      });
+      void idleTimeout() {
+        finishReason = 'idle-timeout';
+        complete();
+      }
+
+      timeoutTimer = Timer(const Duration(seconds: 90), idleTimeout);
       socket.listen(
         (chunk) {
           if (!_isCurrentRun(generation)) {
             complete();
             return;
           }
-          bytes.addAll(chunk);
-          if (bytes.length >= 10 * 1024 * 1024 ||
-              _containsAscii(bytes, '</seedlink>')) {
+          timeoutTimer?.cancel();
+          bytesReceived += chunk.length;
+          timeoutTimer = Timer(const Duration(seconds: 90), idleTimeout);
+          try {
+            info.addBytes(chunk);
+            for (final station in info.stations.skip(preparedStations)) {
+              final catalog = _channelCatalog;
+              if (catalog != null && preparedNetworks.add(station.network)) {
+                unawaited(catalog.load(source.source, station.network));
+              }
+            }
+            preparedStations = info.stations.length;
+            if (info.complete || info.enough) {
+              finishReason = info.complete ? 'complete' : 'limit';
+              complete();
+            }
+          } catch (e) {
+            debugPrint('SeedLink ${source.source} INFO parse failed: $e');
+            finishReason = 'parse-error';
             complete();
           }
         },
         onDone: complete,
-        onError: (_) => complete(),
+        onError: (_) {
+          finishReason = 'socket-error';
+          complete();
+        },
         cancelOnError: true,
       );
-      socket.add(ascii.encode('INFO STREAMS\r'));
+      socket.add(ascii.encode('INFO STREAMS\r\n'));
       await done.future;
     } catch (e) {
       if (_isCurrentRun(generation)) {
@@ -385,129 +677,33 @@ class FdsnMotionService {
       return const [];
     } finally {
       timeoutTimer?.cancel();
+      deadline?.cancel();
       if (socket != null) _discoverySockets.remove(socket);
       socket?.destroy();
     }
 
-    final text = _extractSeedLinkInfoText(Uint8List.fromList(bytes));
-    final streams = _parseSeedLinkStreams(source, text);
-    debugPrint('SeedLink ${source.source}: ${streams.length} stations found');
+    if (!_isCurrentRun(generation)) return const [];
+    _discoveryComplete[source.source] = info.complete || info.enough;
+    final streams = [
+      for (final s in info.stations)
+        FdsnSeedLinkStream(
+          source: source.source,
+          host: source.host,
+          port: source.port,
+          secure: source.secure,
+          network: s.network,
+          station: s.station,
+          selector: s.selector,
+        ),
+    ];
+    debugPrint(
+      'SeedLink ${source.source}: ${streams.length} live stations found; complete=${info.complete}; end=$finishReason; bytes=$bytesReceived',
+    );
     return streams;
   }
 
   bool _isCurrentRun(int generation) =>
       _running && _connectionGeneration == generation;
-
-  bool _containsAscii(List<int> bytes, String needle) {
-    final pattern = ascii.encode(needle.toLowerCase());
-    if (bytes.length < pattern.length) return false;
-    for (var i = 0; i <= bytes.length - pattern.length; i++) {
-      var matched = true;
-      for (var j = 0; j < pattern.length; j++) {
-        final b = bytes[i + j];
-        final lower = b >= 0x41 && b <= 0x5A ? b + 0x20 : b;
-        if (lower != pattern[j]) {
-          matched = false;
-          break;
-        }
-      }
-      if (matched) return true;
-    }
-    return false;
-  }
-
-  String _extractSeedLinkInfoText(Uint8List bytes) {
-    const packetSize = 520;
-    const infoXmlOffset = 72;
-    final buffer = StringBuffer();
-
-    for (var i = 0; i + packetSize <= bytes.length; i++) {
-      if (bytes[i] != 0x53 ||
-          bytes[i + 1] != 0x4C ||
-          bytes[i + 2] != 0x49 ||
-          bytes[i + 3] != 0x4E ||
-          bytes[i + 4] != 0x46 ||
-          bytes[i + 5] != 0x4F) {
-        continue;
-      }
-      buffer.write(
-        latin1.decode(bytes.sublist(i + infoXmlOffset, i + packetSize)),
-      );
-      i += packetSize - 1;
-    }
-
-    final text = buffer.isEmpty ? latin1.decode(bytes) : buffer.toString();
-    return text.replaceAll('\x00', '');
-  }
-
-  List<FdsnSeedLinkStream> _parseSeedLinkStreams(
-    _SeedLinkSource source,
-    String text,
-  ) {
-    final stations = <FdsnSeedLinkStream>[];
-    final stationRegex = RegExp(
-      r'<station\b([^>]*)>([\s\S]*?)</station>',
-      caseSensitive: false,
-    );
-    final streamRegex = RegExp(
-      r'<stream\b[^>]*\bseedname="([^"]+)"',
-      caseSensitive: false,
-    );
-
-    for (final match in stationRegex.allMatches(text)) {
-      final attrs = match.group(1) ?? '';
-      final network = _xmlAttribute(attrs, 'network')?.toUpperCase();
-      final station = _xmlAttribute(attrs, 'name')?.toUpperCase();
-      final body = match.group(2) ?? '';
-      if (network == null ||
-          station == null ||
-          network.isEmpty ||
-          station.isEmpty ||
-          (source.allowedNetworks.isNotEmpty &&
-              !source.allowedNetworks.contains(network))) {
-        continue;
-      }
-
-      final channels = streamRegex
-          .allMatches(body)
-          .map((m) => m.group(1)?.trim().toUpperCase() ?? '')
-          .where((channel) => channel.length >= 2)
-          .toSet();
-      final selector = _preferredSelector(channels);
-      if (selector == null) continue;
-
-      stations.add(
-        FdsnSeedLinkStream(
-          source: source.source,
-          host: source.host,
-          port: source.port,
-          network: network,
-          station: station,
-          selector: selector,
-        ),
-      );
-    }
-
-    return stations;
-  }
-
-  String? _xmlAttribute(String attrs, String name) {
-    final match = RegExp(
-      '$name="([^"]*)"',
-      caseSensitive: false,
-    ).firstMatch(attrs);
-    final value = match?.group(1)?.trim();
-    return value == null || value.isEmpty ? null : value;
-  }
-
-  String? _preferredSelector(Set<String> channels) {
-    const families = ['HN', 'HL', 'HH', 'BH'];
-    for (final family in families) {
-      final hasFamily = channels.any((channel) => channel.startsWith(family));
-      if (hasFamily) return '$family?';
-    }
-    return null;
-  }
 
   void _emitStatus() {
     if (!_running) {
@@ -539,12 +735,7 @@ class FdsnMotionService {
   }
 }
 
-class _ChannelResponse {
-  final double sensitivity;
-  final String unit;
-
-  const _ChannelResponse({required this.sensitivity, required this.unit});
-}
+typedef _ChannelResponse = FdsnChannelSensitivity;
 
 class _MotionMetrics {
   final double? pga;
@@ -583,6 +774,8 @@ class _AsyncLimiter {
 }
 
 class _SeedLinkConnection {
+  final bool secure;
+  final FdsnChannelCatalog? channelCatalog;
   static const int _packetSize = 520;
   static final _responseLoadLimiter = _AsyncLimiter(8);
 
@@ -591,16 +784,44 @@ class _SeedLinkConnection {
   final List<FdsnSeedLinkStream> streams;
   final void Function(FdsnMotionSample sample) onSample;
   final VoidCallback onStatusChanged;
+  final http.Client Function() responseClientFactory;
+  final Duration watchdogInterval;
+  final Duration networkTimeout;
+  final bool resumeAfterDisconnect;
+  final Duration reconnectDelay;
 
   Socket? _socket;
   Timer? _reconnectTimer;
+  Timer? _watchdog;
   http.Client? _httpClient;
   bool _running = false;
   int _runGeneration = 0;
   bool _connected = false;
   int _activePacketJobs = 0;
   final List<int> _buffer = [];
+  final Map<String, Uint8List> _pendingPackets = {};
+  final Map<String, DateTime> _receivedStations = {};
+  final Set<String> _acceptedStations = {};
+  int _replyIndex = 0;
+  bool _selectionOk = true;
+  DateTime? _lastPacketAt;
+  DateTime? _lastReceivedAt;
+  int _packetCount = 0;
+  int _connectAttempts = 0;
+  String _lastCloseReason = '';
+  int _staleCount = 0;
+  final Map<int, int> _decodeRejected = {};
+  final Map<String, int> _resumeSequences = {};
+  final Map<String, DateTime> _resumeObservationTimes = {};
+  final Map<String, _MiniSeedRecord> _measurementRecords = {};
+  final Set<String> _measurementJobs = {};
+  final _metadataRouting = FdsnMetadataRouting();
   final Map<String, Future<_ChannelResponse?>> _responseCache = {};
+  final Map<String, DateTime> _responseRetryAfter = {};
+  late final Map<String, String> _stationSources = {
+    for (final stream in streams)
+      '${stream.network}.${stream.station}': stream.source,
+  };
 
   _SeedLinkConnection({
     required this.host,
@@ -608,17 +829,23 @@ class _SeedLinkConnection {
     required this.streams,
     required this.onSample,
     required this.onStatusChanged,
+    this.responseClientFactory = http.Client.new,
+    this.channelCatalog,
+    this.secure = false,
+    this.watchdogInterval = const Duration(seconds: 15),
+    this.networkTimeout = const Duration(minutes: 3),
+    this.resumeAfterDisconnect = true,
+    this.reconnectDelay = const Duration(seconds: 10),
   });
 
   bool get isConnected => _connected;
-  Set<String> get stationCodes =>
-      streams.map((stream) => '${stream.network}.${stream.station}').toSet();
+  Set<String> get stationCodes => _receivedStations.keys.toSet();
 
   void start() {
     if (_running) return;
     _running = true;
     final generation = ++_runGeneration;
-    _httpClient = http.Client();
+    _httpClient = responseClientFactory();
     _connect(generation);
   }
 
@@ -627,19 +854,30 @@ class _SeedLinkConnection {
     _runGeneration++;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
-    _socket?.destroy();
+    _watchdog?.cancel();
+    _watchdog = null;
+    final socket = _socket;
     _socket = null;
+    socket?.destroy();
     _httpClient?.close();
     _httpClient = null;
     _responseCache.clear();
+    _responseRetryAfter.clear();
     _buffer.clear();
+    _pendingPackets.clear();
+    _measurementRecords.clear();
+    _measurementJobs.clear();
+    _receivedStations.clear();
+    _resumeSequences.clear();
+    _resumeObservationTimes.clear();
     _setConnected(false);
   }
 
   Future<void> _connect(int generation) async {
     if (!_isCurrentRun(generation) || _socket != null) return;
+    _connectAttempts++;
     try {
-      final socket = await Socket.connect(
+      final socket = await (secure ? SecureSocket.connect : Socket.connect)(
         host,
         port,
         timeout: const Duration(seconds: 12),
@@ -649,77 +887,164 @@ class _SeedLinkConnection {
         return;
       }
       _socket = socket;
-      _setConnected(true);
-      _sendSelections(socket);
+      _buffer.clear();
+      _acceptedStations.clear();
+      _replyIndex = 0;
+      _selectionOk = true;
+      _lastPacketAt = null;
+      _lastReceivedAt = DateTime.now();
       socket.listen(
         (bytes) {
           if (_isCurrentRun(generation) && identical(_socket, socket)) {
+            if (bytes.isNotEmpty) _lastReceivedAt = DateTime.now();
             _handleBytes(bytes, generation);
           }
         },
-        onDone: () => _handleClosed(socket, generation),
+        onDone: () => _handleClosed(socket, generation, reason: 'peer closed'),
         onError: (error) {
           debugPrint('SeedLink $host:$port error: $error');
-          _handleClosed(socket, generation);
+          _handleClosed(socket, generation, reason: 'socket error: $error');
         },
         cancelOnError: true,
       );
+      _sendSelections(socket);
+      _watchdog?.cancel();
+      _watchdog = Timer.periodic(watchdogInterval, (_) {
+        if (!_isCurrentRun(generation) || !identical(_socket, socket)) return;
+        final now = DateTime.now();
+        final before = _receivedStations.length;
+        _receivedStations.removeWhere(
+          (_, t) => now.difference(t) > FdsnSeedLinkInfo.maxDataAge,
+        );
+        if (_receivedStations.length != before) onStatusChanged();
+        // Freshness controls map eligibility, not whether the transport is alive.
+        if (now.difference(_lastReceivedAt!) > networkTimeout) {
+          debugPrint('SeedLink $host:$port: receive timeout, reconnecting');
+          _resumeSequences.clear();
+          _resumeObservationTimes.clear();
+          _handleClosed(socket, generation, reason: 'network receive timeout');
+        }
+      });
     } catch (e) {
       if (_isCurrentRun(generation)) {
+        _lastCloseReason = 'connect failed: $e';
         debugPrint('SeedLink $host:$port connect failed: $e');
+        final socket = _socket;
+        if (socket != null) {
+          _handleClosed(socket, generation, reason: _lastCloseReason);
+          return;
+        }
       }
       _scheduleReconnect(generation);
     }
   }
 
   void _sendSelections(Socket socket) {
+    final now = DateTime.now().toUtc();
     for (final stream in streams) {
       _sendLine(socket, 'STATION ${stream.station} ${stream.network}');
       _sendLine(socket, 'SELECT ${stream.selector}');
+      final key = '${stream.network}.${stream.station}';
+      final observed = _resumeObservationTimes[key];
+      if (observed == null ||
+          now.difference(observed) > FdsnSeedLinkInfo.maxDataAge) {
+        _resumeSequences.remove(key);
+        _resumeObservationTimes.remove(key);
+      }
+      final sequence = _resumeSequences[key];
+      _sendLine(
+        socket,
+        sequence == null
+            ? 'DATA'
+            : 'DATA ${((sequence + 1) & 0xffffff).toRadixString(16).padLeft(6, '0').toUpperCase()}',
+      );
     }
     _sendLine(socket, 'END');
   }
 
   void _sendLine(Socket socket, String line) {
-    socket.add(ascii.encode('$line\r'));
+    socket.add(ascii.encode('$line\r\n'));
   }
 
   void _handleBytes(Uint8List bytes, int generation) {
     if (!_isCurrentRun(generation)) return;
     _buffer.addAll(bytes);
-
-    while (true) {
-      final start = _findSeedLinkHeader(_buffer);
-      if (start < 0) {
-        if (_buffer.length > _packetSize) {
-          _buffer.removeRange(0, _buffer.length - 8);
+    while (_replyIndex < streams.length * 3 && _buffer.length >= 2) {
+      if (_buffer[0] == 0x53 && _buffer[1] == 0x4c) break;
+      final newline = _buffer.indexOf(10);
+      if (newline < 0) return;
+      final reply = ascii
+          .decode(_buffer.sublist(0, newline), allowInvalid: true)
+          .trim();
+      _buffer.removeRange(0, newline + 1);
+      if (reply.isEmpty) continue;
+      _selectionOk = _selectionOk && reply == 'OK';
+      final stream = streams[_replyIndex ~/ 3];
+      _replyIndex++;
+      if (_replyIndex % 3 == 0) {
+        if (_selectionOk) {
+          _acceptedStations.add('${stream.network}.${stream.station}');
+        } else {
+          _resumeSequences.remove('${stream.network}.${stream.station}');
+          _resumeObservationTimes.remove('${stream.network}.${stream.station}');
+          debugPrint(
+            'SeedLink $host: subscription rejected ${stream.network}.${stream.station}',
+          );
         }
-        return;
+        _selectionOk = true;
       }
-      if (start > 0) {
-        _buffer.removeRange(0, start);
+    }
+    var consumed = 0;
+    while (true) {
+      final start = _findSeedLinkHeader(_buffer, consumed);
+      if (start < 0) {
+        consumed = max(consumed, _buffer.length - 7);
+        break;
       }
-      if (_buffer.length < _packetSize) return;
-
-      final packet = Uint8List.fromList(_buffer.sublist(0, _packetSize));
-      _buffer.removeRange(0, _packetSize);
+      if (_buffer.length - start < _packetSize) {
+        consumed = start;
+        break;
+      }
+      final packet = Uint8List(_packetSize)
+        ..setRange(0, _packetSize, _buffer, start);
+      consumed = start + _packetSize;
       _schedulePacket(packet, generation);
     }
+    // Compact once per socket chunk, instead of shifting all remaining packets
+    // after each 520-byte record.
+    if (consumed > 0) _buffer.removeRange(0, consumed);
   }
 
   void _schedulePacket(Uint8List packet, int generation) {
     if (!_isCurrentRun(generation)) return;
-    if (_activePacketJobs >= 200) return;
+    if (_activePacketJobs >= 200) {
+      final key = ascii.decode(packet.sublist(16, 28), allowInvalid: true);
+      // Keep the latest raw record per NSLC while metadata is loading. A busy
+      // station must not discard the first records of other stations.
+      _pendingPackets[key] = packet;
+      return;
+    }
     _activePacketJobs++;
     unawaited(
-      _handlePacket(packet, generation).whenComplete(() {
-        _activePacketJobs--;
-      }),
+      _handlePacket(packet, generation)
+          .catchError((Object error) {
+            if (_isCurrentRun(generation)) {
+              debugPrint('SeedLink record rejected: $error');
+            }
+          })
+          .whenComplete(() {
+            _activePacketJobs--;
+            if (_running && _pendingPackets.isNotEmpty) {
+              final key = _pendingPackets.keys.first;
+              final next = _pendingPackets.remove(key)!;
+              _schedulePacket(next, _runGeneration);
+            }
+          }),
     );
   }
 
-  int _findSeedLinkHeader(List<int> data) {
-    for (var i = 0; i <= data.length - 8; i++) {
+  int _findSeedLinkHeader(List<int> data, [int offset = 0]) {
+    for (var i = offset; i <= data.length - 8; i++) {
       if (data[i] != 0x53 || data[i + 1] != 0x4c) continue; // SL
       var ok = true;
       for (var j = i + 2; j < i + 8; j++) {
@@ -737,20 +1062,56 @@ class _SeedLinkConnection {
 
   Future<void> _handlePacket(Uint8List packet, int generation) async {
     if (!_isCurrentRun(generation)) return;
-    final record = packet.sublist(8);
+    _packetCount++;
+    final record = Uint8List.sublistView(packet, 8);
     final miniSeed = _MiniSeedRecord.tryParse(record);
-    if (miniSeed == null || miniSeed.samples.isEmpty) return;
-
-    var source = '';
-    for (final stream in streams) {
-      if (stream.network == miniSeed.network &&
-          stream.station == miniSeed.station) {
-        source = stream.source;
-        break;
-      }
+    if (miniSeed == null || miniSeed.samples.isEmpty) {
+      final data = ByteData.sublistView(record);
+      final endian = _MiniSeedRecord._detectBigEndian(data)
+          ? Endian.big
+          : Endian.little;
+      final encoding =
+          _MiniSeedBlockette1000.tryParse(
+            record,
+            data.getUint16(46, endian),
+            endian,
+          )?.encoding ??
+          -1;
+      _decodeRejected.update(encoding, (n) => n + 1, ifAbsent: () => 1);
+      return;
     }
-    if (source.isEmpty) return;
+
+    final source = _stationSources['${miniSeed.network}.${miniSeed.station}'];
+    if (source == null) return;
+    final stationCode = '${miniSeed.network}.${miniSeed.station}';
+    if (!_acceptedStations.contains(stationCode)) return;
     if (!_isCurrentRun(generation)) return;
+    final now = DateTime.now().toUtc();
+    if (miniSeed.startTime.isAfter(now) ||
+        now.difference(miniSeed.startTime) > FdsnSeedLinkInfo.maxDataAge) {
+      _staleCount++;
+      _setConnected(true);
+      return;
+    }
+    _lastPacketAt = DateTime.now();
+    final sequence = int.parse(ascii.decode(packet.sublist(2, 8)), radix: 16);
+    final previousSequence = _resumeSequences[stationCode];
+    if (previousSequence == null ||
+        ((sequence - previousSequence) & 0xffffff) < 0x800000) {
+      _resumeSequences[stationCode] = sequence;
+      _resumeObservationTimes[stationCode] = miniSeed.startTime;
+    }
+    final added = !_receivedStations.containsKey('$source:$stationCode');
+    final previousObservation = _receivedStations['$source:$stationCode'];
+    if (previousObservation == null ||
+        miniSeed.startTime.isAfter(previousObservation)) {
+      _receivedStations['$source:$stationCode'] = miniSeed.startTime;
+    }
+    if (!_connected) {
+      _setConnected(true);
+    } else if (added) {
+      onStatusChanged();
+    }
 
     onSample(
       FdsnMotionSample(
@@ -763,6 +1124,19 @@ class _SeedLinkConnection {
       ),
     );
 
+    if (channelCatalog != null) {
+      final key =
+          '${miniSeed.network}.${miniSeed.station}.${miniSeed.location}.${miniSeed.channel}';
+      final previous = _measurementRecords[key];
+      if (previous == null ||
+          !miniSeed.startTime.isBefore(previous.startTime)) {
+        _measurementRecords[key] = miniSeed;
+      }
+      if (_measurementJobs.add(key)) {
+        unawaited(_measureLatest(key, source, miniSeed, generation));
+      }
+      return;
+    }
     final response = await _responseFor(source, miniSeed, generation);
     if (response == null || !_isCurrentRun(generation)) return;
 
@@ -784,17 +1158,89 @@ class _SeedLinkConnection {
     );
   }
 
+  Future<void> _measureLatest(
+    String key,
+    String source,
+    _MiniSeedRecord initial,
+    int generation,
+  ) async {
+    try {
+      var response = await _responseFor(source, initial, generation);
+      if (!_isCurrentRun(generation)) return;
+      final record = _measurementRecords.remove(key);
+      if (record == null || response == null) return;
+      if (!response.covers(record.startTime)) {
+        response = await _responseFor(source, record, generation);
+      }
+      if (!_isCurrentRun(generation) || response == null) return;
+      final now = DateTime.now().toUtc();
+      if (record.startTime.isAfter(now) ||
+          now.difference(record.startTime) > FdsnSeedLinkInfo.maxDataAge) {
+        return;
+      }
+      final metrics = _calculateMotionMetrics(record, response);
+      if (!metrics.hasMeasurement) return;
+      onSample(
+        FdsnMotionSample(
+          source: source,
+          network: record.network,
+          station: record.station,
+          channel: record.channel,
+          timestamp: record.startTime,
+          pga: metrics.pga,
+          pgv: metrics.pgv,
+          intensity: metrics.intensity,
+          active: true,
+        ),
+      );
+    } catch (error) {
+      if (_isCurrentRun(generation)) debugPrint('FDSN measurement: $error');
+    } finally {
+      if (_isCurrentRun(generation)) {
+        _measurementJobs.remove(key);
+        final next = _measurementRecords[key];
+        if (next != null && _measurementJobs.add(key)) {
+          unawaited(_measureLatest(key, source, next, generation));
+        }
+      }
+    }
+  }
+
   Future<_ChannelResponse?> _responseFor(
     String source,
     _MiniSeedRecord record,
     int generation,
-  ) {
+  ) async {
     if (!_isCurrentRun(generation)) return Future.value(null);
     final key =
         '$source:${record.network}.${record.station}.${record.location}.${record.channel}';
+    final cached = _responseCache[key];
+    if (cached != null) {
+      final value = await cached;
+      if (!_isCurrentRun(generation)) return null;
+      if (value != null && value.covers(record.startTime)) return value;
+      final retryAfter = _responseRetryAfter[key];
+      if (value == null &&
+          retryAfter != null &&
+          DateTime.now().isBefore(retryAfter)) {
+        return null;
+      }
+      if (identical(_responseCache[key], cached)) _responseCache.remove(key);
+    }
     return _responseCache.putIfAbsent(
       key,
-      () => _loadResponse(source, record, generation),
+      () => _loadResponse(source, record, generation).then((value) {
+        if (_isCurrentRun(generation)) {
+          if (value == null) {
+            _responseRetryAfter[key] = DateTime.now().add(
+              const Duration(minutes: 1),
+            );
+          } else {
+            _responseRetryAfter.remove(key);
+          }
+        }
+        return value;
+      }),
     );
   }
 
@@ -803,6 +1249,23 @@ class _SeedLinkConnection {
     _MiniSeedRecord record,
     int generation,
   ) {
+    final catalog = channelCatalog;
+    if (catalog != null) {
+      return catalog
+          .find(
+            source: source,
+            network: record.network,
+            station: record.station,
+            location: record.location,
+            channel: record.channel,
+            time: record.startTime,
+          )
+          .then((result) {
+            if (!_isCurrentRun(generation)) return null;
+            _publishChannelStation(source, record, result);
+            return result;
+          });
+    }
     final client = _httpClient;
     if (!_isCurrentRun(generation) || client == null) {
       return Future.value(null);
@@ -818,54 +1281,95 @@ class _SeedLinkConnection {
         'network': record.network,
         'station': record.station,
         'channel': record.channel,
-        'level': 'response',
-        'format': 'xml',
+        'level': 'channel',
+        'format': 'text',
+        'location': record.location.isEmpty ? '--' : record.location,
+        'starttime': record.startTime.toIso8601String(),
+        'endtime': record.startTime.toIso8601String(),
         'nodata': '204',
       };
-      if (record.location.isNotEmpty) {
-        query['location'] = record.location;
+
+      Future<_ChannelResponse?> fetch(Uri endpoint) async {
+        try {
+          final response = await client
+              .get(
+                endpoint.replace(queryParameters: query),
+                headers: const {
+                  'Accept': 'text/plain,*/*',
+                  'User-Agent': 'FlutterRhythmQuake/1.0',
+                },
+              )
+              .timeout(const Duration(seconds: 12));
+          if (!_isCurrentRun(generation) ||
+              !identical(_httpClient, client) ||
+              response.statusCode != 200) {
+            return null;
+          }
+          return FdsnChannelSensitivity.parse(
+            utf8.decode(response.bodyBytes),
+            network: record.network,
+            station: record.station,
+            location: record.location,
+            channel: record.channel,
+            time: record.startTime,
+          );
+        } catch (e) {
+          if (_isCurrentRun(generation)) {
+            debugPrint('FDSN metadata ${record.network}.${record.station}: $e');
+          }
+          return null;
+        }
       }
 
-      try {
-        final response = await client
-            .get(
-              Uri.parse(base).replace(queryParameters: query),
-              headers: const {
-                'Accept': 'application/xml,text/xml,*/*',
-                'User-Agent': 'FlutterRhythmQuake/1.0',
-              },
-            )
-            .timeout(const Duration(seconds: 12));
-        if (!_isCurrentRun(generation) || !identical(_httpClient, client)) {
-          return null;
+      var result = await fetch(Uri.parse(base));
+      if (result == null && source == 'GEOFON' && _isCurrentRun(generation)) {
+        final routes = await _metadataRouting.resolve(client, record.network);
+        for (final route in routes) {
+          if (!_isCurrentRun(generation)) return null;
+          if (route.host == Uri.parse(base).host) continue;
+          result = await fetch(route);
+          if (result != null) break;
         }
-        if (response.statusCode != 200) return null;
-        return _parseResponseXml(response.body);
-      } catch (e) {
-        if (!_isCurrentRun(generation) || !identical(_httpClient, client)) {
-          return null;
-        }
-        debugPrint(
-          'FDSN response load failed ${record.network}.${record.station}.${record.channel}: $e',
-        );
-        return null;
       }
+      if (!_isCurrentRun(generation)) return null;
+      _publishChannelStation(source, record, result);
+      return result;
     });
   }
 
-  _ChannelResponse? _parseResponseXml(String xml) {
-    final sensitivityMatch = RegExp(
-      r'<(?:\w+:)?InstrumentSensitivity\b[^>]*>[\s\S]*?<(?:\w+:)?Value>([^<]+)</(?:\w+:)?Value>[\s\S]*?<(?:\w+:)?InputUnits\b[^>]*>[\s\S]*?<(?:\w+:)?Name>([^<]+)</(?:\w+:)?Name>',
-      caseSensitive: false,
-    ).firstMatch(xml);
-    if (sensitivityMatch == null) return null;
-
-    final sensitivity = double.tryParse(sensitivityMatch.group(1)!.trim());
-    final unit = sensitivityMatch.group(2)!.trim().toUpperCase();
-    if (sensitivity == null || sensitivity == 0 || !sensitivity.isFinite) {
-      return null;
+  void _publishChannelStation(
+    String source,
+    _MiniSeedRecord record,
+    _ChannelResponse? result,
+  ) {
+    if (result != null) {
+      final lat = result.latitude;
+      final lon = result.longitude;
+      if (lat != null &&
+          lon != null &&
+          lat.isFinite &&
+          lon.isFinite &&
+          lat >= -90 &&
+          lat <= 90 &&
+          lon >= -180 &&
+          lon <= 180) {
+        final service = source == 'GEOFON'
+            ? FdsnStationService.geofon
+            : FdsnStationService.earthScope;
+        service.acceptChannelStation(
+          FdsnStation(
+            network: record.network,
+            station: record.station,
+            location: record.location,
+            coordinate: LatLng(lat, lon),
+            source: source,
+            elevation: result.elevation,
+            startTime: result.start,
+            endTime: result.end,
+          ),
+        );
+      }
     }
-    return _ChannelResponse(sensitivity: sensitivity.abs(), unit: unit);
   }
 
   _MotionMetrics _calculateMotionMetrics(
@@ -876,11 +1380,16 @@ class _SeedLinkConnection {
       return const _MotionMetrics();
     }
 
-    final values = record.samples
-        .map((sample) => sample / response.sensitivity)
-        .toList(growable: false);
-    final mean = values.reduce((a, b) => a + b) / values.length;
-    final centered = values.map((v) => v - mean).toList(growable: false);
+    final centered = Float64List(record.samples.length);
+    var sum = 0.0;
+    for (var i = 0; i < centered.length; i++) {
+      centered[i] = record.samples[i] / response.sensitivity;
+      sum += centered[i];
+    }
+    final mean = sum / centered.length;
+    for (var i = 0; i < centered.length; i++) {
+      centered[i] -= mean;
+    }
     final dt = 1.0 / record.sampleRate;
 
     double? pga;
@@ -970,20 +1479,40 @@ class _SeedLinkConnection {
 
   bool _isDisplacementUnit(String unit) => unit == 'M' || unit == 'METER';
 
-  void _handleClosed(Socket socket, int generation) {
+  void _handleClosed(
+    Socket socket,
+    int generation, {
+    String reason = 'closed',
+  }) {
     if (!identical(_socket, socket)) {
       socket.destroy();
       return;
     }
-    socket.destroy();
+    _lastCloseReason = reason;
+    // Detach first: destroy can synchronously deliver onDone on some transports.
     _socket = null;
+    socket.destroy();
+    _watchdog?.cancel();
+    _watchdog = null;
+    _buffer.clear();
+    _pendingPackets.clear();
+    _measurementRecords.clear();
+    _measurementJobs.clear();
+    _receivedStations.clear();
+    // GQ's live reader re-subscribes from the current edge after a disconnect.
+    if (!resumeAfterDisconnect) {
+      _resumeSequences.clear();
+      _resumeObservationTimes.clear();
+    }
     _setConnected(false);
-    _scheduleReconnect(generation);
+    if (_isCurrentRun(generation)) {
+      _scheduleReconnect(++_runGeneration);
+    }
   }
 
   void _scheduleReconnect(int generation) {
     if (!_isCurrentRun(generation) || _reconnectTimer != null) return;
-    _reconnectTimer = Timer(const Duration(seconds: 10), () {
+    _reconnectTimer = Timer(reconnectDelay, () {
       _reconnectTimer = null;
       if (_isCurrentRun(generation)) _connect(generation);
     });
@@ -997,6 +1526,39 @@ class _SeedLinkConnection {
     _connected = value;
     onStatusChanged();
   }
+}
+
+@visibleForTesting
+List<int>? decodeFdsnRecordForTest(Uint8List record) =>
+    _MiniSeedRecord.tryParse(record)?.samples;
+
+@visibleForTesting
+Map<String, double?> fdsnMetricsForTest(
+  List<int> samples,
+  double sampleRate,
+  double sensitivity,
+  String unit,
+) {
+  final connection = _SeedLinkConnection(
+    host: '',
+    port: 0,
+    streams: [],
+    onSample: (_) {},
+    onStatusChanged: () {},
+  );
+  final metrics = connection._calculateMotionMetrics(
+    _MiniSeedRecord(
+      network: 'XX',
+      station: 'TEST',
+      location: '',
+      channel: 'HNZ',
+      startTime: DateTime.utc(2026),
+      sampleRate: sampleRate,
+      samples: samples,
+    ),
+    FdsnChannelSensitivity(sensitivity, unit, DateTime.utc(2026), null),
+  );
+  return {'pga': metrics.pga, 'pgv': metrics.pgv, 'mmi': metrics.intensity};
 }
 
 class _MiniSeedRecord {
@@ -1042,21 +1604,29 @@ class _MiniSeedRecord {
     final dataOffset = data.getUint16(44, endian);
     final firstBlocketteOffset = data.getUint16(46, endian);
 
-    DateTime startTime;
-    try {
-      startTime = DateTime.utc(year, 1, 1)
-          .add(Duration(days: dayOfYear - 1))
-          .add(
-            Duration(
-              hours: hour,
-              minutes: minute,
-              seconds: second,
-              microseconds: tenthMillis * 100,
-            ),
-          );
-    } catch (_) {
-      startTime = DateTime.now().toUtc();
+    final daysInYear = DateTime.utc(
+      year + 1,
+    ).difference(DateTime.utc(year)).inDays;
+    if (year < 1900 ||
+        year > 2200 ||
+        dayOfYear < 1 ||
+        dayOfYear > daysInYear ||
+        hour > 23 ||
+        minute > 59 ||
+        second > 60 ||
+        tenthMillis > 9999) {
+      return null;
     }
+    final startTime = DateTime.utc(year, 1, 1)
+        .add(Duration(days: dayOfYear - 1))
+        .add(
+          Duration(
+            hours: hour,
+            minutes: minute,
+            seconds: second,
+            microseconds: tenthMillis * 100,
+          ),
+        );
 
     final blockette = _MiniSeedBlockette1000.tryParse(
       record,
@@ -1152,9 +1722,9 @@ class _MiniSeedDecoder {
       case 3:
         return _decodeInt32(payload, endian, sampleCount);
       case 10:
-        return _decodeSteim1(payload, sampleCount);
+        return _decodeSteim1(payload, sampleCount, endian);
       case 11:
-        return _decodeSteim2(payload, sampleCount);
+        return _decodeSteim2(payload, sampleCount, endian);
       default:
         return const [];
     }
@@ -1186,18 +1756,23 @@ class _MiniSeedDecoder {
     return out;
   }
 
-  static List<int> _decodeSteim1(Uint8List payload, int sampleCount) {
+  static List<int> _decodeSteim1(
+    Uint8List payload,
+    int sampleCount,
+    Endian endian,
+  ) {
     final data = ByteData.sublistView(payload);
     final out = <int>[];
     int? previous;
+    var skipFirstDifference = true;
 
     for (var frame = 0; frame + 64 <= payload.length; frame += 64) {
-      final control = data.getUint32(frame, Endian.big);
+      final control = data.getUint32(frame, endian);
       for (var wordIndex = 1; wordIndex < 16; wordIndex++) {
         final wordOffset = frame + wordIndex * 4;
-        final word = data.getUint32(wordOffset, Endian.big);
+        final word = data.getUint32(wordOffset, endian);
         if (frame == 0 && wordIndex == 1) {
-          previous = data.getInt32(wordOffset, Endian.big);
+          previous = data.getInt32(wordOffset, endian);
           out.add(previous);
           if (out.length >= sampleCount) return out;
           continue;
@@ -1209,21 +1784,21 @@ class _MiniSeedDecoder {
         var current = seeded;
         final code = (control >> (30 - 2 * wordIndex)) & 0x03;
         final diffs = switch (code) {
-          1 => [
-            _signExtend((word >> 24) & 0xff, 8),
-            _signExtend((word >> 16) & 0xff, 8),
-            _signExtend((word >> 8) & 0xff, 8),
-            _signExtend(word & 0xff, 8),
-          ],
+          1 => [for (var j = 0; j < 4; j++) data.getInt8(wordOffset + j)],
           2 => [
-            _signExtend((word >> 16) & 0xffff, 16),
-            _signExtend(word & 0xffff, 16),
+            data.getInt16(wordOffset, endian),
+            data.getInt16(wordOffset + 2, endian),
           ],
           3 => [_signExtend(word, 32)],
           _ => const <int>[],
         };
         for (final diff in diffs) {
-          current += diff;
+          // D0 links the previous record to X0; X0 is already in the output.
+          if (skipFirstDifference) {
+            skipFirstDifference = false;
+            continue;
+          }
+          current = (current + diff).toSigned(32);
           previous = current;
           out.add(current);
           if (out.length >= sampleCount) return out;
@@ -1233,18 +1808,23 @@ class _MiniSeedDecoder {
     return out;
   }
 
-  static List<int> _decodeSteim2(Uint8List payload, int sampleCount) {
+  static List<int> _decodeSteim2(
+    Uint8List payload,
+    int sampleCount,
+    Endian endian,
+  ) {
     final data = ByteData.sublistView(payload);
     final out = <int>[];
     int? previous;
+    var skipFirstDifference = true;
 
     for (var frame = 0; frame + 64 <= payload.length; frame += 64) {
-      final control = data.getUint32(frame, Endian.big);
+      final control = data.getUint32(frame, endian);
       for (var wordIndex = 1; wordIndex < 16; wordIndex++) {
         final wordOffset = frame + wordIndex * 4;
-        final word = data.getUint32(wordOffset, Endian.big);
+        final word = data.getUint32(wordOffset, endian);
         if (frame == 0 && wordIndex == 1) {
-          previous = data.getInt32(wordOffset, Endian.big);
+          previous = data.getInt32(wordOffset, endian);
           out.add(previous);
           if (out.length >= sampleCount) return out;
           continue;
@@ -1255,9 +1835,15 @@ class _MiniSeedDecoder {
         if (seeded == null) return out;
         var current = seeded;
         final code = (control >> (30 - 2 * wordIndex)) & 0x03;
-        final diffs = _steim2Diffs(code, word);
+        final diffs = code == 1
+            ? [for (var j = 0; j < 4; j++) data.getInt8(wordOffset + j)]
+            : _steim2Diffs(code, word);
         for (final diff in diffs) {
-          current += diff;
+          if (skipFirstDifference) {
+            skipFirstDifference = false;
+            continue;
+          }
+          current = (current + diff).toSigned(32);
           previous = current;
           out.add(current);
           if (out.length >= sampleCount) return out;

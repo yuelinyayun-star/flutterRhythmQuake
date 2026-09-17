@@ -28,6 +28,8 @@ class WAuthService {
   static const String verifyApiTokenPath = '/api/token/verify';
   static const String gatewaySessionPath = '/wauth/session';
   static const String gatewayResultPath = '/wauth/result';
+  static const String gatewayUserInfoPath = '/wauth/userinfo';
+  static const String gatewayVerifyApiTokenPath = '/wauth/api/token/verify';
   static const String accessTokenPreferenceKey =
       WAuthCredentialStore.legacyAccessTokenPreferenceKey;
   static const String apiTokenPreferenceKey =
@@ -41,6 +43,7 @@ class WAuthService {
   final String gatewayBaseUrlValue;
   final Duration requestTimeout;
   final WAuthCredentialStore credentialStore;
+  bool _closed = false;
 
   WAuthService({
     http.Client? client,
@@ -52,7 +55,10 @@ class WAuthService {
        credentialStore = credentialStore ?? WAuthCredentialStore(),
        gatewayBaseUrlValue = gatewayBaseUrl ?? WAuthService.gatewayBaseUrl;
 
-  void close() => _client.close();
+  void close() {
+    _closed = true;
+    _client.close();
+  }
 
   Uri buildAuthorizationUri({
     required String redirectUri,
@@ -145,14 +151,31 @@ class WAuthService {
     }
     final deadline = DateTime.now().add(timeout);
     while (DateTime.now().isBefore(deadline)) {
-      final response = await _gatewayRequest(
-        _client.get(
-          Uri.parse(
-            '$gatewayBaseUrlValue$gatewayResultPath',
-          ).replace(queryParameters: {'state': state}),
-          headers: const {'Accept': 'application/json'},
-        ),
-      );
+      http.Response response;
+      try {
+        response = await _gatewayRequest(
+          _client.get(
+            Uri.parse(
+              '$gatewayBaseUrlValue$gatewayResultPath',
+            ).replace(queryParameters: {'state': state}),
+            headers: const {'Accept': 'application/json'},
+          ),
+        );
+      } on WAuthApiException catch (error) {
+        if (_closed || (error.statusCode != 0 && error.statusCode != 408)) {
+          rethrow;
+        }
+        // A transient transport failure must not discard the browser's
+        // in-progress authorization. A consumed/expired result still fails.
+        await Future<void>.delayed(pollInterval);
+        continue;
+      }
+      if (response.statusCode == 502 ||
+          response.statusCode == 503 ||
+          response.statusCode == 504) {
+        await Future<void>.delayed(pollInterval);
+        continue;
+      }
       final json = _decodeObject(response);
       if (response.statusCode == 202) {
         await Future<void>.delayed(pollInterval);
@@ -167,7 +190,7 @@ class WAuthService {
     );
   }
 
-  /// Confirms login with WAuth's official userinfo endpoint.
+  /// Confirms login through the gateway backed by WAuth's userinfo endpoint.
   Future<WAuthAuthorizedSession> requireAuthorizedAccessToken(
     String? accessToken,
   ) async {
@@ -330,7 +353,7 @@ class WAuthService {
     }
     final response = await _gatewayRequest(
       _client.get(
-        Uri.parse('$issuer$userInfoPath'),
+        Uri.parse('$gatewayBaseUrlValue$gatewayUserInfoPath'),
         headers: {
           'Accept': 'application/json',
           'Authorization': 'Bearer $accessToken',
@@ -362,7 +385,7 @@ class WAuthService {
     }
     final response = await _gatewayRequest(
       _client.post(
-        Uri.parse('$issuer$verifyApiTokenPath'),
+        Uri.parse('$gatewayBaseUrlValue$gatewayVerifyApiTokenPath'),
         headers: {
           'Accept': 'application/json',
           'Authorization': 'Bearer $apiToken',

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/unified_quake_data.dart';
 import '../../models/volcano_event_data.dart';
+import 'ui_scale.dart';
 
 UnifiedQuakeData? selectVolcanoSidebarEvent(
   List<UnifiedQuakeData> events,
@@ -61,8 +62,10 @@ class VolcanoSidebarPanel extends StatelessWidget {
             Expanded(
               child: Text(
                 _headerTitle(volcano),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+                maxLines: UiScale.isPhone(context) ? null : 1,
+                overflow: UiScale.isPhone(context)
+                    ? TextOverflow.visible
+                    : TextOverflow.ellipsis,
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: scale(12),
@@ -77,8 +80,10 @@ class VolcanoSidebarPanel extends StatelessWidget {
           SizedBox(height: scale(2)),
           Text(
             _headerDetail(volcano),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
+            maxLines: UiScale.isPhone(context) ? null : 2,
+            overflow: UiScale.isPhone(context)
+                ? TextOverflow.visible
+                : TextOverflow.ellipsis,
             style: TextStyle(
               color: Colors.white.withValues(alpha: 0.62),
               fontSize: scale(9.5),
@@ -455,7 +460,7 @@ class _VolcanoDataRow extends StatelessWidget {
         TextSpan(
           children: [
             TextSpan(
-              text: '${row.label}：',
+              text: '${row.label}：${UiScale.isPhone(context) ? '\n' : ''}',
               style: TextStyle(
                 color: Colors.white.withValues(alpha: 0.62),
                 fontWeight: FontWeight.w700,

@@ -58,6 +58,17 @@ class UnifiedQuakeData {
   final QuakeMessage? rawEvent;
   final DateTime? arrivedAt;
 
+  /// Cached catalog deliveries populate lists only, never active alerts/effects.
+  final bool isHistory;
+  final bool isSnapshot;
+  final bool hasReportSequence;
+
+  /// Feeds with source timestamps must not renew their lifetime on arrival.
+  final bool useSourceTimeForExpiry;
+
+  /// Original provider payload, retained for details and cross-isolate audit.
+  final Map<String, dynamic>? sourcePayload;
+
   const UnifiedQuakeData({
     required this.source,
     required this.origin,
@@ -93,6 +104,11 @@ class UnifiedQuakeData {
     this.jmaLpgmBulletin,
     this.rawEvent,
     this.arrivedAt,
+    this.isHistory = false,
+    this.isSnapshot = false,
+    this.hasReportSequence = true,
+    this.useSourceTimeForExpiry = false,
+    this.sourcePayload,
   });
 
   static const UnifiedQuakeData empty = UnifiedQuakeData(
@@ -156,6 +172,11 @@ class UnifiedQuakeData {
     'jmaLpgmBulletin': jmaLpgmBulletin?.toMap(),
     'rawEvent': rawEvent?.toMap(),
     'arrivedAt': arrivedAt?.toIso8601String(),
+    'isHistory': isHistory,
+    'isSnapshot': isSnapshot,
+    'hasReportSequence': hasReportSequence,
+    'useSourceTimeForExpiry': useSourceTimeForExpiry,
+    'sourcePayload': sourcePayload,
   };
 
   factory UnifiedQuakeData.fromMap(Map<String, dynamic> map) {
@@ -230,6 +251,13 @@ class UnifiedQuakeData {
           ? QuakeMessage.fromMap(Map<String, dynamic>.from(raw))
           : null,
       arrivedAt: parseTime(map['arrivedAt']),
+      isHistory: map['isHistory'] == true,
+      isSnapshot: map['isSnapshot'] == true,
+      hasReportSequence: map['hasReportSequence'] != false,
+      useSourceTimeForExpiry: map['useSourceTimeForExpiry'] == true,
+      sourcePayload: map['sourcePayload'] is Map
+          ? Map<String, dynamic>.unmodifiable(map['sourcePayload'] as Map)
+          : null,
     );
   }
 
@@ -268,6 +296,11 @@ class UnifiedQuakeData {
     JmaLpgmBulletin? jmaLpgmBulletin,
     QuakeMessage? rawEvent,
     DateTime? arrivedAt,
+    bool? isHistory,
+    bool? isSnapshot,
+    bool? hasReportSequence,
+    bool? useSourceTimeForExpiry,
+    Map<String, dynamic>? sourcePayload,
   }) {
     return UnifiedQuakeData(
       source: source ?? this.source,
@@ -304,6 +337,12 @@ class UnifiedQuakeData {
       jmaLpgmBulletin: jmaLpgmBulletin ?? this.jmaLpgmBulletin,
       rawEvent: rawEvent ?? this.rawEvent,
       arrivedAt: arrivedAt ?? this.arrivedAt,
+      isHistory: isHistory ?? this.isHistory,
+      isSnapshot: isSnapshot ?? this.isSnapshot,
+      hasReportSequence: hasReportSequence ?? this.hasReportSequence,
+      useSourceTimeForExpiry:
+          useSourceTimeForExpiry ?? this.useSourceTimeForExpiry,
+      sourcePayload: sourcePayload ?? this.sourcePayload,
     );
   }
 }

@@ -1,0 +1,1 @@
+var dataSK={"nameen":"yiwu","cityname":"义乌","city":"101210904","temp":"30.3","tempf":"86.5","WD":"北风","wde":"N","WS":"3级","wse":"12km\/h","SD":"44%","sd":"44%","qy":"995","njd":"28km","time":"14:25","rain":"0","rain24h":"0","aqi":"28","aqi_pm25":"28","weather":"晴","weathere":"Sunny","weathercode":"d00","limitnumber":"","date":"09月07日(星期一)"}

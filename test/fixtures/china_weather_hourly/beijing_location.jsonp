@@ -1,0 +1,1 @@
+getData({"status":"success","errmsg":"","timestamp":1622032653,"location":{"lng":116.4,"lat":39.9},"data":{"station":{"areaid":"101010100","category":"city","namecn":"北京","nameen":"beijing","disticten":"beijing","distictcn":"北京","provinceen":"beijing","provincecn":"北京"}}})

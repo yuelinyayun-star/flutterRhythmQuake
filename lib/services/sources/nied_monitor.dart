@@ -78,6 +78,7 @@ class NiedStation {
   final bool scanReliable;
   final String? pixelClusterId;
   Timer? activeTimer;
+  DateTime? _activeUntil;
 
   NiedStation({
     required this.id,
@@ -321,12 +322,32 @@ class NiedStation {
   }
 
   void setActive([void Function()? onExpired]) {
+    _holdActive(const Duration(milliseconds: 10500), onExpired);
+  }
+
+  /// Transfer only UI detection state when Android replaces a frame's objects.
+  /// Keep the original deadline so incoming frames cannot extend a detection.
+  void adoptDetectionHold(NiedStation previous, void Function() onExpired) {
+    final deadline = previous._activeUntil;
+    final wasHeld = previous.isActive && (previous.activeTimer?.isActive ?? false);
+    previous.activeTimer?.cancel();
+    if (!wasHeld || deadline == null) return;
+    final remaining = deadline.difference(DateTime.now());
+    if (remaining <= Duration.zero) return;
+    detectState = previous.detectState;
+    detectReason = previous.detectReason;
+    _holdActive(remaining, onExpired);
+  }
+
+  void _holdActive(Duration remaining, void Function()? onExpired) {
     isActive = true;
     activeTimer?.cancel();
+    _activeUntil = DateTime.now().add(remaining);
     // KA keeps an activated NIED station for 10.5 seconds so the hold spans
     // the boundary before the next one-second frame arrives.
-    activeTimer = Timer(const Duration(milliseconds: 10500), () {
+    activeTimer = Timer(remaining, () {
       isActive = false;
+      _activeUntil = null;
       onExpired?.call();
     });
   }
@@ -365,6 +386,7 @@ class NiedMonitorService extends ChangeNotifier {
   DateTime? _liveFrameAnchorJst;
   final Stopwatch _liveFrameAnchorClock = Stopwatch();
   final Stopwatch _metadataRefreshClock = Stopwatch();
+  bool _liveRecoveryPending = false;
   int _realtimeDelayMs = _defaultRealtimeDelayMs;
   String _baseUrl = _lmoniBaseUrl;
   String _sourceName = 'lmoni';
@@ -382,6 +404,7 @@ class NiedMonitorService extends ChangeNotifier {
     _isRunning = true;
     _lastFetchedStampKey = null;
     _lastFetchedFrameTime = null;
+    _liveRecoveryPending = false;
     _realtimeDelayMs = _defaultRealtimeDelayMs;
     _resetLiveFrameAnchor();
     _runGeneration++;
@@ -403,6 +426,7 @@ class NiedMonitorService extends ChangeNotifier {
     _physicalLayerGeneration = null;
     _client?.close(force: true);
     _client = null;
+    _liveRecoveryPending = false;
     dataFrameTime.value = null;
   }
 
@@ -415,6 +439,7 @@ class NiedMonitorService extends ChangeNotifier {
     _baseUrl = nextBaseUrl;
     _lastFetchedStampKey = null;
     _lastFetchedFrameTime = null;
+    _liveRecoveryPending = false;
     dataFrameTime.value = null;
     _realtimeDelayMs = _defaultRealtimeDelayMs;
     _resetLiveFrameAnchor();
@@ -426,6 +451,7 @@ class NiedMonitorService extends ChangeNotifier {
     _replayCursorJst = config.enabled ? config.startJst : null;
     _lastFetchedStampKey = null;
     _lastFetchedFrameTime = null;
+    _liveRecoveryPending = false;
     dataFrameTime.value = null;
     _resetLiveFrameAnchor();
     _restartRunningRequests();
@@ -569,6 +595,7 @@ class NiedMonitorService extends ChangeNotifier {
 
         _lastFetchedStampKey = stampKey;
         _lastFetchedFrameTime = stamp;
+        _liveRecoveryPending = false;
         dataFrameTime.value = stamp;
         if (!_replayConfig.enabled && _timeSyncGeneration != generation) {
           _timeSyncGeneration = generation;
@@ -582,6 +609,14 @@ class NiedMonitorService extends ChangeNotifier {
       }
       if (attempted && !fetchedAny) {
         _increaseRealtimeDelay();
+        if (_shouldRequireUpstreamResync(
+          replayEnabled: _replayConfig.enabled,
+          attempted: attempted,
+          fetchedAny: fetchedAny,
+          previousFrameTime: _lastFetchedFrameTime,
+        )) {
+          _beginLiveRecovery(generation);
+        }
       }
     } finally {
       if (_tickingGeneration == generation) {
@@ -761,7 +796,12 @@ class NiedMonitorService extends ChangeNotifier {
       return [replayTime];
     }
 
+    final recovering = _liveRecoveryPending;
     final latest = await _latestFrameTimeForTick(generation);
+    if (recovering) {
+      if (latest == null) return const [];
+      return _buildRecoveryCandidateTimes(latest);
+    }
     if (latest != null) {
       return _buildLiveCandidateTimes(
         latestTime: latest,
@@ -790,6 +830,17 @@ class NiedMonitorService extends ChangeNotifier {
   }
 
   Future<DateTime?> _latestFrameTimeForTick(int generation) async {
+    if (_liveRecoveryPending) {
+      _metadataRefreshClock
+        ..reset()
+        ..start();
+      final latest = await _refreshLiveFrameAnchor(generation, force: true);
+      if (latest == null) return null;
+      _liveRecoveryPending = false;
+      _realtimeDelayMs = _defaultRealtimeDelayMs;
+      return latest;
+    }
+
     final anchor = _liveFrameAnchorJst;
     final refreshDue =
         anchor == null ||
@@ -812,10 +863,14 @@ class NiedMonitorService extends ChangeNotifier {
     return anchor;
   }
 
-  Future<void> _refreshLiveFrameAnchor(int generation) async {
+  Future<DateTime?> _refreshLiveFrameAnchor(
+    int generation, {
+    bool force = false,
+  }) async {
     final latest = await _fetchLatestFrameTime(generation);
-    if (!_isCurrentRun(generation) || latest == null) return;
-    _updateLiveFrameAnchor(latest);
+    if (!_isCurrentRun(generation) || latest == null) return null;
+    _updateLiveFrameAnchor(latest, force: force);
+    return latest;
   }
 
   Future<void> _waitForReplaySourceBridgeBackpressure() async {
@@ -870,9 +925,43 @@ class NiedMonitorService extends ChangeNotifier {
   static int _liveCandidateAttemptCount(int candidateCount) =>
       candidateCount.clamp(0, _maxLiveCandidateAttemptsPerTick).toInt();
 
+  static bool _shouldRequireUpstreamResync({
+    required bool replayEnabled,
+    required bool attempted,
+    required bool fetchedAny,
+    required DateTime? previousFrameTime,
+  }) {
+    return !replayEnabled &&
+        attempted &&
+        !fetchedAny &&
+        previousFrameTime != null;
+  }
+
+  static List<DateTime> _buildRecoveryCandidateTimes(DateTime latestTime) => [
+    latestTime,
+  ];
+
   @visibleForTesting
   static int liveCandidateAttemptCountForTest(int candidateCount) =>
       _liveCandidateAttemptCount(candidateCount);
+
+  @visibleForTesting
+  static bool shouldRequireUpstreamResyncForTest({
+    required bool replayEnabled,
+    required bool attempted,
+    required bool fetchedAny,
+    required DateTime? previousFrameTime,
+  }) => _shouldRequireUpstreamResync(
+    replayEnabled: replayEnabled,
+    attempted: attempted,
+    fetchedAny: fetchedAny,
+    previousFrameTime: previousFrameTime,
+  );
+
+  @visibleForTesting
+  static List<DateTime> buildRecoveryCandidateTimesForTest(
+    DateTime latestTime,
+  ) => _buildRecoveryCandidateTimes(latestTime);
 
   @visibleForTesting
   static List<DateTime> buildLiveCandidateTimesForTest({
@@ -1007,9 +1096,9 @@ class NiedMonitorService extends ChangeNotifier {
     return true;
   }
 
-  void _updateLiveFrameAnchor(DateTime latest) {
+  void _updateLiveFrameAnchor(DateTime latest, {bool force = false}) {
     final current = _liveFrameAnchorJst;
-    if (current != null && !latest.isAfter(current)) return;
+    if (!force && current != null && !latest.isAfter(current)) return;
     _liveFrameAnchorJst = latest;
     _liveFrameAnchorClock
       ..reset()
@@ -1049,6 +1138,21 @@ class NiedMonitorService extends ChangeNotifier {
       _defaultRealtimeDelayMs,
       _maxRealtimeDelayMs,
     );
+  }
+
+  void _beginLiveRecovery(int generation) {
+    if (!_isCurrentRun(generation) || _liveRecoveryPending) return;
+    _liveRecoveryPending = true;
+    _timeSyncGeneration = null;
+    _metadataRefreshClock
+      ..stop()
+      ..reset();
+
+    // A network handover can leave a pooled socket bound to the old route.
+    // Recreate the client before the mandatory upstream-time refresh.
+    final previousClient = _client;
+    _client = _createHttpClient();
+    previousClient?.close(force: true);
   }
 
   void _resetLiveFrameAnchor() {

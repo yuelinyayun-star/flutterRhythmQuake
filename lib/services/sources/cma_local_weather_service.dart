@@ -249,9 +249,7 @@ List<CmaStationSummary> cmaStationSummariesFromRows(List<dynamic> rows) {
     final temp = raw.length > 6 ? _cmaDouble(raw[6]) : null;
     final weather = raw.length > 7 ? raw[7]?.toString().trim() ?? '' : '';
     final weatherCode = raw.length > 8 ? _cmaInt(raw[8]) : null;
-    final windDirection = raw.length > 9
-        ? raw[9]?.toString().trim() ?? ''
-        : '';
+    final windDirection = raw.length > 9 ? raw[9]?.toString().trim() ?? '' : '';
     final windScale = raw.length > 10 ? raw[10]?.toString().trim() ?? '' : '';
     final minTemp = raw.length > 11 ? _cmaDouble(raw[11]) : null;
     final provinceCode = raw.length > 16
@@ -593,7 +591,8 @@ class CmaLocalWeatherService {
     if (!force &&
         stationDirectoryNotifier.value.isNotEmpty &&
         _lastDirectoryFetchTime != null &&
-        now.difference(_lastDirectoryFetchTime!) < const Duration(minutes: 10)) {
+        now.difference(_lastDirectoryFetchTime!) <
+            const Duration(minutes: 10)) {
       return;
     }
     final c = client ?? http.Client();
@@ -724,7 +723,7 @@ class CmaLocalWeatherService {
     );
   }
 
-  void pause() {
+  void pause({bool clearState = true}) {
     if (_disposed) return;
     _locationRevision++;
     _timer?.cancel();
@@ -732,7 +731,7 @@ class CmaLocalWeatherService {
     _station = null;
     _anchorLatitude = null;
     _anchorLongitude = null;
-    stateNotifier.value = const CmaLocalWeatherState();
+    if (clearState) stateNotifier.value = const CmaLocalWeatherState();
   }
 
   Future<void> refreshNow() async {
@@ -795,7 +794,9 @@ class CmaLocalWeatherService {
       // 优雅降级：若单站详细接口失败，优先从已加载的全国测站概况构造基础实况，避免卡片展示为暂不可用
       CmaLocalWeatherObservation? fallbackObs = previous;
       if (fallbackObs == null) {
-        final matches = stationDirectoryNotifier.value.where((s) => s.id == station.id);
+        final matches = stationDirectoryNotifier.value.where(
+          (s) => s.id == station.id,
+        );
         if (matches.isNotEmpty) {
           final summary = matches.first;
           fallbackObs = CmaLocalWeatherObservation(

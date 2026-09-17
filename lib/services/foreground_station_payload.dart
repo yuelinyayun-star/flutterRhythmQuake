@@ -25,18 +25,30 @@ import 'sources/jma_local_weather_service.dart';
 class ForegroundStationPayload {
   const ForegroundStationPayload._();
 
-  static Map<String, dynamic> nied(List<NiedStation> stations) => {
+  static Map<String, dynamic> nied(
+    List<NiedStation> stations, {
+    String? source,
+  }) => {
     'kind': 'nied',
+    if (source != null) 'source': source,
     'stations': stations.map(_niedStation).toList(growable: false),
   };
 
-  static Map<String, dynamic> kma(List<KmaStation> stations) => {
+  static Map<String, dynamic> kma(
+    List<KmaStation> stations, {
+    DateTime? dataTime,
+  }) => {
     'kind': 'kma',
+    'dataTime': dataTime?.toIso8601String(),
     'stations': stations.map(_kmaStation).toList(growable: false),
   };
 
-  static Map<String, dynamic> cwa(List<CwaStation> stations) => {
+  static Map<String, dynamic> cwa(
+    List<CwaStation> stations, {
+    DateTime? dataTime,
+  }) => {
     'kind': 'cwa',
+    'dataTime': dataTime?.toIso8601String(),
     'stations': stations.map(_cwaStation).toList(growable: false),
   };
 
@@ -45,15 +57,28 @@ class ForegroundStationPayload {
     'stations': stations.map(_snetStation).toList(growable: false),
   };
 
-  static Map<String, dynamic> seisjs(List<SeisJsStation> stations) => {
+  static Map<String, dynamic> seisjs(
+    List<SeisJsStation> stations, {
+    DateTime? dataTime,
+  }) => {
     'kind': 'seisjs',
+    'dataTime': dataTime?.toIso8601String(),
     'stations': stations.map(_seisJsStation).toList(growable: false),
   };
 
-  static Map<String, dynamic> palert(List<PAlertStation> stations) => {
+  static Map<String, dynamic> palert(
+    List<PAlertStation> stations, {
+    DateTime? dataTime,
+    DateTime? receivedTime,
+  }) => {
     'kind': 'palert',
+    'dataTime': dataTime?.toIso8601String(),
+    'receivedTime': receivedTime?.toIso8601String(),
     'stations': stations.map(_pAlertStation).toList(growable: false),
   };
+
+  static DateTime? frameTime(Map<String, dynamic> payload) =>
+      _date(payload['dataTime']);
 
   static Map<String, dynamic> lpgm(LpgmSnapshot snapshot) => {
     'kind': 'lpgm',

@@ -5,8 +5,48 @@ import 'package:flutterrhythmquake/models/volcano_event_data.dart';
 import 'package:flutterrhythmquake/models/typhoon_data.dart';
 import 'package:flutterrhythmquake/models/jma_lpgm_bulletin.dart';
 import 'package:flutterrhythmquake/models/jma_megaquake_advisory.dart';
+import 'package:flutterrhythmquake/services/foreground_station_payload.dart';
+import 'package:flutterrhythmquake/services/sources/nied_monitor.dart';
+import 'package:latlong2/latlong.dart';
 
 void main() {
+  test(
+    'NIED handoff preserves selected source and original frame timestamps',
+    () {
+      final dataTime = DateTime(2026, 9, 7, 19, 0, 22);
+      final receivedAt = DateTime.utc(2026, 9, 7, 10, 0, 24);
+      final station =
+          NiedStation(
+              id: 0,
+              code: 'test-station',
+              name: 'test',
+              coordinate: const LatLng(35, 140),
+              network: 'K-NET',
+              prefecture: '',
+              expireSeconds: 10,
+            )
+            ..lastDataTime = dataTime
+            ..lastUpdate = dataTime
+            ..lastReceivedAt = receivedAt;
+      for (final source in ['lmoni', 'kmoni', 'yahoo']) {
+        final payload = ForegroundStationPayload.nied([
+          station,
+        ], source: source);
+        final decoded = ForegroundStationPayload.decodeNied(
+          payload['stations'],
+        );
+        expect(payload['source'], source);
+        expect(decoded, hasLength(1));
+        expect(decoded.single.lastDataTime, dataTime);
+        expect(decoded.single.lastReceivedAt, receivedAt);
+      }
+      expect(
+        ForegroundStationPayload.nied([station]).containsKey('source'),
+        isFalse,
+      );
+    },
+  );
+
   test('unified payload keeps volcano-specific fields', () {
     final event = UnifiedQuakeData(
       source: 'whewsVolcano',

@@ -742,7 +742,7 @@ class JmaLocalWeatherService {
     );
   }
 
-  void pause() {
+  void pause({bool clearState = true}) {
     if (_disposed) return;
     _locationRevision++;
     _timer?.cancel();
@@ -750,7 +750,7 @@ class JmaLocalWeatherService {
     _station = null;
     _anchorLatitude = null;
     _anchorLongitude = null;
-    stateNotifier.value = const JmaLocalWeatherState();
+    if (clearState) stateNotifier.value = const JmaLocalWeatherState();
   }
 
   Future<void> refreshNow() async {

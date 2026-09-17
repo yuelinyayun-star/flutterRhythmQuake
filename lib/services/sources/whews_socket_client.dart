@@ -46,6 +46,12 @@ class WhewsSocketClient {
   bool get authorizationRejected => _authorizationRejected;
   bool get aliveConfirmed => _aliveConfirmed;
 
+  /// Reuse the transport's bounded retry and authorization handling.
+  void reconnect() {
+    if (!_running || _authorizationRejected) return;
+    _handleClosed(_channel, _serial);
+  }
+
   void setApiToken(String apiToken) {
     final next = apiToken.trim();
     if (next == _apiToken) return;
@@ -223,8 +229,6 @@ class WhewsSocketClient {
   bool _isCurrent(WebSocketChannel channel, int serial) {
     return _running && identical(_channel, channel) && _serial == serial;
   }
-
-  Uri _connectionUri() => buildConnectionUri(url, _apiToken);
 
   @visibleForTesting
   static Uri buildConnectionUri(String url, String apiToken) {

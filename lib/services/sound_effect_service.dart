@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart';
 
 class SoundEffectService {
   static final SoundEffectService _instance = SoundEffectService._internal();
@@ -60,6 +63,42 @@ class SoundEffectService {
   };
 
   final Map<String, DateTime> _lastPlayedAt = {};
+  final Map<String, Future<_PreparedSound>> _pools = {};
+
+  Future<_PreparedSound> _poolFor(String asset) =>
+      _pools.putIfAbsent(asset, () async {
+        try {
+          return await _PreparedSound.create(asset);
+        } catch (_) {
+          _pools.remove(asset);
+          rethrow;
+        }
+      });
+
+  /// Prepare common alerts without delaying startup or taking audio focus.
+  Future<void> warmUp() async {
+    for (final key in [
+      'issue',
+      'warn',
+      'caution',
+      'update',
+      'final',
+      'cancel',
+      'hypocenter',
+      'detail',
+      for (var i = 0; i <= 6; i++) 'shindo$i',
+      'countdown',
+      'intense',
+    ]) {
+      if (!enabled) return;
+      final asset = _srev[key] ?? _general[key]!;
+      try {
+        await _poolFor(asset);
+      } catch (error) {
+        debugPrint('SoundEffect preload failed ($key): $error');
+      }
+    }
+  }
 
   bool enabled = true;
   double volume = 1.0;
@@ -75,19 +114,77 @@ class SoundEffectService {
       _lastPlayedAt[key] = now;
     }
 
-    final player = AudioPlayer();
-    player.onPlayerComplete.listen((_) => player.dispose());
     try {
-      await player.setReleaseMode(ReleaseMode.release);
-      await player.setVolume(volume.clamp(0.0, 1.0));
-      await player.play(AssetSource(asset));
-    } catch (_) {
-      await player.dispose();
+      final pool = await _poolFor(asset);
+      if (!enabled) return;
+      await pool.start(volume: volume.clamp(0.0, 1.0));
+    } catch (error) {
+      debugPrint('SoundEffect playback failed ($key): $error');
     }
   }
 
   Future<void> playShindo(int shindo) {
     final clamped = shindo.clamp(0, 7);
     return play('shindo$clamped', cooldown: const Duration(seconds: 2));
+  }
+}
+
+/// Keep one prepared player per asset. Concurrent alerts get temporary players
+/// which are disposed after completion, without queuing behind an earlier sound.
+class _PreparedSound {
+  _PreparedSound(this.asset);
+  final String asset;
+  AudioPlayer? _idle;
+
+  static Future<_PreparedSound> create(String asset) async {
+    final sound = _PreparedSound(asset);
+    sound._idle = await sound._createPlayer();
+    return sound;
+  }
+
+  Future<AudioPlayer> _createPlayer() async {
+    final player = AudioPlayer()..positionUpdater = null;
+    try {
+      await player.setReleaseMode(ReleaseMode.stop);
+      await player.setSource(AssetSource(asset));
+      return player;
+    } catch (_) {
+      await player.dispose();
+      rethrow;
+    }
+  }
+
+  Future<void> start({required double volume}) async {
+    final reserved = _idle;
+    _idle = null;
+    final player = reserved ?? await _createPlayer();
+    StreamSubscription<void>? completion;
+    var returned = false;
+    Future<void> recycle() async {
+      if (returned) return;
+      returned = true;
+      await completion?.cancel();
+      try {
+        await player.stop();
+        if (_idle == null) {
+          _idle = player;
+          return;
+        }
+      } catch (error) {
+        debugPrint('SoundEffect reset failed: $error');
+      }
+      await player.dispose();
+    }
+
+    completion = player.onPlayerComplete.listen((_) => unawaited(recycle()));
+    try {
+      await player.setVolume(volume);
+      await player.resume();
+    } catch (_) {
+      returned = true;
+      await completion.cancel();
+      await player.dispose();
+      rethrow;
+    }
   }
 }

@@ -1,4 +1,5 @@
 import '../../models/quake_message.dart';
+import '../../models/whews_catalog.dart';
 import '../../models/unified_quake_data.dart';
 import '../../services/ntp_service.dart';
 
@@ -239,7 +240,7 @@ class QuakeTime {
   /// 计算统一事件的已过去时间（秒）
   static int calcPassedSecondsUnified(UnifiedQuakeData event) {
     final refTime = event.originTime;
-    if (refTime == null) return 0;
+    if (refTime == null) return event.useSourceTimeForExpiry ? 999999 : 0;
     // 使用适配器中写入的 timeZone 字段，比字符串匹配更准确
     final offset = Duration(hours: event.timeZone);
     return _calcPassedSecondsFromDateTime(refTime, offset);
@@ -259,14 +260,57 @@ class QuakeTime {
   /// WHEWS EMSC can publish a recent directory revision for an earthquake that
   /// occurred much earlier. Its updateTime remains useful for ordering
   /// revisions, but must not revive that old earthquake in the current UI or
-  /// background notifications. Other sources retain the existing report-time
-  /// display-window behavior.
+  /// background notifications. Catalog snapshots use the earthquake time;
+  /// live catalog admission/display is handled by the separate helper below.
   static DateTime? informationDisplayReference(UnifiedQuakeData event) {
+    // Catalog maintenance must not turn an old earthquake into a new alert.
+    if (unifiedCatalogSources.containsKey(event.source)) return event.originTime;
     final isWhewsEmsc =
         event.apiTypeLabel == 'WHEWS' &&
         (event.source == 'emsc' || event.source == 'emscEqlist');
     if (isWhewsEmsc && event.originTime != null) return event.originTime;
     return event.reportTime ?? event.originTime;
+  }
+
+  /// Product policy for delayed live catalogs, not a provider timestamp rule.
+  static const catalogLiveAdmissionWindow = Duration(minutes: 30);
+
+  /// Returns null for feeds whose existing lifetime rules must stay unchanged.
+  /// Source age controls admission; local first arrival controls card lifetime.
+  static int? catalogInformationRemainingSeconds(
+    UnifiedQuakeData event,
+    int displaySeconds, {
+    DateTime? firstArrivedAt,
+    DateTime? now,
+    DateTime? sourceNow,
+  }) {
+    if (event.isEew || !unifiedCatalogSources.containsKey(event.source)) {
+      return null;
+    }
+    if (event.isHistory ||
+        event.originTime == null ||
+        event.eventId.trim().isEmpty) {
+      return 0;
+    }
+    final sourceAge = (sourceNow ?? NtpService().now)
+        .toUtc()
+        .difference(
+          wallClockToUtc(event.originTime!, Duration(hours: event.timeZone)),
+        )
+        .inSeconds
+        .clamp(0, 999999);
+    // Initial/reconnect snapshots retain the original, source-time window.
+    if (event.isSnapshot) return displaySeconds - sourceAge;
+    final arrival = firstArrivedAt ?? event.arrivedAt;
+    final elapsed = arrival == null
+        ? 0
+        : (now ?? DateTime.now())
+              .toUtc()
+              .difference(arrival.toUtc())
+              .inSeconds
+              .clamp(0, 999999);
+    if (sourceAge - elapsed >= catalogLiveAdmissionWindow.inSeconds) return 0;
+    return displaySeconds - elapsed;
   }
 
   /// 内部：从 DateTime 计算已过去秒数

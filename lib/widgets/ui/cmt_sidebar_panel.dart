@@ -5,6 +5,7 @@ import '../../core/utils/quake_time.dart';
 import '../../models/cmt_solution_metadata.dart';
 import '../../models/quake_message.dart';
 import '../map/fssn_cmt_layer.dart';
+import 'ui_scale.dart';
 
 /// Sidebar page for the active CMT solution.
 ///
@@ -30,13 +31,14 @@ class CmtSidebarPanel extends StatelessWidget {
       CmtFaultTypeClassifier.fromNodalPlane(event.nodalPlane1),
     );
 
-    return Column(
+    final phone = UiScale.isPhone(context);
+    final content = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
           event.source.displayName,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+          maxLines: phone ? null : 1,
+          overflow: phone ? TextOverflow.visible : TextOverflow.ellipsis,
           style: TextStyle(
             color: Colors.white,
             fontSize: scale(12),
@@ -45,17 +47,21 @@ class CmtSidebarPanel extends StatelessWidget {
           ),
         ),
         SizedBox(height: scale(4)),
-        Expanded(
-          child: SingleChildScrollView(
-            physics: const ClampingScrollPhysics(),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                for (final row in rows) _CmtRawDataRow(row: row, scale: scale),
-              ],
+        if (phone)
+          for (final row in rows) _CmtRawDataRow(row: row, scale: scale)
+        else
+          Expanded(
+            child: SingleChildScrollView(
+              physics: const ClampingScrollPhysics(),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final row in rows)
+                    _CmtRawDataRow(row: row, scale: scale),
+                ],
+              ),
             ),
           ),
-        ),
         if (renderableBeachball) ...[
           Padding(
             padding: EdgeInsets.only(top: scale(5), bottom: scale(3)),
@@ -77,8 +83,13 @@ class CmtSidebarPanel extends StatelessWidget {
         Center(
           child: Text(
             '断层类型：$faultType（仅供参考）',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+            maxLines: UiScale.isPhone(context) ? null : 1,
+            overflow: UiScale.isPhone(context)
+                ? TextOverflow.visible
+                : TextOverflow.ellipsis,
+            textAlign: UiScale.isPhone(context)
+                ? TextAlign.center
+                : TextAlign.start,
             style: TextStyle(
               color: Colors.white.withValues(alpha: 0.88),
               fontSize: scale(10.5),
@@ -89,6 +100,7 @@ class CmtSidebarPanel extends StatelessWidget {
         ),
       ],
     );
+    return phone ? SingleChildScrollView(child: content) : content;
   }
 
   List<_CmtRawData> _rows(CmtSolutionMetadata? metadata) {
@@ -197,7 +209,7 @@ class _CmtRawDataRow extends StatelessWidget {
         TextSpan(
           children: [
             TextSpan(
-              text: '${row.label}：',
+              text: '${row.label}：${UiScale.isPhone(context) ? '\n' : ''}',
               style: TextStyle(
                 color: Colors.white.withValues(alpha: 0.62),
                 fontWeight: FontWeight.w700,

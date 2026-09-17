@@ -74,7 +74,7 @@ void main() {
     service.dispose();
   });
 
-  test('negative PGA rejects the complete station frame', () async {
+  test('negative PGA does not discard valid primary observations', () async {
     final service = WhewsStationService(
       kind: WhewsStationKind.snet,
       apiToken: 'test-token',
@@ -97,7 +97,9 @@ void main() {
     });
     await Future<void>.delayed(Duration.zero);
 
-    expect(frames, isEmpty);
+    expect(frames, hasLength(1));
+    expect(frames.single.values, [1.2]);
+    expect(frames.single.pga, isEmpty);
     await subscription.cancel();
     service.dispose();
   });

@@ -11,6 +11,7 @@ import '../models/unified_quake_data.dart';
 import '../models/tsunami_message.dart';
 import '../models/source_status.dart';
 import 'background_event_processor.dart';
+import 'background_source_reload_plan.dart';
 import 'epicenter_region_service.dart';
 import 'location_service.dart';
 import 'ntp_service.dart';
@@ -28,11 +29,14 @@ import 'sources/source_manager.dart';
 import 'sources/usgs_eqlist_service.dart';
 import 'sources/wolfx_service.dart';
 import 'sources/whews_service.dart';
+import 'sources/jian_service.dart';
 import 'wauth_service.dart';
 import 'foreground_station_payload.dart';
 import 'sources/cwa_station_service.dart';
 import 'sources/kma_monitor.dart';
 import 'sources/lmoni_image_service.dart';
+import 'sources/nied_monitor.dart';
+import 'sources/nied_background_worker.dart';
 import 'sources/nied_yahoo_service.dart';
 import 'sources/palert_service.dart';
 import 'sources/seisjs_service.dart';
@@ -72,6 +76,7 @@ final List<StreamSubscription<dynamic>> _backgroundStationSubscriptions = [];
 final List<StreamSubscription<dynamic>> _backgroundCmtSubscriptions = [];
 final List<StreamSubscription<dynamic>> _backgroundAuxSubscriptions = [];
 LmoniImageService? _backgroundLmoni;
+NiedMonitorService? _backgroundNiedMonitor;
 NiedYahooService? _backgroundYahoo;
 KmaMonitorService? _backgroundKma;
 CwaStationService? _backgroundCwa;
@@ -100,6 +105,102 @@ CmaLocalWeatherService? _backgroundCmaWeather;
 JmaLocalWeatherService? _backgroundJmaWeather;
 JmaLpgmService? _backgroundJmaLpgm;
 JmaMegaquakeAdvisoryService? _backgroundJmaMegaquake;
+Map<String, Object>? _backgroundSettings;
+String _backgroundNiedSource = 'lmoni';
+
+Map<String, Object> _settingsSnapshot(SharedPreferences prefs) => {
+  for (final key in prefs.getKeys())
+    if (!BackgroundSourceReloadPlan.runtimeKeys.contains(key) &&
+        prefs.get(key) != null)
+      key: prefs.get(key)!,
+};
+
+/// Returns false when a non-station setting needs the established full reload.
+Future<bool> reloadBackgroundStationSettings() async {
+  final previous = _backgroundSettings;
+  if (previous == null) return false;
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.reload();
+  final next = _settingsSnapshot(prefs);
+  final plan = BackgroundSourceReloadPlan(previous, next);
+  if (plan.requiresFullReload) return false;
+  for (final station in plan.stations) {
+    switch (station) {
+      case 'nied':
+        _backgroundNiedMonitor!.stop();
+        NiedBackgroundWorker.instance.stop();
+        _backgroundLmoni!.stop();
+        _backgroundYahoo!.stop();
+        _backgroundWhewsNied!.stop();
+        _backgroundNiedSource = prefs.getString('nied_data_source') ?? 'lmoni';
+        if (prefs.getBool('api_source_nied_monitor_enabled') ?? true) {
+          if (_backgroundNiedSource == 'yahoo') {
+            _backgroundYahoo!.start();
+          } else if (_backgroundNiedSource != 'whews') {
+            _backgroundNiedMonitor!.configureEndpoint(_backgroundNiedSource);
+            _backgroundLmoni!.start();
+            _backgroundNiedMonitor!.start();
+          }
+        }
+      case 'kma':
+        _backgroundKma!.disconnect();
+        _backgroundWhewsKma!.stop();
+        final source = prefs.getString('kma_data_source') ?? 'pews';
+        if ((prefs.getBool('api_source_kma_pews_enabled') ?? true) &&
+            source != 'whews') {
+          _backgroundKma!.setConnectionSource(source);
+          _backgroundKma!.setExternalInputEnabled(false);
+          _backgroundKma!.connect();
+        }
+      case 'snet':
+        _backgroundSnet!.stopMonitoring();
+        _backgroundWhewsSnet!.stop();
+        if ((prefs.getBool('api_source_snet_enabled') ?? true) &&
+            prefs.getString('snet_data_source') != 'whews') {
+          unawaited(_backgroundSnet!.startMonitoring());
+        }
+      case 'trem':
+        _backgroundCwa!.stop();
+        if (prefs.getBool('trem_station_enabled') ?? true) {
+          _backgroundCwa!.start();
+        }
+      case 'seisjs':
+        _backgroundSeisJs!.disconnect();
+        if (prefs.getBool('api_source_wolfx_seisjs_enabled') ?? true) {
+          _backgroundSeisJs!.connect();
+        }
+      case 'palert':
+        _backgroundPAlert!.stop();
+        if (prefs.getBool('api_source_palert_enabled') ?? true) {
+          _backgroundPAlert!.start();
+        }
+    }
+  }
+  if (plan.stations.any(
+    (station) => const {'nied', 'kma', 'snet'}.contains(station),
+  )) {
+    await _startBackgroundWhewsStationsIfAuthorized(
+      prefs,
+      whewsNied: _backgroundWhewsNied!,
+      whewsKma: _backgroundWhewsKma!,
+      whewsSnet: _backgroundWhewsSnet!,
+      only: plan.stations,
+    );
+  }
+  _backgroundSettings = next;
+  return true;
+}
+
+Iterable<Map<String, dynamic>> backgroundLocalWeatherSnapshots() sync* {
+  final cma = _backgroundCmaWeather;
+  final jma = _backgroundJmaWeather;
+  if (cma != null) {
+    yield ForegroundStationPayload.cmaWeather(cma.stateNotifier.value);
+  }
+  if (jma != null) {
+    yield ForegroundStationPayload.jmaWeather(jma.stateNotifier.value);
+  }
+}
 
 /// 前台服务 isolate 中运行的 EEW/信息数据源管理
 ///
@@ -125,7 +226,9 @@ Future<void> startBackgroundSources({
   await stopBackgroundSources();
 
   final prefs = await SharedPreferences.getInstance();
+  await prefs.reload();
   await EpicenterRegionService.instance.load();
+  final initialSettings = _settingsSnapshot(prefs);
 
   // 恢复用户位置（与主 isolate 一致）
   final savedLat = prefs.getDouble('map_view_lat');
@@ -198,6 +301,7 @@ Future<void> startBackgroundSources({
     apiKey: prefs.getString(FanService.apiKeyPreferenceKey) ?? '',
   );
   final nowQuakeCencIr = NowQuakeCencIntensityService();
+  final jian = JianService();
   final nowQuakeCencIrEnabled =
       prefs.getBool(NowQuakeCencIntensityService.preferenceKey) ?? true;
   fan.setCencIrRequestsEnabled(!nowQuakeCencIrEnabled);
@@ -249,6 +353,9 @@ Future<void> startBackgroundSources({
   _backgroundFnetCmt = fnetCmt;
   _backgroundHinetAquaCmt = hinetAquaCmt;
   final lmoni = LmoniImageService();
+  final niedMonitor = NiedMonitorService();
+  final niedSource = prefs.getString('nied_data_source') ?? 'lmoni';
+  _backgroundNiedSource = niedSource;
   final yahoo = NiedYahooService();
   final kma = KmaMonitorService();
   final cwa = CwaStationService();
@@ -268,6 +375,7 @@ Future<void> startBackgroundSources({
     apiToken: '',
   );
   _backgroundLmoni = lmoni;
+  _backgroundNiedMonitor = niedMonitor;
   _backgroundYahoo = yahoo;
   _backgroundKma = kma;
   _backgroundCwa = cwa;
@@ -311,6 +419,9 @@ Future<void> startBackgroundSources({
   whews.onWeatherAlarm = onWeatherAlarm;
   manager.registerSource(wolfx);
   manager.registerSource(whews);
+  manager.registerSource(jian);
+  manager.setSourceEnabled(jian.name,
+    prefs.getBool(JianService.enabledPreferenceKey) ?? false);
   manager.registerSource(fan);
   manager.registerSource(nowQuakeCencIr);
   manager.registerSource(p2p);
@@ -377,24 +488,41 @@ Future<void> startBackgroundSources({
 
   _backgroundStationSubscriptions.add(
     lmoni.stationStream.listen((stations) {
-      if (stations != null)
-        onStationData(ForegroundStationPayload.nied(stations));
+      if (stations != null) {
+        onStationData(
+          ForegroundStationPayload.nied(
+            stations,
+            source: _backgroundNiedSource,
+          ),
+        );
+      }
     }),
   );
   _backgroundStationSubscriptions.add(
     yahoo.stationStream.listen((stations) {
-      if (stations != null)
-        onStationData(ForegroundStationPayload.nied(stations));
+      if (stations != null) {
+        onStationData(ForegroundStationPayload.nied(stations, source: 'yahoo'));
+      }
     }),
   );
   _backgroundStationSubscriptions.add(
     kma.stationStream.listen((stations) {
-      onStationData(ForegroundStationPayload.kma(stations));
+      onStationData(
+        ForegroundStationPayload.kma(
+          stations,
+          dataTime: kma.dataTimeNotifier.value,
+        ),
+      );
     }),
   );
   _backgroundStationSubscriptions.add(
     cwa.stationStream.listen((stations) {
-      onStationData(ForegroundStationPayload.cwa(stations));
+      onStationData(
+        ForegroundStationPayload.cwa(
+          stations,
+          dataTime: cwa.dataTimeNotifier.value,
+        ),
+      );
     }),
   );
   _backgroundStationSubscriptions.add(
@@ -404,12 +532,23 @@ Future<void> startBackgroundSources({
   );
   _backgroundStationSubscriptions.add(
     seisJs.stationStream.listen((stations) {
-      onStationData(ForegroundStationPayload.seisjs(stations));
+      onStationData(
+        ForegroundStationPayload.seisjs(
+          stations,
+          dataTime: seisJs.dataTimeNotifier.value,
+        ),
+      );
     }),
   );
   _backgroundStationSubscriptions.add(
     pAlert.stationStream.listen((stations) {
-      onStationData(ForegroundStationPayload.palert(stations));
+      onStationData(
+        ForegroundStationPayload.palert(
+          stations,
+          dataTime: pAlert.dataTimeNotifier.value,
+          receivedTime: pAlert.receivedTimeNotifier.value,
+        ),
+      );
     }),
   );
   _backgroundStationSubscriptions.add(
@@ -429,13 +568,14 @@ Future<void> startBackgroundSources({
   );
 
   if (prefs.getBool('api_source_nied_monitor_enabled') ?? true) {
-    final niedSource = prefs.getString('nied_data_source') ?? 'lmoni';
     if (niedSource == 'whews') {
       // The authenticated WHEWS station socket is started below.
     } else if (niedSource == 'yahoo') {
       yahoo.start();
     } else {
+      niedMonitor.configureEndpoint(niedSource);
       lmoni.start();
+      niedMonitor.start();
     }
   }
   if (prefs.getBool('api_source_kma_pews_enabled') ?? true) {
@@ -447,7 +587,9 @@ Future<void> startBackgroundSources({
     }
   }
   if (prefs.getBool('trem_station_enabled') ?? true) cwa.start();
-  if (prefs.getBool('api_source_snet_enabled') ?? true) snet.startMonitoring();
+  if ((prefs.getBool('api_source_snet_enabled') ?? true) &&
+      prefs.getString('snet_data_source') != 'whews')
+    snet.startMonitoring();
   if (prefs.getBool('api_source_wolfx_seisjs_enabled') ?? true)
     seisJs.connect();
   if (prefs.getBool('api_source_palert_enabled') ?? true) pAlert.start();
@@ -620,6 +762,11 @@ Future<void> startBackgroundSources({
 
   // 订阅统一事件，先经过 BackgroundEventProcessor，再把已接纳结果交给主 UI。
   _backgroundSubscriptions.add(
+    jian.onUnifiedEvent.listen(
+      (event) => _handleUnifiedEvent(event, processor, onUnifiedEvent),
+    ),
+  );
+  _backgroundSubscriptions.add(
     wolfx.onUnifiedEvent.listen(
       (event) => _handleUnifiedEvent(event, processor, onUnifiedEvent),
     ),
@@ -704,10 +851,12 @@ Future<void> startBackgroundSources({
     officialJma.onListUpdated = (items) => onSourceList('jma', items);
     officialJma.start();
   }
+  _backgroundSettings = initialSettings;
 }
 
 /// 停止前台服务 isolate 中的所有连接，供服务退出和设置重载使用。
 Future<void> stopBackgroundSources() async {
+  _backgroundSettings = null;
   _backgroundSeenStatePersistTimer?.cancel();
   _backgroundSeenStatePersistTimer = null;
   for (final timer in _backgroundTimers) {
@@ -730,6 +879,8 @@ Future<void> stopBackgroundSources() async {
     await subscription.cancel();
   }
   _backgroundAuxSubscriptions.clear();
+  _backgroundNiedMonitor?.stop();
+  if (_backgroundNiedMonitor != null) NiedBackgroundWorker.instance.stop();
   _backgroundLmoni?.stop();
   _backgroundYahoo?.stop();
   _backgroundKma?.disconnect();
@@ -760,6 +911,7 @@ Future<void> stopBackgroundSources() async {
   _backgroundJmaLpgm?.dispose();
   _backgroundJmaMegaquake?.dispose();
   _backgroundLmoni = null;
+  _backgroundNiedMonitor = null;
   _backgroundYahoo = null;
   _backgroundKma = null;
   _backgroundCwa = null;
@@ -854,6 +1006,7 @@ Future<void> _startBackgroundWhewsStationsIfAuthorized(
   required WhewsStationService whewsNied,
   required WhewsStationService whewsSnet,
   required WhewsStationService whewsKma,
+  Set<String> only = const {'nied', 'snet', 'kma'},
 }) async {
   if (!(prefs.getBool(WhewsService.apiAuthorizedPreferenceKey) ?? false)) {
     return;
@@ -871,13 +1024,24 @@ Future<void> _startBackgroundWhewsStationsIfAuthorized(
   whewsNied.setApiToken(token);
   whewsSnet.setApiToken(token);
   whewsKma.setApiToken(token);
-  if (auth && (prefs.getBool('api_source_whews_nied_enabled') ?? false)) {
+  if (only.contains('nied') &&
+      auth &&
+      (prefs.getBool('api_source_nied_monitor_enabled') ?? true) &&
+      prefs.getString('nied_data_source') == 'whews' &&
+      (prefs.getBool('api_source_whews_nied_enabled') ?? false)) {
     whewsNied.start();
   }
-  if (auth && (prefs.getBool('api_source_whews_snet_enabled') ?? false)) {
+  if (only.contains('snet') &&
+      auth &&
+      (prefs.getBool('api_source_snet_enabled') ?? true) &&
+      prefs.getString('snet_data_source') == 'whews' &&
+      (prefs.getBool('api_source_whews_snet_enabled') ?? false)) {
     whewsSnet.start();
   }
-  if (auth &&
+  if (only.contains('kma') &&
+      auth &&
+      (prefs.getBool('api_source_kma_pews_enabled') ?? true) &&
+      prefs.getString('kma_data_source') == 'whews' &&
       (prefs.getBool('api_source_whews_kma_station_enabled') ?? false)) {
     whewsKma.start();
   }
@@ -892,10 +1056,21 @@ Future<void> _verifyAndEnableBackgroundWhews(
   if (!(prefs.getBool(WhewsService.enabledPreferenceKey) ?? false)) return;
 
   final auth = WAuthService();
+  final previousApiAuthorized =
+      prefs.getBool(WhewsService.apiAuthorizedPreferenceKey) ?? false;
+  var savedApiToken = '';
+
+  void preservePreviousAuthorization() {
+    if (!previousApiAuthorized || savedApiToken.isEmpty) return;
+    whews.setApiToken(savedApiToken);
+    manager.setSourceEnabled('WHEWS', true);
+  }
+
   try {
     final credentials = await auth.credentialStore.readAndMigrate(
       preferences: prefs,
     );
+    savedApiToken = credentials.apiToken.trim();
     if (!credentials.isComplete) {
       await prefs.setBool(WhewsService.apiAuthorizedPreferenceKey, false);
       return;
@@ -914,10 +1089,16 @@ Future<void> _verifyAndEnableBackgroundWhews(
     await prefs.setBool(WhewsService.apiAuthorizedPreferenceKey, true);
     whews.setApiToken(credentials.apiToken);
     manager.setSourceEnabled('WHEWS', true);
+  } on WAuthApiException catch (error) {
+    if (error.statusCode == 401 || error.statusCode == 403) {
+      await prefs.setBool(WhewsService.apiAuthorizedPreferenceKey, false);
+      whews.setApiToken('');
+      manager.setSourceEnabled('WHEWS', false);
+    } else {
+      preservePreviousAuthorization();
+    }
   } catch (_) {
-    await prefs.setBool(WhewsService.apiAuthorizedPreferenceKey, false);
-    whews.setApiToken('');
-    manager.setSourceEnabled('WHEWS', false);
+    preservePreviousAuthorization();
   } finally {
     auth.close();
   }

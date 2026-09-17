@@ -10,6 +10,7 @@
 /// - {s}: 服务器子域名 (用于并行加载)
 /// - {r}: Retina高清标识
 class MapConfig {
+  static const String vectorBasemapKey = 'kaVector';
   static const String mapboxEewceDarkKey = 'mapboxEewceDark';
   static const String mapboxUsernameKey = 'mapbox_username';
   static const String mapboxStyleIdKey = 'mapbox_style_id';
@@ -140,6 +141,7 @@ class MapConfig {
 
   /// 所有可用瓦片选项 (显示名 → URL键名)
   static Map<String, String> get baseTileOptions => {
+    '矢量地图': vectorBasemapKey,
     'Petal 浅色': 'petalLight',
     'Petal 深色': 'petalDark',
     'ArcGIS 卫星': 'arcgisSatellite',
@@ -172,6 +174,8 @@ class MapConfig {
   /// 根据键名获取瓦片URL
   static String urlByKey(String key) {
     switch (key) {
+      case vectorBasemapKey:
+        return '';
       case 'petalDark':
         return petalDark;
       case 'petalLight':

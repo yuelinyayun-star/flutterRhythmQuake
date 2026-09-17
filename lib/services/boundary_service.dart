@@ -121,6 +121,10 @@ class BoundaryService {
 
   List<BoundaryLayer> get layers => _layers;
   List<CityLabel> get cityLabels => _cityLabels;
+  static final List<CityLabel> overviewLabels = List.unmodifiable([
+    ..._defaultProvinceLabels,
+    ..._defaultCityLabels,
+  ]);
   bool get isLoaded => _isLoaded;
 
   /// 默认省份标签

@@ -36,6 +36,53 @@ void main() {
     expect(NiedMonitorService.liveCandidateAttemptCountForTest(0), 0);
   });
 
+  test('failed live fetch after a received frame requires upstream resync', () {
+    final previous = DateTime(2026, 9, 13, 17, 45, 30);
+
+    expect(
+      NiedMonitorService.shouldRequireUpstreamResyncForTest(
+        replayEnabled: false,
+        attempted: true,
+        fetchedAny: false,
+        previousFrameTime: previous,
+      ),
+      isTrue,
+    );
+    expect(
+      NiedMonitorService.shouldRequireUpstreamResyncForTest(
+        replayEnabled: true,
+        attempted: true,
+        fetchedAny: false,
+        previousFrameTime: previous,
+      ),
+      isFalse,
+    );
+    expect(
+      NiedMonitorService.shouldRequireUpstreamResyncForTest(
+        replayEnabled: false,
+        attempted: true,
+        fetchedAny: false,
+        previousFrameTime: null,
+      ),
+      isFalse,
+    );
+  });
+
+  test('reconnected live fetch starts at authoritative upstream time', () {
+    final previous = DateTime(2026, 9, 13, 17, 40, 0);
+    final latest = DateTime(2026, 9, 13, 17, 45, 59);
+
+    final candidates = NiedMonitorService.buildRecoveryCandidateTimesForTest(
+      latest,
+    );
+
+    expect(candidates, [latest]);
+    expect(
+      candidates,
+      isNot(contains(previous.add(const Duration(seconds: 1)))),
+    );
+  });
+
   test('GIF live candidates use latest_time without local projection', () {
     final latest = DateTime(2026, 6, 27, 2, 18, 2);
 

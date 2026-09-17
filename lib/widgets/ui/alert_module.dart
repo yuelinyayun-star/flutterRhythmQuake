@@ -17,9 +17,12 @@ import '../../core/source_estimation/station_event_tracker.dart';
 import '../../core/utils/quake_time.dart';
 import '../../core/utils/volcano_icon_assets.dart';
 import 'ui_scale.dart';
+import 'cmt_badge.dart';
 
 class AlertModule extends StatefulWidget {
-  const AlertModule({super.key});
+  const AlertModule({super.key, this.layoutBuilder});
+
+  final Widget Function(Widget content, Widget bottomStrip)? layoutBuilder;
 
   @override
   State<AlertModule> createState() => _AlertModuleState();
@@ -48,7 +51,7 @@ class _AlertModuleState extends State<AlertModule> {
       SourceEstimateQualityCalculator();
   static const SourceStationPhaseClassifier _sourcePhaseClassifier =
       SourceStationPhaseClassifier();
-  static const int _unifiedPageSize = 4;
+  int get _unifiedPageSize => UiScale.isPhone(context) ? 1 : 4;
 
   static const double _refWidth = 1700.0;
 
@@ -111,11 +114,32 @@ class _AlertModuleState extends State<AlertModule> {
               sourceUnified,
             );
 
-            if (!hasUnified) return alertContent;
+            if (!hasUnified) {
+              return widget.layoutBuilder?.call(
+                    alertContent,
+                    _bottomStrip(context),
+                  ) ??
+                  alertContent;
+            }
 
-            final pageIndicator = unifiedCount > _unifiedPageSize
-                ? '${_unifiedPageIndex + 1}/${_unifiedPageCount(unifiedCount)}'
+            final followEew =
+                UiScale.isPhone(context) &&
+                provider.unifiedEvents.any((event) => event.isEew);
+            final pageItemCount = followEew
+                ? provider.unifiedEvents.where((event) => event.isEew).length
+                : unifiedCount;
+            final focusedInfo =
+                followEew && provider.mobileEewDisplayEvent?.isEew == false;
+            final pageIndicator =
+                !focusedInfo && pageItemCount > _unifiedPageSize
+                ? '${_unifiedPageIndex + 1}/${_unifiedPageCount(pageItemCount)}'
                 : null;
+            if (widget.layoutBuilder != null) {
+              return widget.layoutBuilder!(
+                alertContent,
+                _bottomStrip(context, pageText: pageIndicator),
+              );
+            }
             return Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -137,6 +161,7 @@ class _AlertModuleState extends State<AlertModule> {
     return Object.hash(
       Object.hashAll(unifiedEvents.map((event) => event.hashCode)),
       provider.currentUnifiedIndex,
+      provider.mobileCameraDisplayEvent?.hashCode,
       provider.currentEvent?.hashCode,
       provider.currentDistance,
       provider.estimatedIntensity,
@@ -768,8 +793,20 @@ class _AlertModuleState extends State<AlertModule> {
     final events = [...provider.unifiedEvents, ?sourceUnified];
     final eew = events.where((e) => e.isEew).toList();
     final info = events.where((e) => !e.isEew).toList();
-    final ordered = [...eew, ...info];
-    final visibleEvents = _visibleUnifiedPage(ordered);
+    final followEew = UiScale.isPhone(context) && eew.isNotEmpty;
+    final ordered = followEew ? eew : [...eew, ...info];
+    final cameraEvent = provider.mobileCameraDisplayEvent;
+    final followInfoCamera =
+        UiScale.isPhone(context) && sourceUnified == null && cameraEvent != null;
+    final List<UnifiedQuakeData> visibleEvents;
+    if (followEew || followInfoCamera) {
+      _stopUnifiedPageTimer();
+      final selected = cameraEvent ?? eew.first;
+      _unifiedPageIndex = ordered.indexOf(selected).clamp(0, ordered.length - 1);
+      visibleEvents = [selected];
+    } else {
+      visibleEvents = _visibleUnifiedPage(ordered);
+    }
 
     // 轮播模式：每页固定 _unifiedPageSize 槽位，不足用 null 占位，防止高度跳动
     final paddedEvents = ordered.length > _unifiedPageSize
@@ -807,12 +844,8 @@ class _AlertModuleState extends State<AlertModule> {
   }
 
   void _syncUnifiedPagination(List<UnifiedQuakeData> ordered) {
-    final signature = ordered
-        .map(
-          (e) =>
-              '${e.source}:${e.eventId}:${e.reportNumText}:${e.arrivedAt?.millisecondsSinceEpoch ?? 0}',
-        )
-        .join('|');
+    final signature =
+        '$_unifiedPageSize:${ordered.map((e) => '${e.source}:${e.eventId}:${e.reportNumText}:${e.arrivedAt?.millisecondsSinceEpoch ?? 0}').join('|')}';
 
     if (signature != _unifiedPageSignature) {
       _unifiedPageSignature = signature;
@@ -1021,6 +1054,9 @@ class _AlertModuleState extends State<AlertModule> {
 
   Widget _buildCompactBadge(UnifiedQuakeData event) {
     final color = _uicColorFromClass(event.className);
+    if (CmtBadge.supports(event)) {
+      return CmtBadge(event: event, size: _s(72, context), color: color);
+    }
     if (_isSourceEstimationUnified(event)) {
       return _buildSourceEstimationBadge(event, color);
     }

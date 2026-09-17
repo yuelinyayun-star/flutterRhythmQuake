@@ -15,13 +15,14 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
-from aiohttp import ClientSession, ClientTimeout, web
+from aiohttp import ClientError, ClientSession, ClientTimeout, web
 
 
 ISSUER = "https://auth.beecld.com"
 AUTHORIZE_URL = f"{ISSUER}/oauth2/authorize"
 TOKEN_URL = f"{ISSUER}/oauth2/token"
 USERINFO_URL = f"{ISSUER}/oauth2/userinfo"
+VERIFY_API_TOKEN_URL = f"{ISSUER}/api/token/verify"
 DEFAULT_CLIENT_ID = "wauth_49ad8dff5251645797672e5d"
 DEFAULT_REDIRECT_URI = "https://quake.yuelinrhythm.top/wauth/callback"
 DEFAULT_SCOPE = "openid profile email"
@@ -372,6 +373,98 @@ async def _fetch_userinfo(request: web.Request, access_token: str) -> dict[str, 
         return payload
 
 
+async def _verify_api_token(request: web.Request, api_token: str) -> dict[str, Any]:
+    session: ClientSession = request.app["http_session"]
+    async with session.post(
+        VERIFY_API_TOKEN_URL,
+        headers={
+            "Accept": "application/json",
+            "Authorization": f"Bearer {api_token}",
+        },
+    ) as response:
+        if response.status < 200 or response.status >= 300:
+            raise WAuthUpstreamError(
+                status=response.status,
+                message="WAuth API token verification failed",
+            )
+        try:
+            payload = await response.json(content_type=None)
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as error:
+            raise WAuthUpstreamError(
+                status=502,
+                message="WAuth API token verification returned invalid JSON",
+            ) from error
+        if not isinstance(payload, dict):
+            raise WAuthUpstreamError(
+                status=502,
+                message="WAuth API token verification was not an object",
+            )
+        return payload
+
+
+def _request_bearer_token(request: web.Request) -> str | None:
+    authorization = request.headers.get("Authorization", "")
+    scheme, separator, token = authorization.partition(" ")
+    if separator != " " or scheme.lower() != "bearer":
+        return None
+    token = token.strip()
+    if not token or len(token) > 8192 or any(character.isspace() for character in token):
+        return None
+    return token
+
+
+def _upstream_proxy_error(error: WAuthUpstreamError) -> web.Response:
+    if error.status in {401, 403}:
+        return _json_response(
+            {"error": "invalid_token", "message": "WAuth token was rejected"},
+            status=error.status,
+        )
+    return _json_response(
+        {"error": "upstream_unavailable", "message": "WAuth service is unavailable"},
+        status=502,
+    )
+
+
+async def handle_userinfo_proxy(request: web.Request) -> web.Response:
+    access_token = _request_bearer_token(request)
+    if access_token is None:
+        return _json_response(
+            {"error": "missing_token", "message": "Bearer access token is required"},
+            status=401,
+        )
+    try:
+        fetcher = request.app.get("userinfo_fetcher", _fetch_userinfo)
+        payload = await fetcher(request, access_token)
+    except WAuthUpstreamError as error:
+        return _upstream_proxy_error(error)
+    except (ClientError, asyncio.TimeoutError, OSError):
+        return _json_response(
+            {"error": "upstream_unavailable", "message": "WAuth service is unavailable"},
+            status=502,
+        )
+    return _json_response(payload)
+
+
+async def handle_api_token_verify_proxy(request: web.Request) -> web.Response:
+    api_token = _request_bearer_token(request)
+    if api_token is None:
+        return _json_response(
+            {"error": "missing_token", "message": "Bearer API token is required"},
+            status=401,
+        )
+    try:
+        verifier = request.app.get("api_token_verifier", _verify_api_token)
+        payload = await verifier(request, api_token)
+    except WAuthUpstreamError as error:
+        return _upstream_proxy_error(error)
+    except (ClientError, asyncio.TimeoutError, OSError):
+        return _json_response(
+            {"error": "upstream_unavailable", "message": "WAuth service is unavailable"},
+            status=502,
+        )
+    return _json_response(payload)
+
+
 
 async def handle_root(request: web.Request) -> web.Response:
     return _json_response(
@@ -380,6 +473,8 @@ async def handle_root(request: web.Request) -> web.Response:
             "session": "/wauth/session",
             "callback": "/wauth/callback",
             "result": "/wauth/result",
+            "userinfo": "/wauth/userinfo",
+            "verifyApiToken": "/wauth/api/token/verify",
             "health": "/health",
         }
     )
@@ -586,6 +681,8 @@ def create_app() -> web.Application:
     app.router.add_post("/wauth/session", handle_session)
     app.router.add_get("/wauth/callback", handle_callback)
     app.router.add_get("/wauth/result", handle_result)
+    app.router.add_get("/wauth/userinfo", handle_userinfo_proxy)
+    app.router.add_post("/wauth/api/token/verify", handle_api_token_verify_proxy)
     return app
 
 
