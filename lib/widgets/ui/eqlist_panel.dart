@@ -8,6 +8,7 @@ import '../../models/quake_message.dart';
 import '../../models/whews_catalog.dart';
 import '../../core/utils/quake_time.dart';
 import '../../utils/kma_location.dart';
+import '../../utils/catalog_location.dart';
 import 'package:intl/intl.dart';
 import 'ui_scale.dart';
 
@@ -496,6 +497,9 @@ class _EqCardState extends State<_EqCard> {
     if (_isJmaHypocenterInvestigating) return '震源 調査中';
     if (eq.source == QuakeSourceType.kma_eq) {
       return kmaDisplayLocation(eq.location, eq.latitude, eq.longitude);
+    }
+    if (unifiedCatalogSources.containsValue(eq.source)) {
+      return catalogDisplayLocation(eq.location, eq.latitude, eq.longitude);
     }
     return eq.location;
   }

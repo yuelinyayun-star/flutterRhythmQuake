@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import '../services/epicenter_region_service.dart';
+import 'fe_english_names.dart';
 
 ///
 /// 全球地震位置名称数据库 (FE Region Database)
@@ -65605,6 +65606,21 @@ final List<String> _feNames = [
   '加拉帕戈斯三角洲地区',
   '中国西藏、印度、缅甸边境地区',
 ];
+
+final Map<String, int> _englishRegionIds = {
+  for (var i = 0; i < feEnglishNames.length; i++)
+    _normalizeRegionName(feEnglishNames[i]): i + 1,
+};
+
+String _normalizeRegionName(String name) =>
+    name.trim().toUpperCase().replaceAll(RegExp(r'\s+'), ' ');
+
+/// Exact published region-name lookup, including reports without coordinates.
+String? translateFERegionName(String name) {
+  final id = _englishRegionIds[_normalizeRegionName(name)];
+  if (id == null || id > _feNames.length) return null;
+  return _feNames[id - 1];
+}
 
 String getFEName(double lat, double lng) {
   if (!lat.isFinite || !lng.isFinite) return '';

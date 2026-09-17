@@ -29,7 +29,7 @@ void main() {
 
   for (final width in [800.0, 1600.0]) {
     for (final count in [0, 1, 4, 5, 6]) {
-      testWidgets('$count APIs wrap after four at width $width', (
+      testWidgets('$count APIs wrap after five at width $width', (
         tester,
       ) async {
         tester.view.physicalSize = Size(width, 900);
@@ -64,9 +64,9 @@ void main() {
           );
           if (i >= count) continue;
           final rect = tester.getRect(find.text(labels[i]));
-          final rowStart = tester.getRect(find.text(labels[(i ~/ 4) * 4]));
+          final rowStart = tester.getRect(find.text(labels[(i ~/ 5) * 5]));
           expect(rect.top, closeTo(rowStart.top, 0.01));
-          if (i >= 4) {
+          if (i >= 5) {
             expect(
               rect.top,
               greaterThan(tester.getRect(find.text(labels[0])).bottom),

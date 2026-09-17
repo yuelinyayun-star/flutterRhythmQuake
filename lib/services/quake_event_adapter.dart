@@ -404,7 +404,9 @@ class QuakeEventAdapter {
       case 'va':
         return _whewsVolcanoInfo(data);
       default:
-        return _whewsGenericInfo(sourceKey, data);
+        return _whewsGenericInfo(sourceKey, data).copyWith(
+          sourcePayload: Map<String, dynamic>.unmodifiable(raw),
+        );
     }
   }
 

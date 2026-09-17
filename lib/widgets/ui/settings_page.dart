@@ -2722,7 +2722,7 @@ class _SettingsPageState extends State<SettingsPage>
     return _buildSettingRow(
       title: '地图底图',
       subtitle: _tileKey == MapConfig.vectorBasemapKey
-          ? '数据来源：KA · DataV、GeoJSON、JMA、GeoJSON Maps'
+          ? null
           : '调整主地图底图样式',
       leading: Icons.layers_outlined,
       control: _buildDropdown<String>(
@@ -4753,7 +4753,7 @@ class _SettingsPageState extends State<SettingsPage>
 
   Widget _buildSettingRow({
     required String title,
-    required String subtitle,
+    String? subtitle,
     required IconData leading,
     required Widget control,
   }) {
@@ -4761,7 +4761,9 @@ class _SettingsPageState extends State<SettingsPage>
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 560;
         final titleBlock = Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: subtitle == null
+              ? CrossAxisAlignment.center
+              : CrossAxisAlignment.start,
           children: [
             Container(
               width: 34,
@@ -4788,15 +4790,17 @@ class _SettingsPageState extends State<SettingsPage>
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      subtitle,
-                      style: const TextStyle(
-                        color: _mutedTextColor,
-                        fontSize: 12,
-                        height: 1.25,
+                    if (subtitle != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle,
+                        style: const TextStyle(
+                          color: _mutedTextColor,
+                          fontSize: 12,
+                          height: 1.25,
+                        ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),

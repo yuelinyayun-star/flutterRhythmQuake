@@ -302,7 +302,7 @@ class BackgroundEventProcessor {
       final digits = event.eventId.replaceAll(RegExp(r'[^0-9]'), '');
       if (digits.length >= 12) return digits;
     }
-    return catalogEventId(event.source, event.eventId);
+    return catalogCanonicalEventId(event, _seenUnifiedInfoEvents);
   }
 
   String _jmaInfoTimeToken(DateTime time) {
@@ -569,8 +569,8 @@ class BackgroundEventProcessor {
   }
 
   bool _shouldSuppressSeenUnifiedInfoEvent(UnifiedQuakeData event) {
-    final reportKey = catalogReportKey(event);
-    if (reportKey != null && _seenUnifiedInfoEvents.containsKey(reportKey)) {
+    if (hasSeenCatalogReport(event, _seenUnifiedInfoEvents)) {
+      _rememberUnifiedInfoEvent(event);
       return true;
     }
     final key = _seenUnifiedInfoEventKey(event);
@@ -583,10 +583,9 @@ class BackgroundEventProcessor {
     final key = _seenUnifiedInfoEventKey(event);
     final isNew = !_seenUnifiedInfoEvents.containsKey(key);
     _seenUnifiedInfoEvents[key] = DateTime.now().toUtc();
-    final reportKey = catalogReportKey(event);
-    final isNewReport = reportKey != null &&
-        !_seenUnifiedInfoEvents.containsKey(reportKey);
-    if (reportKey != null) {
+    var isNewReport = false;
+    for (final reportKey in catalogReportKeys(event, _seenUnifiedInfoEvents)) {
+      isNewReport |= !_seenUnifiedInfoEvents.containsKey(reportKey);
       _seenUnifiedInfoEvents[reportKey] = DateTime.now().toUtc();
     }
     if (isNew || isNewReport) onSeenStateChanged?.call();
@@ -597,7 +596,8 @@ class BackgroundEventProcessor {
     UnifiedQuakeData event,
   ) {
     if (!_isSameInfoEvent(oldEvent, event)) return event;
-    var merged = event.copyWith(eventId: oldEvent.eventId);
+    var merged = unifiedCatalogSources.containsKey(event.source)
+        ? event : event.copyWith(eventId: oldEvent.eventId);
     if (_jmaInfoTitleRank(event.titleText) <
         _jmaInfoTitleRank(oldEvent.titleText)) {
       merged = merged.copyWith(titleText: oldEvent.titleText);

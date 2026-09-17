@@ -334,13 +334,13 @@ class _SourceDashboardState extends State<SourceDashboard> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        for (var start = 0; start < children.length; start += 4)
+        for (var start = 0; start < children.length; start += 5)
           Padding(
             padding: EdgeInsets.only(top: start == 0 ? 0 : _s(2, context)),
             child: Wrap(
               spacing: _s(7, context),
               runSpacing: _s(2, context),
-              children: children.skip(start).take(4).toList(),
+              children: children.skip(start).take(5).toList(),
             ),
           ),
       ],

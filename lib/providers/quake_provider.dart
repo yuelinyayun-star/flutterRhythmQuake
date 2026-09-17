@@ -2175,7 +2175,7 @@ class QuakeProvider with ChangeNotifier {
       final digits = event.eventId.replaceAll(RegExp(r'[^0-9]'), '');
       if (digits.length >= 12) return digits;
     }
-    return catalogEventId(event.source, event.eventId);
+    return catalogCanonicalEventId(event, _backgroundSeenUnifiedInfoEvents);
   }
 
   String _jmaInfoTimeToken(DateTime time) {
@@ -2259,8 +2259,9 @@ class QuakeProvider with ChangeNotifier {
       _backgroundAcceptedEewSeenAt[key] = now;
     } else {
       _backgroundSeenUnifiedInfoEvents[key] = now;
-      final reportKey = catalogReportKey(event);
-      if (reportKey != null) _backgroundSeenUnifiedInfoEvents[reportKey] = now;
+      for (final reportKey in catalogReportKeys(event, _backgroundSeenUnifiedInfoEvents)) {
+        _backgroundSeenUnifiedInfoEvents[reportKey] = now;
+      }
     }
     _pruneBackgroundSeenState();
     _backgroundSeenStateDirty = true;
@@ -3244,12 +3245,11 @@ class QuakeProvider with ChangeNotifier {
         notifyListeners();
         return;
       }
-      final reportKey = catalogReportKey(event);
-      if (reportKey != null &&
-          _backgroundSeenUnifiedInfoEvents.containsKey(reportKey)) {
+      if (hasSeenCatalogReport(event, _backgroundSeenUnifiedInfoEvents)) {
         // Another transport may use its own ID, title or translated place name.
         // Identical observations must not announce again or renew the timer.
         _syncUnifiedToListBucket(event);
+        _rememberBackgroundAcceptedUnifiedEvent(event);
         notifyListeners();
         return;
       }
@@ -3702,7 +3702,8 @@ class QuakeProvider with ChangeNotifier {
   ) {
     if (!_isSameUnifiedInfoEvent(oldEvent, event)) return event;
 
-    var merged = event.copyWith(eventId: oldEvent.eventId);
+    var merged = unifiedCatalogSources.containsKey(event.source)
+        ? event : event.copyWith(eventId: oldEvent.eventId);
 
     if (_jmaInfoTitleRank(event.titleText) <
         _jmaInfoTitleRank(oldEvent.titleText)) {
