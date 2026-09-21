@@ -15,7 +15,15 @@ class PAlertDetector {
     };
   }
 
-  final _engine = ShakeDetectionService.forSource('palert');
+  // Application-specific noise gate, independent of the marker threshold.
+  static const double minimumDetectionPgaGal = 0.8;
+  static const int minimumJointStations = 3;
+
+  final _engine = ShakeDetectionService.forSource(
+    'palert',
+    minimumJointStations: minimumJointStations,
+    allowActiveRiseShortcut: false,
+  );
   final Map<String, NiedStation> _stations = {};
   final Map<String, int?> _currentCwaIndices = {};
   String _layout = '';
@@ -47,6 +55,10 @@ class PAlertDetector {
       _engine.setStations(_stations.values.toList());
     }
     var changed = false;
+    // A cached/duplicate sample cannot vote again when another station updates.
+    for (final state in _stations.values) {
+      state.activity = 0;
+    }
     for (final station in ordered) {
       final state = _stations[station.id]!;
       final time = station.dataTime;
@@ -77,6 +89,9 @@ class PAlertDetector {
       state.lastUpdate = receivedAt;
       _currentCwaIndices[station.id] = station.cwaIntensityIndex;
       state.update(station.detectionLevel);
+      // Keep the original level/history for rise detection and display. Only
+      // the detection vote is gated, including when an old hold is active.
+      if (station.pgaGal! < minimumDetectionPgaGal) state.activity = 0;
       changed = true;
     }
     if (changed) _engine.processUpdate();
@@ -87,6 +102,7 @@ class PAlertDetector {
   void expireStale(DateTime now) {
     var changed = false;
     for (final state in _stations.values) {
+      state.activity = 0;
       final receivedAt = state.lastReceivedAt;
       if (receivedAt != null &&
           now.difference(receivedAt) > PAlertService.frameStaleAfter) {

@@ -82,11 +82,22 @@ class ShakeDetectionService {
   static final ShakeDetectionService _instance =
       ShakeDetectionService._internal();
   factory ShakeDetectionService() => _instance;
-  ShakeDetectionService._internal() : _sourceId = 'nied';
+  ShakeDetectionService._internal()
+    : _sourceId = 'nied',
+      _minimumJointStations = 0,
+      _allowActiveRiseShortcut = true;
 
   /// Independent state and timers while reusing the NIED detection algorithm.
-  ShakeDetectionService.forSource(this._sourceId);
+  ShakeDetectionService.forSource(
+    this._sourceId, {
+    int minimumJointStations = 0,
+    bool allowActiveRiseShortcut = true,
+  }) : assert(minimumJointStations >= 0),
+       _minimumJointStations = minimumJointStations,
+       _allowActiveRiseShortcut = allowActiveRiseShortcut;
   final String _sourceId;
+  final int _minimumJointStations;
+  final bool _allowActiveRiseShortcut;
 
   static const ShakeDetectionSnapshot idleSnapshot = ShakeDetectionSnapshot(
     stage: ShakeDetectStage.idle,
@@ -376,7 +387,7 @@ class ShakeDetectionService {
         continue;
       }
 
-      if (station.isActive && station.ascend > 0) {
+      if (_allowActiveRiseShortcut && station.isActive && station.ascend > 0) {
         _chainActivate(index, activeStations, checkedStations);
         continue;
       }
@@ -403,7 +414,10 @@ class ShakeDetectionService {
           possibleNearbyStationIds.length - weakRiseCount / 2.0;
 
       final nearbyCount = nearbyStationIds.length.clamp(0, nearbyLength);
-      final numThres = niedStationCountThreshold(_sensitivity, nearbyCount);
+      final numThres = math.max(
+        _minimumJointStations.toDouble(),
+        niedStationCountThreshold(_sensitivity, nearbyCount),
+      );
       var activityThres = niedActivityThreshold(_sensitivity, nearbyCount);
 
       if (nearbyActiveNum >= numThres) {

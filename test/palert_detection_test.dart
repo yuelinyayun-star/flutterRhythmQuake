@@ -51,7 +51,7 @@ void main() {
   setUp(() => detector = PAlertDetector());
   tearDown(() => detector.dispose());
 
-  test('joint PGA rise inside CWA zero reaches the NIED weak stage', () {
+  test('joint PGA rise inside CWA zero is below the P-Alert noise gate', () {
     detector.update(pgaFrame(start, 0.02), now: start);
     final time = start.add(const Duration(seconds: 1));
     final raw = pgaFrame(time, 0.6);
@@ -59,10 +59,10 @@ void main() {
     final signals = <PAlertDetectionSignal>[];
     detector.onCwaIntensityChanged = (value) => signals.add(gate.update(value));
     detector.update(raw, now: time);
-    expect(detector.snapshot.stage, ShakeDetectStage.weak);
-    expect(detector.snapshot.gridCells, isNotEmpty);
-    expect(detector.confirmedCwaMaxShindo, 0);
-    expect(signals, [PAlertDetectionSignal.none]);
+    expect(detector.snapshot.stage, ShakeDetectStage.idle);
+    expect(detector.snapshot.gridCells, isEmpty);
+    expect(detector.confirmedCwaMaxShindo, -1);
+    expect(signals, isEmpty);
     expect(raw.every((s) => s.cwaIntensityIndex == 0), isTrue);
     expect(raw.every((s) => s.pgaGal == 0.6), isTrue);
     expect(raw.first.estimatedContinuousShindo, closeTo(0.2563025, 1e-6));
@@ -75,6 +75,132 @@ void main() {
       expect(detector.snapshot.gridCells, isEmpty);
       expect(detector.confirmedCwaMaxShindo, -1);
     }
+  });
+
+  test('P-Alert detection floor is inclusive and independent of markers', () {
+    for (final pga in [0.799999, 0.8, 0.800001]) {
+      detector.reset();
+      detector.update(pgaFrame(start, 0.02), now: start);
+      final time = start.add(const Duration(seconds: 1));
+      final raw = pgaFrame(time, pga);
+      detector.update(raw, now: time);
+      expect(detector.snapshot.gridCells.isNotEmpty, pga >= 0.8);
+      expect(raw.every((s) => s.pgaGal == pga), isTrue);
+      expect(raw.every((s) => s.detectionLevel >= 6), isTrue);
+    }
+  });
+
+  test('one or two neighboring stations cannot form a P-Alert detection', () {
+    for (final sensitivity in [1, 2, 3]) {
+      for (final count in [1, 2]) {
+        detector.reset();
+        detector.setSensitivity(sensitivity);
+        detector.update(frame(start, List.filled(count, 0)), now: start);
+        final time = start.add(const Duration(seconds: 1));
+        detector.update(frame(time, List.filled(count, 4)), now: time);
+        expect(detector.snapshot.gridCells, isEmpty);
+      }
+    }
+  });
+
+  testWidgets('low-amplitude noise cannot keep an activated grid alive', (
+    tester,
+  ) async {
+    final original = ShakeDetectionService.forSource('original-palert-policy');
+    final originalStations = [
+      for (var i = 0; i < 6; i++)
+        NiedStation(
+          id: i,
+          code: 'SIM$i',
+          name: 'SIM$i',
+          coordinate: frame(start, List.filled(6, 0))[i].coordinate,
+          network: 'TEST',
+          prefecture: 'TEST',
+          expireSeconds: NiedStation.kaExpireSeconds,
+        ),
+    ];
+    original.setStations(originalStations);
+    var originalSnapshot = ShakeDetectionService.idleSnapshot;
+    original.onDetectionSnapshotChanged = (value) => originalSnapshot = value;
+    void feed(DateTime time, double pga) {
+      final raw = pgaFrame(time, pga);
+      for (var i = 0; i < originalStations.length; i++) {
+        originalStations[i].lastDataTime = time;
+        originalStations[i].lastReceivedAt = time;
+        originalStations[i].update(raw[i].detectionLevel);
+      }
+      original.processUpdate();
+      detector.update(raw, now: time);
+    }
+
+    addTearDown(() => original.reset(detachStations: true));
+    feed(start, 0.02);
+    final rise = start.add(const Duration(seconds: 1));
+    feed(rise, 1.5);
+    expect(detector.snapshot.gridCells, isNotEmpty);
+    for (var i = 1; i <= 13; i++) {
+      await tester.pump(const Duration(seconds: 1));
+      final time = rise.add(Duration(seconds: i));
+      feed(time, i.isEven ? 0.6 : 0.3);
+      if (i == 1) expect(detector.snapshot.gridCells, isNotEmpty);
+      if (i >= 11) expect(detector.snapshot.gridCells, isEmpty);
+    }
+    expect(detector.confirmedCwaMaxShindo, -1);
+    expect(originalSnapshot.gridCells, isNotEmpty);
+    original.reset(detachStations: true);
+    detector.dispose();
+  });
+
+  testWidgets('an active rising outlier cannot bypass joint renewal', (
+    tester,
+  ) async {
+    detector.update(frame(start, List.filled(6, 0)), now: start);
+    final rise = start.add(const Duration(seconds: 1));
+    detector.update(frame(rise, List.filled(6, 1)), now: rise);
+    expect(detector.snapshot.gridCells, isNotEmpty);
+    for (var i = 1; i <= 13; i++) {
+      await tester.pump(const Duration(seconds: 1));
+      final time = rise.add(Duration(seconds: i));
+      detector.update(
+        frame(time, [i.isEven ? 3 : 2, 0, 0, 0, 0, 0]),
+        now: time,
+      );
+    }
+    expect(detector.snapshot.gridCells, isEmpty);
+    detector.dispose();
+  });
+
+  testWidgets('cached high neighbors cannot renew from another fresh station', (
+    tester,
+  ) async {
+    detector.update(frame(start, List.filled(6, 0)), now: start);
+    final rise = start.add(const Duration(seconds: 1));
+    final high = frame(rise, List.filled(6, 2));
+    detector.update(high, now: rise);
+    expect(detector.snapshot.gridCells, isNotEmpty);
+    for (var i = 1; i <= 11; i++) {
+      await tester.pump(const Duration(seconds: 1));
+      final time = rise.add(Duration(seconds: i));
+      detector.update([
+        frame(time, [2]).first,
+        ...high.skip(1),
+      ], now: time);
+    }
+    expect(detector.snapshot.gridCells, isEmpty);
+    detector.dispose();
+  });
+
+  testWidgets('fresh joint above-floor shaking retains the hold', (
+    tester,
+  ) async {
+    detector.update(pgaFrame(start, 0.02), now: start);
+    for (var i = 1; i <= 14; i++) {
+      await tester.pump(const Duration(seconds: 1));
+      final time = start.add(Duration(seconds: i));
+      detector.update(pgaFrame(time, 1.5), now: time);
+      expect(detector.snapshot.gridCells, isNotEmpty);
+    }
+    detector.dispose();
   });
 
   test('CWA sound boundary updates even without a new engine snapshot', () {
@@ -271,11 +397,15 @@ void main() {
     },
   );
 
-  test('P-Alert equals direct NIED engine results for each sensitivity', () {
+  test('P-Alert matches shared engine with its source-specific policy', () {
     for (var sensitivity = 1; sensitivity <= 3; sensitivity++) {
       detector.reset();
       detector.setSensitivity(sensitivity);
-      final reference = ShakeDetectionService.forSource('reference');
+      final reference = ShakeDetectionService.forSource(
+        'reference',
+        minimumJointStations: PAlertDetector.minimumJointStations,
+        allowActiveRiseShortcut: false,
+      );
       reference.setSensitivity(sensitivity);
       final stations = [
         for (final s in frame(start, List.filled(6, 0)))
@@ -307,6 +437,9 @@ void main() {
             stations[i].lastDataTime = time;
             stations[i].lastReceivedAt = time;
             stations[i].update(input[i].detectionLevel);
+            if (input[i].pgaGal! < PAlertDetector.minimumDetectionPgaGal) {
+              stations[i].activity = 0;
+            }
           }
           reference.processUpdate();
           detector.update(input, now: time);

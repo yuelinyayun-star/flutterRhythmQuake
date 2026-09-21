@@ -57,6 +57,7 @@ import '../../services/sources/china_weather_alert_map_service.dart';
 import 'eew_wave_camera_follow_gate.dart';
 import 'cenc_ir_focus.dart';
 import 'desktop_event_camera_focus.dart';
+import 'station_detection_focus.dart';
 import '../ui/ui_scale.dart';
 import 'jma_info_focus.dart';
 import 'finite_camera_constraint.dart';
@@ -581,7 +582,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   final EewWaveCameraFollowGate _eewWaveCameraFollowGate =
       EewWaveCameraFollowGate();
   String _lastEewTakeoverSignature = '';
-  String? _preferredStationFocusSource;
   String? _lastSelectedHistoryCameraKey;
   bool _pendingNiedStationFocus = false;
   bool _pendingKmaStationFocus = false;
@@ -1432,9 +1432,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _lastKmaStationFocusSignature = null;
     _lastKmaStationFocusAt = null;
     _pendingKmaStationFocus = false;
-    if (_preferredStationFocusSource == 'kma') {
-      _preferredStationFocusSource = null;
-    }
     _notifyLayer(_kmaLayerRevision);
     _emitStationSummary();
   }
@@ -1628,9 +1625,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       _lastTremStationFocusSignature = null;
       _lastTremStationFocusAt = null;
       _pendingTremStationFocus = false;
-      if (_preferredStationFocusSource == 'trem') {
-        _preferredStationFocusSource = null;
-      }
       _notifyLayer(_cwaLayerRevision);
       _emitStationSummary();
       provider.updateSourceStatus('TREM', SourceStatus.disconnected);
@@ -2304,6 +2298,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                     _niedGridCellCenters
                       ..clear()
                       ..addAll(centers);
+                    _queueCameraPolicyRefresh();
                     if (_pendingNiedStationFocus) {
                       _pendingNiedStationFocus = false;
                       _requestNiedStationFocus(force: true);
@@ -2342,6 +2337,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                     _kmaGridCellCenters
                       ..clear()
                       ..addAll(centers);
+                    _queueCameraPolicyRefresh();
                     if (_pendingKmaStationFocus) {
                       _pendingKmaStationFocus = false;
                       _requestKmaStationFocus(force: true);
@@ -2377,6 +2373,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                   blinkOn: blinkOn,
                   displayShindo0: _displayShindo0,
                   onGridCellsChanged: (_) {
+                    _queueCameraPolicyRefresh();
                     if (_pendingTremStationFocus) {
                       _pendingTremStationFocus = false;
                       _requestTremStationFocus(force: true);
@@ -3391,7 +3388,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     final provider = _quakeProvider;
     if (provider == null) return false;
     if (provider.unifiedEvents.isNotEmpty) return true;
-    if (_preferredStationFocusSource != null) return true;
+    if (_stationDetectionFocus().points.isNotEmpty) return true;
     if (_preferredEventFocus != null &&
         _preferredEventFocusUntil != null &&
         DateTime.now().isBefore(_preferredEventFocusUntil!)) {
@@ -3644,9 +3641,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _lastNiedStationFocusSignature = null;
     _lastNiedStationFocusAt = null;
     _pendingNiedStationFocus = false;
-    if (_preferredStationFocusSource == 'nied') {
-      _preferredStationFocusSource = null;
-    }
     _niedGridCellCenters.clear();
     _latestDetectSnapshot = ShakeDetectionService.idleSnapshot;
     _emitStationSummary();
@@ -3670,9 +3664,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _lastNiedStationFocusAt = null;
     _pendingNiedStationFocus = false;
     _lastNiedLayerSignature = '';
-    if (_preferredStationFocusSource == 'nied') {
-      _preferredStationFocusSource = null;
-    }
     _clearNiedSourceEstimationState();
     _emitStationSummary();
     _syncActivityTimers();
@@ -3684,9 +3675,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _lastKmaStationFocusSignature = null;
     _lastKmaStationFocusAt = null;
     _pendingKmaStationFocus = false;
-    if (_preferredStationFocusSource == 'kma') {
-      _preferredStationFocusSource = null;
-    }
     _onShakeExpired();
   }
 
@@ -3695,9 +3683,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _lastTremStationFocusSignature = null;
     _lastTremStationFocusAt = null;
     _pendingTremStationFocus = false;
-    if (_preferredStationFocusSource == 'trem') {
-      _preferredStationFocusSource = null;
-    }
     _onShakeExpired();
   }
 
@@ -3712,9 +3697,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _lastPAlertStationFocusSignature = null;
     _lastPAlertStationFocusAt = null;
     _pendingPAlertStationFocus = false;
-    if (_preferredStationFocusSource == 'palert') {
-      _preferredStationFocusSource = null;
-    }
     _syncActivityTimers();
     _notifyLayer(_pAlertLayerRevision);
   }
@@ -3954,7 +3936,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
 
     _lastNiedStationFocusSignature = signature;
     _lastNiedStationFocusAt = now;
-    _preferStationFocusSource('nied', force);
     _queueCameraPolicyRefresh(force: force);
     return true;
   }
@@ -3973,11 +3954,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       _cameraPolicyForce = false;
       _applyCameraPolicy(force: useForce);
     });
-  }
-
-  void _preferStationFocusSource(String source, bool force) {
-    if (!force) return;
-    _preferredStationFocusSource = source;
   }
 
   void _applyCameraPolicy({bool force = false}) {
@@ -4170,12 +4146,21 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _clearPreferredEventFocus();
 
     _eewWaveCameraFollowGate.syncEvents(const [], now);
+    // Multiple networks share one extent, including when NIED has an estimate.
+    final stationFocus = _stationDetectionFocus();
+    if (stationFocus.isCombined &&
+        _applyStationFocusPolicy(mapState, force: force, focus: stationFocus)) {
+      _lastEpicenterFocus = null;
+      _lastEpicenterSourceEventId = null;
+      provider.setMobileCameraInfoFocus(null);
+      return;
+    }
     if (_applyNiedSourceFocusPolicy(mapState, force: force)) {
       provider.setMobileCameraInfoFocus(null);
       return;
     }
 
-    if (_applyStationFocusPolicy(mapState, force: force)) {
+    if (_applyStationFocusPolicy(mapState, force: force, focus: stationFocus)) {
       provider.setMobileCameraInfoFocus(null);
       return;
     }
@@ -4375,58 +4360,36 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     return points;
   }
 
+  StationDetectionFocus _stationDetectionFocus() {
+    return StationDetectionFocus({
+      if (_niedLayerVisible) 'nied': _niedFocusPoints(),
+      if (_kmaVisible) 'kma': _kmaFocusPoints(),
+      if (_cwaVisible)
+        'trem': _tremFocusStations().map((s) => s.coordinate).toList(),
+      if (_pAlertEnabled) 'palert': _pAlertDetectionGrid.centers,
+    });
+  }
+
   bool _applyStationFocusPolicy(
     MapStateProvider mapState, {
     required bool force,
+    required StationDetectionFocus focus,
   }) {
-    var preferred = _preferredStationFocusSource;
-    final currentPreferredPoints = switch (preferred) {
-      'kma' => _kmaFocusPoints(),
-      'trem' => _tremFocusStations().map((s) => s.coordinate).toList(),
-      'palert' => _pAlertDetectionGrid.centers,
-      'nied' => _niedFocusPoints(),
-      _ => const <LatLng>[],
-    };
-    if (preferred != null && currentPreferredPoints.isEmpty) {
-      _preferredStationFocusSource = null;
-      preferred = null;
-    }
-
-    final stationPoints = <String, List<LatLng>>{
-      'nied': _niedFocusPoints(),
-      'kma': _kmaFocusPoints(),
-      'trem': _tremFocusStations().map((s) => s.coordinate).toList(),
-      'palert': _pAlertDetectionGrid.centers,
-      if (preferred != null && currentPreferredPoints.isNotEmpty)
-        preferred: currentPreferredPoints,
-    };
-    final preferredHasPoints =
-        preferred != null && (stationPoints[preferred]?.isNotEmpty ?? false);
-
-    final order = <String>[
-      if (preferredHasPoints) preferred,
-      for (final source in const ['nied', 'kma', 'trem', 'palert'])
-        if (source != preferred) source,
-    ];
-
-    for (final source in order) {
-      final points = stationPoints[source] ?? const <LatLng>[];
-      if (points.isEmpty) continue;
-
-      mapState.smartMoveToPoints(
-        points,
-        minZoom: 4.5,
-        maxZoom: 8.5,
-        padding: _stationFocusPadding(points.length),
-        screenOffset: _stationFocusOffset(),
-        sourceTag: 'policy-$source-station',
-        force: force,
-        minInterval: const Duration(milliseconds: 2000),
-      );
-      return true;
-    }
-
-    return false;
+    if (focus.points.isEmpty) return false;
+    mapState.smartMoveToPoints(
+      focus.points,
+      minZoom: focus.minZoom,
+      maxZoom: 8.5,
+      padding: _stationFocusPadding(focus.points.length),
+      viewportPadding: focus.isCombined
+          ? cencIrViewportPadding(context) ?? const EdgeInsets.all(50)
+          : null,
+      screenOffset: focus.isCombined ? Offset.zero : _stationFocusOffset(),
+      sourceTag: focus.sourceTag,
+      force: force,
+      minInterval: const Duration(milliseconds: 2000),
+    );
+    return true;
   }
 
   String _cameraDatasetKey(QuakeProvider provider) {
@@ -4437,8 +4400,8 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     final kmaSig = _lastKmaStationFocusSignature ?? '';
     final tremSig = _lastTremStationFocusSignature ?? '';
     final pAlertSig = _lastPAlertStationFocusSignature ?? '';
-    final stationPref = _preferredStationFocusSource ?? '';
-    return 'u[$unified]-n[$niedSig]-k[$kmaSig]-c[$tremSig]-p[$pAlertSig]-sp[$stationPref]';
+    final stationFocus = _stationDetectionFocus().signature;
+    return 'u[$unified]-n[$niedSig]-k[$kmaSig]-c[$tremSig]-p[$pAlertSig]-s[$stationFocus]';
   }
 
   String? _historyCameraKey(QuakeMessage? event) {
@@ -4530,7 +4493,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
 
     _lastKmaStationFocusSignature = signature;
     _lastKmaStationFocusAt = now;
-    _preferStationFocusSource('kma', force);
     _queueCameraPolicyRefresh(force: force);
     return true;
   }
@@ -4585,7 +4547,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
 
     _lastTremStationFocusSignature = signature;
     _lastTremStationFocusAt = now;
-    _preferStationFocusSource('trem', force);
     _queueCameraPolicyRefresh(force: force);
     return true;
   }
@@ -4651,7 +4612,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
 
     _lastPAlertStationFocusSignature = signature;
     _lastPAlertStationFocusAt = now;
-    _preferStationFocusSource('palert', force);
     _queueCameraPolicyRefresh(force: force);
     return true;
   }
