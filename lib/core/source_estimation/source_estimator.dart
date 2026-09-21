@@ -13,6 +13,7 @@ import 'kanameishi_jma2001_travel_time_table.dart';
 import 'kotoho7_js_eew_bridge.dart';
 import 'kotoho7_js_receiver_bridge.dart' as kotoho7_js;
 import 'nied_pgv_magnitude_diagnostics.dart';
+import 'palert_source_profile.dart';
 import 'source_estimation_models.dart';
 import 'srev_kaizou_magnitude.dart';
 import 'station_observation_history.dart';
@@ -9134,12 +9135,14 @@ _NiedHypWorkerFrame? _niedHypWorkerFrame(SourceEstimationRequest request) {
 
   final active = <_NiedHypWorkerStation>[];
   for (final snapshot in activeByCode.values) {
-    final station = _niedHypStationFromSnapshot(snapshot, active: true);
+    final station = _niedHypStationFromSnapshot(snapshot, active: true,
+        palert: request.sourceId == 'palert');
     if (station != null) active.add(station);
   }
   final newActive = <_NiedHypWorkerStation>[];
   for (final snapshot in newActiveByCode.values) {
-    final station = _niedHypStationFromSnapshot(snapshot, active: true);
+    final station = _niedHypStationFromSnapshot(snapshot, active: true,
+        palert: request.sourceId == 'palert');
     if (station != null) newActive.add(station);
   }
   final newActiveStationIdsWithoutTrigger = <String>{
@@ -9154,7 +9157,8 @@ _NiedHypWorkerFrame? _niedHypWorkerFrame(SourceEstimationRequest request) {
   ];
   final inactive = <_NiedHypWorkerStation>[];
   for (final snapshot in inactiveByCode.values) {
-    final station = _niedHypStationFromSnapshot(snapshot, active: false);
+    final station = _niedHypStationFromSnapshot(snapshot, active: false,
+        palert: request.sourceId == 'palert');
     if (station != null) inactive.add(station);
   }
   return _NiedHypWorkerFrame(
@@ -9221,6 +9225,7 @@ String? _niedHypSnapshotCode(Map<String, Object?> snapshot) {
 _NiedHypWorkerStation? _niedHypStationFromSnapshot(
   Map<String, Object?> snapshot, {
   required bool active,
+  bool palert = false,
 }) {
   final code = _niedHypSnapshotCode(snapshot);
   final latLng = _niedHypSnapshotLatLng(snapshot);
@@ -9241,6 +9246,9 @@ _NiedHypWorkerStation? _niedHypStationFromSnapshot(
     currentShindo: currentShindo,
     ascend: ascend,
     active: active,
+    palertMaxLevel: palert ? _intFromObject(snapshot['maxLevel']) : null,
+    palertSecondMaxLevel: palert ? _intFromObject(snapshot['secondMaxLevel']) : null,
+    nonQuietBoundary: palert ? _niedHypSnapshotTime(snapshot['nonQuietBoundaryStamp']) : null,
   );
 }
 
@@ -9479,7 +9487,9 @@ class _NiedHypEventState {
       state.worker.activeStationsByCode[station.code] = merged;
       if (existing == null ||
           existing.level != merged.level ||
-          existing.ascend != merged.ascend) {
+          existing.ascend != merged.ascend ||
+          existing.palertMaxLevel != merged.palertMaxLevel ||
+          existing.palertSecondMaxLevel != merged.palertSecondMaxLevel) {
         _referenceMarkUpdated(state, updateVersion);
       }
     }
@@ -10563,6 +10573,9 @@ class _NiedHypEventState {
             'diagnostics': {
               for (final key in const <String>[
                 'error_level',
+                'quality_score',
+                'quality_rank',
+                'wave_counts',
                 'score',
                 'wave_elapsed_s',
                 'wave_radius_cap_km',
@@ -10808,6 +10821,9 @@ _NiedHypWorkerStation _mergeNiedHypStation(
     currentShindo: incoming.currentShindo,
     ascend: math.max(existing.ascend, incoming.ascend),
     active: true,
+    palertMaxLevel: incoming.palertMaxLevel,
+    palertSecondMaxLevel: incoming.palertSecondMaxLevel,
+    nonQuietBoundary: incoming.nonQuietBoundary,
   );
 }
 
@@ -10877,6 +10893,9 @@ class _NiedHypWorkerState {
         currentShindo: incoming.currentShindo,
         ascend: math.max(existing.ascend, incoming.ascend),
         active: true,
+        palertMaxLevel: incoming.palertMaxLevel,
+        palertSecondMaxLevel: incoming.palertSecondMaxLevel,
+        nonQuietBoundary: incoming.nonQuietBoundary,
       );
     }
 
@@ -10919,6 +10938,9 @@ class _NiedHypWorkerStation {
     required this.currentShindo,
     required this.ascend,
     required this.active,
+    this.palertMaxLevel,
+    this.palertSecondMaxLevel,
+    this.nonQuietBoundary,
   });
 
   final String id;
@@ -10930,6 +10952,13 @@ class _NiedHypWorkerStation {
   final double? currentShindo;
   final int ascend;
   final bool active;
+  final int? palertMaxLevel;
+  final int? palertSecondMaxLevel;
+  final DateTime? nonQuietBoundary;
+
+  bool get hasInferenceWeight => palertMaxLevel != null
+      ? PAlertSourceProfile.pickWeight(palertMaxLevel!) > 0
+      : ascend >= 2;
 }
 
 class _NiedHypWorkerCandidateConstraints {
@@ -11161,10 +11190,10 @@ SourceEstimate? _estimateNiedHypWorkerFrame(
       .map((entry) => entry.$2)
       .toList(growable: false);
   final weightedActive = clusterStations
-      .where((station) => station.ascend >= 2)
+      .where((station) => station.hasInferenceWeight)
       .toList(growable: false);
   final zeroContributionStations = clusterStations
-      .where((station) => station.ascend < 2)
+      .where((station) => !station.hasInferenceWeight)
       .toList(growable: false);
   final referenceAlignedSearch =
       searchSchedule == NiedHypSearchSchedule.referenceBroadFourStage;
@@ -12285,7 +12314,9 @@ _NiedHypWorkerResult _scoreNiedReferenceCandidate(
         : rankRatio <= 0.8
         ? 0.9 - rankRatio
         : 0.1;
-    final ascendWeight = station.ascend >= 4
+    final ascendWeight = station.palertMaxLevel != null
+        ? PAlertSourceProfile.pickWeight(station.palertMaxLevel!)
+        : station.ascend >= 4
         ? math.min(0.2 * station.ascend, 2.0)
         : station.ascend >= 3
         ? 0.3
@@ -12413,9 +12444,12 @@ _NiedHypWorkerResult _scoreNiedReferenceCandidate(
     final effectiveCount = pCount + sCount;
     if (weightSum <= 0 || effectiveCount == 0) return null;
 
+    final palert = active.any((station) => station.palertMaxLevel != null);
     final referenceDistances = <double>[
       for (final station in active)
-        if (station.ascend >= 3 && (station.level ?? -1) >= 4)
+        if (palert
+            ? (station.palertSecondMaxLevel ?? -1) >= 9
+            : station.ascend >= 3 && (station.level ?? -1) >= 4)
           _kanameishiHaversineKm(
             latitude,
             longitude,
@@ -12427,12 +12461,13 @@ _NiedHypWorkerResult _scoreNiedReferenceCandidate(
     if (referenceDistances.isNotEmpty) {
       final referenceDistance =
           referenceDistances[math.max(
-            (referenceDistances.length * 0.9).floor() - 1,
+            (referenceDistances.length * (palert ? 0.8 : 0.9)).floor() - 1,
             0,
           )];
       final inactiveDistances = <double>[
         for (final station in inactive)
-          if (station.updateAt != null)
+          if (station.updateAt != null && (!palert ||
+              (station.nonQuietBoundary?.isBefore(earliestAt) ?? false)))
             _kanameishiHaversineKm(
               latitude,
               longitude,
@@ -12452,8 +12487,11 @@ _NiedHypWorkerResult _scoreNiedReferenceCandidate(
     final rmse = math.sqrt(residualSquares / weightSum);
     final inactiveWeight = effectiveCount >= 50
         ? 0.0
-        : 10.0 * (1.0 - effectiveCount / 50.0);
-    final waveMultiplier = math.min(
+        : (palert ? 8.0 : 10.0) * (1.0 - effectiveCount / 50.0);
+    final waveMultiplier = palert
+        ? 1 + (0.5 * (sCount / math.max(1, pCount) - (8 + filterStageLevel)))
+            .clamp(0.0, 2.0 - 0.5 * filterStageLevel)
+        : math.min(
       math.max(sCount / math.max(1, pCount) - 2.0, 1.0),
       3.0,
     );

@@ -622,6 +622,7 @@ class _SettingsPageState extends State<SettingsPage>
     SourceManager().setSourceEnabled('Wolfx', _wolfxEnabled);
     SourceManager().setSourceEnabled('P2P', _p2pquakeEnabled);
     UiRuntimeFlags.sideInfoAutoShowBetaNotifier.value = _sideInfoAutoShowBeta;
+    UiRuntimeFlags.hideGridOnEewNotifier.value = _hideGridOnEew;
     UiRuntimeFlags.weatherMarqueeEnabledNotifier.value = _weatherMarqueeEnabled;
     _niedReplayStartController.text = _niedReplayStart;
     _syncNiedReplayConfig();
@@ -4059,7 +4060,7 @@ class _SettingsPageState extends State<SettingsPage>
 
   Widget _buildHideGridOnEewSwitch() {
     return _buildSettingRow(
-      title: '预警时隐藏网格',
+      title: '预警时隐藏网格与匹配推算',
       subtitle: '地震预警触发时隐藏测站闪烁网格',
       leading: Icons.grid_off_outlined,
       control: Align(
@@ -4072,6 +4073,7 @@ class _SettingsPageState extends State<SettingsPage>
           inactiveTrackColor: Colors.white24,
           onChanged: (val) {
             setState(() => _hideGridOnEew = val);
+            UiRuntimeFlags.hideGridOnEewNotifier.value = val;
             _saveHideGridOnEew(val);
           },
         ),
@@ -4105,7 +4107,7 @@ class _SettingsPageState extends State<SettingsPage>
   Widget _buildEpicenterShowSwitch() {
     return _buildSettingRow(
       title: '推算震中显示（beta）',
-      subtitle: 'NIED 检测时在地图上显示网格搜索推算的震中位置',
+      subtitle: 'NIED / P-Alert',
       leading: Icons.crisis_alert_outlined,
       control: Align(
         alignment: Alignment.centerRight,

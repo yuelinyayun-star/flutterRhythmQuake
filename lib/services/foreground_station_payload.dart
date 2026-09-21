@@ -75,6 +75,10 @@ class ForegroundStationPayload {
     ShakeDetectionSnapshot? detection,
   }) => {
     'kind': 'palert',
+    'detectedStationIds': [
+      for (final station in detection?.detectedStations ?? <DetectedStationEntry>[])
+        station.code,
+    ],
     'dataTime': dataTime?.toIso8601String(),
     'receivedTime': receivedTime?.toIso8601String(),
     'detectionGrid': [
@@ -83,6 +87,18 @@ class ForegroundStationPayload {
     ],
     'stations': stations.map(_pAlertStation).toList(growable: false),
   };
+
+  static Set<String> decodePAlertDetectedStationIds(
+    Map<String, dynamic> payload, {required DateTime now}
+  ) {
+    final received = _date(payload['receivedTime']);
+    final raw = payload['detectedStationIds'];
+    if (received == null || raw is! List ||
+        PAlertService.isFrameStale(received, now)) {
+      return const {};
+    }
+    return raw.whereType<String>().where((id) => id.isNotEmpty).toSet();
+  }
 
   static List<PAlertDetectionGridCell> decodePAlertDetection(
     Map<String, dynamic> payload, {

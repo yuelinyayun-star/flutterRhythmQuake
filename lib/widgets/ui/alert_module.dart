@@ -12,6 +12,10 @@ import '../../models/weather_alarm.dart';
 import '../../core/intensity_calculator.dart';
 import '../../core/source_estimation/source_estimate_quality.dart';
 import '../../core/source_estimation/source_estimation_models.dart';
+import '../../core/source_estimation/source_estimation_presentation.dart';
+import '../../services/sources/palert_source_state.dart';
+import '../map/palert_source_visibility.dart';
+import 'ui_runtime_flags.dart';
 import '../../core/source_estimation/source_station_phase_classifier.dart';
 import '../../core/source_estimation/station_event_tracker.dart';
 import '../../core/utils/quake_time.dart';
@@ -93,6 +97,15 @@ class _AlertModuleState extends State<AlertModule> {
 
   @override
   Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        PAlertSourceState.events, UiRuntimeFlags.hideGridOnEewNotifier,
+      ]),
+      builder: (context, child) => _buildModule(context),
+    );
+  }
+
+  Widget _buildModule(BuildContext context) {
     return Selector<QuakeProvider, int>(
       selector: (context, provider) => _alertUiSignature(provider),
       builder: (context, signature, child) {
@@ -104,11 +117,11 @@ class _AlertModuleState extends State<AlertModule> {
             final showSourceEstimationUi = context
                 .watch<MapStateProvider>()
                 .showEstimatedEpicenter;
-            final sourceUnified = showSourceEstimationUi
-                ? _sourceEstimationUnifiedEventV2(sourceEvent)
-                : null;
+            final sourceUnified = _sourceUnifiedEvents(
+              provider, showSourceEstimationUi, sourceEvent,
+            );
             final unifiedCount =
-                provider.unifiedEvents.length + (sourceUnified == null ? 0 : 1);
+                provider.unifiedEvents.length + sourceUnified.length;
             final bool hasUnified = unifiedCount > 0;
             final Widget alertContent = _buildAlertContent(
               provider,
@@ -228,10 +241,10 @@ class _AlertModuleState extends State<AlertModule> {
 
   Widget _buildAlertContent(
     QuakeProvider provider,
-    UnifiedQuakeData? sourceUnified,
+    List<UnifiedQuakeData> sourceUnified,
   ) {
     final hasUnified =
-        provider.unifiedEvents.isNotEmpty || sourceUnified != null;
+        provider.unifiedEvents.isNotEmpty || sourceUnified.isNotEmpty;
 
     if (hasUnified) {
       _syncFlashController(false);
@@ -357,17 +370,35 @@ class _AlertModuleState extends State<AlertModule> {
     }
   }
 
+  List<UnifiedQuakeData> _sourceUnifiedEvents(
+    QuakeProvider provider, bool enabled, SeismicActiveEvent? nied,
+  ) {
+    if (!enabled) return const [];
+    return [
+      ?_sourceEstimationUnifiedEventV2(nied),
+      for (final event in PAlertSourceState.events.value)
+        if (event.estimate != null && shouldShowPAlertSource(
+          event.estimate!, provider.unifiedEvents,
+          hideOnMatchingEew: UiRuntimeFlags.hideGridOnEewNotifier.value,
+        ))
+          ?_sourceEstimationUnifiedEventV2(event),
+    ];
+  }
+
   UnifiedQuakeData? _sourceEstimationUnifiedEventV2(
     SeismicActiveEvent? sourceEvent,
   ) {
     final estimate = sourceEvent?.estimate;
     if (sourceEvent == null || estimate == null) return null;
 
+    final isPAlert = sourceEvent.sourceId == 'palert';
     final isKotoho7Js = estimate.method == 'nied_gif_kotoho7_js_receiver_v1';
     final originTime = _sourceEstimationJstWallClock(
       estimate.originTime ?? sourceEvent.startedAt,
+      offsetHours: isPAlert ? 8 : 9,
     );
-    final reportTime = _sourceEstimationJstWallClock(sourceEvent.updatedAt);
+    final reportTime = _sourceEstimationJstWallClock(sourceEvent.updatedAt,
+      offsetHours: isPAlert ? 8 : 9);
     final estimatedShindo = isKotoho7Js
         ? (_sourceDiagnosticDouble(
                 estimate,
@@ -402,12 +433,12 @@ class _AlertModuleState extends State<AlertModule> {
     final dartHypStable = estimate.diagnostics['nied_dart_hyp_stable'] == true;
 
     return UnifiedQuakeData(
-      source: _sourceEstimationUnifiedSource,
+      source: isPAlert ? 'palert_source_estimation' : _sourceEstimationUnifiedSource,
       origin: originTime.millisecondsSinceEpoch ~/ 1000,
       eventId: sourceEvent.eventId,
       isEew: false,
-      timeZone: 9,
-      titleText: '\u9707\u6e90\u672c\u5730\u63a8\u7b97',
+      timeZone: isPAlert ? 8 : 9,
+      titleText: sourceEstimationTitle,
       reportNumText: dartHypReportNumber == null
           ? ''
           : '第$dartHypReportNumber报${dartHypStable ? '（稳定）' : ''}',
@@ -503,7 +534,10 @@ class _AlertModuleState extends State<AlertModule> {
   }
 
   String? _sourceDartHypResultText(SourceEstimate estimate) {
-    if (estimate.method != 'nied_dart_hyp_v1') return null;
+    if (estimate.method != 'nied_dart_hyp_v1' &&
+        estimate.method != 'palert_hyp_v1') {
+      return null;
+    }
     final errorLevel = _sourceDiagnosticDouble(estimate, 'error_level');
     final qualityRank = estimate.diagnostics['quality_rank']?.toString();
     final parts = <String>[
@@ -513,8 +547,8 @@ class _AlertModuleState extends State<AlertModule> {
     return parts.join(' · ');
   }
 
-  DateTime _sourceEstimationJstWallClock(DateTime instant) {
-    final jst = instant.toUtc().add(const Duration(hours: 9));
+  DateTime _sourceEstimationJstWallClock(DateTime instant, {int offsetHours = 9}) {
+    final jst = instant.toUtc().add(Duration(hours: offsetHours));
     return DateTime(
       jst.year,
       jst.month,
@@ -531,7 +565,7 @@ class _AlertModuleState extends State<AlertModule> {
     SeismicActiveEvent sourceEvent,
     SourceEstimate estimate,
   ) {
-    if (estimate.method == 'nied_dart_hyp_v1') {
+    if (estimate.method == 'nied_dart_hyp_v1' || estimate.method == 'palert_hyp_v1') {
       final waveCounts = estimate.diagnostics['wave_counts'];
       if (waveCounts is Map) {
         final p = _nonNegativeSourceCount(waveCounts['P']);
@@ -632,7 +666,8 @@ class _AlertModuleState extends State<AlertModule> {
   }) {
     final raw = isKotoho7Js
         ? estimate.diagnostics['js_map_max_shindo_index']
-        : sourceEvent.metadata['nied_max_jma_shindo_index'];
+        : sourceEvent.metadata[sourceEvent.sourceId == 'palert'
+            ? 'palert_max_cwa_intensity_index' : 'nied_max_jma_shindo_index'];
     final index = switch (raw) {
       int value => value,
       num value => value.round(),
@@ -658,6 +693,7 @@ class _AlertModuleState extends State<AlertModule> {
   }
 
   String _sourceMethodLabelV2(String method) => switch (method) {
+    'palert_hyp_v1' => 'P-Alert HYP',
     'nied_gif_kotoho7_js_receiver_v1' => 'kotoho7 JS',
     'nied_dart_hyp_v1' => 'Dart HYP',
     'nied_gif_hybrid_v1' => 'GIF\u6df7\u5408',
@@ -700,7 +736,7 @@ class _AlertModuleState extends State<AlertModule> {
       eventId: sourceEvent.eventId,
       isEew: false,
       timeZone: 9,
-      titleText: '震源本地推算',
+      titleText: sourceEstimationTitle,
       reportNumText: '第$reportNumber报',
       useShindo: false,
       maxIntensity: grade,
@@ -727,7 +763,8 @@ class _AlertModuleState extends State<AlertModule> {
   }
 
   bool _isSourceEstimationUnified(UnifiedQuakeData event) =>
-      event.source == _sourceEstimationUnifiedSource;
+      event.source == _sourceEstimationUnifiedSource ||
+      event.source == 'palert_source_estimation';
 
   int _sourceEstimationReportNumber(
     SeismicActiveEvent sourceEvent,
@@ -789,16 +826,16 @@ class _AlertModuleState extends State<AlertModule> {
 
   Widget _buildStackedUnifiedView(
     QuakeProvider provider,
-    UnifiedQuakeData? sourceUnified,
+    List<UnifiedQuakeData> sourceUnified,
   ) {
-    final events = [...provider.unifiedEvents, ?sourceUnified];
+    final events = [...provider.unifiedEvents, ...sourceUnified];
     final eew = events.where((e) => e.isEew).toList();
     final info = events.where((e) => !e.isEew).toList();
     final followEew = UiScale.isPhone(context) && eew.isNotEmpty;
     final ordered = followEew ? eew : [...eew, ...info];
     final cameraEvent = provider.mobileCameraDisplayEvent;
     final followInfoCamera =
-        UiScale.isPhone(context) && sourceUnified == null && cameraEvent != null;
+        UiScale.isPhone(context) && sourceUnified.isEmpty && cameraEvent != null;
     final List<UnifiedQuakeData> visibleEvents;
     if (followEew || followInfoCamera) {
       _stopUnifiedPageTimer();
@@ -870,14 +907,13 @@ class _AlertModuleState extends State<AlertModule> {
       final showSourceEstimationUi = context
           .read<MapStateProvider>()
           .showEstimatedEpicenter;
-      final sourceUnified = showSourceEstimationUi
-          ? _sourceEstimationUnifiedEventV2(
-              StationEventTracker.instance.currentNiedEvent.value,
-            )
-          : null;
+      final sourceUnified = _sourceUnifiedEvents(
+        context.read<QuakeProvider>(), showSourceEstimationUi,
+        StationEventTracker.instance.currentNiedEvent.value,
+      );
       final count =
           context.read<QuakeProvider>().unifiedEvents.length +
-          (sourceUnified == null ? 0 : 1);
+          sourceUnified.length;
       final nextPageCount = _unifiedPageCount(count);
       if (nextPageCount <= 1) {
         _stopUnifiedPageTimer();

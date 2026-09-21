@@ -88,6 +88,10 @@ import '../../services/sources/kma_monitor.dart';
 import '../../services/sources/cwa_station_service.dart';
 import '../../services/sources/palert_service.dart';
 import '../../services/sources/palert_detection_grid.dart';
+import '../../services/sources/palert_source_worker.dart';
+import '../../services/sources/palert_source_state.dart';
+import 'palert_source_visibility.dart';
+import '../ui/ui_runtime_flags.dart';
 import '../../services/sources/seisjs_service.dart';
 import '../../services/sources/fdsn_station_service.dart';
 import '../../services/sources/fdsn_motion_service.dart';
@@ -406,6 +410,9 @@ class _QuakeMapViewState extends State<QuakeMapView> {
 
   final CwaStationService _cwaService = CwaStationService();
   final PAlertService _pAlertService = PAlertService();
+  final PAlertSourceWorker _pAlertSourceWorker = PAlertSourceWorker();
+  Timer? _pAlertSourceExpiry;
+  int _pAlertSourceGeneration = 0;
 
   /// CWA 测站数据订阅
   StreamSubscription? _cwaStationSubscription;
@@ -669,6 +676,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     QuakeMapView.kmaPewsEnabledNotifier.addListener(_onKmaPewsEnabledChanged);
     QuakeMapView.kmaSourceNotifier.addListener(_onKmaSourceChanged);
     QuakeMapView.pAlertEnabledNotifier.addListener(_onPAlertEnabledChanged);
+    UiRuntimeFlags.hideGridOnEewNotifier.addListener(_onHideGridOnEewChanged);
     QuakeMapView.niedMonitorEnabledNotifier.addListener(
       _onNiedMonitorEnabledChanged,
     );
@@ -746,6 +754,10 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       stations,
     ) {
       if (!mounted) return;
+      _processPAlertSourceEstimation(stations, {
+        for (final entry in _pAlertService.detectionSnapshot.detectedStations)
+          entry.code,
+      });
       _ingestPAlertAutomationStations(stations);
       final signature = _pAlertLayerSignature(stations);
       if (signature != _lastPAlertLayerSignature) {
@@ -883,6 +895,10 @@ class _QuakeMapViewState extends State<QuakeMapView> {
           payload['receivedTime']?.toString() ?? '',
         );
         final stations = ForegroundStationPayload.decodePAlert(rawStations);
+        _processPAlertSourceEstimation(stations,
+          ForegroundStationPayload.decodePAlertDetectedStationIds(
+            payload, now: DateTime.now(),
+          ));
         _pAlertStations = stations;
         _ingestPAlertAutomationStations(stations);
         _updatePAlertDetectionGrid(
@@ -2699,6 +2715,9 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   void _onQuakeProviderChanged() {
     _syncActivityTimers();
     _syncVolcanoMapServiceWithOverlay();
+    if (PAlertSourceState.events.value.isNotEmpty) {
+      _queueCameraPolicyRefresh();
+    }
     final provider = _quakeProvider;
     if (provider != null &&
         (provider.mobileEewCarousel || !UiScale.isPhone(context)) &&
@@ -2909,6 +2928,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _syncWaveAutoZoomTimer();
     if (!_showNiedEstimatedEpicenter) {
       _clearNiedSourceDisplayState();
+      _clearPAlertSourceEstimation();
     }
     if (!_lastCanAutoFollow && canAutoFollow) {
       _queueCameraPolicyRefresh(force: false);
@@ -3686,6 +3706,69 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _onShakeExpired();
   }
 
+  void _onHideGridOnEewChanged() {
+    _hideGridOnEew = UiRuntimeFlags.hideGridOnEewNotifier.value;
+    if (mounted) {
+      setState(() {});
+      _queueCameraPolicyRefresh();
+    }
+  }
+
+  List<SeismicActiveEvent> _visiblePAlertSources() {
+    if (!_showNiedEstimatedEpicenter || !_pAlertEnabled) return const [];
+    return PAlertSourceState.events.value.where((event) =>
+      event.estimate != null && shouldShowPAlertSource(
+        event.estimate!, _quakeProvider?.unifiedEvents ?? const [],
+        hideOnMatchingEew: _hideGridOnEew,
+      )).toList(growable: false);
+  }
+
+  void _clearPAlertSourceEstimation() {
+    _pAlertSourceGeneration++;
+    _pAlertSourceExpiry?.cancel();
+    _pAlertSourceExpiry = null;
+    _pAlertSourceWorker.reset();
+    if (PAlertSourceState.events.value.isNotEmpty) {
+      PAlertSourceState.events.value = const [];
+      _queueCameraPolicyRefresh();
+    }
+  }
+
+  Future<void> _processPAlertSourceEstimation(
+    List<PAlertStation> stations, Set<String> confirmedIds,
+  ) async {
+    if (!mounted || !_pAlertEnabled || !_showNiedEstimatedEpicenter) return;
+    final received = stations.map((s) => s.receivedAt).whereType<DateTime>()
+        .fold<DateTime?>(null, (last, time) =>
+          last == null || time.isAfter(last) ? time : last);
+    if (received == null || PAlertService.isFrameStale(received, DateTime.now())) {
+      _clearPAlertSourceEstimation();
+      return;
+    }
+    _pAlertSourceExpiry?.cancel();
+    _pAlertSourceExpiry = Timer(
+      received.add(PAlertService.frameStaleAfter).difference(DateTime.now()),
+      _clearPAlertSourceEstimation,
+    );
+    final generation = _pAlertSourceGeneration;
+    try {
+      final events = await _pAlertSourceWorker.process(stations, confirmedIds);
+      if (!mounted || generation != _pAlertSourceGeneration || events == null ||
+          !_pAlertEnabled || !_showNiedEstimatedEpicenter ||
+          PAlertService.isFrameStale(received, DateTime.now())) {
+        return;
+      }
+      if (events.isEmpty && PAlertSourceState.events.value.isEmpty) return;
+      PAlertSourceState.events.value = events;
+      _queueCameraPolicyRefresh();
+    } catch (error, stack) {
+      debugPrint('P-Alert source estimation failed: $error\n$stack');
+      if (mounted && generation == _pAlertSourceGeneration) {
+        _clearPAlertSourceEstimation();
+      }
+    }
+  }
+
   void _onPAlertShakeExpired() {
     if (!mounted) return;
     _clearPAlertStationFocus();
@@ -3693,6 +3776,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   }
 
   void _clearPAlertStationFocus() {
+    _clearPAlertSourceEstimation();
     _pAlertDetectionGrid.clear();
     _lastPAlertStationFocusSignature = null;
     _lastPAlertStationFocusAt = null;
@@ -4366,7 +4450,11 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       if (_kmaVisible) 'kma': _kmaFocusPoints(),
       if (_cwaVisible)
         'trem': _tremFocusStations().map((s) => s.coordinate).toList(),
-      if (_pAlertEnabled) 'palert': _pAlertDetectionGrid.centers,
+      if (_pAlertEnabled) 'palert': [
+        ..._pAlertDetectionGrid.centers,
+        for (final event in _visiblePAlertSources())
+          LatLng(event.estimate!.latitude, event.estimate!.longitude),
+      ],
     });
   }
 
@@ -5022,6 +5110,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _kmaService.setSensitivity(sensitivity);
     _pAlertService.setSensitivity(sensitivity);
     _hideGridOnEew = prefs.getBool('hide_grid_on_eew') ?? false;
+    UiRuntimeFlags.hideGridOnEewNotifier.value = _hideGridOnEew;
 
     QuakeMapView.niedSourceNotifier.addListener(_onNiedSourceChanged);
     QuakeMapView.niedLiveRestoreNotifier.addListener(
@@ -5120,6 +5209,9 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       _updatePAlertDetectionGrid(
         snapshot.gridCells.values.map(PAlertDetectionGridCell.fromDetection),
       );
+      _processPAlertSourceEstimation(_pAlertService.stations, {
+        for (final entry in snapshot.detectedStations) entry.code,
+      });
     };
     _pAlertService.onShakeDetected = (maxShindo) {
       debugPrint('P-Alert ShakeDetection: shindo $maxShindo detected');
@@ -5566,6 +5658,11 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       _onNiedSourceEventChanged,
     );
     _niedSourceEstimationDriver.dispose();
+    _pAlertSourceExpiry?.cancel();
+    _pAlertSourceGeneration++;
+    _pAlertSourceWorker.dispose();
+    PAlertSourceState.events.value = const [];
+    UiRuntimeFlags.hideGridOnEewNotifier.removeListener(_onHideGridOnEewChanged);
     _kmaService.disconnect();
     _cwaService.stop();
     _pAlertStationSubscription?.cancel();
@@ -5884,6 +5981,31 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                             },
                           ),
                           const UserLocationLayer(),
+                          ListenableBuilder(
+                            listenable: Listenable.merge([
+                              PAlertSourceState.events,
+                              UiRuntimeFlags.hideGridOnEewNotifier,
+                              context.read<MapStateProvider>(),
+                              context.read<QuakeProvider>(),
+                            ]),
+                            builder: (context, child) => MarkerLayer(markers: [
+                              for (final event in _visiblePAlertSources())
+                                Marker(
+                                  width: 220, height: 56,
+                                  point: LatLng(event.estimate!.latitude,
+                                    event.estimate!.longitude),
+                                  alignment: Alignment.center,
+                                  child: _NiedHypMapCandidateMarkerVisual(
+                                    label: event.estimate!.diagnostics['nied_dart_hyp_selected'] == true
+                                        ? '当前' : '震源 ${event.estimate!.diagnostics['selected_detection_id'] ?? ''}',
+                                    depthText: _niedHypMapSourceDetail(event.estimate!),
+                                    color: const Color(0xFFFFA000),
+                                    temporary: false,
+                                    selected: event.estimate!.diagnostics['nied_dart_hyp_selected'] == true,
+                                  ),
+                                ),
+                            ]),
+                          ),
                           Selector<MapStateProvider, bool>(
                             selector: (context, mapState) =>
                                 mapState.showEstimatedEpicenter,

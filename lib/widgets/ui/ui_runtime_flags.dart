@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 class UiRuntimeFlags {
   UiRuntimeFlags._();
 
+  static final ValueNotifier<bool> hideGridOnEewNotifier =
+      ValueNotifier<bool>(false);
+
   static const String niedHypCurvePanelVisiblePreferenceKey =
       'debug_nied_hyp_curve_panel_visible';
 
