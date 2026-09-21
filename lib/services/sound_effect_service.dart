@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleState;
 
 class SoundEffectService {
   static final SoundEffectService _instance = SoundEffectService._internal();
@@ -64,6 +65,32 @@ class SoundEffectService {
 
   final Map<String, DateTime> _lastPlayedAt = {};
   final Map<String, Future<_PreparedSound>> _pools = {};
+  final Set<_PreparedSound> _detectionPools = {};
+  AppLifecycleState? _lifecycleState;
+  DateTime? _foregroundSince;
+  int _detectionEpoch = 0;
+
+  bool get _isMobile =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS);
+
+  bool get _canPlayDetection =>
+      !_isMobile || _lifecycleState == AppLifecycleState.resumed;
+
+  void onLifecycleStateChanged(AppLifecycleState state) {
+    if (state == _lifecycleState) return;
+    _lifecycleState = state;
+    if (!_isMobile) return;
+    _detectionEpoch++;
+    if (state == AppLifecycleState.resumed) {
+      _foregroundSince = DateTime.now();
+    } else {
+      for (final pool in _detectionPools) {
+        unawaited(pool.stopActive());
+      }
+    }
+  }
 
   Future<_PreparedSound> _poolFor(String asset) =>
       _pools.putIfAbsent(asset, () async {
@@ -105,6 +132,12 @@ class SoundEffectService {
 
   Future<void> play(String key, {Duration cooldown = Duration.zero}) async {
     if (!enabled) return;
+    final isDetection = key.startsWith('shindo');
+    final epoch = _detectionEpoch;
+    bool canStart() =>
+        enabled &&
+        (!isDetection || (_canPlayDetection && epoch == _detectionEpoch));
+    if (!canStart()) return;
     final asset = _srev[key] ?? _general[key];
     if (asset == null) return;
     if (cooldown > Duration.zero) {
@@ -116,15 +149,36 @@ class SoundEffectService {
 
     try {
       final pool = await _poolFor(asset);
-      if (!enabled) return;
-      await pool.start(volume: volume.clamp(0.0, 1.0));
+      if (!canStart()) return;
+      if (isDetection) _detectionPools.add(pool);
+      await pool.start(volume: volume.clamp(0.0, 1.0), canStart: canStart);
     } catch (error) {
       debugPrint('SoundEffect playback failed ($key): $error');
     }
   }
 
-  Future<void> playShindo(int shindo) {
+  Future<void> playShindo(
+    int shindo, {
+    String source = 'unknown',
+    DateTime? detectedAt,
+  }) {
     final clamped = shindo.clamp(0, 7);
+    final predatesForeground =
+        _isMobile &&
+        detectedAt != null &&
+        _foregroundSince != null &&
+        detectedAt.isBefore(_foregroundSince!);
+    if (!_canPlayDetection || predatesForeground) {
+      debugPrint(
+        '[DetectionSound] suppressed source=$source shindo=$clamped '
+        'state=${_lifecycleState?.name} oldSignal=$predatesForeground',
+      );
+      return Future<void>.value();
+    }
+    debugPrint(
+      '[DetectionSound] request source=$source shindo=$clamped '
+      'state=${_lifecycleState?.name}',
+    );
     return play('shindo$clamped', cooldown: const Duration(seconds: 2));
   }
 }
@@ -135,6 +189,11 @@ class _PreparedSound {
   _PreparedSound(this.asset);
   final String asset;
   AudioPlayer? _idle;
+  final Map<AudioPlayer, Future<void> Function()> _active = {};
+
+  Future<void> stopActive() async {
+    await Future.wait(_active.values.toList().map((stop) => stop()));
+  }
 
   static Future<_PreparedSound> create(String asset) async {
     final sound = _PreparedSound(asset);
@@ -154,7 +213,10 @@ class _PreparedSound {
     }
   }
 
-  Future<void> start({required double volume}) async {
+  Future<void> start({
+    required double volume,
+    required bool Function() canStart,
+  }) async {
     final reserved = _idle;
     _idle = null;
     final player = reserved ?? await _createPlayer();
@@ -163,6 +225,7 @@ class _PreparedSound {
     Future<void> recycle() async {
       if (returned) return;
       returned = true;
+      _active.remove(player);
       await completion?.cancel();
       try {
         await player.stop();
@@ -177,11 +240,22 @@ class _PreparedSound {
     }
 
     completion = player.onPlayerComplete.listen((_) => unawaited(recycle()));
+    _active[player] = recycle;
     try {
+      if (!canStart()) {
+        await recycle();
+        return;
+      }
       await player.setVolume(volume);
+      if (returned || !canStart()) {
+        await recycle();
+        return;
+      }
       await player.resume();
+      if (!canStart()) await recycle();
     } catch (_) {
       returned = true;
+      _active.remove(player);
       await completion.cancel();
       await player.dispose();
       rethrow;

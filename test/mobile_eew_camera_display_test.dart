@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutterrhythmquake/models/unified_quake_data.dart';
+import 'package:flutterrhythmquake/models/volcano_event_data.dart';
+import 'package:flutterrhythmquake/widgets/map/desktop_event_camera_focus.dart';
 import 'package:flutterrhythmquake/providers/map_state_provider.dart';
 import 'package:flutterrhythmquake/providers/quake_provider.dart';
 import 'package:flutterrhythmquake/services/sound_effect_service.dart';
@@ -100,6 +102,60 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     },
   );
+
+  for (final phone in [false, true]) {
+    testWidgets('earthquake and volcano share the carousel, phone=$phone', (
+      tester,
+    ) async {
+      final provider = await mount(tester, phone: phone);
+      provider.handleUnifiedEventForTest(event('INFO', eew: false));
+      final eruption = event('VOLCANO', eew: false, source: 'whews_va')
+          .copyWith(
+            magnitude: -1,
+            depth: -1,
+            volcanoEvent: VolcanoEventData.fromMap(const {
+              'kindCode': 'VFVO52',
+              'volcanoName': '桜島',
+              'volcanoCode': '506',
+              'latitude': 31.5925,
+              'longitude': 130.6567,
+            }),
+          );
+      provider.handleUnifiedEventForTest(eruption);
+      await tester.pump();
+      expect(provider.unifiedEventCount, 2);
+      final selector = DesktopEventCameraFocus();
+      final visited = <bool>{};
+      for (var i = 0; i < 4; i++) {
+        final current = provider.currentUnifiedEvent!;
+        visited.add(current.isVolcanoEvent);
+        final candidates = [
+          for (var index = 0; index < provider.unifiedEvents.length; index++)
+            DesktopCameraCandidate.fromEvent(
+              provider.unifiedEvents[index],
+              index: index,
+            )!,
+        ];
+        final target = selector.select(
+          candidates: candidates,
+          requestedIndex: provider.currentUnifiedIndex,
+          isVisible: (_) => false,
+        )!;
+        expect(target.isVolcano, current.isVolcanoEvent);
+        if (phone) {
+          expect(
+            find.text(current.isVolcanoEvent ? '桜島' : 'INFO'),
+            findsOneWidget,
+          );
+        }
+        await tester.pump(const Duration(seconds: 5));
+        expect(provider.currentUnifiedEvent!.eventId, isNot(current.eventId));
+      }
+      expect(visited, {false, true});
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
 
   testWidgets('camera info focus overrides EEW carousel only while active', (
     tester,

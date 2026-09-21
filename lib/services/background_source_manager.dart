@@ -108,6 +108,10 @@ JmaMegaquakeAdvisoryService? _backgroundJmaMegaquake;
 Map<String, Object>? _backgroundSettings;
 String _backgroundNiedSource = 'lmoni';
 
+void setBackgroundPAlertDetectionSensitivity(int value) {
+  _backgroundPAlert?.setSensitivity(value);
+}
+
 Map<String, Object> _settingsSnapshot(SharedPreferences prefs) => {
   for (final key in prefs.getKeys())
     if (!BackgroundSourceReloadPlan.runtimeKeys.contains(key) &&
@@ -362,6 +366,7 @@ Future<void> startBackgroundSources({
   final snet = SnetService();
   final seisJs = SeisJsService();
   final pAlert = PAlertService();
+  pAlert.setSensitivity(prefs.getInt('shake_sensitivity') ?? 2);
   final whewsNied = WhewsStationService(
     kind: WhewsStationKind.nied,
     apiToken: '',
@@ -465,6 +470,7 @@ Future<void> startBackgroundSources({
     'source': 'kma',
     'action': 'detected',
     'value': value,
+    'detectedAt': DateTime.now().toUtc().toIso8601String(),
   });
   kma.onShakeExpired = () =>
       onStationData({'kind': 'signal', 'source': 'kma', 'action': 'expired'});
@@ -473,9 +479,22 @@ Future<void> startBackgroundSources({
     'source': 'trem',
     'action': 'detected',
     'value': value,
+    'detectedAt': DateTime.now().toUtc().toIso8601String(),
   });
   cwa.onShakeExpired = () =>
       onStationData({'kind': 'signal', 'source': 'trem', 'action': 'expired'});
+  pAlert.onShakeDetected = (value) => onStationData({
+    'kind': 'signal',
+    'source': 'palert',
+    'action': 'detected',
+    'value': value,
+    'detectedAt': DateTime.now().toUtc().toIso8601String(),
+  });
+  pAlert.onShakeExpired = () => onStationData({
+    'kind': 'signal',
+    'source': 'palert',
+    'action': 'expired',
+  });
   whewsNied.stateNotifier.addListener(() {
     onSourceStatus(SourceStatusUpdate('NIED', _whewsState(whewsNied)));
   });
@@ -547,9 +566,18 @@ Future<void> startBackgroundSources({
           stations,
           dataTime: pAlert.dataTimeNotifier.value,
           receivedTime: pAlert.receivedTimeNotifier.value,
+          detection: pAlert.detectionSnapshot,
         ),
       );
     }),
+  );
+  pAlert.onDetectionChanged = (snapshot) => onStationData(
+    ForegroundStationPayload.palert(
+      pAlert.stations,
+      dataTime: pAlert.dataTimeNotifier.value,
+      receivedTime: pAlert.receivedTimeNotifier.value,
+      detection: snapshot,
+    ),
   );
   _backgroundStationSubscriptions.add(
     whewsNied.frameStream.listen((frame) {

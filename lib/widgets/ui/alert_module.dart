@@ -16,6 +16,7 @@ import '../../core/source_estimation/source_station_phase_classifier.dart';
 import '../../core/source_estimation/station_event_tracker.dart';
 import '../../core/utils/quake_time.dart';
 import '../../core/utils/volcano_icon_assets.dart';
+import 'volcano_event_icon.dart';
 import 'ui_scale.dart';
 import 'cmt_badge.dart';
 
@@ -1090,9 +1091,6 @@ class _AlertModuleState extends State<AlertModule> {
     String label = '火山',
   }) {
     final volcano = event.volcanoEvent;
-    final iconAsset = volcano == null
-        ? VolcanoIconAssets.generic
-        : VolcanoIconAssets.forVolcanoEvent(volcano);
     return Container(
       width: _s(72, context),
       height: _s(72, context),
@@ -1109,12 +1107,17 @@ class _AlertModuleState extends State<AlertModule> {
             height: _s(42, context),
             child: Transform.scale(
               scale: 2,
-              child: Image.asset(
-                iconAsset,
-                key: ValueKey('volcano_badge_icon'),
-                fit: BoxFit.contain,
-                filterQuality: FilterQuality.high,
-              ),
+              child: volcano == null
+                  ? Image.asset(
+                      VolcanoIconAssets.generic,
+                      key: const ValueKey('volcano_badge_icon'),
+                      fit: BoxFit.contain,
+                      filterQuality: FilterQuality.high,
+                    )
+                  : VolcanoEventIcon(
+                      volcano: volcano,
+                      imageKey: const ValueKey('volcano_badge_icon'),
+                    ),
             ),
           ),
           Text(

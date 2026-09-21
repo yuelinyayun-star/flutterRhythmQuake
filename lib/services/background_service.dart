@@ -555,6 +555,14 @@ class BackgroundService {
     FlutterBackgroundService().invoke('requestLocalWeatherState');
   }
 
+  /// Updates detector parameters without restarting background connections.
+  void updatePAlertDetectionSensitivity(int sensitivity) {
+    if (!isAndroidConnectionHostedByForegroundService) return;
+    FlutterBackgroundService().invoke('palertDetectionSensitivity', {
+      'value': sensitivity.clamp(1, 3),
+    });
+  }
+
   /// 设置改变后要求前台服务重新读取 SharedPreferences 并重建连接。
   Future<void> requestSourceReload({bool force = false}) async {
     if (!isAndroidConnectionHostedByForegroundService) return;
@@ -743,6 +751,10 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
 
   service.on('reloadSources').listen((event) {
     unawaited(reloadSources(force: event?['force'] == true));
+  });
+  service.on('palertDetectionSensitivity').listen((event) {
+    final value = event?['value'];
+    if (value is int) setBackgroundPAlertDetectionSensitivity(value);
   });
 
   // 接收主 isolate 的停止指令

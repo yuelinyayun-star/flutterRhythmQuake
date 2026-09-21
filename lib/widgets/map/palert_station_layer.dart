@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 
+import '../../services/sources/palert_detection_grid.dart';
 import '../../services/sources/palert_service.dart';
 import 'ka_shindo_marker_style.dart';
 import 'map_style_zoom.dart';
@@ -9,11 +11,17 @@ import 'station_dot_painter_layer.dart';
 class PAlertStationLayer extends StatelessWidget {
   final List<PAlertStation> stations;
   final bool displayShindo0;
+  final List<PAlertDetectionGridCell> detectionGridCells;
+  final bool hideGrid;
+  final bool blinkOn;
 
   const PAlertStationLayer({
     super.key,
     required this.stations,
     this.displayShindo0 = false,
+    this.detectionGridCells = const [],
+    this.hideGrid = false,
+    this.blinkOn = true,
   });
 
   static const Color _idleColor = Color(0x804466AA);
@@ -40,9 +48,11 @@ class PAlertStationLayer extends StatelessWidget {
       final level = station.gridLevel;
       final showMarker =
           recent &&
-          PAlertService.isPgaEligibleForNumericMarker(station.pgaGal) &&
+          level >= 0 &&
+          (displayShindo0 || station.displayCwaIntensityIndex != 0) &&
           KaShindoMarkerStyle.shouldShowMarker(
-            level: level,
+            // Eligibility uses current PGA; labels/colors keep held CWA levels.
+            level: station.detectionLevel,
             zoom: zoom,
             displayShindo0: displayShindo0,
           );
@@ -87,10 +97,37 @@ class PAlertStationLayer extends StatelessWidget {
 
     return Stack(
       children: [
+        if (detectionGridCells.isNotEmpty && !hideGrid)
+          PolygonLayer(polygons: _buildGridPolygons()),
         StationDotPainterLayer(dots: dots, sizeWithCameraZoom: true),
         if (markers.isNotEmpty) MarkerLayer(markers: markers),
       ],
     );
+  }
+
+  List<Polygon> _buildGridPolygons() {
+    const halfStep = 0.99 / 2;
+    return detectionGridCells
+        .map((cell) {
+          final center = cell.center;
+          final color = cell.level <= 7
+              ? const Color(0xFF008000)
+              : cell.level <= 13
+              ? const Color(0xFFFFFF00)
+              : const Color(0xFFFF0000);
+          return Polygon(
+            points: [
+              LatLng(center.latitude - halfStep, center.longitude - halfStep),
+              LatLng(center.latitude + halfStep, center.longitude - halfStep),
+              LatLng(center.latitude + halfStep, center.longitude + halfStep),
+              LatLng(center.latitude - halfStep, center.longitude + halfStep),
+            ],
+            borderStrokeWidth: 2.0,
+            borderColor: blinkOn ? color : color.withValues(alpha: 0),
+            color: Colors.transparent,
+          );
+        })
+        .toList(growable: false);
   }
 
   static double _markerSize(int level) => 14.0;

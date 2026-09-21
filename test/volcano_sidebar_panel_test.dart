@@ -55,6 +55,11 @@ void main() {
 
     await _pumpPanel(tester, event);
 
+    final icon = tester.widget<Image>(
+      find.byKey(const ValueKey('volcano_sidebar_icon')),
+    );
+    expect((icon.image as AssetImage).assetName, 'assets/images/volcano/vol.png');
+    expect(find.byIcon(Icons.local_fire_department), findsNothing);
     expect(find.text('推定喷烟流向报'), findsOneWidget);
     expect(find.textContaining('火口：南岳山顶火口'), findsOneWidget);
     await tester.drag(

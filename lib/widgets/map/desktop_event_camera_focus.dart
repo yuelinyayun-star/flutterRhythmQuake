@@ -1,18 +1,46 @@
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../core/calculator.dart';
+import '../../models/unified_quake_data.dart';
+
 class DesktopCameraCandidate {
   final String key;
   final int index;
   final LatLng location;
   final List<LatLng> stationPoints;
+  final bool isVolcano;
 
   const DesktopCameraCandidate({
     required this.key,
     required this.index,
     required this.location,
     this.stationPoints = const [],
+    this.isVolcano = false,
   });
+
+  static DesktopCameraCandidate? fromEvent(
+    UnifiedQuakeData event, {
+    required int index,
+    List<LatLng> focusPoints = const [],
+  }) {
+    final latitude = event.volcanoEvent?.latitude ?? event.lat;
+    final longitude = event.volcanoEvent?.longitude ?? event.lng;
+    final hasLocation =
+        latitude != null &&
+        longitude != null &&
+        QuakeCalculator.isUsableMapCoordinate(latitude, longitude);
+    if (!hasLocation && focusPoints.isEmpty) return null;
+    return DesktopCameraCandidate(
+      key: '${event.source}:${event.eventId}',
+      index: index,
+      location: hasLocation
+          ? LatLng(latitude, longitude)
+          : LatLngBounds.fromPoints(focusPoints).center,
+      stationPoints: event.source == 'nowQuakeCencIr' ? focusPoints : const [],
+      isVolcano: event.isVolcanoEvent,
+    );
+  }
 }
 
 /// Chooses a camera owner, without merging or removing any source events.
@@ -39,13 +67,14 @@ class DesktopEventCameraFocus {
     var selected = requested ?? owner ?? candidates.first;
     // Use the animation destination, not a transient camera frame.
     if (owner != null &&
+        owner.isVolcano == selected.isVolcano &&
         !(selected.stationPoints.length > 1 &&
             owner.stationPoints.length < 2) &&
         isVisible(owner.location) &&
         isVisible(selected.location)) {
       selected = owner;
     }
-    if (selected.stationPoints.length < 2) {
+    if (!selected.isVolcano && selected.stationPoints.length < 2) {
       // Prefer an active station report covering this epicenter, even when the
       // corresponding bulletin arrives before the first camera fit ends.
       for (final candidate in candidates) {

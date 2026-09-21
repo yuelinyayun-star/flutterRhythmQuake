@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../models/unified_quake_data.dart';
 import '../../models/volcano_event_data.dart';
 import 'ui_scale.dart';
+import 'volcano_event_icon.dart';
 
 UnifiedQuakeData? selectVolcanoSidebarEvent(
   List<UnifiedQuakeData> events,
@@ -53,10 +54,15 @@ class VolcanoSidebarPanel extends StatelessWidget {
       children: [
         Row(
           children: [
-            Icon(
-              Icons.local_fire_department,
-              color: const Color(0xFFFF7043),
-              size: scale(14),
+            SizedBox.square(
+              dimension: scale(14),
+              child: Transform.scale(
+                scale: 2,
+                child: VolcanoEventIcon(
+                  volcano: volcano,
+                  imageKey: const ValueKey('volcano_sidebar_icon'),
+                ),
+              ),
             ),
             SizedBox(width: scale(4)),
             Expanded(

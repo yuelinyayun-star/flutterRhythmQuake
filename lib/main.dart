@@ -530,7 +530,13 @@ class _RhythmQuakeAppState extends State<RhythmQuakeApp> {
   void initState() {
     super.initState();
     _lifecycleListener = AppLifecycleListener(
-      onStateChange: BackgroundService().onLifecycleStateChanged,
+      onStateChange: (state) {
+        SoundEffectService().onLifecycleStateChanged(state);
+        BackgroundService().onLifecycleStateChanged(state);
+      },
+    );
+    SoundEffectService().onLifecycleStateChanged(
+      WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.detached,
     );
   }
 

@@ -190,6 +190,7 @@ void main() {
       void frameReport() => provider.smartMoveToPoints(
         report.stationPoints,
         viewportPadding: padding,
+        focusAnchor: report.location,
         maxZoom: 12,
         force: true,
         minInterval: Duration.zero,

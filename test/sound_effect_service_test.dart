@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutterrhythmquake/services/sound_effect_service.dart';
 
@@ -85,6 +87,9 @@ void main() {
       );
 
       final sounds = SoundEffectService();
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      sounds.onLifecycleStateChanged(AppLifecycleState.resumed);
       await sounds.warmUp();
       expect(calls.where((c) => c.method == 'create'), hasLength(17));
       expect(playing, isEmpty, reason: 'Preloading must never play a sound.');
@@ -160,6 +165,96 @@ void main() {
         reason: 'Disabling during preparation must prevent delayed playback.',
       );
       sounds.enabled = true;
+      sourceReached = null;
+      sourceGate = null;
+
+      for (final state in [
+        AppLifecycleState.inactive,
+        AppLifecycleState.hidden,
+        AppLifecycleState.paused,
+        AppLifecycleState.detached,
+      ]) {
+        sounds.onLifecycleStateChanged(state);
+        calls.clear();
+        for (final source in ['nied', 'kma', 'trem', 'palert']) {
+          await sounds.playShindo(1, source: source);
+        }
+        await sounds.play('shindo4');
+        expect(
+          calls.where((c) => c.method == 'resume'),
+          isEmpty,
+          reason: 'Station detections must stay silent in $state.',
+        );
+      }
+      calls.clear();
+      await sounds.play('warn');
+      expect(
+        calls.where((c) => c.method == 'resume'),
+        hasLength(1),
+        reason: 'The detection gate must not mute other alert sounds.',
+      );
+      for (final id in playing.toList()) {
+        await emit(id, 'audio.onComplete');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      final oldSignalTime = DateTime.now().subtract(const Duration(seconds: 1));
+      sounds.onLifecycleStateChanged(AppLifecycleState.resumed);
+      calls.clear();
+      await sounds.playShindo(1, source: 'palert', detectedAt: oldSignalTime);
+      expect(calls.where((c) => c.method == 'resume'), isEmpty);
+      await sounds.playShindo(1, source: 'palert', detectedAt: DateTime.now());
+      expect(calls.where((c) => c.method == 'resume'), hasLength(1));
+      sounds.onLifecycleStateChanged(AppLifecycleState.paused);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(
+        playing,
+        isEmpty,
+        reason: 'Leaving the app stops already-playing detection audio.',
+      );
+      sounds.onLifecycleStateChanged(AppLifecycleState.resumed);
+
+      await sounds.play('shindo6');
+      calls.clear();
+      sourceReached = Completer<void>();
+      sourceGate = Completer<void>();
+      final pendingDetection = sounds.play('shindo6');
+      await sourceReached.future;
+      sounds.onLifecycleStateChanged(AppLifecycleState.paused);
+      sounds.onLifecycleStateChanged(AppLifecycleState.resumed);
+      sourceGate.complete();
+      await pendingDetection;
+      expect(
+        calls.where((c) => c.method == 'resume'),
+        isEmpty,
+        reason: 'An old pending detection cannot play after resuming.',
+      );
+      sourceReached = null;
+      sourceGate = null;
+      await sounds.play('shindo6');
+      expect(
+        calls.where((c) => c.method == 'resume'),
+        hasLength(1),
+        reason: 'New foreground detections still play.',
+      );
+      for (final id in playing.toList()) {
+        await emit(id, 'audio.onComplete');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+      sounds.onLifecycleStateChanged(AppLifecycleState.paused);
+      calls.clear();
+      await sounds.playShindo(5, detectedAt: oldSignalTime);
+      expect(
+        calls.where((c) => c.method == 'resume'),
+        hasLength(1),
+        reason: 'Desktop background detection behavior stays unchanged.',
+      );
+      for (final id in playing.toList()) {
+        await emit(id, 'audio.onComplete');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 10));
       for (final uri in AudioCache.instance.loadedFiles.values) {
         await File.fromUri(uri).delete();
       }

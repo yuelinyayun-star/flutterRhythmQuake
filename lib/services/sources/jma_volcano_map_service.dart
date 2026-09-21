@@ -6,7 +6,7 @@ import 'package:http/http.dart' as http;
 
 import '../../models/jma_volcano_site.dart';
 
-class JmaVolcanoMapService {
+class JmaVolcanoMapService extends ChangeNotifier {
   static final JmaVolcanoMapService _instance =
       JmaVolcanoMapService._internal();
   factory JmaVolcanoMapService() => _instance;
@@ -46,6 +46,31 @@ class JmaVolcanoMapService {
   void Function(List<JmaVolcanoSite>)? onSitesUpdated;
 
   List<JmaVolcanoSite> get sites => List.unmodifiable(_sites);
+
+  JmaVolcanoSite? siteForCode(String code) {
+    final key = code.trim();
+    if (key.isEmpty) return null;
+    for (final site in _sites) {
+      if (site.code == key) return site;
+    }
+    return null;
+  }
+
+  /// Shares HTTP results and Android foreground-service snapshots with the UI.
+  void acceptSitesSnapshot(List<JmaVolcanoSite> sites) {
+    final snapshot = List<JmaVolcanoSite>.of(sites);
+    _sites
+      ..clear()
+      ..addAll(snapshot);
+    onSitesUpdated?.call(this.sites);
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    stop();
+    super.dispose();
+  }
 
   void start({Duration interval = const Duration(minutes: 10)}) {
     if (_started) return;
@@ -135,6 +160,19 @@ class JmaVolcanoMapService {
         if (state == null) continue;
         warningByEventId[state.code] = state;
       }
+      if (stateResponses[0] == null) {
+        // A hosted snapshot may be newer than this isolate's last HTTP cache.
+        for (final site in _sites) {
+          warningByEventId[site.code] = _WarningState(
+            code: site.code,
+            level: site.alertLevel,
+            kindCode: site.warningKindCode,
+            kindName: site.warningKindName,
+            alarm: site.warningAlarm,
+            reportTime: site.warningReportTime,
+          );
+        }
+      }
 
       final infoByEventId = <String, Map<String, dynamic>>{};
       for (final info in infoList) {
@@ -197,10 +235,7 @@ class JmaVolcanoMapService {
         return a.code.compareTo(b.code);
       });
 
-      _sites
-        ..clear()
-        ..addAll(sites);
-      onSitesUpdated?.call(List.unmodifiable(_sites));
+      acceptSitesSnapshot(sites);
       debugPrint('JMA Volcano map: ${_sites.length} sites updated');
     } catch (e) {
       debugPrint('JMA Volcano map update error: $e');

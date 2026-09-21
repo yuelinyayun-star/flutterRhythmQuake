@@ -462,6 +462,18 @@ class MapStateProvider with ChangeNotifier {
     final lngDelta = (dest.longitude - currCenter.longitude).abs();
     final zoomDiff = (destZoom - currZoom).abs();
 
+    final pending = _animationDestination;
+    if (animate && pending != null &&
+        (pending.center.latitude - dest.latitude).abs() < 1e-7 &&
+        (WorldWrap.longitudeClosestTo(
+          pending.center.longitude,
+          dest.longitude,
+        ) - dest.longitude).abs() < 1e-7 &&
+        (pending.zoom - destZoom).abs() < 1e-5) {
+      // Repeated policy refreshes must not restart the same in-flight move.
+      return;
+    }
+
     _stopMoveAnimation();
 
     if (!animate) {
@@ -682,6 +694,7 @@ class MapStateProvider with ChangeNotifier {
     double minZoom = 3.0,
     double maxZoom = 8.0,
     EdgeInsets? viewportPadding,
+    LatLng? focusAnchor,
     Offset screenOffset = Offset.zero,
     bool respectAutoZoom = true,
     String sourceTag = 'points',
@@ -696,7 +709,21 @@ class MapStateProvider with ChangeNotifier {
     if (view == null) return;
 
     final maxDiff = max(view.latDiff, view.lngDiff) + padding * 2;
-    final fitted = viewportPadding == null
+    final hasAnchor =
+        focusAnchor != null &&
+        QuakeCalculator.isUsableMapCoordinate(
+          focusAnchor.latitude,
+          focusAnchor.longitude,
+        );
+    final fitted = hasAnchor
+        ? _fitPointsAroundAnchor(
+            points,
+            focusAnchor,
+            minZoom: minZoom,
+            maxZoom: maxZoom,
+            padding: viewportPadding ?? const EdgeInsets.all(50),
+          )
+        : viewportPadding == null
         ? null
         : _fitViewToViewport(
             view,
@@ -704,7 +731,7 @@ class MapStateProvider with ChangeNotifier {
             maxZoom: maxZoom,
             padding: viewportPadding,
           );
-    final center = fitted?.center ?? view.center;
+    final center = fitted?.center ?? (hasAnchor ? focusAnchor : view.center);
     final zoom =
         fitted?.zoom ?? _zoomForDiff(maxDiff).clamp(minZoom, maxZoom).toDouble();
     final targetCenter = screenOffset == Offset.zero
@@ -802,7 +829,11 @@ class MapStateProvider with ChangeNotifier {
     );
     final camera = _mapController!.camera;
     final focusPoint = camera.projectAtZoom(wrappedFocus, destZoom);
-    return camera.unprojectAtZoom(focusPoint - screenOffset, destZoom);
+    return WorldWrap.unprojectUnwrapped(
+      camera,
+      focusPoint - screenOffset,
+      zoom: destZoom,
+    );
   }
 
   _WrappedEventView? _calcWrappedEventView(
@@ -992,6 +1023,71 @@ class MapStateProvider with ChangeNotifier {
       minZoom: minZoom,
       maxZoom: maxZoom,
     ).fit(camera);
+  }
+
+  MapCamera? _fitPointsAroundAnchor(
+    List<LatLng> points,
+    LatLng anchor, {
+    required double minZoom,
+    required double maxZoom,
+    required EdgeInsets padding,
+  }) {
+    final camera = _mapController!.camera;
+    final size = camera.nonRotatedSize;
+    final width = size.width - padding.horizontal;
+    final height = size.height - padding.vertical;
+    if (!width.isFinite || !height.isFinite || width <= 0 || height <= 0) {
+      return null;
+    }
+
+    Offset rotate(Offset point, double angle) => Offset(
+      point.dx * cos(angle) - point.dy * sin(angle),
+      point.dx * sin(angle) + point.dy * cos(angle),
+    );
+    final anchorPixel = camera.projectAtZoom(anchor);
+    var halfWidth = 0.0;
+    var halfHeight = 0.0;
+    for (final point in points) {
+      if (!QuakeCalculator.isUsableMapCoordinate(
+        point.latitude,
+        point.longitude,
+      )) {
+        continue;
+      }
+      final wrapped = LatLng(
+        point.latitude,
+        WorldWrap.longitudeClosestTo(point.longitude, anchor.longitude),
+      );
+      final delta = rotate(
+        camera.projectAtZoom(wrapped) - anchorPixel,
+        -camera.rotationRad,
+      );
+      halfWidth = max(halfWidth, delta.dx.abs());
+      halfHeight = max(halfHeight, delta.dy.abs());
+    }
+    // Keep the epicenter centered; the farther side determines each span.
+    final scale = min(
+      halfWidth == 0 ? double.infinity : width / (2 * halfWidth),
+      halfHeight == 0 ? double.infinity : height / (2 * halfHeight),
+    );
+    final zoom = (scale.isFinite ? camera.getScaleZoom(scale) : maxZoom)
+        .clamp(minZoom, maxZoom)
+        .toDouble();
+    final paddingOffset = rotate(
+      Offset(
+        (padding.right - padding.left) / 2,
+        (padding.bottom - padding.top) / 2,
+      ),
+      camera.rotationRad,
+    );
+    return camera.withPosition(
+      center: WorldWrap.unprojectUnwrapped(
+        camera,
+        camera.projectAtZoom(anchor, zoom) + paddingOffset,
+        zoom: zoom,
+      ),
+      zoom: zoom,
+    );
   }
 
   double _calcAutoZoomWaveRadiusKm(QuakeMessage event) {

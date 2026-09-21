@@ -4,6 +4,9 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
+import 'palert_detection.dart';
+import 'palert_intensity.dart';
+import 'shake_detection_service.dart';
 
 class PAlertStation {
   final String id;
@@ -40,7 +43,17 @@ class PAlertStation {
   static const List<int> _gridLevels = [7, 9, 11, 13, 15, 16, 17, 18, 19, 20];
 
   int get gridLevel {
-    final index = displayCwaIntensityIndex;
+    return _gridLevel(displayCwaIntensityIndex);
+  }
+
+  int get currentGridLevel => _gridLevel(cwaIntensityIndex);
+
+  double? get estimatedContinuousShindo =>
+      PAlertIntensity.estimateFromPga(pgaGal);
+
+  int get detectionLevel => PAlertIntensity.detectionLevelFromPga(pgaGal);
+
+  static int _gridLevel(int? index) {
     if (index == null || index < 0 || index >= _gridLevels.length) return -1;
     return _gridLevels[index];
   }
@@ -98,10 +111,63 @@ class PAlertStation {
   }
 }
 
+enum PAlertDetectionSignal { none, detected, expired }
+
+/// Sound tiers consume only the joint detector's confirmed intensity.
+/// A session plays once at shindo 1-3 and once again when it reaches 4+.
+class PAlertDetectionGate {
+  int _previousMaxShindo = -1;
+  bool _lowIntensityNotified = false;
+  bool _strongIntensityNotified = false;
+
+  PAlertDetectionSignal update(int currentMaxShindo) {
+    if (currentMaxShindo < 0) {
+      final hadRealtime = reset();
+      return hadRealtime
+          ? PAlertDetectionSignal.expired
+          : PAlertDetectionSignal.none;
+    }
+
+    final rising = currentMaxShindo > _previousMaxShindo;
+    _previousMaxShindo = currentMaxShindo;
+    if (!rising) return PAlertDetectionSignal.none;
+    if (currentMaxShindo >= 4 && !_strongIntensityNotified) {
+      _lowIntensityNotified = true;
+      _strongIntensityNotified = true;
+      return PAlertDetectionSignal.detected;
+    }
+    if (currentMaxShindo >= 1 && !_lowIntensityNotified) {
+      _lowIntensityNotified = true;
+      return PAlertDetectionSignal.detected;
+    }
+    return PAlertDetectionSignal.none;
+  }
+
+  bool reset() {
+    final hadRealtime = _previousMaxShindo >= 0;
+    _previousMaxShindo = -1;
+    _lowIntensityNotified = false;
+    _strongIntensityNotified = false;
+    return hadRealtime;
+  }
+}
+
 class PAlertService {
   static final PAlertService _instance = PAlertService._();
   factory PAlertService() => _instance;
-  PAlertService._();
+  PAlertService._() {
+    _detector.onSnapshot = (snapshot) {
+      onDetectionChanged?.call(snapshot);
+    };
+    _detector.onCwaIntensityChanged = (maxShindo) {
+      final signal = _detectionGate.update(maxShindo);
+      if (signal == PAlertDetectionSignal.detected) {
+        onShakeDetected?.call(maxShindo);
+      } else if (signal == PAlertDetectionSignal.expired) {
+        onShakeExpired?.call();
+      }
+    };
+  }
 
   static final Uri _graphqlUri = Uri.parse(
     'https://palert.earth.sinica.edu.tw/graphql/',
@@ -112,16 +178,6 @@ class PAlertService {
   static const Duration frameStaleAfter = Duration(seconds: 6);
   static const Duration _frameWatchdogInterval = Duration(seconds: 1);
   static const int maxConsecutiveFailures = 3;
-
-  // Keep the fixed low-value display floor separate from the user setting
-  // that controls whether valid intensity 0 markers are shown.
-  static const double numericMarkerPgaFloorGal = 0.7;
-
-  static bool isPgaEligibleForNumericMarker(double? pgaGal) {
-    return pgaGal != null &&
-        pgaGal.isFinite &&
-        pgaGal >= numericMarkerPgaFloorGal;
-  }
 
   static const String _stationListQuery = '''
 query (\$staFilter: staList_filter_choices) {
@@ -150,10 +206,17 @@ query (\$recordTime: Float!, \$token: String!) {
   final ValueNotifier<DateTime?> dataTimeNotifier = ValueNotifier(null);
   final ValueNotifier<DateTime?> receivedTimeNotifier = ValueNotifier(null);
   void Function(bool connected)? onStatusChanged;
+  void Function(int maxShindo)? onShakeDetected;
+  void Function()? onShakeExpired;
+  void Function(ShakeDetectionSnapshot)? onDetectionChanged;
+  final PAlertDetector _detector = PAlertDetector();
+  ShakeDetectionSnapshot get detectionSnapshot => _detector.snapshot;
+  void setSensitivity(int value) => _detector.setSensitivity(value);
 
   final Map<String, PAlertStation> _stationMap = {};
   final Map<String, List<({DateTime time, int intensityIndex})>>
   _intensityHistory = {};
+  final PAlertDetectionGate _detectionGate = PAlertDetectionGate();
   List<PAlertStation> _stations = const [];
   List<PAlertStation> get stations => _stations;
 
@@ -198,6 +261,7 @@ query (\$recordTime: Float!, \$token: String!) {
   }
 
   void stop({bool clear = true}) {
+    _endShakeDetection();
     _running = false;
     _runGeneration++;
     _stationTimer?.cancel();
@@ -371,6 +435,7 @@ query (\$recordTime: Float!, \$token: String!) {
       dataTimeNotifier.value = pgaTimestamp;
       receivedTimeNotifier.value = receivedAt;
       _emitStations();
+      _checkShakeDetection();
       _handleSuccess();
     } catch (e) {
       if (_isCurrentRun(generation)) {
@@ -385,6 +450,9 @@ query (\$recordTime: Float!, \$token: String!) {
   }
 
   void _checkFrameFreshness(int generation) {
+    if (_isCurrentRun(generation)) {
+      _detector.expireStale(DateTime.now().toUtc());
+    }
     if (!_isCurrentRun(generation) ||
         !isFrameStale(_lastFrameReceivedAt, DateTime.now().toUtc())) {
       return;
@@ -407,6 +475,7 @@ query (\$recordTime: Float!, \$token: String!) {
     }
     _isConnected = false;
     _failureReported = true;
+    _endShakeDetection();
     onStatusChanged?.call(false);
   }
 
@@ -415,6 +484,7 @@ query (\$recordTime: Float!, \$token: String!) {
     if (_failureReported) return;
     _isConnected = false;
     _failureReported = true;
+    _endShakeDetection();
     onStatusChanged?.call(false);
   }
 
@@ -455,6 +525,14 @@ query (\$recordTime: Float!, \$token: String!) {
       ..sort((a, b) => a.id.compareTo(b.id));
     _stations = next;
     _stationController.add(next);
+  }
+
+  void _checkShakeDetection() {
+    _detector.update(_stations, now: DateTime.now().toUtc());
+  }
+
+  void _endShakeDetection() {
+    _detector.reset();
   }
 
   static int? cwaIntensityIndexFromPgaPgv({double? pgaGal, double? pgvCms}) {
@@ -520,7 +598,6 @@ query (\$recordTime: Float!, \$token: String!) {
     return previous == null || candidate.isAfter(previous);
   }
 
-  @visibleForTesting
   static bool isFrameStale(
     DateTime? receivedAt,
     DateTime now, {

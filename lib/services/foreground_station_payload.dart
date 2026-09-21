@@ -7,6 +7,8 @@ import 'sources/kma_monitor.dart';
 import 'sources/nied_monitor.dart';
 import 'sources/nied_gif_observation.dart';
 import 'sources/palert_service.dart';
+import 'sources/palert_detection_grid.dart';
+import 'sources/shake_detection_service.dart';
 import 'sources/seisjs_service.dart';
 import 'sources/lpgm_monitor_service.dart';
 import 'sources/fdsn_station_service.dart';
@@ -20,8 +22,8 @@ import 'sources/cma_local_weather_service.dart';
 import 'sources/jma_local_weather_service.dart';
 
 /// Compact, isolate-safe snapshots for station inputs owned by the Android
-/// foreground service. The UI still owns all rendering and higher-level
-/// detection/focus processing.
+/// foreground service. P-Alert also carries its confirmed detection grids;
+/// the UI owns rendering and camera focus, without reclassifying station data.
 class ForegroundStationPayload {
   const ForegroundStationPayload._();
 
@@ -70,12 +72,50 @@ class ForegroundStationPayload {
     List<PAlertStation> stations, {
     DateTime? dataTime,
     DateTime? receivedTime,
+    ShakeDetectionSnapshot? detection,
   }) => {
     'kind': 'palert',
     'dataTime': dataTime?.toIso8601String(),
     'receivedTime': receivedTime?.toIso8601String(),
+    'detectionGrid': [
+      for (final cell in detection?.gridCells.values ?? <NiedDetectionGridCell>[])
+        [cell.center.latitude, cell.center.longitude, cell.level],
+    ],
     'stations': stations.map(_pAlertStation).toList(growable: false),
   };
+
+  static List<PAlertDetectionGridCell> decodePAlertDetection(
+    Map<String, dynamic> payload, {
+    required DateTime now,
+  }) {
+    final received = _date(payload['receivedTime']);
+    final raw = payload['detectionGrid'];
+    if (received == null ||
+        raw is! List ||
+        PAlertService.isFrameStale(received, now)) {
+      return const [];
+    }
+    return [
+      for (final cell in raw)
+        if (cell is List &&
+            cell.length == 3 &&
+            cell[0] is num &&
+            cell[1] is num &&
+            cell[2] is int &&
+            (cell[0] as num).isFinite &&
+            (cell[1] as num).isFinite &&
+            (cell[0] as num).abs() <= 90 &&
+            (cell[1] as num).abs() <= 180 &&
+            (cell[2] as int) >= 0 &&
+            (cell[2] as int) <= 20)
+          PAlertDetectionGridCell(
+            center: LatLng(
+              (cell[0] as num).toDouble(), (cell[1] as num).toDouble(),
+            ),
+            level: cell[2] as int,
+          ),
+    ];
+  }
 
   static DateTime? frameTime(Map<String, dynamic> payload) =>
       _date(payload['dataTime']);

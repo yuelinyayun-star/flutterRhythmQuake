@@ -82,7 +82,11 @@ class ShakeDetectionService {
   static final ShakeDetectionService _instance =
       ShakeDetectionService._internal();
   factory ShakeDetectionService() => _instance;
-  ShakeDetectionService._internal();
+  ShakeDetectionService._internal() : _sourceId = 'nied';
+
+  /// Independent state and timers while reusing the NIED detection algorithm.
+  ShakeDetectionService.forSource(this._sourceId);
+  final String _sourceId;
 
   static const ShakeDetectionSnapshot idleSnapshot = ShakeDetectionSnapshot(
     stage: ShakeDetectStage.idle,
@@ -113,8 +117,8 @@ class ShakeDetectionService {
   bool _useBackgroundWorker = false;
   bool _backgroundDetectionRunning = false;
   bool _backgroundDetectionPending = false;
-  final LegacyShakeEventDetectorAdapter _legacyEventDetector =
-      LegacyShakeEventDetectorAdapter();
+  late final LegacyShakeEventDetectorAdapter _legacyEventDetector =
+      LegacyShakeEventDetectorAdapter(sourceId: _sourceId);
   Future<List<int>?>? _backgroundDetectorInit;
   int _configuredStationCount = -1;
   NiedStation? _configuredFirstStation;
@@ -180,7 +184,7 @@ class ShakeDetectionService {
       onEventDetectionChanged?.call(
         EventDetection(
           detectorId: 'legacy_shake_detection_adapter',
-          sourceId: 'nied',
+          sourceId: _sourceId,
           eventId: null,
           state: EventDetectionState.idle,
           observedAt: observedAt,
@@ -197,7 +201,7 @@ class ShakeDetectionService {
     final previousStations = _stations;
     _stations = stations;
     _useBackgroundWorker =
-        background && NiedBackgroundWorker.instance.supported;
+        _sourceId == 'nied' && background && NiedBackgroundWorker.instance.supported;
     final middleStation = stations.isEmpty
         ? null
         : stations[stations.length ~/ 2];
@@ -767,7 +771,7 @@ class ShakeDetectionService {
       detectedStations: entries,
       gridCells: Map<String, NiedDetectionGridCell>.from(_gridCells),
     );
-    NiedReplayLogger.instance.logDetection(snapshot);
+    if (_sourceId == 'nied') NiedReplayLogger.instance.logDetection(snapshot);
     onDetectionSnapshotChanged?.call(snapshot);
     onEventDetectionChanged?.call(eventDetection);
   }

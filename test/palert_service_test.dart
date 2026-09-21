@@ -68,21 +68,6 @@ void main() {
   });
 
   group('P-Alert CWA intensity', () {
-    test(
-      'keeps the fixed low-value marker floor independent of the setting',
-      () {
-        expect(PAlertService.numericMarkerPgaFloorGal, 0.7);
-        expect(PAlertService.isPgaEligibleForNumericMarker(0.699999), isFalse);
-        expect(PAlertService.isPgaEligibleForNumericMarker(0.7), isTrue);
-        expect(PAlertService.isPgaEligibleForNumericMarker(0.700001), isTrue);
-        expect(PAlertService.isPgaEligibleForNumericMarker(null), isFalse);
-        expect(
-          PAlertService.isPgaEligibleForNumericMarker(double.nan),
-          isFalse,
-        );
-      },
-    );
-
     test('uses PGA for intensity 0 through 4', () {
       expect(PAlertService.cwaIntensityIndexFromPgaPgv(pgaGal: 0.1), 0);
       expect(PAlertService.cwaIntensityIndexFromPgaPgv(pgaGal: 0.8), 1);
@@ -193,6 +178,40 @@ void main() {
       expect(station.displayCwaIntensityIndex, 4);
       expect(station.gridLevel, 15);
       expect(station.shindoLabel, '4');
+    });
+  });
+
+  group('P-Alert detection lifecycle', () {
+    test(
+      'notifies once at low intensity, once at strong intensity, then ends',
+      () {
+        final gate = PAlertDetectionGate();
+
+        expect(gate.update(0), PAlertDetectionSignal.none);
+        expect(gate.update(1), PAlertDetectionSignal.detected);
+        expect(gate.update(3), PAlertDetectionSignal.none);
+        expect(gate.update(4), PAlertDetectionSignal.detected);
+        expect(gate.update(7), PAlertDetectionSignal.none);
+        expect(gate.update(-1), PAlertDetectionSignal.expired);
+        expect(gate.update(2), PAlertDetectionSignal.detected);
+      },
+    );
+
+    test('a first frame at strong intensity only emits one detection', () {
+      final gate = PAlertDetectionGate();
+
+      expect(gate.update(6), PAlertDetectionSignal.detected);
+      expect(gate.update(9), PAlertDetectionSignal.none);
+    });
+
+    test('only resets sound tiers when joint detection ends', () {
+      final gate = PAlertDetectionGate();
+
+      expect(gate.update(2), PAlertDetectionSignal.detected);
+      expect(gate.update(0), PAlertDetectionSignal.none);
+      expect(gate.update(2), PAlertDetectionSignal.none);
+      expect(gate.update(-1), PAlertDetectionSignal.expired);
+      expect(gate.update(2), PAlertDetectionSignal.detected);
     });
   });
 }

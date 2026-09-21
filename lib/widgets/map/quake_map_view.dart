@@ -34,6 +34,8 @@ import 'history_marker_layer.dart';
 import 'snet_layer.dart';
 import 'volcano_layer.dart';
 import 'volcano_ashfall_layer.dart';
+import 'volcano_info_focus.dart';
+import '../../core/utils/volcano_icon_assets.dart';
 import 'seisjs_layer.dart';
 import 'fdsn_station_layer.dart';
 import '../../core/fdsn_intensity.dart';
@@ -84,6 +86,7 @@ import '../../services/sources/shake_detection_service.dart';
 import '../../services/sources/kma_monitor.dart';
 import '../../services/sources/cwa_station_service.dart';
 import '../../services/sources/palert_service.dart';
+import '../../services/sources/palert_detection_grid.dart';
 import '../../services/sources/seisjs_service.dart';
 import '../../services/sources/fdsn_station_service.dart';
 import '../../services/sources/fdsn_motion_service.dart';
@@ -411,6 +414,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
 
   List<CwaStation> _cwaStations = [];
   List<PAlertStation> _pAlertStations = [];
+  final PAlertDetectionGrid _pAlertDetectionGrid = PAlertDetectionGrid();
   bool _wolfxSeisJsEnabled = true;
   bool _kmaPewsEnabled = true;
   bool _pAlertEnabled = true;
@@ -553,6 +557,8 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   DateTime? _lastKmaStationFocusAt;
   String? _lastTremStationFocusSignature;
   DateTime? _lastTremStationFocusAt;
+  String? _lastPAlertStationFocusSignature;
+  DateTime? _lastPAlertStationFocusAt;
   String _lastNiedLayerSignature = '';
   String _lastKmaLayerSignature = '';
   String _lastCwaLayerSignature = '';
@@ -580,6 +586,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   bool _pendingNiedStationFocus = false;
   bool _pendingKmaStationFocus = false;
   bool _pendingTremStationFocus = false;
+  bool _pendingPAlertStationFocus = false;
   QuakeProvider? _quakeProvider;
   MapStateProvider? _mapStateProvider;
   bool _providerCallbacksBound = false;
@@ -878,6 +885,11 @@ class _QuakeMapViewState extends State<QuakeMapView> {
         final stations = ForegroundStationPayload.decodePAlert(rawStations);
         _pAlertStations = stations;
         _ingestPAlertAutomationStations(stations);
+        _updatePAlertDetectionGrid(
+          ForegroundStationPayload.decodePAlertDetection(
+            payload, now: DateTime.now(),
+          ),
+        );
         final signature = _pAlertLayerSignature(stations);
         if (signature != _lastPAlertLayerSignature) {
           _lastPAlertLayerSignature = signature;
@@ -908,10 +920,9 @@ class _QuakeMapViewState extends State<QuakeMapView> {
         final sample = ForegroundStationPayload.decodeFdsnMotion(payload);
         if (sample != null) _handleFdsnMotionSample(sample);
       case 'volcanoSites':
-        _volcanoSites = ForegroundStationPayload.decodeVolcanoSites(
-          payload['sites'],
+        _volcanoMapService.acceptSitesSnapshot(
+          ForegroundStationPayload.decodeVolcanoSites(payload['sites']),
         );
-        if (mounted) setState(() {});
       case 'fanRadar':
         final frame = ForegroundStationPayload.decodeFanRadar(payload);
         if (frame != null) {
@@ -980,6 +991,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     final source = payload['source']?.toString();
     final action = payload['action']?.toString();
     final value = _foregroundNumber(payload['value']);
+    final detectedAt = DateTime.tryParse(payload['detectedAt']?.toString() ?? '');
     if (source == 'kma') {
       if (action == 'detected' && value != null) {
         final intensity = value.round();
@@ -988,7 +1000,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
           maxIntensity: intensity,
           observedAt: DateTime.now(),
         );
-        _onKmaShakeDetected(intensity);
+        _onKmaShakeDetected(intensity, detectedAt: detectedAt);
       } else if (action == 'expired') {
         _obsAutomationInputs.endLegacyNetworkDetection(
           network: 'kma',
@@ -1004,13 +1016,29 @@ class _QuakeMapViewState extends State<QuakeMapView> {
           maxIntensity: intensity,
           observedAt: DateTime.now(),
         );
-        _onTremShakeDetected(intensity);
+        _onTremShakeDetected(intensity, detectedAt: detectedAt);
       } else if (action == 'expired') {
         _obsAutomationInputs.endLegacyNetworkDetection(
           network: 'trem',
           observedAt: DateTime.now(),
         );
         _onTremShakeExpired();
+      }
+    } else if (source == 'palert') {
+      if (action == 'detected' && value != null) {
+        final intensity = value.round();
+        _obsAutomationInputs.ingestLegacyNetworkDetection(
+          network: 'palert',
+          maxIntensity: intensity,
+          observedAt: DateTime.now(),
+        );
+        _onPAlertShakeDetected(intensity, detectedAt: detectedAt);
+      } else if (action == 'expired') {
+        _obsAutomationInputs.endLegacyNetworkDetection(
+          network: 'palert',
+          observedAt: DateTime.now(),
+        );
+        _onPAlertShakeExpired();
       }
     }
   }
@@ -1445,6 +1473,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       } else {
         _obsAutomationInputs.clearStationNetwork('palert');
         _pAlertStations = const [];
+        _clearPAlertStationFocus();
         _notifyLayer(_pAlertLayerRevision);
         _emitStationSummary();
       }
@@ -1459,6 +1488,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _obsAutomationInputs.clearStationNetwork('palert');
     _pAlertStations = const [];
     _lastPAlertLayerSignature = '';
+    _clearPAlertStationFocus();
     _notifyLayer(_pAlertLayerRevision);
     _quakeProvider?.updateSourceStatus('P-Alert', SourceStatus.disconnected);
     _emitStationSummary();
@@ -2370,9 +2400,18 @@ class _QuakeMapViewState extends State<QuakeMapView> {
         if (!_pAlertEnabled || _pAlertStations.isEmpty) {
           return const SizedBox.shrink();
         }
-        return PAlertStationLayer(
-          stations: _pAlertStations,
-          displayShindo0: _displayShindo0,
+        return Selector<QuakeProvider, bool>(
+          selector: (context, provider) => _hasEewSource(provider, 'cwaEew'),
+          builder: (context, hideGrid, child) => ValueListenableBuilder<bool>(
+            valueListenable: _blinkNotifier,
+            builder: (context, blinkOn, child) => PAlertStationLayer(
+              stations: _pAlertStations,
+              displayShindo0: _displayShindo0,
+              detectionGridCells: _pAlertDetectionGrid.cells,
+              hideGrid: hideGrid,
+              blinkOn: blinkOn,
+            ),
+          ),
         );
       },
     );
@@ -2662,6 +2701,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
 
   void _onQuakeProviderChanged() {
     _syncActivityTimers();
+    _syncVolcanoMapServiceWithOverlay();
     final provider = _quakeProvider;
     if (provider != null &&
         (provider.mobileEewCarousel || !UiScale.isPhone(context)) &&
@@ -2688,6 +2728,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     if (provider?.ntwcTsunami?.isActive == true) return true;
     if (provider?.incoisTsunami?.isActive == true) return true;
     if (_latestDetectSnapshot.stage != ShakeDetectStage.idle) return true;
+    if (_pAlertDetectionGrid.cells.isNotEmpty) return true;
     if (_kmaStations.any((s) => s.isActive || s.intensity >= 0)) return true;
     if (_cwaStations.any((s) => s.hasAlert || s.currentIntensity >= 0)) {
       return true;
@@ -2956,22 +2997,32 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   }
 
   void _syncVolcanoMapServiceWithOverlay() {
-    final mapState = _mapStateProvider;
-    final shouldRun =
-        mapState != null && mapState.isOverlayEnabled('volcanoLayer');
-    if (BackgroundService().isAndroidConnectionHostedByForegroundService) {
+    if (_backgroundPaused) {
       _volcanoMapService.stop();
-      if (shouldRun && !_foregroundHostedOverlayKeys.contains('volcano')) {
+      return;
+    }
+    final mapState = _mapStateProvider;
+    final overlayEnabled =
+        mapState != null && mapState.isOverlayEnabled('volcanoLayer');
+    final hasVolcanoEvent =
+        _quakeProvider?.unifiedEvents.any((event) => event.isVolcanoEvent) == true;
+    if (BackgroundService().isAndroidConnectionHostedByForegroundService) {
+      if (overlayEnabled && !_foregroundHostedOverlayKeys.contains('volcano')) {
         _foregroundHostedOverlayKeys.add('volcano');
         unawaited(BackgroundService().requestSourceReload());
-      } else if (!shouldRun) {
+      } else if (!overlayEnabled) {
         _foregroundHostedOverlayKeys.remove('volcano');
-        _volcanoSites = const [];
-        if (mounted) setState(() {});
+      }
+      // The host supplies overlay snapshots; hidden-layer event badges still
+      // need standing warnings, without restarting all background sources.
+      if (hasVolcanoEvent && !overlayEnabled) {
+        _volcanoMapService.start();
+      } else {
+        _volcanoMapService.stop();
       }
       return;
     }
-    if (shouldRun) {
+    if (overlayEnabled || hasVolcanoEvent) {
       _volcanoMapService.start();
     } else {
       _volcanoMapService.stop();
@@ -3007,10 +3058,12 @@ class _QuakeMapViewState extends State<QuakeMapView> {
         if (volcano.isProvisionalCommentary) {
           site = site.copyWith(hasProvisionalInfo: true);
         }
-        final level = volcano.parsedAlertLevel;
-        if (level != null && level > site.alertLevel) {
-          site = site.copyWith(alertLevel: level);
-        }
+        site = site.copyWith(
+          alertLevel: VolcanoIconAssets.levelForVolcanoEvent(
+            volcano,
+            officialSite: official,
+          ),
+        );
         sites.add(site);
         continue;
       }
@@ -3025,7 +3078,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
           latitude: volcano.latitude!,
           longitude: volcano.longitude!,
           levelOperation: false,
-          alertLevel: volcano.parsedAlertLevel ?? 0,
+          alertLevel: VolcanoIconAssets.levelForVolcanoEvent(volcano),
           hasWarning: false,
           hasRecentInfo: volcano.isCommentaryInfo,
           hasRecentEruption: false,
@@ -3443,8 +3496,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     if (index >= 0 &&
         index < unifiedEvents.length &&
         index < mapEvents.length &&
-        !unifiedEvents[index].isEew &&
-        !unifiedEvents[index].isVolcanoEvent) {
+        !unifiedEvents[index].isEew) {
       return mapEvents[index];
     }
     return infoEvents[index % infoEvents.length];
@@ -3466,26 +3518,17 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     final candidates = <DesktopCameraCandidate>[];
     for (var i = 0; i < events.length && i < mapEvents.length; i++) {
       final event = events[i];
-      if (event.isEew != isEew || event.isVolcanoEvent) continue;
+      if (event.isEew != isEew) continue;
       final mapEvent = mapEvents[i];
       final points = isEew
           ? const <LatLng>[]
           : _unifiedInfoFocusPoints(provider, event, mapEvent);
-      final hasEpicenter = QuakeCalculator.isUsableMapCoordinate(
-        mapEvent.latitude,
-        mapEvent.longitude,
+      final candidate = DesktopCameraCandidate.fromEvent(
+        event,
+        index: i,
+        focusPoints: points,
       );
-      if (!hasEpicenter && points.isEmpty) continue;
-      candidates.add(
-        DesktopCameraCandidate(
-          key: '${event.source}:${event.eventId}',
-          index: i,
-          location: hasEpicenter
-              ? LatLng(mapEvent.latitude, mapEvent.longitude)
-              : LatLngBounds.fromPoints(points).center,
-          stationPoints: event.source == 'nowQuakeCencIr' ? points : const [],
-        ),
-      );
+      if (candidate != null) candidates.add(candidate);
     }
     final padding = cencIrViewportPadding(context)!;
     return _desktopEventCameraFocus.select(
@@ -3510,6 +3553,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     final points = _unifiedInfoFocusPoints(provider, event, mapEvent);
     final padding = cencIrViewportPadding(context)!;
     final stationFit = event.source == 'nowQuakeCencIr' && points.length > 1;
+    final areaFit = stationFit || (event.isVolcanoEvent && points.length > 1);
     final screenOffset = Offset(
       (padding.left - padding.right) / 2,
       (padding.top - padding.bottom) / 2,
@@ -3521,8 +3565,11 @@ class _QuakeMapViewState extends State<QuakeMapView> {
         padding: 0.8,
         minZoom: 3,
         maxZoom: stationFit ? 12 : 8,
-        viewportPadding: stationFit ? padding : null,
-        screenOffset: stationFit ? Offset.zero : screenOffset,
+        viewportPadding: areaFit ? padding : null,
+        focusAnchor: event.source == 'nowQuakeCencIr'
+            ? LatLng(mapEvent.latitude, mapEvent.longitude)
+            : null,
+        screenOffset: areaFit ? Offset.zero : screenOffset,
         sourceTag: 'policy-desktop-info-area-${target.key}',
         force: force,
         minInterval: const Duration(milliseconds: 1200),
@@ -3585,7 +3632,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
 
   void _onNiedShakeDetected(int shindo) {
     if (!mounted) return;
-    SoundEffectService().playShindo(shindo);
+    SoundEffectService().playShindo(shindo, source: 'nied');
     if (shindo < 1) return;
     if (!_requestNiedStationFocus(force: true)) {
       _pendingNiedStationFocus = true;
@@ -3652,6 +3699,24 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       _preferredStationFocusSource = null;
     }
     _onShakeExpired();
+  }
+
+  void _onPAlertShakeExpired() {
+    if (!mounted) return;
+    _clearPAlertStationFocus();
+    _onShakeExpired();
+  }
+
+  void _clearPAlertStationFocus() {
+    _pAlertDetectionGrid.clear();
+    _lastPAlertStationFocusSignature = null;
+    _lastPAlertStationFocusAt = null;
+    _pendingPAlertStationFocus = false;
+    if (_preferredStationFocusSource == 'palert') {
+      _preferredStationFocusSource = null;
+    }
+    _syncActivityTimers();
+    _notifyLayer(_pAlertLayerRevision);
   }
 
   void _requestEventPointFocus(
@@ -3780,6 +3845,8 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     UnifiedQuakeData event,
     QuakeMessage mapEvent,
   ) {
+    final volcano = event.volcanoEvent;
+    if (volcano != null) return volcanoInfoFocusPoints(volcano);
     final jmaPoints = _p2pJmaInfoFocusPoints(event, mapEvent);
     if (jmaPoints.isNotEmpty) return jmaPoints;
     return _cencIrInfoFocusPoints(provider, event, mapEvent);
@@ -3832,19 +3899,33 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     );
   }
 
-  void _onKmaShakeDetected(int maxShindo) {
+  void _onKmaShakeDetected(int maxShindo, {DateTime? detectedAt}) {
     if (!mounted) return;
-    SoundEffectService().playShindo(maxShindo);
+    SoundEffectService().playShindo(
+      maxShindo, source: 'kma', detectedAt: detectedAt,
+    );
     if (!_requestKmaStationFocus(force: true)) {
       _pendingKmaStationFocus = true;
     }
   }
 
-  void _onTremShakeDetected(int maxShindo) {
+  void _onTremShakeDetected(int maxShindo, {DateTime? detectedAt}) {
     if (!mounted) return;
-    SoundEffectService().playShindo(maxShindo);
+    SoundEffectService().playShindo(
+      maxShindo, source: 'trem', detectedAt: detectedAt,
+    );
     if (!_requestTremStationFocus(force: true)) {
       _pendingTremStationFocus = true;
+    }
+  }
+
+  void _onPAlertShakeDetected(int maxShindo, {DateTime? detectedAt}) {
+    if (!mounted) return;
+    SoundEffectService().playShindo(
+      maxShindo, source: 'palert', detectedAt: detectedAt,
+    );
+    if (!_requestPAlertStationFocus(force: true)) {
+      _pendingPAlertStationFocus = true;
     }
   }
 
@@ -3961,17 +4042,22 @@ class _QuakeMapViewState extends State<QuakeMapView> {
         final focus = _preferredEventFocus!;
         provider.setMobileCameraInfoFocus(_preferredUnifiedInfoFocus);
         if (_preferredEventFocusPoints.isNotEmpty) {
+          final isCencIrFocus =
+              _preferredUnifiedInfoFocus?.source == 'nowQuakeCencIr';
           final viewportPadding =
-              _preferredUnifiedInfoFocus?.source == 'nowQuakeCencIr' &&
+              isCencIrFocus &&
                       _preferredEventFocusPoints.length > 1
                   ? cencIrViewportPadding(context)
                   : null;
           mapState.smartMoveToPoints(
             _preferredEventFocusPoints,
             padding: 0.8,
-            minZoom: 4.5,
-            maxZoom: viewportPadding == null ? 7.5 : 12.0,
+            minZoom: isCencIrFocus ? 3.0 : 4.5,
+            maxZoom: isCencIrFocus ? 12.0 : 7.5,
             viewportPadding: viewportPadding,
+            focusAnchor: isCencIrFocus
+                ? LatLng(focus.latitude, focus.longitude)
+                : null,
             screenOffset: _eventFocusOffset(),
             sourceTag: 'policy-event-area-focus',
             force: force,
@@ -4098,7 +4184,12 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       return;
     }
 
-    final latestInfoIndex = _latestUnifiedInfoIndex(provider.unifiedEvents);
+    final selectedInfo = provider.currentUnifiedEvent;
+    final hasVolcanoInfo = provider.unifiedEvents.any((event) => event.isVolcanoEvent);
+    final latestInfoIndex = !desktop && hasVolcanoInfo &&
+            selectedInfo != null && !selectedInfo.isEew
+        ? provider.currentUnifiedIndex
+        : _latestUnifiedInfoIndex(provider.unifiedEvents);
     if (latestInfoIndex >= 0 && latestInfoIndex < mapEvents.length) {
       final infoFocusPoints = _unifiedInfoFocusPoints(
         provider,
@@ -4106,8 +4197,10 @@ class _QuakeMapViewState extends State<QuakeMapView> {
         mapEvents[latestInfoIndex],
       );
       if (infoFocusPoints.isNotEmpty) {
+        final isCencIrFocus =
+            provider.unifiedEvents[latestInfoIndex].source == 'nowQuakeCencIr';
         final viewportPadding =
-            provider.unifiedEvents[latestInfoIndex].source == 'nowQuakeCencIr' &&
+            isCencIrFocus &&
                     infoFocusPoints.length > 1
                 ? cencIrViewportPadding(context)
                 : null;
@@ -4118,10 +4211,16 @@ class _QuakeMapViewState extends State<QuakeMapView> {
           infoFocusPoints,
           padding: 0.8,
           minZoom: 3.0,
-          maxZoom: viewportPadding == null ? 8.0 : 12.0,
+          maxZoom: isCencIrFocus ? 12.0 : 8.0,
           viewportPadding: viewportPadding,
+          focusAnchor: isCencIrFocus
+              ? LatLng(
+                  mapEvents[latestInfoIndex].latitude,
+                  mapEvents[latestInfoIndex].longitude,
+                )
+              : null,
           screenOffset: _eventFocusOffset(),
-          sourceTag: 'policy-p2p-jma-info-area',
+          sourceTag: 'policy-info-area-${_cameraEventTag(mapEvents[latestInfoIndex])}',
           force: force,
           minInterval: const Duration(milliseconds: 1200),
         );
@@ -4130,7 +4229,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     }
 
     if (mapEvents.isNotEmpty) {
-      if (_shouldSplitDistantUnifiedFocus(mapEvents)) {
+      if (hasVolcanoInfo || _shouldSplitDistantUnifiedFocus(mapEvents)) {
         final focusInfo = _currentInfoFocusEvent(provider, mapEvents);
         if (focusInfo != null) {
           final focusIndex = mapEvents.indexOf(focusInfo);
@@ -4284,6 +4383,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     final currentPreferredPoints = switch (preferred) {
       'kma' => _kmaFocusPoints(),
       'trem' => _tremFocusStations().map((s) => s.coordinate).toList(),
+      'palert' => _pAlertDetectionGrid.centers,
       'nied' => _niedFocusPoints(),
       _ => const <LatLng>[],
     };
@@ -4296,6 +4396,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       'nied': _niedFocusPoints(),
       'kma': _kmaFocusPoints(),
       'trem': _tremFocusStations().map((s) => s.coordinate).toList(),
+      'palert': _pAlertDetectionGrid.centers,
       if (preferred != null && currentPreferredPoints.isNotEmpty)
         preferred: currentPreferredPoints,
     };
@@ -4304,7 +4405,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
 
     final order = <String>[
       if (preferredHasPoints) preferred,
-      for (final source in const ['nied', 'kma', 'trem'])
+      for (final source in const ['nied', 'kma', 'trem', 'palert'])
         if (source != preferred) source,
     ];
 
@@ -4335,8 +4436,9 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     final niedSig = _lastNiedStationFocusSignature ?? '';
     final kmaSig = _lastKmaStationFocusSignature ?? '';
     final tremSig = _lastTremStationFocusSignature ?? '';
+    final pAlertSig = _lastPAlertStationFocusSignature ?? '';
     final stationPref = _preferredStationFocusSource ?? '';
-    return 'u[$unified]-n[$niedSig]-k[$kmaSig]-c[$tremSig]-sp[$stationPref]';
+    return 'u[$unified]-n[$niedSig]-k[$kmaSig]-c[$tremSig]-p[$pAlertSig]-sp[$stationPref]';
   }
 
   String? _historyCameraKey(QuakeMessage? event) {
@@ -4523,6 +4625,53 @@ class _QuakeMapViewState extends State<QuakeMapView> {
             .toList()
           ..sort();
     return keys.join('|');
+  }
+
+  bool _requestPAlertStationFocus({bool force = false}) {
+    if (!mounted) return false;
+    final provider = context.read<QuakeProvider>();
+    if (provider.unifiedEvents.any((event) => event.isEew)) return false;
+
+    if (_pAlertDetectionGrid.cells.isEmpty) {
+      _lastPAlertStationFocusSignature = null;
+      _lastPAlertStationFocusAt = null;
+      return false;
+    }
+
+    final signature = _pAlertDetectionGrid.signature;
+    final now = DateTime.now();
+    final lastAt = _lastPAlertStationFocusAt;
+    if (!force) {
+      if (signature == _lastPAlertStationFocusSignature) return false;
+      if (lastAt != null &&
+          now.difference(lastAt) < const Duration(seconds: 5)) {
+        return false;
+      }
+    }
+
+    _lastPAlertStationFocusSignature = signature;
+    _lastPAlertStationFocusAt = now;
+    _preferStationFocusSource('palert', force);
+    _queueCameraPolicyRefresh(force: force);
+    return true;
+  }
+
+  void _updatePAlertDetectionGrid(Iterable<PAlertDetectionGridCell> cells) {
+    final hadGrid = _pAlertDetectionGrid.cells.isNotEmpty;
+    final previousSignature = _pAlertDetectionGrid.signature;
+    _pAlertDetectionGrid.update(cells);
+    if (previousSignature != _pAlertDetectionGrid.signature) {
+      _notifyLayer(_pAlertLayerRevision);
+    }
+    if (_pAlertDetectionGrid.cells.isEmpty) {
+      if (hadGrid) _onPAlertShakeExpired();
+    } else {
+      final force = _pendingPAlertStationFocus || !hadGrid;
+      if (_requestPAlertStationFocus(force: force)) {
+        _pendingPAlertStationFocus = false;
+      }
+    }
+    _syncActivityTimers();
   }
 
   /// 閫氱敤娴嬬珯鍦扮悊鑱氱被锛屼笌 [_localNiedFocusCluster] 鍚岄€昏緫
@@ -4911,6 +5060,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _shakeDetection.setSensitivity(sensitivity);
     _niedSourceEstimationDriver.setSensitivity(sensitivity);
     _kmaService.setSensitivity(sensitivity);
+    _pAlertService.setSensitivity(sensitivity);
     _hideGridOnEew = prefs.getBool('hide_grid_on_eew') ?? false;
 
     QuakeMapView.niedSourceNotifier.addListener(_onNiedSourceChanged);
@@ -5000,6 +5150,33 @@ class _QuakeMapViewState extends State<QuakeMapView> {
         observedAt: _cwaService.dataTimeNotifier.value ?? DateTime.now(),
       );
       _onTremShakeExpired();
+    };
+
+    _pAlertService.onDetectionChanged = (snapshot) {
+      if (!mounted || !_pAlertEnabled ||
+          BackgroundService().isAndroidConnectionHostedByForegroundService) {
+        return;
+      }
+      _updatePAlertDetectionGrid(
+        snapshot.gridCells.values.map(PAlertDetectionGridCell.fromDetection),
+      );
+    };
+    _pAlertService.onShakeDetected = (maxShindo) {
+      debugPrint('P-Alert ShakeDetection: shindo $maxShindo detected');
+      _obsAutomationInputs.ingestLegacyNetworkDetection(
+        network: 'palert',
+        maxIntensity: maxShindo,
+        observedAt: _pAlertService.dataTimeNotifier.value ?? DateTime.now(),
+      );
+      _onPAlertShakeDetected(maxShindo);
+    };
+    _pAlertService.onShakeExpired = () {
+      debugPrint('P-Alert ShakeDetection: shake expired');
+      _obsAutomationInputs.endLegacyNetworkDetection(
+        network: 'palert',
+        observedAt: _pAlertService.dataTimeNotifier.value ?? DateTime.now(),
+      );
+      _onPAlertShakeExpired();
     };
   }
 
@@ -5102,6 +5279,8 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _shakeDetection.setSensitivity(sensitivity);
     _niedSourceEstimationDriver.setSensitivity(sensitivity);
     _kmaService.setSensitivity(sensitivity);
+    _pAlertService.setSensitivity(sensitivity);
+    BackgroundService().updatePAlertDetectionSensitivity(sensitivity);
   }
 
   NiedReplayConfig _niedReplayConfigFromPrefs(SharedPreferences prefs) {
@@ -5467,6 +5646,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _lpgmService.stop();
     NiedBackgroundWorker.instance.stop();
     _volcanoMapService.onSitesUpdated = null;
+    _volcanoMapService.stop();
     _niedLayerRevision.dispose();
     _kmaLayerRevision.dispose();
     _cwaLayerRevision.dispose();
