@@ -113,36 +113,38 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _buildMainRow(latest, color, hasMultiple),
-              if (hasMultiple) ...[
-                InkWell(
-                  onTap: () => setState(() => _expanded = !_expanded),
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          '${widget.group.latestReportNumber}报',
-                          style: TextStyle(
-                            color: color.withOpacity(0.8),
-                            fontSize: 11,
-                            fontWeight: FontWeight.w500,
-                          ),
+              _buildMainRow(latest, color),
+              SizedBox(
+                height: 12 + MediaQuery.textScalerOf(context).scale(11) * 1.4,
+                child: InkWell(
+                  onTap: hasMultiple
+                      ? () => setState(() => _expanded = !_expanded)
+                      : null,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        '${widget.group.latestReportNumber}报',
+                        style: TextStyle(
+                          color: color.withValues(alpha: 0.8),
+                          fontSize: 11,
+                          height: 1.4,
+                          fontWeight: FontWeight.w500,
                         ),
+                      ),
+                      if (hasMultiple) ...[
                         const SizedBox(width: 4),
                         Icon(
                           _expanded ? Icons.expand_less : Icons.expand_more,
-                          color: color.withOpacity(0.6),
+                          color: color.withValues(alpha: 0.6),
                           size: 14,
                         ),
                       ],
-                    ),
+                    ],
                   ),
                 ),
-                if (_expanded) _buildReportList(reports, color),
-              ],
+              ),
+              if (hasMultiple && _expanded) _buildReportList(reports, color),
             ],
           ),
         ),
@@ -150,73 +152,137 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
     );
   }
 
-  Widget _buildMainRow(UnifiedQuakeData event, Color color, bool hasMultiple) {
-    return Padding(
-      padding: const EdgeInsets.all(12),
-      child: Row(
-        children: [
-          _buildBadge(event, color),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        event.titleText,
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                        softWrap: true,
-                      ),
-                    ),
-                    if (event.reportNumText.isNotEmpty)
-                      Container(
-                        margin: const EdgeInsets.only(left: 6),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 1,
-                        ),
-                        decoration: BoxDecoration(
-                          color: color.withOpacity(0.2),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          event.reportNumText,
-                          style: TextStyle(
-                            color: color,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
+  Widget _buildMainRow(UnifiedQuakeData event, Color color) {
+    final scaler = MediaQuery.textScalerOf(context);
+    final titleHeight = scaler.scale(13) * 1.35 * 2;
+    final infoHeight = scaler.scale(11) * 1.4;
+    final apiHeight = scaler.scale(9) * 1.4;
+    final magnitude = event.magnitude >= 0
+        ? 'M${event.magnitude.toStringAsFixed(1)}'
+        : '規模 調査中';
+    final depth = event.isAssumption
+        ? '仮定震源要素'
+        : event.depthText.isNotEmpty
+        ? event.depthText
+        : event.depth >= 0
+        ? '深${event.depth.round()}km'
+        : '深度 --';
+
+    return SizedBox(
+      key: ValueKey('history-summary-${widget.group.eventId}'),
+      height: 24 + titleHeight + 4 + infoHeight * 3 + 2 + apiHeight,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            _buildBadge(event, color),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    height: titleHeight,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Tooltip(
+                            message: event.titleText,
+                            child: Text(
+                              event.titleText,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                height: 1.35,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                         ),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  _formatInfo(event),
-                  style: const TextStyle(color: Colors.white54, fontSize: 11),
-                ),
-                if (event.apiTypeLabel.isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    event.apiTypeLabel,
-                    style: TextStyle(
-                      color: Colors.white38,
-                      fontSize: 9,
-                      fontWeight: FontWeight.w600,
+                        if (event.reportNumText.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 90),
+                              child: Tooltip(
+                                message: event.reportNumText,
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 1,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: color.withValues(alpha: 0.2),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      event.reportNumText,
+                                      style: TextStyle(
+                                        color: color,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
+                  const SizedBox(height: 4),
+                  _summaryLine(
+                    QuakeTime.formatUnifiedOriginClock(
+                      event,
+                      includeSeconds: false,
+                    ),
+                    infoHeight,
+                  ),
+                  _summaryLine('$magnitude  $depth', infoHeight),
+                  _summaryLine(
+                    _isInvestigatingHypocenter(event.hypocenter)
+                        ? '震源 調査中'
+                        : event.hypocenter,
+                    infoHeight,
+                  ),
+                  const SizedBox(height: 2),
+                  _summaryLine(event.apiTypeLabel, apiHeight, api: true),
                 ],
-              ],
+              ),
             ),
+            const Icon(
+              Icons.location_searching,
+              color: Colors.white24,
+              size: 18,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _summaryLine(String text, double height, {bool api = false}) {
+    return SizedBox(
+      height: height,
+      width: double.infinity,
+      child: Tooltip(
+        message: text,
+        child: Text(
+          text,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: api ? Colors.white38 : Colors.white54,
+            fontSize: api ? 9 : 11,
+            height: 1.4,
+            fontWeight: api ? FontWeight.w600 : FontWeight.normal,
           ),
-          const Icon(Icons.location_searching, color: Colors.white24, size: 18),
-        ],
+        ),
       ),
     );
   }
@@ -238,56 +304,59 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
           border: Border.all(color: color.withOpacity(0.4), width: 1),
         ),
         alignment: Alignment.center,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            FittedBox(
-              fit: BoxFit.scaleDown,
-              child: subChar.isEmpty
-                  ? Text(
-                      mainChar,
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w900,
-                        color: color,
-                        height: 1,
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: subChar.isEmpty
+                    ? Text(
+                        mainChar,
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w900,
+                          color: color,
+                          height: 1,
+                        ),
+                      )
+                    : Row(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            mainChar,
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w900,
+                              color: color,
+                              height: 1,
+                            ),
+                          ),
+                          Text(
+                            subChar,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w900,
+                              color: color,
+                              height: 1,
+                            ),
+                          ),
+                        ],
                       ),
-                    )
-                  : Row(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          mainChar,
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w900,
-                            color: color,
-                            height: 1,
-                          ),
-                        ),
-                        Text(
-                          subChar,
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w900,
-                            color: color,
-                            height: 1,
-                          ),
-                        ),
-                      ],
-                    ),
-            ),
-            Text(
-              '震度',
-              style: TextStyle(
-                fontSize: 6,
-                fontWeight: FontWeight.w500,
-                color: color,
-                height: 1,
               ),
-            ),
-          ],
+              Text(
+                '震度',
+                style: TextStyle(
+                  fontSize: 6,
+                  fontWeight: FontWeight.w500,
+                  color: color,
+                  height: 1,
+                ),
+              ),
+            ],
+          ),
         ),
       );
     }
@@ -306,31 +375,34 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
         border: Border.all(color: color.withOpacity(0.4), width: 1),
       ),
       alignment: Alignment.center,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Text(
-              display,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                display,
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w900,
+                  color: color,
+                  height: 1,
+                ),
+              ),
+            ),
+            Text(
+              '烈度',
               style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w900,
+                fontSize: 6,
+                fontWeight: FontWeight.w500,
                 color: color,
                 height: 1,
               ),
             ),
-          ),
-          Text(
-            '烈度',
-            style: TextStyle(
-              fontSize: 6,
-              fontWeight: FontWeight.w500,
-              color: color,
-              height: 1,
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

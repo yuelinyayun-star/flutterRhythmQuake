@@ -46,7 +46,11 @@
 
 import 'dart:async';
 import 'dart:convert';
+
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:web_socket_channel/web_socket_channel.dart';
+
+import '../../models/source_payload.dart';
 import 'base_source.dart';
 import '../../models/tsunami_message.dart';
 import '../quake_event_adapter.dart';
@@ -279,7 +283,8 @@ class P2PQuakeService extends BaseSourceService {
       final eq = json['earthquake'];
       if (eq == null) return;
 
-      _emitP2pUnified(_mergeJmaEqInfo(json));
+      final payload = snapshotSourcePayload(json);
+      _emitP2pUnified(_mergeJmaEqInfo(json), payload);
     } catch (e) {
       debugPrint('P2PQuake 551 地震情报解析异常: $e');
     }
@@ -373,9 +378,15 @@ class P2PQuakeService extends BaseSourceService {
     print(message);
   }
 
-  void _emitP2pUnified(Map<String, dynamic> json) {
+  @visibleForTesting
+  void handleMessageForTesting(String data) => _handleData(data);
+
+  void _emitP2pUnified(
+    Map<String, dynamic> json,
+    Map<String, dynamic> payload,
+  ) {
     final result = QuakeEventAdapter.convert('jmaEqlist', json, 2);
-    if (result != null) emitUnified(result);
+    if (result != null) emitUnified(result.copyWith(sourcePayload: payload));
   }
 
   Map<String, dynamic> _mergeJmaEqInfo(Map<String, dynamic> json) {

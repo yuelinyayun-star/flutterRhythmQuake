@@ -40,6 +40,7 @@ import 'base_source.dart';
 import '../event_bus.dart';
 import '../../models/quake_message.dart';
 import '../../models/source_status.dart';
+import '../../models/source_credential_info.dart';
 
 /// 数据源状态更新事件
 ///
@@ -59,13 +60,16 @@ class SourceStatusUpdate {
   /// - [SourceStatus.connected]: 已连接
   /// - [SourceStatus.error]: 连接错误
   final SourceStatus status;
+  final String? authenticationStatus;
+  final SourceCredentialInfo? credentialInfo;
 
   /// 构造函数
   ///
   /// 参数：
   /// - [sourceName]: 数据源名称
   /// - [status]: 新的连接状态
-  SourceStatusUpdate(this.sourceName, this.status);
+  SourceStatusUpdate(this.sourceName, this.status,
+    {this.authenticationStatus, this.credentialInfo});
 }
 
 /// 数据源管理器
@@ -162,7 +166,9 @@ class SourceManager {
   void registerSource(BaseSourceService source) {
     _sources.add(source);
     source.onStatusChanged = (status) {
-      _statusController.add(SourceStatusUpdate(source.name, status));
+      _statusController.add(SourceStatusUpdate(source.name, status,
+        authenticationStatus: source.authenticationStatus,
+        credentialInfo: source.credentialInfo));
     };
   }
 

@@ -10,6 +10,7 @@
 /// 3. 颜色由 `className` 字符串统一控制，UI + 地图使用同一色彩体系
 
 import 'quake_message.dart';
+import 'source_payload.dart';
 import 'cmt_moment_tensor.dart';
 import 'cmt_solution_metadata.dart';
 import 'volcano_event_data.dart';
@@ -66,7 +67,8 @@ class UnifiedQuakeData {
   /// Feeds with source timestamps must not renew their lifetime on arrival.
   final bool useSourceTimeForExpiry;
 
-  /// Original provider payload, retained for details and cross-isolate audit.
+  /// Original decoded event body, retained per report in history and handoff.
+  /// GlobalQuake uses a tagged Java object representation, not wire bytes.
   final Map<String, dynamic>? sourcePayload;
 
   const UnifiedQuakeData({
@@ -256,7 +258,9 @@ class UnifiedQuakeData {
       hasReportSequence: map['hasReportSequence'] != false,
       useSourceTimeForExpiry: map['useSourceTimeForExpiry'] == true,
       sourcePayload: map['sourcePayload'] is Map
-          ? Map<String, dynamic>.unmodifiable(map['sourcePayload'] as Map)
+          ? snapshotSourcePayload(
+              Map<String, dynamic>.from(map['sourcePayload'] as Map),
+            )
           : null,
     );
   }

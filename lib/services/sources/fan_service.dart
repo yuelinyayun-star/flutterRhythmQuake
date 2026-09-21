@@ -44,6 +44,7 @@ import 'fan_socket_connection.dart';
 import 'fan_socket_factory.dart';
 import '../quake_event_adapter.dart';
 import '../../models/quake_message.dart';
+import '../../models/source_payload.dart';
 import '../../models/cmt_moment_tensor.dart';
 import '../../models/source_status.dart';
 import '../../models/cenc_ir_data.dart';
@@ -1571,7 +1572,12 @@ class FanService extends BaseSourceService {
           if (sourceHint != null && sourceHint.isNotEmpty) {
             payload.putIfAbsent('source', () => sourceHint);
           }
-          _emitFanUnified(source, payload, apiName: sourceHint);
+          _emitFanUnified(
+            source,
+            payload,
+            apiName: sourceHint,
+            rawPayload: json,
+          );
         } else {
           _emitFanUnified(source, <String, dynamic>{
             'eventId': eventId.isNotEmpty
@@ -1616,7 +1622,7 @@ class FanService extends BaseSourceService {
             'centroidDepth': json['centroidDepth'],
             'momentTensor': momentTensor,
             'momentTensorConvention': 'ned',
-          });
+          }, rawPayload: json);
         }
       }
 
@@ -1903,6 +1909,7 @@ class FanService extends BaseSourceService {
     QuakeSourceType source,
     Map<String, dynamic> data, {
     String? apiName,
+    required Map<String, dynamic> rawPayload,
   }) {
     if (source == QuakeSourceType.unadapted) {
       emitUnified(
@@ -1910,14 +1917,18 @@ class FanService extends BaseSourceService {
           apiName: apiName ?? '',
           origin: 1,
           data: data,
-        ),
+        ).copyWith(sourcePayload: snapshotSourcePayload(rawPayload)),
       );
       return;
     }
     final adapterSource = _sourceToAdapterSource(source);
     if (adapterSource == null) return;
     final result = QuakeEventAdapter.convert(adapterSource, data, 1);
-    if (result != null) emitUnified(result);
+    if (result != null) {
+      emitUnified(
+        result.copyWith(sourcePayload: snapshotSourcePayload(rawPayload)),
+      );
+    }
   }
 
   String? _sourceToAdapterSource(QuakeSourceType source) {

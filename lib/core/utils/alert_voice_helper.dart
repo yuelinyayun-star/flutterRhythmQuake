@@ -141,25 +141,35 @@ class AlertVoiceHelper {
         ? _jmaInfoTitle(event.titleText)
         : '地震信息';
     final report = _infoReportText(event);
+    final isObservationBulletin =
+        event.source == 'jmaEqlist' &&
+        _isJmaObservationBulletin(event.titleText);
     final hasObservationLocation =
         event.source == 'jmaEqlist' && _isUnknownJmaLocation(event.hypocenter);
-    final observations = hasObservationLocation
+    final observations = hasObservationLocation || isObservationBulletin
         ? _jmaObservedAreas(event.warnArea, event.maxIntensity)
         : (text: '', includesMaximum: false);
     final location = hasObservationLocation
         ? observations.text
         : _voiceLocation(event.hypocenter, isJma: event.source == 'jmaEqlist');
     final mag = _magText(event.magnitude);
-    final depth = _depthText(event.depth);
+    final depth = isObservationBulletin && event.depth == 0
+        ? ''
+        : _depthText(event.depth);
     final intensity = _unifiedIntensityText(event);
 
     return _sentence([
           phase == 'first' ? title : '$title更新',
           if (location.isNotEmpty) location,
           if (mag.isNotEmpty) mag,
-          if (intensity.isNotEmpty && !observations.includesMaximum) intensity,
+          if (intensity.isNotEmpty &&
+              !(hasObservationLocation && observations.includesMaximum))
+            intensity,
           if (depth.isNotEmpty) depth,
         ]) +
+        (!hasObservationLocation && observations.text.isNotEmpty
+            ? _sentence([observations.text])
+            : '') +
         _sentence([source, if (report.isNotEmpty) report]);
   }
 
@@ -295,11 +305,14 @@ class AlertVoiceHelper {
     '震度速報' || '震度速报' => '震度速报',
     '震源に関する情報' => '震源信息',
     '震度・震源に関する情報' || '震源・震度に関する情報' => '震源震度信息',
-    '各地の震度に関する情報' => '各地震度信息',
+    '各地の震度に関する情報' || '各地の震度情報' => '各地震度信息',
     '遠地地震に関する情報' || '遠地地震情報' => '远地地震信息',
     '遠地噴火に関する情報' => '远地火山喷发信息',
     _ => '地震信息',
   };
+
+  static bool _isJmaObservationBulletin(String title) =>
+      const {'震度速報', '震度速报', '各地の震度に関する情報', '各地の震度情報'}.contains(title.trim());
 
   static bool _isUnknownJmaLocation(String name) => const {
     '',

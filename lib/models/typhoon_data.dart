@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 class TyphoonData {
   final String tfid;
   final String name;
@@ -44,19 +46,8 @@ class TyphoonData {
     return null;
   }
 
-  String get signature {
-    final latest = latestPoint;
-    return [
-      tfid,
-      isActive ? '1' : '0',
-      points.length.toString(),
-      latest?.time ?? '',
-      latest?.lat?.toStringAsFixed(3) ?? '',
-      latest?.lng?.toStringAsFixed(3) ?? '',
-      latest?.speedText ?? '',
-      latest?.pressureText ?? '',
-    ].join('|');
-  }
+  // Forecasts and wind radii can change without a new observed track point.
+  String get signature => jsonEncode(toMap());
 
   Map<String, dynamic> toMap() => {
     'tfid': tfid,
@@ -158,7 +149,7 @@ class TyphoonPoint {
     required this.jl,
   });
 
-  bool get hasLocation => lat != null && lng != null;
+  bool get hasLocation => _validLocation(lat, lng);
   String get speedText => speed == null ? '' : _formatNumber(speed!);
   String get pressureText => pressure?.toString() ?? '';
 
@@ -258,7 +249,7 @@ class TyphoonForecastPoint {
     required this.pressure,
   });
 
-  bool get hasLocation => lat != null && lng != null;
+  bool get hasLocation => _validLocation(lat, lng);
 
   Map<String, dynamic> toMap() => {
     'time': time,
@@ -294,7 +285,8 @@ String _clean(dynamic value) {
 double? _toDouble(dynamic value) {
   final text = _clean(value);
   if (text.isEmpty) return null;
-  return double.tryParse(text);
+  final number = double.tryParse(text);
+  return number != null && number.isFinite ? number : null;
 }
 
 int? _toInt(dynamic value) {
@@ -306,13 +298,26 @@ int? _toInt(dynamic value) {
 List<double> _parseRadius(dynamic value) {
   final text = _clean(value);
   if (text.isEmpty) return const [];
-  return text
+  final radii = text
       .split('|')
       .map((part) => double.tryParse(part.trim()))
-      .whereType<double>()
-      .where((radius) => radius > 0)
       .toList();
+  if (radii.length != 4 ||
+      radii.any((radius) => radius == null || !radius.isFinite || radius < 0)) {
+    return const [];
+  }
+  return radii.cast<double>();
 }
+
+bool _validLocation(double? lat, double? lng) =>
+    lat != null &&
+    lng != null &&
+    lat.isFinite &&
+    lng.isFinite &&
+    lat >= -90 &&
+    lat <= 90 &&
+    lng >= -180 &&
+    lng <= 180;
 
 String _formatNumber(double value) {
   if (value == value.roundToDouble()) return value.round().toString();

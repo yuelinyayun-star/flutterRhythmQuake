@@ -19,6 +19,8 @@ import '../../services/tts_service.dart';
 import '../../services/sources/fan_service.dart';
 import '../../services/sources/whews_service.dart';
 import '../../services/sources/jian_service.dart';
+import 'jian_auth_settings.dart';
+import 'settings_controls.dart';
 import '../../services/sources/nowquake_cenc_intensity_service.dart';
 import '../../services/sources/fdsn_motion_service.dart';
 import '../../core/fdsn_intensity.dart';
@@ -99,6 +101,7 @@ class _SettingsPageState extends State<SettingsPage>
   bool _overlayWind = false;
   bool _overlayRain = false;
   bool _overlayRadarChina = false;
+  bool _overlayPrecipitationChina = false;
   bool _overlayJmaRadar = false;
   bool _overlaySatelliteCloud = false;
   bool _overlayCnContour = false;
@@ -162,6 +165,7 @@ class _SettingsPageState extends State<SettingsPage>
   static const String _overlayWindKey = 'map_overlay_windLayer';
   static const String _overlayRainKey = 'map_overlay_rainLayer';
   static const String _overlayRadarChinaKey = 'map_overlay_radarChinaLayer';
+  static const String _overlayPrecipitationChinaKey = 'map_overlay_precipitationChinaLayer';
   static const String _overlayJmaRadarKey = 'map_overlay_jmaRadarLayer';
   static const String _overlaySatelliteCloudKey =
       'map_overlay_satelliteCloudLayer';
@@ -245,16 +249,16 @@ class _SettingsPageState extends State<SettingsPage>
     5.0,
   ];
 
-  static const Color _accentColor = Color(0xFF82B1FF);
+  static const Color _accentColor = SettingsControlStyle.accent;
 
   /// HTML uses rgba(36,36,38,0.40) + blur(22px). Flutter BackdropFilter
   /// composites darker, so keep a lighter fill + milder sigma to match.
-  static const Color _panelColor = Color.fromRGBO(48, 48, 52, 0.28);
-  static const double _panelBlurSigma = 14;
-  static const Color _fieldColor = Color.fromRGBO(255, 255, 255, 0.09);
-  static const Color _borderColor = Color.fromRGBO(255, 255, 255, 0.16);
-  static const Color _dividerColor = Color.fromRGBO(255, 255, 255, 0.10);
-  static const Color _mutedTextColor = Color.fromRGBO(255, 255, 255, 0.58);
+  static const Color _panelColor = SettingsControlStyle.panel;
+  static const double _panelBlurSigma = SettingsControlStyle.blurSigma;
+  static const Color _fieldColor = SettingsControlStyle.field;
+  static const Color _borderColor = SettingsControlStyle.border;
+  static const Color _dividerColor = SettingsControlStyle.divider;
+  static const Color _mutedTextColor = SettingsControlStyle.muted;
 
   /// Left “应用设置” header and right category title share this height
   /// so their bottom dividers line up across the vertical split.
@@ -268,6 +272,9 @@ class _SettingsPageState extends State<SettingsPage>
       accent: Color(0xFF62C6FF),
       keywords: [
         'api',
+        'jian',
+        '鉴权',
+        'token',
         'whews',
         'wauth',
         '账号',
@@ -508,6 +515,7 @@ class _SettingsPageState extends State<SettingsPage>
       _overlayWind = prefs.getBool(_overlayWindKey) ?? false;
       _overlayRain = prefs.getBool(_overlayRainKey) ?? false;
       _overlayRadarChina = prefs.getBool(_overlayRadarChinaKey) ?? false;
+      _overlayPrecipitationChina = prefs.getBool(_overlayPrecipitationChinaKey) ?? false;
       _overlayJmaRadar = prefs.getBool(_overlayJmaRadarKey) ?? false;
       _overlaySatelliteCloud =
           prefs.getBool(_overlaySatelliteCloudKey) ?? false;
@@ -632,6 +640,7 @@ class _SettingsPageState extends State<SettingsPage>
     mapState.setOverlayEnabled('windLayer', _overlayWind);
     mapState.setOverlayEnabled('rainLayer', _overlayRain);
     mapState.setOverlayEnabled('radarChinaLayer', _overlayRadarChina);
+    mapState.setOverlayEnabled('precipitationChinaLayer', _overlayPrecipitationChina);
     mapState.setOverlayEnabled('jmaRadarLayer', _overlayJmaRadar);
     mapState.setOverlayEnabled('satelliteCloudLayer', _overlaySatelliteCloud);
     mapState.setOverlayEnabled('cnContour', _overlayCnContour);
@@ -1451,6 +1460,7 @@ class _SettingsPageState extends State<SettingsPage>
     _overlayWind = map.isOverlayEnabled('windLayer');
     _overlayRain = map.isOverlayEnabled('rainLayer');
     _overlayRadarChina = map.isOverlayEnabled('radarChinaLayer');
+    _overlayPrecipitationChina = map.isOverlayEnabled('precipitationChinaLayer');
     _overlayJmaRadar = map.isOverlayEnabled('jmaRadarLayer');
     _overlaySatelliteCloud = map.isOverlayEnabled('satelliteCloudLayer');
     _overlayTyphoon = map.isOverlayEnabled('typhoonLayer');
@@ -2043,6 +2053,15 @@ class _SettingsPageState extends State<SettingsPage>
             icon: Icons.key_outlined,
             title: '账号与 API 授权',
             children: [
+              JianAuthSettings(onChanged: () async {
+                if (BackgroundService()
+                    .isAndroidConnectionHostedByForegroundService) {
+                  await BackgroundService().requestJianCredentialReload();
+                } else {
+                  SourceManager().getSource<JianService>()?.reloadCredentials();
+                }
+              }),
+              const _SettingsDivider(),
               _buildFanApiKeySetting(),
               const _SettingsDivider(),
               _buildWAuthSetting(),
@@ -2800,6 +2819,21 @@ class _SettingsPageState extends State<SettingsPage>
         },
       ),
       _buildInfoLayerSwitch(
+        title: '全国逐小时降水',
+        value: _overlayPrecipitationChina,
+        leading: Icons.water_drop_outlined,
+        onChanged: (val) async {
+          final mapState = context.read<MapStateProvider>();
+          setState(() => _overlayPrecipitationChina = val);
+          await _saveOverlayState(_overlayPrecipitationChinaKey, val);
+          mapState.setOverlayEnabled(
+            'precipitationChinaLayer',
+            val,
+          );
+          _requestForegroundConnectionReload();
+        },
+      ),
+      _buildInfoLayerSwitch(
         title: '东南沿海及西太卫星云图',
         value: _overlaySatelliteCloud,
         leading: Icons.cloud_queue_outlined,
@@ -2904,41 +2938,8 @@ class _SettingsPageState extends State<SettingsPage>
   }
 
   /// Shared frosted selectable chip / segment look.
-  BoxDecoration _glassSelectableDecoration({required bool selected}) {
-    return BoxDecoration(
-      gradient: selected
-          ? LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                Colors.white.withValues(alpha: 0.16),
-                _accentColor.withValues(alpha: 0.34),
-              ],
-            )
-          : null,
-      color: selected ? null : Colors.white.withValues(alpha: 0.11),
-      borderRadius: BorderRadius.circular(10),
-      border: Border.all(
-        color: selected
-            ? _accentColor.withValues(alpha: 0.78)
-            : Colors.white.withValues(alpha: 0.22),
-      ),
-      boxShadow: selected
-          ? [
-              BoxShadow(
-                color: _accentColor.withValues(alpha: 0.18),
-                blurRadius: 14,
-                offset: const Offset(0, 3),
-              ),
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.18),
-                blurRadius: 10,
-                offset: const Offset(0, 3),
-              ),
-            ]
-          : null,
-    );
-  }
+  BoxDecoration _glassSelectableDecoration({required bool selected}) =>
+      SettingsControlStyle.selectableDecoration(selected: selected);
 
   ButtonStyle _glassOutlinedButtonStyle({bool emphasize = false}) {
     return OutlinedButton.styleFrom(
@@ -2962,64 +2963,10 @@ class _SettingsPageState extends State<SettingsPage>
     IconData? icon,
     bool busy = false,
     bool emphasized = false,
-  }) {
-    final enabled = onPressed != null && !busy;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: enabled ? onPressed : null,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          height: 40,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: _glassSelectableDecoration(selected: emphasized).copyWith(
-            color: emphasized
-                ? null
-                : Colors.white.withValues(alpha: enabled ? 0.11 : 0.06),
-            border: Border.all(
-              color: emphasized
-                  ? _accentColor.withValues(alpha: enabled ? 0.78 : 0.35)
-                  : Colors.white.withValues(alpha: enabled ? 0.22 : 0.12),
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              if (busy)
-                const SizedBox.square(
-                  dimension: 15,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 1.8,
-                    color: Colors.white70,
-                  ),
-                )
-              else if (icon != null)
-                Icon(
-                  icon,
-                  size: 16,
-                  color: enabled ? Colors.white : Colors.white54,
-                ),
-              if (busy || icon != null) const SizedBox(width: 6),
-              Text(
-                label,
-                maxLines: 1,
-                softWrap: false,
-                overflow: TextOverflow.visible,
-                style: TextStyle(
-                  color: enabled ? Colors.white : Colors.white54,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  height: 1.1,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+  }) => SettingsGlassAction(
+    label: label, onPressed: onPressed, icon: icon, busy: busy,
+    emphasized: emphasized,
+  );
 
   Widget _buildOverlayToggle({
     required String label,
@@ -4758,79 +4705,9 @@ class _SettingsPageState extends State<SettingsPage>
     String? subtitle,
     required IconData leading,
     required Widget control,
-  }) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 560;
-        final titleBlock = Row(
-          crossAxisAlignment: subtitle == null
-              ? CrossAxisAlignment.center
-              : CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 34,
-              height: 34,
-              decoration: BoxDecoration(
-                color: _accentColor.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: _accentColor.withValues(alpha: 0.28)),
-              ),
-              child: Icon(leading, size: 18, color: _accentColor),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.only(top: 1),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    if (subtitle != null) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        subtitle,
-                        style: const TextStyle(
-                          color: _mutedTextColor,
-                          fontSize: 12,
-                          height: 1.25,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-          ],
-        );
-
-        if (compact) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [titleBlock, const SizedBox(height: 12), control],
-          );
-        }
-
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Expanded(child: titleBlock),
-            const SizedBox(width: 18),
-            ConstrainedBox(
-              constraints: const BoxConstraints(minWidth: 220, maxWidth: 330),
-              child: control,
-            ),
-          ],
-        );
-      },
-    );
-  }
+  }) => SettingsControlRow(
+    title: title, subtitle: subtitle, leading: leading, control: control,
+  );
 
   Widget _buildDropdown<T>({
     required T value,

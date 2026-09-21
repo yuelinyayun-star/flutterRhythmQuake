@@ -462,6 +462,10 @@ MapStateProvider _createMapStateProvider(
     prefs.getBool('map_overlay_radarChinaLayer') ?? false,
   );
   provider.setOverlayEnabled(
+    'precipitationChinaLayer',
+    prefs.getBool('map_overlay_precipitationChinaLayer') ?? false,
+  );
+  provider.setOverlayEnabled(
     'jmaRadarLayer',
     prefs.getBool('map_overlay_jmaRadarLayer') ?? false,
   );

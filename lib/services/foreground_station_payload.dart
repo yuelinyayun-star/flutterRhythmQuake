@@ -243,6 +243,11 @@ class ForegroundStationPayload {
     'imageBytes': frame.imageBytes,
   };
 
+  static Map<String, dynamic> cmaPrecipitation(FanRadarFrame frame) => {
+    ...fanRadar(frame),
+    'kind': 'cmaPrecipitation',
+  };
+
   static Map<String, dynamic> fanSatellite(FanSatelliteCloudFrame frame) => {
     'kind': 'fanSatellite',
     'time': frame.time.toIso8601String(),

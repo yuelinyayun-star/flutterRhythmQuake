@@ -3,9 +3,12 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
+
 import '../../core/intensity_calculator.dart';
 import '../../models/quake_message.dart';
 import '../../models/source_status.dart';
+import '../../models/source_payload.dart';
 import '../../models/unified_quake_data.dart';
 import '../../utils/fe_regions.dart';
 import 'base_source.dart';
@@ -202,6 +205,18 @@ class GlobalQuakeService extends BaseSourceService {
     }
   }
 
+  @visibleForTesting
+  List<Map<String, dynamic>> decodePayloadsForTesting(Uint8List bytes) {
+    final decoder = _JavaObjectStreamDecoder();
+    return [for (final packet in decoder.add(bytes)) _snapshotPacket(packet)];
+  }
+
+  Map<String, dynamic> _snapshotPacket(_JavaObject packet) =>
+      snapshotSourcePayload({
+        'format': 'java-object-stream-decoded-v1',
+        'packet': _JavaPayloadSnapshot().encode(packet),
+      });
+
   UnifiedQuakeData? _toUnifiedEvent(_JavaObject packet) {
     final data = packet.fields['data'];
     if (data is! _JavaObject) return null;
@@ -277,6 +292,7 @@ class GlobalQuakeService extends BaseSourceService {
       isFinal: false,
       apiTypeLabel: 'GlobalQuake',
       rawEvent: raw,
+      sourcePayload: _snapshotPacket(packet),
       arrivedAt: DateTime.now(),
     );
   }
@@ -645,7 +661,7 @@ class _JavaObjectStreamDecoder {
         object.fields[field.name] = _readField(field.typeCode);
       }
       if ((current.flags & 0x01) != 0) {
-        _skipCustomData();
+        object.customData[current.className] = _readCustomData();
       }
     }
     return object;
@@ -689,18 +705,13 @@ class _JavaObjectStreamDecoder {
     }
   }
 
-  void _skipCustomData() {
+  List<dynamic> _readCustomData() {
+    final values = <dynamic>[];
     while (true) {
       final tc = _readU1();
-      if (tc == 0x78) return;
-      if (tc == 0x77) {
-        _readBytes(_readU1());
-      } else if (tc == 0x7a) {
-        _readBytes(_readU4());
-      } else {
-        _offset--;
-        _readContent();
-      }
+      if (tc == 0x78) return values;
+      _offset--;
+      values.add(_readContent());
     }
   }
 
@@ -805,6 +816,60 @@ class _JavaObject {
 
   final String className;
   final Map<String, dynamic> fields = {};
+  final Map<String, List<dynamic>> customData = {};
+}
+
+/// A self-contained JSON representation of a decoded Java object graph.
+/// References and non-finite numbers are tagged rather than discarded.
+class _JavaPayloadSnapshot {
+  final _references = Map<Object, int>.identity();
+
+  dynamic encode(dynamic value) {
+    if (value == null || value is String || value is bool || value is int) {
+      return value;
+    }
+    if (value is double) {
+      return value.isFinite ? value : {'number': value.toString()};
+    }
+    final previousId = _references[value];
+    if (previousId != null) return {'ref': previousId};
+    final id = _references.length;
+    _references[value as Object] = id;
+    if (value is _JavaObject) {
+      return {
+        'id': id,
+        'className': value.className,
+        'fields': value.fields.map((key, field) => MapEntry(key, encode(field))),
+        if (value.customData.isNotEmpty)
+          'customData': value.customData.map(
+            (key, items) => MapEntry(key, encode(items)),
+          ),
+      };
+    }
+    if (value is List) {
+      return {'id': id, 'items': value.map(encode).toList(growable: false)};
+    }
+    if (value is _JavaBlockData) {
+      return {'id': id, 'blockDataBase64': base64Encode(value.bytes)};
+    }
+    if (value is _JavaClassDesc) {
+      return {
+        'id': id,
+        'className': value.className,
+        'flags': value.flags,
+        'fields': [
+          for (final field in value.fields)
+            {
+              'name': field.name,
+              'typeCode': field.typeCode,
+              'typeName': field.typeName,
+            },
+        ],
+        'superDesc': encode(value.superDesc),
+      };
+    }
+    throw FormatException('Unsupported decoded Java value ${value.runtimeType}');
+  }
 }
 
 class _JavaBlockData {

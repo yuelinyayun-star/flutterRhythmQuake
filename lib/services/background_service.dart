@@ -40,6 +40,7 @@ import '../models/cenc_ir_data.dart';
 import '../models/weather_alarm.dart';
 import '../models/tsunami_message.dart';
 import '../models/source_status.dart';
+import '../models/source_credential_info.dart';
 import '../providers/background_settings_provider.dart';
 import 'sources/source_manager.dart';
 import 'background_source_manager.dart';
@@ -529,7 +530,13 @@ class BackgroundService {
             }
           }
           if (status != null) {
-            _foregroundStatusController.add(SourceStatusUpdate(name, status));
+            _foregroundStatusController.add(
+              SourceStatusUpdate(name, status,
+                authenticationStatus: payload['authenticationStatus'] is String
+                    ? payload['authenticationStatus'] as String
+                    : null,
+                credentialInfo: SourceCredentialInfo.fromMap(payload['credentialInfo'])),
+            );
           }
         });
     _foregroundStationSubscription ??= service
@@ -553,6 +560,19 @@ class BackgroundService {
   void requestLocalWeatherState() {
     if (!isAndroidConnectionHostedByForegroundService) return;
     FlutterBackgroundService().invoke('requestLocalWeatherState');
+  }
+
+  void requestJianStatus() {
+    if (!isAndroidConnectionHostedByForegroundService) return;
+    FlutterBackgroundService().invoke('requestJianStatus');
+  }
+
+  Future<void> requestJianCredentialReload() async {
+    if (!isAndroidConnectionHostedByForegroundService) return;
+    final service = FlutterBackgroundService();
+    if (await service.isRunning()) {
+      service.invoke('reloadJianCredentials');
+    }
   }
 
   /// Updates detector parameters without restarting background connections.
@@ -686,6 +706,8 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
     service.invoke('foregroundSourceStatus', {
       'sourceName': update.sourceName,
       'status': update.status.name,
+      'authenticationStatus': update.authenticationStatus,
+      'credentialInfo': update.credentialInfo?.toMap(),
     });
   }
 
@@ -745,6 +767,15 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
     for (final payload in backgroundLocalWeatherSnapshots()) {
       unawaited(sendAuxData(payload));
     }
+  });
+
+  service.on('requestJianStatus').listen((_) {
+    final status = backgroundJianStatus();
+    if (status != null) unawaited(sendSourceStatus(status));
+  });
+
+  service.on('reloadJianCredentials').listen((_) {
+    reloadBackgroundJianCredentials();
   });
 
   await startSources();

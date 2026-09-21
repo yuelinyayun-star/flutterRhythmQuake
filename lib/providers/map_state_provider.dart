@@ -196,6 +196,7 @@ class MapStateProvider with ChangeNotifier {
     'windLayer': false,
     'rainLayer': false,
     'radarChinaLayer': false,
+    'precipitationChinaLayer': false,
     'jmaRadarLayer': false,
     'satelliteCloudLayer': false,
     'cnContour': false,

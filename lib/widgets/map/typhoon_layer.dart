@@ -31,6 +31,7 @@ class TyphoonLayer extends StatelessWidget {
     historyMarkers.addAll(_warningLineLabels(scale));
 
     for (final typhoon in typhoons) {
+      if (!typhoon.isActive) continue;
       final latest = typhoon.latestPoint;
       if (latest == null || !latest.hasLocation) continue;
       visibleTyphoons.add(typhoon);
@@ -342,7 +343,7 @@ class TyphoonLayer extends StatelessWidget {
 
   static List<double> _displayRadii(List<double> rawRadii) {
     if (rawRadii.length < 4) return rawRadii;
-    // FAN returns NE, SE, NW, SW. Draw and display as NE, SE, SW, NW.
+    // Zhejiang returns NE, SE, NW, SW. Draw and display as NE, SE, SW, NW.
     return [rawRadii[0], rawRadii[1], rawRadii[3], rawRadii[2]];
   }
 

@@ -7,30 +7,47 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../models/typhoon_data.dart';
 
 class TyphoonService {
-  static const String _endpoint = 'https://api.fanstudio.tech/we/typhoon.php';
+  static const String _baseUrl = 'https://typhoon.slt.zj.gov.cn/Api/';
   static const Duration _timeout = Duration(seconds: 14);
-  static const Duration _cacheMaxAge = Duration(hours: 24);
-  static const Duration fallbackRefreshInterval = Duration(hours: 1);
-  static const String _cacheBodyKey = 'typhoon_active_cache_body';
-  static const String _cacheSavedAtKey = 'typhoon_active_cache_saved_at';
+  static const Duration _cacheMaxAge = Duration(hours: 1);
+  static const Duration fallbackRefreshInterval = Duration(minutes: 5);
+  static const Duration retryInterval = Duration(seconds: 30);
+  static const String _cacheKey = 'typhoon_zj_active_cache_v1';
 
+  final http.Client? _client;
+  final DateTime Function() _now;
   Timer? _timer;
-  bool _fetching = false;
+  bool _running = false;
+  int _generation = 0;
+  int? _fetchingGeneration;
+  int _revision = 0;
+  Duration _interval = fallbackRefreshInterval;
   String _lastSignature = '';
   List<TyphoonData> _lastTyphoons = const [];
 
+  TyphoonService({http.Client? client, DateTime Function()? now})
+    : _client = client,
+      _now = now ?? DateTime.now;
+
   void Function(List<TyphoonData> typhoons)? onActiveTyphoonsChanged;
 
-  bool get isRunning => _timer != null;
+  bool get isRunning => _running;
 
   void start({Duration interval = fallbackRefreshInterval}) {
-    _timer?.cancel();
-    _emitCachedActive();
-    fetchNow();
-    _timer = Timer.periodic(interval, (_) => fetchNow());
+    stop();
+    _running = true;
+    _interval = interval;
+    unawaited(_start(_generation));
+  }
+
+  Future<void> _start(int generation) async {
+    await _emitCachedActive(generation, _revision);
+    if (generation == _generation) await fetchNow();
   }
 
   void stop({bool clearState = false}) {
+    _running = false;
+    _generation++;
     _timer?.cancel();
     _timer = null;
     if (clearState) {
@@ -40,38 +57,44 @@ class TyphoonService {
   }
 
   Future<void> fetchNow() async {
-    if (_fetching) return;
-    _fetching = true;
+    final generation = _generation;
+    if (_fetchingGeneration == generation) return;
+    _fetchingGeneration = generation;
+    _timer?.cancel();
+    var complete = false;
     try {
-      final result = await _fetchWithRaw(Uri.parse(_endpoint));
-      final typhoons = result.typhoons;
-      await _saveActiveCache(result.body, typhoons);
-      final signature = typhoons.map((item) => item.signature).join('||');
-      if (signature != _lastSignature || _lastTyphoons.isEmpty) {
-        _lastSignature = signature;
-        _lastTyphoons = List.unmodifiable(typhoons);
-        onActiveTyphoonsChanged?.call(_lastTyphoons);
-      }
+      final result = await _fetchSnapshot(_lastTyphoons);
+      if (generation != _generation) return;
+      complete = result.complete;
+      _revision++;
+      ingestExternal(result.typhoons);
+      await _saveActiveCache(result, generation);
     } catch (_) {
-      // Keep the previous typhoon layer on transient network/API failures.
+      // A failed activity request is not an empty activity list.
     } finally {
-      _fetching = false;
+      if (_fetchingGeneration == generation) _fetchingGeneration = null;
+      if (generation == _generation && _running) {
+        _timer = Timer(complete ? _interval : retryInterval, fetchNow);
+      }
     }
   }
 
   Future<List<TyphoonData>> fetchActiveNow() async {
-    return (await _fetchWithRaw(Uri.parse(_endpoint))).typhoons;
+    final result = await _fetchSnapshot(const []);
+    if (!result.complete) {
+      throw const FormatException('Incomplete typhoon data');
+    }
+    return result.typhoons;
   }
 
   Future<List<TyphoonData>> fetchById(String tfid) async {
     final id = tfid.trim();
     if (id.isEmpty) return const [];
-    return (await _fetchWithRaw(
-      Uri.parse(_endpoint).replace(queryParameters: {'tfid': id}),
-    )).typhoons;
+    final raw = await _getJson('TyphoonInfo/${Uri.encodeComponent(id)}');
+    return [_parseDetail(raw, id)];
   }
 
-  /// 接收 Android 前台服务已经完成请求和解析的结果。
+  /// Accept a snapshot already fetched by the Android foreground service.
   void ingestExternal(List<TyphoonData> typhoons) {
     final next = List<TyphoonData>.unmodifiable(typhoons);
     final signature = next.map((item) => item.signature).join('||');
@@ -80,69 +103,127 @@ class TyphoonService {
     }
     _lastSignature = signature;
     _lastTyphoons = next;
-    onActiveTyphoonsChanged?.call(_lastTyphoons);
+    onActiveTyphoonsChanged?.call(next);
   }
 
-  Future<_TyphoonFetchResult> _fetchWithRaw(Uri uri) async {
-    final resp = await http
-        .get(
-          uri,
-          headers: const {
-            'Accept': 'application/json',
-            'User-Agent':
-                'RhythmQuake/typhoon-layer (+https://api.fanstudio.tech/)',
-          },
-        )
-        .timeout(_timeout);
-    if (resp.statusCode != 200) return const _TyphoonFetchResult('', []);
-
-    final body = utf8.decode(resp.bodyBytes, allowMalformed: true);
-    final decoded = json.decode(body);
-    return _TyphoonFetchResult(body, TyphoonData.listFromJson(decoded));
+  Future<_TyphoonSnapshot> _fetchSnapshot(List<TyphoonData> previous) async {
+    final activity = await _getJson('TyhoonActivity');
+    if (activity is! List) {
+      throw const FormatException('Invalid typhoon activity list');
+    }
+    final ids = <String>{};
+    for (final entry in activity) {
+      final id = entry is Map ? entry['tfid']?.toString().trim() : null;
+      if (id == null || !RegExp(r'^\d{6}$').hasMatch(id)) {
+        throw const FormatException('Invalid active typhoon ID');
+      }
+      ids.add(id);
+    }
+    final sortedIds = ids.toList()..sort();
+    final old = {for (final item in previous) item.tfid: item};
+    final rawDetails = <dynamic>[];
+    var complete = true;
+    final items = <TyphoonData>[];
+    for (final id in sortedIds) {
+      try {
+        final raw = await _getJson('TyphoonInfo/$id');
+        final detail = _parseDetail(raw, id);
+        if (detail.isActive) {
+          items.add(detail);
+          rawDetails.add(raw);
+        }
+      } catch (_) {
+        complete = false;
+        final retained = old[id];
+        if (retained != null && retained.isActive) items.add(retained);
+      }
+    }
+    return _TyphoonSnapshot(items, rawDetails, complete);
   }
 
-  Future<void> _emitCachedActive() async {
+  static TyphoonData _parseDetail(dynamic raw, String id) {
+    if (raw is! Map || raw['tfid']?.toString() != id) {
+      throw const FormatException('Mismatched typhoon detail');
+    }
+    final active = raw['isactive']?.toString();
+    final points = raw['points'];
+    if ((active != '0' && active != '1') || points is! List || points.isEmpty) {
+      throw const FormatException('Invalid typhoon detail');
+    }
+    final result = TyphoonData.fromMap(raw)!;
+    if (result.points.length != points.length ||
+        result.points.any(
+          (point) => !point.hasLocation || point.time.isEmpty,
+        )) {
+      throw const FormatException('Invalid typhoon track');
+    }
+    return result;
+  }
+
+  Future<dynamic> _getJson(String path) async {
+    final uri = Uri.parse(
+      '$_baseUrl$path',
+    ).replace(queryParameters: {'time': '${_now().millisecondsSinceEpoch}'});
+    const headers = {
+      'Accept': 'application/json',
+      'User-Agent': 'RhythmQuake/typhoon-layer',
+    };
+    final response =
+        await (_client == null
+                ? http.get(uri, headers: headers)
+                : _client.get(uri, headers: headers))
+            .timeout(_timeout);
+    if (response.statusCode != 200) {
+      throw http.ClientException('Typhoon HTTP ${response.statusCode}', uri);
+    }
+    return jsonDecode(utf8.decode(response.bodyBytes));
+  }
+
+  Future<void> _emitCachedActive(int generation, int revision) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final body = prefs.getString(_cacheBodyKey);
-      final savedAtMs = prefs.getInt(_cacheSavedAtKey);
-      if (body == null || body.isEmpty || savedAtMs == null) return;
-
-      final savedAt = DateTime.fromMillisecondsSinceEpoch(savedAtMs);
-      if (DateTime.now().difference(savedAt) > _cacheMaxAge) return;
-
-      final decoded = json.decode(body);
-      final typhoons = TyphoonData.listFromJson(decoded);
-      if (typhoons.isEmpty) return;
-
-      final signature = typhoons.map((item) => item.signature).join('||');
-      if (signature == _lastSignature && _lastTyphoons.isNotEmpty) return;
-      _lastSignature = signature;
-      _lastTyphoons = List.unmodifiable(typhoons);
-      onActiveTyphoonsChanged?.call(_lastTyphoons);
+      final body = prefs.getString(_cacheKey);
+      if (body == null) return;
+      final cached = jsonDecode(body) as Map;
+      final savedAt = DateTime.fromMillisecondsSinceEpoch(
+        cached['savedAt'] as int,
+      );
+      final age = _now().difference(savedAt);
+      if (age.isNegative || age > _cacheMaxAge) return;
+      final details = cached['details'] as List;
+      final items = details
+          .map((raw) => _parseDetail(raw, raw['tfid'].toString()))
+          .where((item) => item.isActive)
+          .toList();
+      if (generation != _generation || revision != _revision) return;
+      ingestExternal(items);
     } catch (_) {}
   }
 
-  Future<void> _saveActiveCache(String body, List<TyphoonData> typhoons) async {
+  Future<void> _saveActiveCache(_TyphoonSnapshot result, int generation) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      if (body.isEmpty || typhoons.isEmpty) {
-        await prefs.remove(_cacheBodyKey);
-        await prefs.remove(_cacheSavedAtKey);
-        return;
+      if (generation != _generation) return;
+      // Do not persist retained details as fresh data, or revive removed IDs.
+      if (!result.complete || result.typhoons.isEmpty) {
+        await prefs.remove(_cacheKey);
+      } else {
+        await prefs.setString(
+          _cacheKey,
+          jsonEncode({
+            'savedAt': _now().millisecondsSinceEpoch,
+            'details': result.rawDetails,
+          }),
+        );
       }
-      await prefs.setString(_cacheBodyKey, body);
-      await prefs.setInt(
-        _cacheSavedAtKey,
-        DateTime.now().millisecondsSinceEpoch,
-      );
     } catch (_) {}
   }
 }
 
-class _TyphoonFetchResult {
-  final String body;
+class _TyphoonSnapshot {
   final List<TyphoonData> typhoons;
+  final List<dynamic> rawDetails;
+  final bool complete;
 
-  const _TyphoonFetchResult(this.body, this.typhoons);
+  const _TyphoonSnapshot(this.typhoons, this.rawDetails, this.complete);
 }

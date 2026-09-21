@@ -3,6 +3,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:flutterrhythmquake/core/utils/alert_voice_helper.dart';
@@ -13,6 +16,7 @@ import 'package:flutterrhythmquake/models/unified_quake_data.dart';
 import 'package:flutterrhythmquake/models/source_status.dart';
 import 'package:flutterrhythmquake/providers/quake_provider.dart';
 import 'package:flutterrhythmquake/services/background_event_processor.dart';
+import 'package:flutterrhythmquake/services/jian_auth_service.dart';
 import 'package:flutterrhythmquake/services/quake_event_adapter.dart';
 import 'package:flutterrhythmquake/services/sound_effect_service.dart';
 import 'package:flutterrhythmquake/services/sources/jian_service.dart';
@@ -37,6 +41,16 @@ Map<String, dynamic> scenario(
   'infoTypeName': '[正式测定]',
 };
 
+// Non-working protocol credentials for transport lifecycle tests only.
+JianAuthService transportAuth() => JianAuthService(
+  client: MockClient(
+    (_) async => http.Response(
+      '{"ok":true,"token":"at_test","expires_after_sec":3600}',
+      200,
+    ),
+  ),
+);
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final captured =
@@ -44,6 +58,9 @@ void main() {
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+    FlutterSecureStorage.setMockInitialValues({
+      JianCredentialStore.storageKey: 'rt_test',
+    });
     SoundEffectService().enabled = false;
   });
   tearDown(() => SoundEffectService().enabled = true);
@@ -373,7 +390,8 @@ void main() {
       final channel = FakeChannel();
       var opens = 0;
       final service = JianService(
-        socketFactory: (_) {
+        authService: transportAuth(),
+        socketFactory: (_, {headers}) {
           opens++;
           return channel;
         },
@@ -420,8 +438,9 @@ void main() {
     (tester) async {
       final sockets = <FakeChannel>[];
       final service = JianService(
+        authService: transportAuth(),
         now: tester.binding.clock.now,
-        socketFactory: (_) {
+        socketFactory: (_, {headers}) {
           final socket = FakeChannel();
           sockets.add(socket);
           return socket;
@@ -455,7 +474,8 @@ void main() {
     var opens = 0;
     final states = <SourceStatus>[];
     final service = JianService(
-      socketFactory: (_) {
+      authService: transportAuth(),
+      socketFactory: (_, {headers}) {
         opens++;
         return channel;
       },
@@ -484,7 +504,10 @@ void main() {
     final ready = Completer<void>();
     final channel = FakeChannel(ready: ready.future);
     final states = <SourceStatus>[];
-    final service = JianService(socketFactory: (_) => channel);
+    final service = JianService(
+      authService: transportAuth(),
+      socketFactory: (_, {headers}) => channel,
+    );
     service.onStatusChanged = states.add;
     service.connect();
     await tester.pump();

@@ -519,6 +519,10 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   final JmaVolcanoMapService _volcanoMapService = JmaVolcanoMapService();
   List<JmaVolcanoSite> _volcanoSites = [];
   final FanRadarService _fanRadarService = FanRadarService();
+  final FanRadarService _precipitationService = FanRadarService.precipitation();
+  StreamSubscription<FanRadarFrame?>? _precipitationSubscription;
+  FanRadarFrame? _latestPrecipitationFrame;
+  final ValueNotifier<int> _precipitationLayerRevision = ValueNotifier<int>(0);
   StreamSubscription<FanRadarFrame?>? _fanRadarSubscription;
   FanRadarFrame? _latestFanRadarFrame;
   final ValueNotifier<int> _fanRadarLayerRevision = ValueNotifier<int>(0);
@@ -642,6 +646,12 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       setState(() => _volcanoSites = items);
     };
     _latestFanRadarFrame = _fanRadarService.latestFrame;
+    _latestPrecipitationFrame = _precipitationService.latestFrame;
+    _precipitationSubscription = _precipitationService.frameStream.listen((frame) {
+      if (!mounted) return;
+      _latestPrecipitationFrame = frame;
+      _notifyLayer(_precipitationLayerRevision);
+    });
     _fanRadarSubscription = _fanRadarService.frameStream.listen((frame) {
       if (!mounted) return;
       _latestFanRadarFrame = frame;
@@ -951,6 +961,13 @@ class _QuakeMapViewState extends State<QuakeMapView> {
           _latestJmaRadarFrame = frame;
           _notifyLayer(_jmaRadarLayerRevision);
         }
+      case 'cmaPrecipitation':
+        if (_mapStateProvider?.isOverlayEnabled('precipitationChinaLayer') != true) return;
+        final frame = ForegroundStationPayload.decodeFanRadar(payload);
+        if (frame != null) {
+          _latestPrecipitationFrame = frame;
+          _notifyLayer(_precipitationLayerRevision);
+        }
       case 'fanSatellite':
         final frame = ForegroundStationPayload.decodeFanSatellite(payload);
         if (frame != null) {
@@ -1197,6 +1214,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _fdsnMotionService.disconnect();
     _volcanoMapService.stop();
     _fanRadarService.stop();
+    _precipitationService.stop();
     _jmaRadarService.stop();
     _fanSatelliteCloudService.stop();
     _whewsNiedService.stop();
@@ -1230,6 +1248,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       if (!mounted || _backgroundPaused) return;
       _syncVolcanoMapServiceWithOverlay();
       _syncFanRadarServiceWithOverlay();
+      _syncPrecipitationServiceWithOverlay();
       _syncJmaRadarServiceWithOverlay();
       _syncFanSatelliteCloudServiceWithOverlay();
       _syncLiveWeatherTileRefresh();
@@ -2778,6 +2797,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _syncLiveWeatherTileRefresh();
     _syncTyphoonLayerServiceWithOverlay();
     _syncFanRadarServiceWithOverlay();
+    _syncPrecipitationServiceWithOverlay();
     _syncJmaRadarServiceWithOverlay();
     _syncFanSatelliteCloudServiceWithOverlay();
   }
@@ -2923,6 +2943,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _syncTyphoonLayerServiceWithOverlay();
     _syncVolcanoMapServiceWithOverlay();
     _syncFanRadarServiceWithOverlay();
+    _syncPrecipitationServiceWithOverlay();
     _syncJmaRadarServiceWithOverlay();
     _syncFanSatelliteCloudServiceWithOverlay();
     _syncWaveAutoZoomTimer();
@@ -3174,9 +3195,33 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       return;
     }
     if (shouldRun) {
-      _fanRadarService.start(interval: const Duration(minutes: 10));
+      _fanRadarService.start(interval: FanRadarService.refreshInterval);
     } else {
       _fanRadarService.stop(clear: true);
+    }
+  }
+
+  void _syncPrecipitationServiceWithOverlay() {
+    final shouldRun =
+        _mapStateProvider?.isOverlayEnabled('precipitationChinaLayer') == true;
+    if (BackgroundService().isAndroidConnectionHostedByForegroundService) {
+      _precipitationService.stop(clear: false);
+      if (shouldRun && !_foregroundHostedOverlayKeys.contains('cmaPrecipitation')) {
+        _foregroundHostedOverlayKeys.add('cmaPrecipitation');
+        unawaited(BackgroundService().requestSourceReload());
+      } else if (!shouldRun) {
+        _foregroundHostedOverlayKeys.remove('cmaPrecipitation');
+        _latestPrecipitationFrame = null;
+        _notifyLayer(_precipitationLayerRevision);
+      }
+      return;
+    }
+    if (shouldRun) {
+      _precipitationService.start(
+        interval: FanRadarService.precipitationRefreshInterval,
+      );
+    } else {
+      _precipitationService.stop(clear: true);
     }
   }
 
@@ -5681,6 +5726,8 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _liveWeatherTileRefreshTimer = null;
     _stopFdsnServices();
     _fanRadarSubscription?.cancel();
+    _precipitationSubscription?.cancel();
+    _precipitationService.stop(clear: false);
     _fanRadarService.stop(clear: false);
     _jmaRadarSubscription?.cancel();
     _jmaRadarService.stop(clear: false);
@@ -5714,6 +5761,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _geofonLayerRevision.dispose();
     _liveWeatherTileRevision.dispose();
     _fanRadarLayerRevision.dispose();
+    _precipitationLayerRevision.dispose();
     _jmaRadarLayerRevision.dispose();
     _fanSatelliteCloudLayerRevision.dispose();
     _blinkNotifier.dispose();
@@ -5901,6 +5949,21 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                               builder: (context, revision, child) {
                                 return FanRadarLayer(
                                   frame: _latestFanRadarFrame,
+                                );
+                              },
+                            );
+                          },
+                        ),
+                        Selector<MapStateProvider, bool>(
+                          selector: (context, mapState) =>
+                              mapState.isOverlayEnabled('precipitationChinaLayer'),
+                          builder: (context, visible, child) {
+                            if (!visible) return const SizedBox.shrink();
+                            return ValueListenableBuilder<int>(
+                              valueListenable: _precipitationLayerRevision,
+                              builder: (context, revision, child) {
+                                return FanRadarLayer(
+                                  frame: _latestPrecipitationFrame,
                                 );
                               },
                             );

@@ -1,14 +1,25 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:web_socket_channel/io.dart';
 
 // Bounded, read-only probe. Stored JSON is the exact decoded UTF-8 wire frame.
 Future<void> main(List<String> args) async {
+  final accessToken = Platform.environment['JIAN_ACCESS_TOKEN'] ?? '';
+  if (!accessToken.startsWith('at_') ||
+      accessToken.length <= 3 ||
+      !RegExp(r'^[\x21-\x7E]+$').hasMatch(accessToken)) {
+    stderr.writeln(
+      'Set JIAN_ACCESS_TOKEN to a current access token before probing.',
+    );
+    exitCode = 64;
+    return;
+  }
   final output = args.isEmpty ? null : Directory(args.first);
   if (output != null) await output.create(recursive: true);
-  final socket = WebSocketChannel.connect(
+  final socket = IOWebSocketChannel.connect(
     Uri.parse('wss://api.sismotide.top/all'),
+    headers: {'Authorization': 'Bearer $accessToken'},
   );
   final counts = <String, int>{};
   var requested = false;

@@ -66,6 +66,19 @@ import '../core/local_weather_region.dart';
 final List<StreamSubscription> _backgroundSubscriptions = [];
 final List<Timer> _backgroundTimers = [];
 SourceManager? _backgroundManager;
+
+void reloadBackgroundJianCredentials() {
+  _backgroundManager?.getSource<JianService>()?.reloadCredentials();
+}
+
+SourceStatusUpdate? backgroundJianStatus() {
+  final jian = _backgroundManager?.getSource<JianService>();
+  return jian == null
+      ? null
+      : SourceStatusUpdate(jian.name, jian.connectionStatus,
+          authenticationStatus: jian.authenticationStatus,
+          credentialInfo: jian.credentialInfo);
+}
 UsgsEqlistService? _backgroundOfficialUsgs;
 EmscEqlistService? _backgroundOfficialEmsc;
 CwaEqlistService? _backgroundOfficialCwa;
@@ -96,6 +109,7 @@ FdsnStationService? _backgroundEarthScopeStations;
 FdsnStationService? _backgroundGeofonStations;
 FdsnMotionService? _backgroundFdsnMotion;
 FanRadarService? _backgroundFanRadar;
+FanRadarService? _backgroundCmaPrecipitation;
 FanSatelliteCloudService? _backgroundFanSatellite;
 JmaRadarService? _backgroundJmaRadar;
 JmaVolcanoMapService? _backgroundVolcanoMap;
@@ -328,6 +342,7 @@ Future<void> startBackgroundSources({
   final geofonStations = FdsnStationService.geofon;
   final fdsnMotion = FdsnMotionService();
   final fanRadar = FanRadarService();
+  final precipitation = FanRadarService.precipitation();
   final fanSatellite = FanSatelliteCloudService();
   final jmaRadar = JmaRadarService();
   final volcanoMap = JmaVolcanoMapService();
@@ -338,6 +353,7 @@ Future<void> startBackgroundSources({
   final jmaLpgm = JmaLpgmService();
   final jmaMegaquake = JmaMegaquakeAdvisoryService();
   _backgroundFanRadar = fanRadar;
+  _backgroundCmaPrecipitation = precipitation;
   _backgroundFanSatellite = fanSatellite;
   _backgroundJmaRadar = jmaRadar;
   _backgroundVolcanoMap = volcanoMap;
@@ -673,6 +689,13 @@ Future<void> startBackgroundSources({
         onStationData(ForegroundStationPayload.jmaRadar(frame));
     }),
   );
+  _backgroundAuxSubscriptions.add(
+    precipitation.frameStream.listen((frame) {
+      if (frame != null) {
+        onStationData(ForegroundStationPayload.cmaPrecipitation(frame));
+      }
+    }),
+  );
   volcanoMap.onSitesUpdated = (sites) {
     onStationData(ForegroundStationPayload.volcanoSites(sites));
   };
@@ -725,7 +748,10 @@ Future<void> startBackgroundSources({
     fdsnMotion.connect(stationLimit: limit, enabledSources: fdsnSources);
   }
   if (prefs.getBool('map_overlay_radarChinaLayer') ?? false) {
-    fanRadar.start(interval: const Duration(minutes: 10));
+    fanRadar.start(interval: FanRadarService.refreshInterval);
+  }
+  if (prefs.getBool('map_overlay_precipitationChinaLayer') ?? false) {
+    precipitation.start(interval: FanRadarService.precipitationRefreshInterval);
   }
   if (prefs.getBool('map_overlay_jmaRadarLayer') ?? false) {
     jmaRadar.start(interval: JmaRadarService.refreshInterval);
@@ -929,6 +955,7 @@ Future<void> stopBackgroundSources() async {
   _backgroundGeofonStations?.stop();
   _backgroundFdsnMotion?.disconnect();
   _backgroundFanRadar?.stop();
+  _backgroundCmaPrecipitation?.stop();
   _backgroundFanSatellite?.stop();
   _backgroundJmaRadar?.stop();
   _backgroundVolcanoMap?.stop();
@@ -959,6 +986,7 @@ Future<void> stopBackgroundSources() async {
   _backgroundGeofonStations = null;
   _backgroundFdsnMotion = null;
   _backgroundFanRadar = null;
+  _backgroundCmaPrecipitation = null;
   _backgroundFanSatellite = null;
   _backgroundJmaRadar = null;
   _backgroundVolcanoMap = null;
@@ -986,6 +1014,7 @@ Future<void> stopBackgroundSources() async {
   _backgroundOfficialCwa = null;
   _backgroundOfficialCenc = null;
   _backgroundOfficialJma = null;
+  _backgroundManager?.getSource<JianService>()?.dispose();
   _backgroundManager?.reset();
   _backgroundManager = null;
 }

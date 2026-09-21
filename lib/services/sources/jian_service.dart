@@ -5,20 +5,48 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:web_socket_channel/io.dart';
+import '../jian_auth_service.dart';
 
 import '../../models/jian_sources.dart';
 import '../../models/source_status.dart';
+import '../../models/source_credential_info.dart';
 import '../quake_event_adapter.dart';
 import 'base_source.dart';
 
-typedef JianSocketFactory = WebSocketChannel Function(Uri uri);
+typedef JianSocketFactory =
+    WebSocketChannel Function(Uri uri, {Map<String, dynamic>? headers});
 
 /// One aggregate connection, owned by the existing foreground/background
 /// source manager. Parsing ends at emitUnified: no UI, audio or map callbacks.
 class JianService extends BaseSourceService {
-  JianService({JianSocketFactory? socketFactory, DateTime Function()? now})
-    : _socketFactory = socketFactory ?? WebSocketChannel.connect,
-      _now = now ?? DateTime.now;
+  JianService({
+    JianSocketFactory? socketFactory,
+    DateTime Function()? now,
+    JianCredentialStore? credentialStore,
+    JianAuthService? authService,
+  }) : _socketFactory = socketFactory ?? _nativeSocket,
+       _credentialStore = credentialStore ?? JianCredentialStore(),
+       _authService = authService ?? JianAuthService(),
+       _now = now ?? DateTime.now;
+
+  static WebSocketChannel _nativeSocket(
+    Uri uri, {
+    Map<String, dynamic>? headers,
+  }) => IOWebSocketChannel.connect(
+    uri,
+    headers: headers,
+    connectTimeout: const Duration(seconds: 20),
+  );
+  final JianCredentialStore _credentialStore;
+  final JianAuthService _authService;
+  JianAuthStatus authStatus = JianAuthStatus.anonymous;
+  SourceStatus connectionStatus = SourceStatus.disconnected;
+  @override
+  String get authenticationStatus => authStatus.name;
+  SourceCredentialInfo _credentialInfo = const SourceCredentialInfo();
+  @override
+  SourceCredentialInfo get credentialInfo => _credentialInfo;
 
   static const sourceName = 'Jian Project';
   static const enabledPreferenceKey = 'api_source_jian_enabled';
@@ -48,7 +76,16 @@ class JianService extends BaseSourceService {
   @override
   String get name => sourceName;
 
-  void updateStatus(SourceStatus status) => onStatusChanged?.call(status);
+  void updateStatus(SourceStatus status) {
+    connectionStatus = status;
+    onStatusChanged?.call(status);
+  }
+
+  void reloadCredentials() {
+    final reconnect = _enabled;
+    disconnect();
+    if (reconnect) connect();
+  }
 
   @override
   void connect() {
@@ -63,6 +100,23 @@ class JianService extends BaseSourceService {
       final prefs = await SharedPreferences.getInstance();
       await prefs.reload();
       if (!_isCurrent(generation)) return;
+      JianCredential credential;
+      try {
+        credential = await _credentialStore.readCredential();
+      } catch (_) {
+        throw const JianAuthException('storage');
+      }
+      if (!_isCurrent(generation)) return;
+      _credentialInfo = SourceCredentialInfo(
+        configured: credential.token.isNotEmpty,
+        expiresAt: credential.expiresAt,
+      );
+      if (credential.token.isEmpty) {
+        authStatus = JianAuthStatus.unconfigured;
+        lastError = const JianAuthException('credential_required').message;
+        updateStatus(SourceStatus.error);
+        return;
+      }
       final saved = prefs.getInt(retryAfterPreferenceKey);
       if (saved != null) {
         final savedTime = DateTime.fromMillisecondsSinceEpoch(saved);
@@ -76,17 +130,23 @@ class JianService extends BaseSourceService {
         _retryTimer = Timer(wait, () => unawaited(_open()));
         return;
       }
-      // /all costs three connection points. Persist spacing across rapid
-      // settings reloads/isolate restarts as well as ordinary reconnects.
+      // Persist attempt spacing across settings reloads and isolate restarts.
       _nextAttemptAt = _now().add(const Duration(seconds: 45));
       await prefs.setInt(
         retryAfterPreferenceKey,
         _nextAttemptAt!.millisecondsSinceEpoch,
       );
       if (!_isCurrent(generation)) return;
+      authStatus = JianAuthStatus.authenticating;
       updateStatus(SourceStatus.connecting);
       _requestedHistory = false;
-      final socket = _socketFactory(endpoint);
+      final refreshToken = credential.token;
+      final access = await _authService.accessToken(refreshToken);
+      if (!_isCurrent(generation)) return;
+      final socket = _socketFactory(
+        endpoint,
+        headers: {'Authorization': 'Bearer $access'},
+      );
       _socket = socket;
       _subscription = socket.stream.listen(
         (message) {
@@ -94,13 +154,15 @@ class JianService extends BaseSourceService {
           _lastFrameAt = _now();
           _receive(message, generation);
         },
-        onError: (Object error) => _failed(generation, '连接错误: $error'),
+        onError: (Object error) => _failed(generation, 'Jian 连接失败'),
         onDone: () => _failed(generation, '连接关闭'),
       );
       await socket.ready.timeout(const Duration(seconds: 20));
       if (!_isCurrent(generation)) return;
       _connectedAt = _now();
       _lastFrameAt ??= _connectedAt;
+      authStatus = JianAuthStatus.authenticated;
+      lastError = null;
       updateStatus(SourceStatus.connected);
       _heartbeatTimer = Timer.periodic(const Duration(seconds: 30), (_) {
         if (!_isCurrent(generation)) return;
@@ -111,11 +173,13 @@ class JianService extends BaseSourceService {
         try {
           socket.sink.add('ping');
         } catch (error) {
-          _failed(generation, '心跳发送失败: $error');
+          _failed(generation, '心跳发送失败');
         }
       });
-    } catch (error) {
-      _failed(generation, '握手失败: $error');
+    } on JianAuthException catch (error) {
+      _authFailed(generation, error);
+    } catch (_) {
+      _failed(generation, 'Jian 握手失败');
     }
   }
 
@@ -130,11 +194,16 @@ class JianService extends BaseSourceService {
       if (decoded is! Map) return;
       final frame = Map<String, dynamic>.from(decoded);
       final type = frame['type']?.toString() ?? '';
+      if (frame['ok'] == false ||
+          frame['error'] != null && frame['code'] is num) {
+        _authFailed(generation, JianAuthException.fromResponse(frame));
+        return;
+      }
       if (type == 'error') {
         final error = frame['message']?.toString() ?? '服务器拒绝连接';
         _failed(
           generation,
-          error,
+          error.contains('封禁') ? 'Jian IP 已被封禁' : 'Jian 服务器拒绝连接',
           cooldown: Duration(minutes: error.contains('封禁') ? 24 * 60 : 5),
         );
         return;
@@ -163,7 +232,7 @@ class JianService extends BaseSourceService {
         _emitPayload(type, frame['Data']);
       }
     } catch (error) {
-      lastError = '报文解析失败: $error';
+      lastError = 'Jian 报文解析失败';
       debugPrint('Jian Project: $lastError');
     }
   }
@@ -205,15 +274,43 @@ class JianService extends BaseSourceService {
       try {
         _socket?.sink.add('${historyTypes[index++]}list');
       } catch (error) {
-        _failed(generation, '历史请求失败: $error');
+        _failed(generation, '历史请求失败');
       }
     });
   }
 
-  void _failed(int generation, String error, {Duration? cooldown}) {
+  void _authFailed(int generation, JianAuthException error) {
+    if (!_isCurrent(generation)) return;
+    _credentialInfo = SourceCredentialInfo(
+      configured: _credentialInfo.configured,
+      expiresAt: _credentialInfo.expiresAt,
+      errorCode: error.code,
+    );
+    authStatus = error.retryable
+        ? JianAuthStatus.unavailable
+        : JianAuthStatus.invalid;
+    _failed(
+      generation,
+      error.message,
+      cooldown: const Duration(minutes: 5),
+      retry: error.retryable,
+      preserveAuthStatus: true,
+    );
+  }
+
+  void _failed(
+    int generation,
+    String error, {
+    Duration? cooldown,
+    bool retry = true,
+    bool preserveAuthStatus = false,
+  }) {
     if (!_isCurrent(generation)) return;
     ++_generation;
     lastError = error;
+    if (!preserveAuthStatus && authStatus != JianAuthStatus.anonymous) {
+      authStatus = JianAuthStatus.unavailable;
+    }
     debugPrint('Jian Project: $error');
     if (_connectedAt != null &&
         _now().difference(_connectedAt!) > const Duration(minutes: 2)) {
@@ -226,7 +323,7 @@ class JianService extends BaseSourceService {
     unawaited(_saveRetryAfter(_nextAttemptAt!));
     _closeConnection();
     updateStatus(SourceStatus.error);
-    _retryTimer = Timer(delay, () => unawaited(_open()));
+    if (retry) _retryTimer = Timer(delay, () => unawaited(_open()));
   }
 
   Future<void> _saveRetryAfter(DateTime time) async {
@@ -263,6 +360,7 @@ class JianService extends BaseSourceService {
     _enabled = false;
     ++_generation;
     _closeConnection();
+    authStatus = JianAuthStatus.anonymous;
     updateStatus(SourceStatus.disconnected);
   }
 
@@ -270,6 +368,7 @@ class JianService extends BaseSourceService {
   void dispose() {
     disconnect();
     _disposed = true;
+    _authService.close();
     super.dispose();
   }
 }

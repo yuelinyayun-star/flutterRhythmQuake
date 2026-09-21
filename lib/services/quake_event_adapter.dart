@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
 
+import '../models/source_payload.dart';
 import '../models/unified_quake_data.dart';
 import '../models/cmt_moment_tensor.dart';
 import '../models/cmt_solution_metadata.dart';
@@ -135,7 +136,7 @@ class QuakeEventAdapter {
       isSnapshot: isSnapshot,
       hasReportSequence: serial != null,
       useSourceTimeForExpiry: true,
-      sourcePayload: Map<String, dynamic>.unmodifiable(raw),
+      sourcePayload: snapshotSourcePayload(raw),
     );
   }
 
@@ -216,6 +217,7 @@ class QuakeEventAdapter {
     Map<String, dynamic> data,
     int origin,
   ) {
+    final payload = snapshotSourcePayload(data);
     final UnifiedQuakeData? result;
     switch (source) {
       case 'jmaEew':
@@ -315,15 +317,27 @@ class QuakeEventAdapter {
         result = convertUnadapted(apiName: source, origin: origin, data: data);
     }
     if (result == null) return null;
-    if (_isUnadaptedSourceKey(result.source)) return result;
+    if (_isUnadaptedSourceKey(result.source)) {
+      return result.copyWith(sourcePayload: payload);
+    }
     final label = _apiTypeLabel(source, origin);
-    if (label.isEmpty) return result;
-    return result.copyWith(apiTypeLabel: label);
+    return result.copyWith(
+      apiTypeLabel: label.isEmpty ? result.apiTypeLabel : label,
+      sourcePayload: payload,
+    );
   }
 
   /// Converts WHEWS frames into the same logical source slots used by FAN.
   /// The input map is copied; raw values are not rewritten in place.
   static UnifiedQuakeData? convertWhews(
+    String source,
+    Map<String, dynamic> raw,
+  ) {
+    final payload = snapshotSourcePayload(raw);
+    return _convertWhews(source, raw)?.copyWith(sourcePayload: payload);
+  }
+
+  static UnifiedQuakeData? _convertWhews(
     String source,
     Map<String, dynamic> raw,
   ) {

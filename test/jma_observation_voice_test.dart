@@ -232,4 +232,137 @@ void main() {
       expect(voice(event.copyWith(depth: depth)), isNot(contains('深度')));
     }
   });
+
+  test(
+    'captured Hyuganada DetailScale speaks regions with a known hypocentre',
+    () {
+      final history =
+          jsonDecode(
+                File(
+                  'test/fixtures/jma_voice/p2p_history_20260921.json',
+                ).readAsStringSync(encoding: utf8),
+              )
+              as List;
+      final raw = history.cast<Map<String, dynamic>>().singleWhere(
+        (item) =>
+            item['issue']['type'] == 'DetailScale' &&
+            item['earthquake']['time'] == '2026/09/21 22:38:00',
+      );
+      final before = jsonEncode(raw);
+      expect(raw['points'], hasLength(191));
+      final event = QuakeEventAdapter.convert('jmaEqlist', raw, 2)!;
+      final beforeEvent = event.toMap();
+      final text = voice(event);
+      expect(text, startsWith('各地震度信息，日向滩，震级4.8，最大震度3，深度30公里。'));
+      expect(text, contains('观测到震度3的地区：'));
+      for (final name in ['大分県中部', '大分県南部', '宮崎県北部平野部', '宮崎県北部山沿い']) {
+        expect(text, contains(jmaVoiceLocation(name)));
+      }
+      final areas = jsonDecode(event.warnArea) as List;
+      expect(areas.length, greaterThan(4));
+      for (final area in areas) {
+        expect(text, contains(jmaVoiceLocation(area['name'] as String)));
+      }
+      expect(text, contains('观测到震度2的地区：'));
+      expect(text, contains('观测到震度1的地区：'));
+      expect(text, endsWith('日本气象厅。'));
+      expect(jsonEncode(raw), before);
+      expect(event.toMap(), beforeEvent);
+      expect(voice(event.copyWith(isCanceled: true)), '日本气象厅，地震信息已取消。');
+    },
+  );
+
+  test(
+    'captured shallow DetailScale omits shallow-depth wording without changing data',
+    () {
+      final history =
+          jsonDecode(
+                File(
+                  'test/fixtures/jma_voice/p2p_history_20260921.json',
+                ).readAsStringSync(encoding: utf8),
+              )
+              as List;
+      final raw = history.cast<Map<String, dynamic>>().firstWhere(
+        (item) =>
+            item['issue']['type'] == 'DetailScale' &&
+            item['earthquake']['hypocenter']['depth'] == 0,
+      );
+      final event = QuakeEventAdapter.convert('jmaEqlist', raw, 2)!;
+      expect(event.depth, 0);
+      expect(voice(event), isNot(contains('深度')));
+      expect(voice(event), contains('观测到震度'));
+      expect(event.depth, 0);
+    },
+  );
+
+  test('only observation bulletins suppress shallow depth', () {
+    final event = observation([
+      {'name': 'ニセコ町', 'intensity': '4'},
+    ]).copyWith(hypocenter: '日向灘', magnitude: 4.8, depth: 0);
+    for (final title in ['震度速報', '震度速报', '各地の震度に関する情報', '各地の震度情報']) {
+      final text = voice(event.copyWith(titleText: title));
+      expect(text, isNot(contains('深度很浅')));
+      expect(text, contains('观测到震度4的地区：新雪谷町'));
+      expect(
+        voice(event.copyWith(titleText: title, depth: 30)),
+        contains('深度30公里'),
+      );
+    }
+    for (final title in ['震源に関する情報', '震度・震源に関する情報', '遠地地震に関する情報', 'その他の情報']) {
+      final text = voice(event.copyWith(titleText: title));
+      expect(text, contains('深度很浅'));
+      expect(text, isNot(contains('观测到')));
+    }
+    expect(voice(event.copyWith(source: 'cencEqlist')), contains('深度很浅'));
+    expect(
+      voice(event.copyWith(source: 'jmaEew', isEew: true)),
+      contains('深度很浅'),
+    );
+  });
+
+  test(
+    'known-location observation bulletin with no regions does not invent any',
+    () {
+      final event = observation([]).copyWith(
+        titleText: '各地の震度に関する情報',
+        hypocenter: '日向灘',
+        magnitude: 4.8,
+        depth: 30,
+      );
+      expect(voice(event), '各地震度信息，日向滩，震级4.8，最大震度4，深度30公里。日本气象厅。');
+    },
+  );
+
+  test(
+    'WHEWS and Jian known-location DetailScale use the shared regional TTS',
+    () {
+      final whews = QuakeEventAdapter.convertWhews('jma', {
+        'id': 'voice-whews-detail-test',
+        'title': '各地の震度に関する情報',
+        'location': '日向灘',
+        'maxIntensity': '4',
+        'intensities': [
+          {
+            'pref': '北海道',
+            'areas': [
+              {'area': 'ニセコ町', 'maxIntensity': '4'},
+            ],
+          },
+        ],
+      })!;
+      final jian = QuakeEventAdapter.convertJian('jma', {
+        'id': 'voice-jian-detail-test',
+        'title': '各地の震度に関する情報',
+        'placeName': '日向灘',
+        'intensity': '4',
+        'intensityAreas': [
+          {'name': 'ニセコ町', 'intensity': '4'},
+        ],
+      })!;
+      for (final event in [whews, jian]) {
+        expect(event.hypocenter, '日向灘');
+        expect(voice(event), contains('观测到震度4的地区：新雪谷町'));
+      }
+    },
+  );
 }

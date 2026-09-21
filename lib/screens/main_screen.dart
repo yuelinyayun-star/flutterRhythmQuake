@@ -340,6 +340,9 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
               onStationDataChanged: _onStationDataChanged,
             ),
 
+            if (isPhone && _mobileSection == MobileSection.seismic)
+              const SourceDashboard(mobile: true),
+
             // 2. 顶部状态栏
             if (!isPhone)
               const Positioned(

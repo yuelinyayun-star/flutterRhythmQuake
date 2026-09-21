@@ -52,6 +52,7 @@ import '../../models/quake_message.dart';
 import '../../models/unified_quake_data.dart';
 import '../../models/tsunami_message.dart';
 import '../../models/source_status.dart';
+import '../../models/source_credential_info.dart';
 
 /// 数据源服务抽象基类
 ///
@@ -97,6 +98,9 @@ abstract class BaseSourceService {
   /// 用于在日志和状态显示中标识此数据源。
   /// 例如：'Wolfx'、'FAN'、'P2P' 等。
   String get name;
+
+  String? get authenticationStatus => null;
+  SourceCredentialInfo? get credentialInfo => null;
 
   /// 连接状态变化回调
   ///

@@ -66,6 +66,7 @@ import '../models/whews_catalog.dart';
 import '../models/unified_quake_data.dart';
 import '../models/eew_event_group.dart';
 import '../models/source_status.dart';
+import '../models/source_credential_info.dart';
 import '../models/cenc_ir_data.dart';
 import '../models/weather_alarm.dart';
 import '../models/typhoon_data.dart';
@@ -995,6 +996,23 @@ class QuakeProvider with ChangeNotifier {
   };
 
   Map<String, SourceStatus> get sourceStatuses => _sourceStatuses;
+  final Map<String, String?> _sourceAuthenticationStatuses = {};
+  final Map<String, SourceCredentialInfo?> _sourceCredentialInfos = {};
+  SourceCredentialInfo? sourceCredentialInfo(String source) =>
+      _sourceCredentialInfos[source];
+  String? sourceAuthenticationStatus(String source) =>
+      _sourceAuthenticationStatuses[source];
+
+  bool _updateAuthenticationStatus(SourceStatusUpdate update) {
+    if (_sourceAuthenticationStatuses[update.sourceName] ==
+        update.authenticationStatus &&
+        _sourceCredentialInfos[update.sourceName] == update.credentialInfo) {
+      return false;
+    }
+    _sourceAuthenticationStatuses[update.sourceName] = update.authenticationStatus;
+    _sourceCredentialInfos[update.sourceName] = update.credentialInfo;
+    return true;
+  }
   QuakeMessage? get currentEvent =>
       _legacyActiveQuakePipelineDisabled ? null : _currentEvent;
   double get currentDistance =>
@@ -1278,7 +1296,13 @@ class QuakeProvider with ChangeNotifier {
       },
     );
     _sourceStatusSubscription = SourceManager().onStatusUpdate.listen((update) {
-      final changed = _sourceStatuses[update.sourceName] != update.status;
+      if (update.sourceName == JianService.sourceName &&
+          BackgroundService().isAndroidConnectionHostedByForegroundService) {
+        return;
+      }
+      final authChanged = _updateAuthenticationStatus(update);
+      final changed =
+          _sourceStatuses[update.sourceName] != update.status || authChanged;
       if (changed) {
         _sourceStatuses[update.sourceName] = update.status;
       }
@@ -1293,7 +1317,9 @@ class QuakeProvider with ChangeNotifier {
 
     _unifiedSubscriptions.add(
       BackgroundService().onForegroundSourceStatus.listen((update) {
-        final changed = _sourceStatuses[update.sourceName] != update.status;
+        final authChanged = _updateAuthenticationStatus(update);
+        final changed =
+            _sourceStatuses[update.sourceName] != update.status || authChanged;
         if (!changed) return;
         _sourceStatuses[update.sourceName] = update.status;
         _notifySourceStatusSlice();
@@ -1330,12 +1356,6 @@ class QuakeProvider with ChangeNotifier {
       };
       fanService.onWeatherAlarm = (alarm) {
         _acceptRemoteWeatherAlarm(alarm);
-      };
-      fanService.onTyphoonUpdate = () {
-        _notifyTyphoonSlice();
-        if (_typhoonLayerEnabled) {
-          _typhoonService.fetchNow();
-        }
       };
     }
 
