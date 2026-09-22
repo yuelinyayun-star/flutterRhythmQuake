@@ -92,9 +92,13 @@ void main() {
         ),
       );
       expect(
-        tester.widget<IconButton>(find.byWidgetPredicate(
-          (widget) => widget is IconButton && widget.tooltip == '未保存原始报文',
-        )).onPressed,
+        tester
+            .widget<IconButton>(
+              find.byWidgetPredicate(
+                (widget) => widget is IconButton && widget.tooltip == '未保存原始报文',
+              ),
+            )
+            .onPressed,
         isNull,
       );
       await tester.tap(find.byTooltip('回放已保存报文'));
@@ -124,6 +128,43 @@ void main() {
       expect(restored.reports.single.toMap(), package.reports.single.toMap());
     },
   );
+
+  testWidgets('both history play buttons close the drawer and keep playing', (
+    tester,
+  ) async {
+    final provider = HistoryProvider([
+      recorded.group([recorded.recordedEew()]),
+    ]);
+    addTearDown(provider.dispose);
+    final scaffold = GlobalKey<ScaffoldState>();
+    await tester.pumpWidget(
+      ChangeNotifierProvider<QuakeProvider>.value(
+        value: provider,
+        child: MaterialApp(
+          home: Scaffold(
+            key: scaffold,
+            drawer: const Drawer(child: HistoryPanel()),
+            body: const SizedBox.expand(),
+          ),
+        ),
+      ),
+    );
+    scaffold.currentState!.openDrawer();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('回放已保存报文'));
+    await tester.pumpAndSettle();
+    expect(scaffold.currentState!.isDrawerOpen, isFalse);
+    expect(provider.historyReplay.active, isTrue);
+    scaffold.currentState!.openDrawer();
+    await tester.pumpAndSettle();
+    expect(find.textContaining('静音'), findsNothing);
+    await tester.tap(find.byTooltip('重新回放'));
+    await tester.pumpAndSettle();
+    expect(scaffold.currentState!.isDrawerOpen, isFalse);
+    expect(provider.historyReplay.active, isTrue);
+    provider.historyReplay.stop();
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 
   for (final width in [280.0, 520.0]) {
     testWidgets('import, play, stop and malformed import at width $width', (

@@ -26,10 +26,12 @@ Future<bool> exportHistoryReplay(HistoryReplayPackage package) async {
 class HistoryReplayControls extends StatefulWidget {
   final HistoryReplayController controller;
   final bool allowImport;
+  final VoidCallback? onPlaybackStarted;
   const HistoryReplayControls({
     super.key,
     required this.controller,
     this.allowImport = true,
+    this.onPlaybackStarted,
   });
 
   @override
@@ -117,7 +119,12 @@ class _HistoryReplayControlsState extends State<HistoryReplayControls> {
                 ),
               IconButton(
                 tooltip: controller.active ? '重新回放' : '播放回放',
-                onPressed: package == null || _busy ? null : controller.play,
+                onPressed: package == null || _busy
+                    ? null
+                    : () {
+                        controller.play();
+                        if (controller.active) widget.onPlaybackStarted?.call();
+                      },
                 icon: Icon(controller.active ? Icons.replay : Icons.play_arrow),
               ),
               IconButton(
@@ -142,7 +149,7 @@ class _HistoryReplayControlsState extends State<HistoryReplayControls> {
                   : controller.active
                   ? '回放中'
                   : '待播放'}'
-              ' · ${controller.played}/${package.reports.length} 报 · 静音'
+              ' · ${controller.played}/${package.reports.length} 报'
               '${package.manualTiming ? ' · 缺少报时，逐报播放' : ''}'
               '${package.omittedReports > 0 ? ' · ${package.omittedReports} 报无报文' : ''}',
               style: const TextStyle(fontSize: 12, color: Colors.white60),

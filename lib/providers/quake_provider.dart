@@ -287,13 +287,16 @@ class QuakeProvider with ChangeNotifier {
 
   void _presentReplayReport(UnifiedQuakeData event) {
     if (_disposed) return;
-    _unifiedEvents.removeWhere(
-      (item) => item.replaySessionId == event.replaySessionId &&
-          item.source == event.source &&
-          (item.eventId == event.eventId || _isSameUnifiedEewEvent(item, event)),
-    );
+    bool sameEvent(UnifiedQuakeData item) =>
+        item.replaySessionId == event.replaySessionId &&
+        item.source == event.source &&
+        (item.eventId == event.eventId || _isSameUnifiedEewEvent(item, event));
+    final isUpdate = _unifiedEvents.any(sameEvent);
+    _unifiedEvents.removeWhere(sameEvent);
     _unifiedEvents.insert(0, event);
     _refreshReplayPresentation();
+    _announceUnifiedEvent(event, isFirst: !isUpdate);
+    onUnifiedEventNotified?.call(event, isUpdate);
   }
 
   void _clearReplaySession(String session) {
@@ -312,6 +315,7 @@ class QuakeProvider with ChangeNotifier {
     } else {
       _startUnifiedCarousel();
     }
+    _ensureUnifiedCountdownVoiceTimer();
     notifyListeners();
   }
   final DomesticEewEffects _domesticEewEffects = DomesticEewEffects();
@@ -4169,7 +4173,7 @@ class QuakeProvider with ChangeNotifier {
     if (_disposed) return;
 
     final activeKeys = _unifiedEvents
-        .where((event) => event.isEew && !event.isReplay)
+        .where((event) => event.isEew)
         .map(_unifiedEventKey)
         .toSet();
     _unifiedCountdownLastSpokenSeconds.removeWhere(
@@ -4195,7 +4199,8 @@ class QuakeProvider with ChangeNotifier {
     if (_disposed) return;
     final selected = currentUnifiedEvent;
     final event = selected?.isReplay == true
-        ? _unifiedEvents.where((e) => e.isEew && !e.isReplay).firstOrNull
+        ? (_unifiedEvents.where((e) => e.isEew && !e.isReplay).firstOrNull ??
+              selected)
         : selected;
     if (event == null || !event.isEew || event.isCanceled) return;
 

@@ -7,6 +7,8 @@ import 'package:flutterrhythmquake/core/utils/quake_time.dart';
 import 'package:flutterrhythmquake/models/eew_event_group.dart';
 import 'package:flutterrhythmquake/models/unified_quake_data.dart';
 import 'package:flutterrhythmquake/providers/quake_provider.dart';
+import 'package:flutterrhythmquake/providers/notification_settings_provider.dart';
+import 'package:flutterrhythmquake/services/notification_service.dart';
 import 'package:flutterrhythmquake/services/debug/history_replay.dart';
 import 'package:flutterrhythmquake/services/quake_event_adapter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -34,6 +36,37 @@ EewEventGroup group(List<UnifiedQuakeData> reports) => EewEventGroup(
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('replay reaches sound service and respects the sound switch', () async {
+    SharedPreferences.setMockInitialValues({});
+    final provider = QuakeProvider();
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    final settings = NotificationSettingsProvider();
+    final sounds = <String>[];
+    final notifications = NotificationService(
+      provider,
+      settings,
+      playSound: sounds.add,
+    );
+    final captured = recordedEew();
+    provider.historyReplay.load(
+      HistoryReplayPackage.fromGroup(group([captured])),
+    );
+    provider.historyReplay.play();
+    expect(sounds, contains('issue'));
+    sounds.clear();
+    provider.historyReplay.play();
+    expect(sounds, contains('issue'));
+    sounds.clear();
+    settings.onEew.sound = false;
+    settings.onEewWarn.sound = false;
+    provider.historyReplay.play();
+    expect(sounds, isEmpty);
+    provider.historyReplay.stop();
+    notifications.dispose();
+    settings.dispose();
+    provider.dispose();
+  });
 
   test(
     'stopping replay leaves a same-agency live event and its history intact',
@@ -256,7 +289,7 @@ void main() {
   });
 
   test(
-    'provider playback displays old reports without writing history or alerting',
+    'provider playback announces old reports without writing history',
     () async {
       final event = recordedEew();
       final saved = group([event]);
@@ -296,7 +329,7 @@ void main() {
         jsonEncode(provider.eewHistory.map((g) => g.toMap()).toList()),
         before,
       );
-      expect(notifications, 0);
+      expect(notifications, 1);
       replay.stop();
       expect(provider.unifiedEvents, isEmpty);
       provider.dispose();

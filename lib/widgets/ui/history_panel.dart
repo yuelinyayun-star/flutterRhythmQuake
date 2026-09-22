@@ -35,6 +35,7 @@ class HistoryPanel extends StatelessWidget {
               child: HistoryReplayControls(
                 controller: provider.historyReplay,
                 allowImport: false,
+                onPlaybackStarted: () => Scaffold.maybeOf(context)?.closeDrawer(),
               ),
             ),
             Expanded(
@@ -85,6 +86,9 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
         final controller = context.read<QuakeProvider>().historyReplay;
         controller.load(package);
         controller.play();
+        if (controller.active && mounted) {
+          Scaffold.maybeOf(context)?.closeDrawer();
+        }
       }
     } catch (error) {
       if (mounted) {

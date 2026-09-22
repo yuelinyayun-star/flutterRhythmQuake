@@ -12,20 +12,48 @@ class NsmcSatelliteCloudLayer extends StatelessWidget {
   Widget build(BuildContext context) {
     final data = frame;
     if (data == null) return const SizedBox.shrink();
-    return OverlayImageLayer(
-      overlayImages: [
-        OverlayImage(
-          key: ValueKey('nsmc-satellite-${data.time.toIso8601String()}'),
-          bounds: LatLngBounds(
-            const LatLng(-NsmcSatelliteCloudService.mercatorLatitude, -180),
-            const LatLng(NsmcSatelliteCloudService.mercatorLatitude, 180),
-          ),
-          imageProvider: MemoryImage(data.imageBytes),
-          opacity: 0.72,
-          gaplessPlayback: true,
-          filterQuality: FilterQuality.medium,
+    final camera = MapCamera.of(context);
+    final image = MemoryImage(data.imageBytes);
+    return MobileLayerTransformer(
+      child: ClipRect(
+        child: Stack(
+          children: [
+            for (final bounds in nsmcSatelliteWorldRects(camera))
+              Positioned.fromRect(
+                rect: bounds.shift(-camera.pixelOrigin),
+                child: Image(
+                  image: image,
+                  fit: BoxFit.fill,
+                  opacity: const AlwaysStoppedAnimation(0.72),
+                  gaplessPlayback: true,
+                  filterQuality: FilterQuality.medium,
+                ),
+              ),
+          ],
         ),
-      ],
+      ),
     );
   }
+}
+
+// Repeat the unchanged global image just as the basemap repeats across 180 degrees.
+List<Rect> nsmcSatelliteWorldRects(MapCamera camera) {
+  final world = Rect.fromPoints(
+    camera.projectAtZoom(
+      const LatLng(NsmcSatelliteCloudService.mercatorLatitude, -180),
+    ),
+    camera.projectAtZoom(
+      const LatLng(-NsmcSatelliteCloudService.mercatorLatitude, 180),
+    ),
+  );
+  final viewport = camera.pixelBounds;
+  final width = camera.getWorldWidthAtZoom();
+  if (width <= 0) return world.overlaps(viewport) ? [world] : [];
+  final first = ((viewport.left - world.right) / width).floor() + 1;
+  final last = ((viewport.right - world.left) / width).ceil() - 1;
+  return [
+    for (var copy = first; copy <= last; copy++)
+      if (world.shift(Offset(copy * width, 0)).overlaps(viewport))
+        world.shift(Offset(copy * width, 0)),
+  ];
 }

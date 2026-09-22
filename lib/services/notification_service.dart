@@ -72,7 +72,7 @@ class NotificationService {
       _focusEvent(event, eventKey);
     }
 
-    if (notify) {
+    if (notify && !event.isReplay) {
       BackgroundService().showEewSystemNotification(
         event,
         localIntensity: _quakeProvider.estimatedIntensity,
@@ -138,14 +138,14 @@ class NotificationService {
     final eventKey = '${event.source}|${event.eventId}';
 
     if (settings.sound) {
-      SoundEffectService().play(_infoSoundKeyForEvent(event));
+      _playSound(_infoSoundKeyForEvent(event));
     }
 
     if (settings.focus) {
       _focusEvent(event, eventKey);
     }
 
-    if (settings.notification) {
+    if (settings.notification && !event.isReplay) {
       BackgroundService().showReportSystemNotification(event);
     }
   }
