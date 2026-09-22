@@ -82,6 +82,23 @@ class WAuthCredentialStore {
     await prefs.remove(legacyApiTokenPreferenceKey);
   }
 
+  /// Imports a business token without requiring an OAuth account session.
+  Future<void> writeApiToken({
+    required String apiToken,
+    SharedPreferences? preferences,
+  }) async {
+    final token = apiToken.trim();
+    if (token.isEmpty) throw ArgumentError('WAuth API token is required.');
+    final prefs = preferences ?? await SharedPreferences.getInstance();
+    final previous = await readAndMigrate(preferences: prefs);
+    await _storage.write(key: _secureApiTokenKey, value: token);
+    if (previous.apiToken != token) {
+      await _storage.delete(key: _secureAccessTokenKey);
+      await prefs.remove(legacyAccessTokenPreferenceKey);
+    }
+    await prefs.remove(legacyApiTokenPreferenceKey);
+  }
+
   Future<void> clear({SharedPreferences? preferences}) async {
     await _storage.delete(key: _secureAccessTokenKey);
     await _storage.delete(key: _secureApiTokenKey);

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/foundation.dart'
     show
@@ -29,7 +28,6 @@ import 'services/background_service.dart';
 import 'services/tts_service.dart';
 import 'services/sound_effect_service.dart';
 import 'services/obs_automation_runtime_service.dart';
-import 'services/wauth_service.dart';
 import 'services/wauth_credential_store.dart';
 import 'services/sources/source_manager.dart';
 import 'services/sources/wolfx_service.dart';
@@ -91,8 +89,6 @@ Future<void> _clearLegacyFanTileCacheOnce(SharedPreferences prefs) async {
 void _startDeferredServices(
   SharedPreferences prefs,
   GlobalQuakeService globalQuake,
-  WhewsService whews,
-  WAuthCredentials whewsCredentials,
 ) {
   WidgetsBinding.instance.addPostFrameCallback((_) {
     unawaited(SoundEffectService().warmUp());
@@ -108,7 +104,7 @@ void _startDeferredServices(
       if (!BackgroundService().isAndroidConnectionHostedByForegroundService) {
         SourceManager().startAll();
       }
-      unawaited(_verifyAndEnableWhews(prefs, whews, whewsCredentials));
+
       if (!BackgroundService().isAndroidConnectionHostedByForegroundService &&
           (prefs.getBool(GlobalQuakeService.enabledPreferenceKey) ?? false)) {
         globalQuake.connect();
@@ -134,118 +130,29 @@ void _startDeferredServices(
   });
 }
 
-Future<void> _verifyAndEnableWhews(
+void _restoreWhewsConnections(
   SharedPreferences prefs,
   WhewsService whews,
   WAuthCredentials credentials,
-) async {
-  final hasRequestedWhews =
-      (prefs.getBool(WhewsService.enabledPreferenceKey) ?? false) ||
-      (prefs.getBool(QuakeMapView.whewsNiedEnabledPreferenceKey) ?? false) ||
-      (prefs.getBool(QuakeMapView.whewsSnetEnabledPreferenceKey) ?? false) ||
+) {
+  // The business socket authenticates this token; OAuth userinfo is not a gate.
+  final hasToken = credentials.hasApiToken;
+  final token = hasToken ? credentials.apiToken.trim() : '';
+  whews.setApiToken(token);
+  QuakeMapView.whewsApiTokenNotifier.value = token;
+  QuakeMapView.whewsNiedEnabledNotifier.value =
+      hasToken &&
+      (prefs.getBool(QuakeMapView.whewsNiedEnabledPreferenceKey) ?? false);
+  QuakeMapView.whewsSnetEnabledNotifier.value =
+      hasToken &&
+      (prefs.getBool(QuakeMapView.whewsSnetEnabledPreferenceKey) ?? false);
+  QuakeMapView.whewsKmaEnabledNotifier.value =
+      hasToken &&
       (prefs.getBool(QuakeMapView.whewsKmaEnabledPreferenceKey) ?? false);
-  if (!hasRequestedWhews || !credentials.isComplete) {
-    await prefs.setBool(WhewsService.apiAuthorizedPreferenceKey, false);
-    SourceManager().setSourceEnabled('WHEWS', false);
-    return;
-  }
-
-  final auth = WAuthService();
-  final previousApiAuthorized =
-      prefs.getBool(WhewsService.apiAuthorizedPreferenceKey) ?? false;
-  try {
-    final status = await auth.inspectStoredAuthorization(preferences: prefs);
-    if (status.credentials.accessToken != credentials.accessToken ||
-        status.credentials.apiToken != credentials.apiToken) {
-      return;
-    }
-
-    if (status.shouldForgetLogin) {
-      await prefs.setBool(WhewsService.apiAuthorizedPreferenceKey, false);
-      SourceManager().setSourceEnabled('WHEWS', false);
-      whews.setApiToken('');
-      QuakeMapView.whewsApiTokenNotifier.value = '';
-      QuakeMapView.whewsNiedEnabledNotifier.value = false;
-      QuakeMapView.whewsSnetEnabledNotifier.value = false;
-      QuakeMapView.whewsKmaEnabledNotifier.value = false;
-      return;
-    }
-
-    if (status.accessAuthorized && status.userInfo != null) {
-      await prefs.setString(
-        WAuthService.userInfoPreferenceKey,
-        jsonEncode(status.userInfo),
-      );
-    }
-
-    if (status.apiAuthorized) {
-      await prefs.setBool(WhewsService.apiAuthorizedPreferenceKey, true);
-      whews.setApiToken(status.credentials.apiToken);
-      QuakeMapView.whewsApiTokenNotifier.value = status.credentials.apiToken;
-      QuakeMapView.whewsNiedEnabledNotifier.value =
-          prefs.getBool(QuakeMapView.whewsNiedEnabledPreferenceKey) ?? false;
-      QuakeMapView.whewsSnetEnabledNotifier.value =
-          prefs.getBool(QuakeMapView.whewsSnetEnabledPreferenceKey) ?? false;
-      QuakeMapView.whewsKmaEnabledNotifier.value =
-          prefs.getBool(QuakeMapView.whewsKmaEnabledPreferenceKey) ?? false;
-      SourceManager().setSourceEnabled(
-        'WHEWS',
-        prefs.getBool(WhewsService.enabledPreferenceKey) ?? false,
-      );
-      return;
-    }
-
-    if (status.hasTransientVerificationFailure && previousApiAuthorized) {
-      whews.setApiToken(credentials.apiToken);
-      QuakeMapView.whewsApiTokenNotifier.value = credentials.apiToken;
-      QuakeMapView.whewsNiedEnabledNotifier.value =
-          prefs.getBool(QuakeMapView.whewsNiedEnabledPreferenceKey) ?? false;
-      QuakeMapView.whewsSnetEnabledNotifier.value =
-          prefs.getBool(QuakeMapView.whewsSnetEnabledPreferenceKey) ?? false;
-      QuakeMapView.whewsKmaEnabledNotifier.value =
-          prefs.getBool(QuakeMapView.whewsKmaEnabledPreferenceKey) ?? false;
-      SourceManager().setSourceEnabled(
-        'WHEWS',
-        prefs.getBool(WhewsService.enabledPreferenceKey) ?? false,
-      );
-      return;
-    }
-
-    await prefs.setBool(WhewsService.apiAuthorizedPreferenceKey, false);
-    SourceManager().setSourceEnabled('WHEWS', false);
-    whews.setApiToken('');
-    QuakeMapView.whewsApiTokenNotifier.value = '';
-    QuakeMapView.whewsNiedEnabledNotifier.value = false;
-    QuakeMapView.whewsSnetEnabledNotifier.value = false;
-    QuakeMapView.whewsKmaEnabledNotifier.value = false;
-  } catch (error) {
-    if (previousApiAuthorized && credentials.isComplete) {
-      whews.setApiToken(credentials.apiToken);
-      QuakeMapView.whewsApiTokenNotifier.value = credentials.apiToken;
-      QuakeMapView.whewsNiedEnabledNotifier.value =
-          prefs.getBool(QuakeMapView.whewsNiedEnabledPreferenceKey) ?? false;
-      QuakeMapView.whewsSnetEnabledNotifier.value =
-          prefs.getBool(QuakeMapView.whewsSnetEnabledPreferenceKey) ?? false;
-      QuakeMapView.whewsKmaEnabledNotifier.value =
-          prefs.getBool(QuakeMapView.whewsKmaEnabledPreferenceKey) ?? false;
-      SourceManager().setSourceEnabled(
-        'WHEWS',
-        prefs.getBool(WhewsService.enabledPreferenceKey) ?? false,
-      );
-      debugPrint('WHEWS startup authorization kept cached: $error');
-      return;
-    }
-    await prefs.setBool(WhewsService.apiAuthorizedPreferenceKey, false);
-    SourceManager().setSourceEnabled('WHEWS', false);
-    whews.setApiToken('');
-    QuakeMapView.whewsApiTokenNotifier.value = '';
-    QuakeMapView.whewsNiedEnabledNotifier.value = false;
-    QuakeMapView.whewsSnetEnabledNotifier.value = false;
-    QuakeMapView.whewsKmaEnabledNotifier.value = false;
-    debugPrint('WHEWS startup authorization check failed: $error');
-  } finally {
-    auth.close();
-  }
+  SourceManager().setSourceEnabled(
+    'WHEWS',
+    hasToken && (prefs.getBool(WhewsService.enabledPreferenceKey) ?? false),
+  );
 }
 
 Widget _buildPlatformSemanticsWrapper(BuildContext context, Widget? child) {
@@ -384,7 +291,8 @@ void main() async {
     'P2P',
     prefs.getBool('api_source_p2pquake_enabled') ?? true,
   );
-  _startDeferredServices(prefs, globalQuake, whews, whewsCredentials);
+  _restoreWhewsConnections(prefs, whews, whewsCredentials);
+  _startDeferredServices(prefs, globalQuake);
 
   // 4. 桌面端窗口初始化（Web 自动跳过）
   await initDesktopWindow();
@@ -421,7 +329,10 @@ void main() async {
 }
 
 QuakeProvider _createQuakeProvider(SharedPreferences prefs) {
-  final provider = QuakeProvider();
+  final provider = QuakeProvider(
+    jmaVolcanoPushEnabled:
+        prefs.getBool(QuakeProvider.jmaVolcanoPushEnabledPreferenceKey) ?? true,
+  );
   provider.setTyphoonLayerEnabled(
     prefs.getBool('map_overlay_typhoonLayer') ?? false,
   );
@@ -468,6 +379,14 @@ MapStateProvider _createMapStateProvider(
   provider.setOverlayEnabled(
     'jmaRadarLayer',
     prefs.getBool('map_overlay_jmaRadarLayer') ?? false,
+  );
+  provider.setOverlayEnabled(
+    'jmaSatelliteCloudLayer',
+    prefs.getBool('map_overlay_jmaSatelliteCloudLayer') ?? false,
+  );
+  provider.setOverlayEnabled(
+    'nsmcSatelliteCloudLayer',
+    prefs.getBool('map_overlay_nsmcSatelliteCloudLayer') ?? false,
   );
   provider.setOverlayEnabled(
     'satelliteCloudLayer',

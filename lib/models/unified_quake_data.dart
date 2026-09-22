@@ -71,6 +71,11 @@ class UnifiedQuakeData {
   /// GlobalQuake uses a tagged Java object representation, not wire bytes.
   final Map<String, dynamic>? sourcePayload;
 
+  /// Transient playback state, deliberately excluded from persisted reports.
+  final String? replaySessionId;
+  final Duration replayClockOffset;
+  bool get isReplay => replaySessionId != null;
+
   const UnifiedQuakeData({
     required this.source,
     required this.origin,
@@ -111,6 +116,8 @@ class UnifiedQuakeData {
     this.hasReportSequence = true,
     this.useSourceTimeForExpiry = false,
     this.sourcePayload,
+    this.replaySessionId,
+    this.replayClockOffset = Duration.zero,
   });
 
   static const UnifiedQuakeData empty = UnifiedQuakeData(
@@ -305,6 +312,8 @@ class UnifiedQuakeData {
     bool? hasReportSequence,
     bool? useSourceTimeForExpiry,
     Map<String, dynamic>? sourcePayload,
+    String? replaySessionId,
+    Duration? replayClockOffset,
   }) {
     return UnifiedQuakeData(
       source: source ?? this.source,
@@ -347,6 +356,8 @@ class UnifiedQuakeData {
       useSourceTimeForExpiry:
           useSourceTimeForExpiry ?? this.useSourceTimeForExpiry,
       sourcePayload: sourcePayload ?? this.sourcePayload,
+      replaySessionId: replaySessionId ?? this.replaySessionId,
+      replayClockOffset: replayClockOffset ?? this.replayClockOffset,
     );
   }
 }

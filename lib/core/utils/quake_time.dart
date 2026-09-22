@@ -243,6 +243,11 @@ class QuakeTime {
     if (refTime == null) return event.useSourceTimeForExpiry ? 999999 : 0;
     // 使用适配器中写入的 timeZone 字段，比字符串匹配更准确
     final offset = Duration(hours: event.timeZone);
+    if (event.isReplay) {
+      final instant = wallClockToUtc(refTime, offset);
+      return NtpService().now.toUtc().subtract(event.replayClockOffset)
+          .difference(instant).inSeconds.clamp(0, 999999);
+    }
     return _calcPassedSecondsFromDateTime(refTime, offset);
   }
 

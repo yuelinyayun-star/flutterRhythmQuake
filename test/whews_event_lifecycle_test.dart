@@ -18,6 +18,104 @@ void main() {
 
   tearDown(() => SoundEffectService().enabled = true);
 
+  test('disabled volcano push blocks direct and background-accepted events', () async {
+    final provider = QuakeProvider(jmaVolcanoPushEnabled: false);
+    addTearDown(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      provider.dispose();
+    });
+    final effects = <UnifiedQuakeData>[];
+    provider.onUnifiedEventNotified = (event, _) => effects.add(event);
+    final event = _whewsVolcanoPush();
+    provider.handleUnifiedEventForTest(event);
+    provider.handleUnifiedEventForTest(event, alreadyAccepted: true);
+    expect(provider.unifiedEvents, isEmpty);
+    expect(provider.currentUnifiedEvent, isNull);
+    expect(effects, isEmpty);
+  });
+
+  test('disabling removes volcano cards without changing selected earthquake', () async {
+    final provider = QuakeProvider(jmaVolcanoPushEnabled: true);
+    addTearDown(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      provider.dispose();
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    final quake = _whewsInfo(
+      eventId: 'quake-remains-visible', reportTime: _sourceLocalNow(8),
+    );
+    provider.handleUnifiedEventForTest(quake);
+    provider.handleUnifiedEventForTest(_whewsVolcanoPush());
+    expect(provider.unifiedEvents, hasLength(2));
+    provider.setCurrentUnifiedIndex(provider.unifiedEvents.indexWhere(
+      (event) => event.eventId == quake.eventId,
+    ));
+    await provider.setJmaVolcanoPushEnabled(false);
+    expect(provider.unifiedEvents, hasLength(1));
+    expect(provider.currentUnifiedEvent!.eventId, quake.eventId);
+    expect(provider.currentUnifiedIndex, 0);
+    expect((await SharedPreferences.getInstance()).getBool(
+      QuakeProvider.jmaVolcanoPushEnabledPreferenceKey,
+    ), isFalse);
+    await provider.setJmaVolcanoPushEnabled(true);
+    expect(provider.unifiedEvents, hasLength(1));
+    provider.handleUnifiedEventForTest(
+      _whewsVolcanoPush().copyWith(eventId: 'next-volcano-report'),
+    );
+    expect(provider.unifiedEvents.any((event) => event.isVolcanoEvent), isTrue);
+  });
+
+  test('disabling the only volcano clears current focus and carousel', () async {
+    final provider = QuakeProvider(jmaVolcanoPushEnabled: true);
+    addTearDown(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      provider.dispose();
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    provider.handleUnifiedEventForTest(_whewsVolcanoPush());
+    expect(provider.currentUnifiedEvent!.isVolcanoEvent, isTrue);
+    var expired = 0;
+    provider.onAllEventsExpired = () => expired++;
+    await provider.setJmaVolcanoPushEnabled(false);
+    expect(provider.unifiedEventCount, 0);
+    expect(provider.currentUnifiedIndex, 0);
+    expect(provider.currentUnifiedEvent, isNull);
+    expect(expired, 1);
+  });
+
+  test('saved volcano switch restores without altering the overlay preference', () async {
+    SharedPreferences.setMockInitialValues({
+      QuakeProvider.jmaVolcanoPushEnabledPreferenceKey: false,
+      'map_overlay_volcanoLayer': true,
+    });
+    final provider = QuakeProvider();
+    addTearDown(provider.dispose);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(provider.jmaVolcanoPushEnabled, isFalse);
+    provider.handleUnifiedEventForTest(_whewsVolcanoPush());
+    expect(provider.unifiedEvents, isEmpty);
+    expect((await SharedPreferences.getInstance()).getBool(
+      'map_overlay_volcanoLayer',
+    ), isTrue);
+  });
+
+  test('background volcano filtering updates without replacing the processor', () {
+    final processor = BackgroundEventProcessor(
+      sourceInfoMagFilters: const {}, jmaVolcanoPushEnabled: false,
+    );
+    final volcano = _whewsVolcanoPush();
+    expect(processor.process(volcano).type, BackgroundEventResultType.dropped);
+    expect(processor.process(_whewsInfo(
+      eventId: 'background-quake', reportTime: _sourceLocalNow(8),
+    )).type, BackgroundEventResultType.newEvent);
+    processor.jmaVolcanoPushEnabled = true;
+    expect(processor.process(volcano).type, BackgroundEventResultType.newEvent);
+    processor.jmaVolcanoPushEnabled = false;
+    expect(processor.process(volcano.copyWith(
+      eventId: 'later-volcano-report',
+    )).type, BackgroundEventResultType.dropped);
+  });
+
   test('expired WHEWS information never enters the current UI', () async {
     final provider = QuakeProvider();
     addTearDown(() async {
@@ -703,6 +801,22 @@ UnifiedQuakeData _whewsCencInfo({
     apiTypeLabel: 'WHEWS',
   );
 }
+
+UnifiedQuakeData _whewsVolcanoPush() => QuakeEventAdapter.convertWhews('va', {
+  'id': 'VFVO52_20260807120000_506',
+  'kindCode': 'VFVO52',
+  'kindName': '喷发相关火山观测报',
+  'infoTypeName': '發表',
+  'reportTime': _sourceLocalNow(9).toIso8601String(),
+  'targetTime': _sourceLocalNow(9)
+      .subtract(const Duration(minutes: 1)).toIso8601String(),
+  'volcanoName': '桜島',
+  'volcanoCode': '506',
+  'latitude': 31.5925,
+  'longitude': 130.6567,
+  'craterName': '南岳山頂火口',
+  'headline': '噴火が発生しました。',
+})!;
 
 DateTime _sourceLocalNow(int timeZone) {
   final utc = DateTime.now().toUtc();

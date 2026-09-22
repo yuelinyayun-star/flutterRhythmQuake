@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="ja" dir="ltr">
+<head>
+<meta http-equiv="content-type" content="text/html; charset=euc-jp" />
+<meta http-equiv="content-style-type" content="text/css" />
+<meta http-equiv="content-script-type" content="text/javascript" />
+<meta http-equiv="pragma" content="no-cache" />
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="expires" content="0" />
+<link rel="stylesheet" type="text/css" href="./css/joho_ja.css" media="all" />
+<link rel="stylesheet" type="text/css" href="./css/joho_ul.css" media="all" />
+<script type="text/javascript" src="/js/jQuery/lib/jquery-3.6.0.min.js" charset="utf-8"></script>
+<script type="text/javascript" src="./js/joho.js" charset="euc-jp"></script>
+<script type="text/javascript" charset="euc-jp">
+$(function(){
+    $(window).focus(function(event){
+        listActive('20260922063300');
+    });
+    $(".evcheck_img").hover(function(){
+            $(this).attr('src',$(this).attr('src').replace('mouseout','mouseover'));
+            $(this).css("cursor","pointer");
+        },function(){
+            $(this).attr('src',$(this).attr('src').replace('mouseover','mouseout'));
+            $(this).css("cursor","default");
+        }
+    );
+});
+</script>
+<title>F-net 地震のメカニズム情報【詳細】</title>
+</head>
+<body>
+<form>
+
+<div id="tdmt_container">
+<div id="tdmt_header" class="tdmt_hf_gradient">
+<img id="mark_event_img" src="./image/mark_event_id.gif" alt="" title="" />
+<img id="nied_logo_img" src="./image/logo_01.png" alt="NIED" title="" />
+<span id="logo_title">F-net &nbsp;&nbsp;&nbsp;広帯域地震観測網</span>
+<span id="clang">
+<button type="button" id="btn_clang" onClick="openTdmt('20260922063300','0','en')">English</button>
+<button type="button" id="btn_close" onClick="window.close()">Close</button>
+</span>
+</div>
+<div id="tdmt_title">
+F-net 地震のメカニズム情報【詳細】
+</div>
+<div id="tdmt_hypo_element_02">
+<table class="tdmt_element">
+<tr><td colspan="9" class="subj">&#9608; 気象庁による震源情報 (速報)</td></tr>
+<tr>
+<td colspan="2" class="label">地震発生時刻 (JST)</td>
+<td class="label">緯度 (&#176;)</td>
+<td class="label">経度 (&#176;)</td>
+<td colspan="3" class="label">震央地名</td>
+<td class="label">深さ (km)</td>
+<td class="label">M<span id="sub">j</span></td>
+</tr>
+<tr>
+<td colspan="2" class="nodeci">2026/09/22 15:34</td>
+<td class="deci">36.2</td>
+<td class="deci">140.0</td>
+<td colspan="3" class="nodeci region">茨城県南部</td>
+<td class="deci">50</td>
+<td class="deci"> 3.9</td>
+</tr>
+<tr><td colspan="9" class="subj">&#9608; 自動メカニズム推定結果</td></tr>
+<tr>
+<td class="label">緯度 (&#176;)</td>
+<td class="label">経度 (&#176;)</td>
+<td class="label">深さ (km)</td>
+<td class="label">走向 (&#176;)</td>
+<td class="label">傾斜 (&#176;)</td>
+<td class="label">すべり角 (&#176;)</td>
+<td class="label">M<span class="sub">o</span> (Nm)</td>
+<td class="label">M<span class="sub">w</span></td>
+<td class="label">品質</td>
+</tr>
+<tr>
+<td class="deci">36.2</td>
+<td class="deci">140.0</td>
+<td class="deci">53</td>
+<td class="deci">279 ; 44</td>
+<td class="deci">26 ; 75</td>
+<td class="deci">143 ; 69</td>
+<td class="deci">5.97e+14</td>
+<td class="deci"> 3.8</td>
+<td class="deci"> 61.86</td>
+</tr>
+</table>
+</div>
+<div id="tdmt_plotd_02">
+<img src="./imgflush.php?_tp=plotd&_id=20260922063300&_upd=0&LANG=ja" alt="メカニズム" title="メカニズム" />
+</div>
+<div id="tdmt_gmt_02">
+&#9608; 周辺の地震活動
+<button type="button" id="btn_catalog" onClick="openCatalog('20260922063300','ja');">詳細版</button></br>
+<img src="./imgflush.php?_tp=gmt&_id=20260922063300&_upd=0&LANG=ja" id="gmt_img" alt="周辺の地震活動" title="周辺の地震活動" />
+</div>
+<div id="tdmt_dataget_02">
+<button type="button" id="btn_general" onClick="openDataget('20260922 1534','ASI:ONS:JIZ:TTO:FUJ:KZK','ja')">波形データ取得</button>
+</div>
+<div id="tdmt_stations_02">
+<span class="bold">&#9608; 地震波形</span><br />
+<span class="station_wave1"><img src="./image/mark_station.gif" alt="" title="" />
+01. ASI</span>
+<span class="station_wave2_ja">足尾</span>
+<span class="station_wave4">
+<span class="station_wave0" onClick="openTdmtWf('20260922063300','ASI','ja')">波形画像</span>
+&nbsp;
+</span>
+<span class="station_wave1"><img src="./image/mark_station.gif" alt="" title="" />
+02. ONS</span>
+<span class="station_wave2_ja">鬼石</span>
+<span class="station_wave4">
+<span class="station_wave0" onClick="openTdmtWf('20260922063300','ONS','ja')">波形画像</span>
+&nbsp;
+</span>
+<br />
+<span class="station_wave1"><img src="./image/mark_station.gif" alt="" title="" />
+03. JIZ</span>
+<span class="station_wave2_ja">中伊豆</span>
+<span class="station_wave4">
+<span class="station_wave0" onClick="openTdmtWf('20260922063300','JIZ','ja')">波形画像</span>
+&nbsp;
+</span>
+<span class="station_wave1"><img src="./image/mark_station.gif" alt="" title="" />
+04. TTO</span>
+<span class="station_wave2_ja">高遠</span>
+<span class="station_wave4">
+<span class="station_wave0" onClick="openTdmtWf('20260922063300','TTO','ja')">波形画像</span>
+&nbsp;
+</span>
+<br />
+<span class="station_wave1"><img src="./image/mark_station.gif" alt="" title="" />
+05. FUJ</span>
+<span class="station_wave2_ja">富士川</span>
+<span class="station_wave4">
+<span class="station_wave0" onClick="openTdmtWf('20260922063300','FUJ','ja')">波形画像</span>
+&nbsp;
+</span>
+<span class="station_wave1"><img src="./image/mark_station.gif" alt="" title="" />
+06. KZK</span>
+<span class="station_wave2_ja">柏崎</span>
+<span class="station_wave4">
+<span class="station_wave0" onClick="openTdmtWf('20260922063300','KZK','ja')">波形画像</span>
+&nbsp;
+</span>
+<br />
+</div>
+<div id="tdmt_footer" class="tdmt_hf_gradient"></div>
+</div>
+
+</form>
+</body>
+</html>
+

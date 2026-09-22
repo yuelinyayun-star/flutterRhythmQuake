@@ -29,6 +29,7 @@ class BackgroundEventProcessor {
   BackgroundEventProcessor({
     required Map<String, double> sourceInfoMagFilters,
     String infoActionWhitelist = '',
+    this.jmaVolcanoPushEnabled = true,
     Map<String, DateTime>? seenUsgsInfoBodyKeys,
     Map<String, DateTime>? seenEmscInfoBodyKeys,
     Map<String, DateTime>? seenCwaInfoBodyKeys,
@@ -57,6 +58,8 @@ class BackgroundEventProcessor {
       'seen_no_update_info_events';
   static const String infoActionWhitelistPreferenceKey =
       'info_action_whitelist';
+  static const String jmaVolcanoPushEnabledPreferenceKey =
+      'jma_volcano_push_enabled';
   static const String seenUnifiedInfoEventsPreferenceKey =
       'background_seen_unified_info_events';
   static const String acceptedEewReportNumsPreferenceKey =
@@ -68,6 +71,7 @@ class BackgroundEventProcessor {
 
   final Map<String, double> _sourceInfoMagFilters;
   final String _infoActionWhitelist;
+  bool jmaVolcanoPushEnabled;
   final void Function()? onSeenStateChanged;
 
   /// 信息事件与主 UI 一样按 source slot 保存，而不是按 eventId 分裂成多条。
@@ -96,6 +100,7 @@ class BackgroundEventProcessor {
       UnmodifiableMapView(_acceptedEewReportNums);
 
   BackgroundEventResult process(UnifiedQuakeData event) {
+    if (event.isVolcanoEvent && !jmaVolcanoPushEnabled) return _dropped;
     _pruneSeenState(notify: false);
     if (event.isHistory) {
       if (event.isEew || event.originTime == null ||

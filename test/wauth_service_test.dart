@@ -549,6 +549,39 @@ void main() {
     },
   );
 
+  test('API-only stored credentials can be verified', () async {
+    SharedPreferences.setMockInitialValues({
+      WAuthService.apiTokenPreferenceKey: 'business-only',
+    });
+    final service = WAuthService(client: MockClient((request) async {
+      expect(request.url.path, WAuthService.gatewayVerifyApiTokenPath);
+      return http.Response(jsonEncode({'valid': true}), 200);
+    }));
+    addTearDown(service.close);
+    final status = await service.inspectStoredAuthorization();
+    expect(status.hasCredentials, isTrue);
+    expect(status.apiAuthorized, isTrue);
+    expect(status.shouldForgetLogin, isFalse);
+  });
+
+  test('expired OAuth plus unavailable verifier preserves API token', () async {
+    SharedPreferences.setMockInitialValues({
+      WAuthService.accessTokenPreferenceKey: 'expired-account',
+      WAuthService.apiTokenPreferenceKey: 'saved-business',
+    });
+    final service = WAuthService(client: MockClient((request) async {
+      return http.Response('{}',
+        request.url.path == WAuthService.gatewayUserInfoPath ? 401 : 503);
+    }));
+    addTearDown(service.close);
+    final status = await service.inspectStoredAuthorization();
+    expect(status.accessRejected, isTrue);
+    expect(status.hasTransientVerificationFailure, isTrue);
+    expect(status.shouldForgetLogin, isFalse);
+    expect((await service.credentialStore.readAndMigrate()).apiToken,
+      'saved-business');
+  });
+
   test('rejected API token forces forgetting saved login', () async {
     SharedPreferences.setMockInitialValues({
       WAuthService.accessTokenPreferenceKey: 'access-token',

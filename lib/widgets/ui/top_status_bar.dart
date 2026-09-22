@@ -12,6 +12,11 @@ import '../../services/sources/nied_yahoo_service.dart';
 import '../../core/nied_replay_logger.dart';
 import '../map/quake_map_view.dart';
 import 'ui_scale.dart';
+import '../../services/debug/local_inject_decoder.dart';
+import 'local_inject_settings.dart';
+import 'package:provider/provider.dart';
+import '../../providers/quake_provider.dart';
+import 'history_replay_controls.dart';
 
 /// 顶部状态栏组件
 ///
@@ -233,8 +238,11 @@ class _TopStatusBarState extends State<TopStatusBar> {
   /// 用于调试和测试，可以手动注入预警消息
   void _openMockDialog() {
     if (_mockOverlayEntry != null) return;
+    final replay = context.read<QuakeProvider?>()?.historyReplay;
 
     var payload = '';
+    var format = 'auto';
+    var source = '';
     var zipPath = '';
     var niedGifPath = '';
     final position = ValueNotifier<Offset>(const Offset(40, 74));
@@ -248,7 +256,7 @@ class _TopStatusBarState extends State<TopStatusBar> {
             .clamp(280.0, 520.0)
             .toDouble();
         final panelHeight = (screenSize.height - 64)
-            .clamp(280.0, 560.0)
+            .clamp(280.0, 720.0)
             .toDouble();
 
         return ValueListenableBuilder<Offset>(
@@ -320,8 +328,42 @@ class _TopStatusBarState extends State<TopStatusBar> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              const LocalInjectSettings(),
+                              if (replay != null) ...[
+                                const Divider(height: 24),
+                                HistoryReplayControls(controller: replay),
+                              ],
+                              const SizedBox(height: 12),
+                              DropdownButtonFormField<String>(
+                                initialValue: format,
+                                isExpanded: true,
+                                decoration: const InputDecoration(
+                                  labelText: '报文格式',
+                                  isDense: true,
+                                ),
+                                items: [
+                                  for (final value
+                                      in LocalInjectDecoder.formats)
+                                    DropdownMenuItem(
+                                      value: value,
+                                      child: Text(
+                                        value == 'auto' ? '自动识别' : value,
+                                      ),
+                                    ),
+                                ],
+                                onChanged: (value) => format = value ?? 'auto',
+                              ),
+                              const SizedBox(height: 8),
+                              TextField(
+                                onChanged: (value) => source = value.trim(),
+                                decoration: const InputDecoration(
+                                  labelText: '机构 / 适配器（可选）',
+                                  isDense: true,
+                                ),
+                              ),
+                              const SizedBox(height: 12),
                               const Text(
-                                '粘贴 Wolfx / FAN / P2P 的 js/json 报文：',
+                                '原始报文',
                                 style: TextStyle(
                                   color: Colors.white70,
                                   fontSize: 12,
@@ -473,7 +515,11 @@ class _TopStatusBarState extends State<TopStatusBar> {
                           ElevatedButton(
                             onPressed: () {
                               if (payload.trim().isNotEmpty) {
-                                _submitMockPayload(payload);
+                                _submitMockPayload(
+                                  payload,
+                                  format: format,
+                                  source: source.isEmpty ? null : source,
+                                );
                               }
                             },
                             child: const Text('注入报文'),
@@ -563,14 +609,22 @@ class _TopStatusBarState extends State<TopStatusBar> {
   ///
   /// 将用户输入的模拟数据注入到预警系统
   /// [raw] 原始报文数据
-  void _submitMockPayload(String raw) {
+  void _submitMockPayload(
+    String raw, {
+    String format = 'auto',
+    String? source,
+  }) {
     try {
       final mockService = SourceManager().getSource<MockInputService>();
       if (mockService == null) {
         _toast('模拟注入源未初始化');
         return;
       }
-      final count = mockService.injectFromJs(raw);
+      final count = mockService.injectFromJs(
+        raw,
+        format: format,
+        source: source,
+      );
       _toast('模拟注入成功：$count 条');
     } catch (e) {
       _toast('模拟注入失败：$e');

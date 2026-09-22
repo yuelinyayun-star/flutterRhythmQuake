@@ -1,14 +1,14 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:euc/euc.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:http/http.dart' as http;
 
 /// F-net CMT（震源机制解）サービス
 ///
 /// 数据来源：防災科学技術研究所 F-net 地震のメカニズム情報
 ///
-/// F-net 站点要求先访问 joho.php 初始化 session cookie，随后才能正常请求
-/// sret.php 与 tdmt.php。本服务使用 [HttpClient] 在两次请求之间复用 cookie。
+/// 先访问 joho.php，再请求 sret.php 与 tdmt.php。
 ///
 /// 两步获取：
 /// 1. 列表页 sret.php (LANG=en)：获取事件列表、基本参数、status_color
@@ -21,7 +21,21 @@ import 'package:euc/euc.dart';
 class FnetCmtService {
   static final FnetCmtService _instance = FnetCmtService._internal();
   factory FnetCmtService() => _instance;
-  FnetCmtService._internal();
+  FnetCmtService._internal()
+    : _clientFactory = http.Client.new,
+      _retryDelay = const Duration(seconds: 3);
+
+  @visibleForTesting
+  FnetCmtService.forTest({
+    required http.Client Function() clientFactory,
+    Duration retryDelay = Duration.zero,
+  }) : _clientFactory = clientFactory,
+       _retryDelay = retryDelay;
+
+  final http.Client Function() _clientFactory;
+  final Duration _retryDelay;
+  static const _requestTimeout = Duration(seconds: 15);
+  int _generation = 0;
 
   static const String _baseUrl = 'https://www.fnet.bosai.go.jp';
   static const String _initUrl = '$_baseUrl/fnet/event/joho.php';
@@ -47,6 +61,7 @@ class FnetCmtService {
   }
 
   void stop() {
+    _generation++;
     _timer?.cancel();
     _timer = null;
   }
@@ -56,7 +71,8 @@ class FnetCmtService {
   Future<void> fetch() async {
     if (_fetching) return;
     _fetching = true;
-    final client = HttpClient();
+    final generation = _generation;
+    final client = _clientFactory();
     try {
       // 1. 初始化 session：F-net 要求先访问 joho.php 才能请求 sret.php
       await _initSession(client);
@@ -64,6 +80,7 @@ class FnetCmtService {
       // 2. 请求列表页
       final list = await _fetchList(client);
       if (list.isEmpty) return;
+      if (generation != _generation) return;
 
       // 3. 对新事件或 reviewType 变化的事件获取详细数据
       final currentIds = <String>{};
@@ -79,12 +96,29 @@ class FnetCmtService {
           continue;
         }
 
-        final detail = await _fetchDetail(client, eventId);
+        var detail = await _fetchDetail(client, eventId);
+        // Only the latest bulletin drives the active card. Bound its retries;
+        // historical details must not generate a burst of retry requests.
+        for (
+          var retry = 0;
+          identical(item, list.first) &&
+              !_hasCompleteDetail(detail) &&
+              retry < 2;
+          retry++
+        ) {
+          if (generation != _generation) return;
+          await Future<void>.delayed(_retryDelay);
+          if (generation != _generation) return;
+          detail = await _fetchDetail(client, eventId);
+        }
+        if (generation != _generation) return;
         if (detail != null) {
           item.addAll(detail);
+        }
+        if (_hasCompleteDetail(detail)) {
           _detailCache[eventId] = (
             reviewType: reviewType,
-            fields: Map<String, dynamic>.from(detail),
+            fields: Map<String, dynamic>.from(detail!),
           );
         }
       }
@@ -103,26 +137,19 @@ class FnetCmtService {
     }
   }
 
-  /// 访问 joho.php 初始化 session cookie
-  Future<void> _initSession(HttpClient client) async {
-    final req = await client.getUrl(Uri.parse('$_initUrl?LANG=en'));
-    _setHeaders(req);
-    final resp = await req.close();
-    await resp.drain();
+  /// 访问 joho.php 初始化查询流程。
+  Future<void> _initSession(http.Client client) async {
+    final resp = await client
+        .get(Uri.parse('$_initUrl?LANG=en'), headers: _headers())
+        .timeout(_requestTimeout);
     if (resp.statusCode != 200) {
       throw Exception('F-net CMT init session HTTP ${resp.statusCode}');
     }
   }
 
   /// 请求列表页 sret.php
-  Future<List<Map<String, dynamic>>> _fetchList(HttpClient client) async {
+  Future<List<Map<String, dynamic>>> _fetchList(http.Client client) async {
     final now = DateTime.now().toUtc();
-    final req = await client.postUrl(Uri.parse('$_listUrl?LANG=en'));
-    _setHeaders(
-      req,
-      referer: '$_initUrl?LANG=en',
-      contentType: 'application/x-www-form-urlencoded; charset=UTF-8',
-    );
 
     final postData = [
       'init=1',
@@ -150,36 +177,42 @@ class FnetCmtService {
       'status[]=1',
       'status[]=2',
     ].join('&');
-    req.write(postData);
-
-    final resp = await req.close();
-    final bodyBytes = await resp.fold<List<int>>([], (a, b) => a..addAll(b));
+    final resp = await client
+        .post(
+          Uri.parse('$_listUrl?LANG=en'),
+          headers: _headers(
+            referer: '$_initUrl?LANG=en',
+            contentType: 'application/x-www-form-urlencoded; charset=UTF-8',
+          ),
+          body: postData,
+        )
+        .timeout(_requestTimeout);
     if (resp.statusCode != 200) {
       print('F-net CMT list HTTP ${resp.statusCode}');
       return [];
     }
-    final body = EucJP().decode(bodyBytes);
+    final body = EucJP().decode(resp.bodyBytes);
     return _parseList(body);
   }
 
   /// 获取详细页面数据（断层面参数 + 日文区域名）
   Future<Map<String, dynamic>?> _fetchDetail(
-    HttpClient client,
+    http.Client client,
     String rawId,
   ) async {
     try {
       // rawId 格式为 "fnet_cmt_20260803143900"，提取数字部分
       final id = rawId.replaceAll(RegExp(r'^fnet_cmt_'), '');
-      final req = await client.getUrl(
-        Uri.parse('$_detailUrl?_id=$id&_upd=&LANG=ja'),
-      );
-      _setHeaders(req, referer: '$_initUrl?LANG=ja');
-      final resp = await req.close();
-      final bodyBytes = await resp.fold<List<int>>([], (a, b) => a..addAll(b));
+      final resp = await client
+          .get(
+            Uri.parse('$_detailUrl?_id=$id&_upd=&LANG=ja'),
+            headers: _headers(referer: '$_initUrl?LANG=ja'),
+          )
+          .timeout(_requestTimeout);
       if (resp.statusCode != 200) return null;
 
       // 用 EucJP 解码日文页面
-      final body = EucJP().decode(bodyBytes);
+      final body = EucJP().decode(resp.bodyBytes);
 
       // 解析断层面参数（<td class="deci">）
       final deciRegex = RegExp(r'<td class="deci">([^<]*)</td>');
@@ -234,23 +267,37 @@ class FnetCmtService {
     }
   }
 
-  void _setHeaders(
-    HttpClientRequest req, {
-    String? referer,
-    String? contentType,
-  }) {
-    req.headers.set(
-      'User-Agent',
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    );
-    if (referer != null) {
-      req.headers.set('Referer', referer);
+  static bool _hasCompleteDetail(Map<String, dynamic>? detail) {
+    if (detail == null || '${detail['location'] ?? ''}'.trim().isEmpty) {
+      return false;
     }
-    req.headers.set('X-Requested-With', 'XMLHttpRequest');
-    if (contentType != null) {
-      req.headers.set('Content-Type', contentType);
+    for (final key in ['nodalPlane1', 'nodalPlane2']) {
+      final parts = '${detail[key] ?? ''}'.split('/');
+      if (parts.length != 3) continue;
+      final values = parts.map(double.tryParse).toList();
+      if (values.any((v) => v == null || !v.isFinite)) continue;
+      final strike = values[0]!;
+      final dip = values[1]!;
+      final rake = values[2]!;
+      if (strike >= 0 &&
+          strike <= 360 &&
+          dip >= 0 &&
+          dip <= 90 &&
+          rake >= -180 &&
+          rake <= 180) {
+        return true;
+      }
     }
+    return false;
   }
+
+  Map<String, String> _headers({String? referer, String? contentType}) => {
+    'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'X-Requested-With': 'XMLHttpRequest',
+    'Referer': ?referer,
+    'Content-Type': ?contentType,
+  };
 
   /// 将 "147 ; 40", "29 ; 81", "19 ; 118" 解析为两个 nodalPlane
   ///

@@ -12,6 +12,7 @@ class WeatherAlarm {
   final double? longitude;
   final String type;
   final WeatherAlarmSource source;
+  final String apiTypeLabel;
   final DateTime receivedAtUtc;
 
   WeatherAlarm({
@@ -24,6 +25,7 @@ class WeatherAlarm {
     this.longitude,
     required this.type,
     this.source = WeatherAlarmSource.fan,
+    this.apiTypeLabel = '',
     DateTime? receivedAtUtc,
   }) : receivedAtUtc = (receivedAtUtc ?? DateTime.now()).toUtc();
 
@@ -37,6 +39,7 @@ class WeatherAlarm {
     'longitude': longitude,
     'type': type,
     'source': source.name,
+    'apiTypeLabel': apiTypeLabel,
     'receivedAtUtc': receivedAtUtc.toIso8601String(),
   };
 
@@ -56,6 +59,7 @@ class WeatherAlarm {
       longitude: _parseNumber(map['longitude']),
       type: map['type']?.toString() ?? '',
       source: source,
+      apiTypeLabel: map['apiTypeLabel']?.toString() ?? '',
       receivedAtUtc: DateTime.tryParse(map['receivedAtUtc']?.toString() ?? ''),
     );
   }
@@ -63,8 +67,10 @@ class WeatherAlarm {
   factory WeatherAlarm.fromFanJson(
     Map<String, dynamic> json, {
     WeatherAlarmSource source = WeatherAlarmSource.fan,
+    String apiTypeLabel = '',
   }) {
     return WeatherAlarm(
+      apiTypeLabel: apiTypeLabel,
       id: json['id']?.toString() ?? '',
       headline: json['headline']?.toString() ?? json['title']?.toString() ?? '',
       effective: json['effective']?.toString() ?? '',

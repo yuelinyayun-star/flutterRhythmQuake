@@ -21,6 +21,7 @@ import '../../services/sources/whews_service.dart';
 import '../../services/sources/jian_service.dart';
 import 'jian_auth_settings.dart';
 import 'settings_controls.dart';
+import 'wauth_token_field.dart';
 import '../../services/sources/nowquake_cenc_intensity_service.dart';
 import '../../services/sources/fdsn_motion_service.dart';
 import '../../core/fdsn_intensity.dart';
@@ -72,13 +73,13 @@ class _SettingsPageState extends State<SettingsPage>
   bool _whewsSnetEnabled = false;
   bool _whewsKmaEnabled = false;
   final WAuthService _wauthService = WAuthService();
-  String? _wauthAccessToken;
+  String _wauthApiToken = '';
+  final _wauthTokenController = TextEditingController();
   Map<String, dynamic>? _wauthUserInfo;
   bool _wauthBusy = false;
   bool _wauthBrowserOpened = false;
-  bool _wauthVerifying = false;
-  bool _wauthRestoredFromStorage = false;
-  bool _whewsApiAuthorized = false;
+  bool _wauthSaving = false;
+  bool _hasWAuthApiToken = false;
   String? _wauthError;
   bool _nowQuakeCencIrEnabled = true;
   bool _cencCmtEnabled = true;
@@ -103,6 +104,8 @@ class _SettingsPageState extends State<SettingsPage>
   bool _overlayRadarChina = false;
   bool _overlayPrecipitationChina = false;
   bool _overlayJmaRadar = false;
+  bool _overlayJmaSatelliteCloud = false;
+  bool _overlayNsmcSatelliteCloud = false;
   bool _overlaySatelliteCloud = false;
   bool _overlayCnContour = false;
   bool _overlayCnFault = false;
@@ -167,6 +170,8 @@ class _SettingsPageState extends State<SettingsPage>
   static const String _overlayRadarChinaKey = 'map_overlay_radarChinaLayer';
   static const String _overlayPrecipitationChinaKey = 'map_overlay_precipitationChinaLayer';
   static const String _overlayJmaRadarKey = 'map_overlay_jmaRadarLayer';
+  static const String _overlayJmaSatelliteCloudKey = 'map_overlay_jmaSatelliteCloudLayer';
+  static const String _overlayNsmcSatelliteCloudKey = 'map_overlay_nsmcSatelliteCloudLayer';
   static const String _overlaySatelliteCloudKey =
       'map_overlay_satelliteCloudLayer';
   static const String _overlayCnContourKey = 'map_overlay_cnContour';
@@ -451,9 +456,6 @@ class _SettingsPageState extends State<SettingsPage>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _refreshNotificationPermission();
-      if (_wauthAccessToken != null && !_wauthBusy && !_wauthVerifying) {
-        _confirmSavedWAuthLogin();
-      }
     }
   }
 
@@ -470,9 +472,8 @@ class _SettingsPageState extends State<SettingsPage>
     } catch (_) {
       credentials = const WAuthCredentials();
     }
-    final savedWAuthAccessToken = credentials.accessToken.trim();
     Map<String, dynamic>? cachedWAuthUserInfo;
-    if (savedWAuthAccessToken.isNotEmpty) {
+    if (credentials.hasApiToken) {
       cachedWAuthUserInfo = _readCachedWAuthUserInfo(prefs);
     }
     if (!mounted) return;
@@ -500,14 +501,10 @@ class _SettingsPageState extends State<SettingsPage>
       _fdsnSeedLinkEnabled = prefs.getBool(_fdsnSeedLinkEnabledKey) ?? false;
       _fanApiKeyController.text =
           prefs.getString(FanService.apiKeyPreferenceKey) ?? '';
-      _wauthAccessToken = savedWAuthAccessToken.isNotEmpty
-          ? savedWAuthAccessToken
-          : null;
+      _wauthApiToken = credentials.apiToken;
+      _wauthTokenController.text = credentials.apiToken;
       _wauthUserInfo = cachedWAuthUserInfo;
-      _wauthVerifying = false;
-      _wauthRestoredFromStorage = savedWAuthAccessToken.isNotEmpty;
-      _whewsApiAuthorized =
-          prefs.getBool(WhewsService.apiAuthorizedPreferenceKey) ?? false;
+      _hasWAuthApiToken = credentials.hasApiToken;
       _tileKey = MapConfig.normalizeBaseTileKey(
         prefs.getString(_tileKeyKey) ?? 'petalLight',
       );
@@ -517,6 +514,8 @@ class _SettingsPageState extends State<SettingsPage>
       _overlayRadarChina = prefs.getBool(_overlayRadarChinaKey) ?? false;
       _overlayPrecipitationChina = prefs.getBool(_overlayPrecipitationChinaKey) ?? false;
       _overlayJmaRadar = prefs.getBool(_overlayJmaRadarKey) ?? false;
+      _overlayJmaSatelliteCloud = prefs.getBool(_overlayJmaSatelliteCloudKey) ?? false;
+      _overlayNsmcSatelliteCloud = prefs.getBool(_overlayNsmcSatelliteCloudKey) ?? false;
       _overlaySatelliteCloud =
           prefs.getBool(_overlaySatelliteCloudKey) ?? false;
       _overlayCnContour = prefs.getBool(_overlayCnContourKey) ?? false;
@@ -614,12 +613,18 @@ class _SettingsPageState extends State<SettingsPage>
     QuakeMapView.snetEnabledNotifier.value = _snetEnabled;
     QuakeMapView.fdsnSeedLinkEnabledNotifier.value = _fdsnSeedLinkEnabled;
     QuakeMapView.whewsApiTokenNotifier.value = credentials.apiToken;
-    QuakeMapView.whewsNiedEnabledNotifier.value = false;
-    QuakeMapView.whewsSnetEnabledNotifier.value = false;
-    QuakeMapView.whewsKmaEnabledNotifier.value = false;
+    QuakeMapView.whewsNiedEnabledNotifier.value =
+        credentials.hasApiToken && _whewsNiedEnabled;
+    QuakeMapView.whewsSnetEnabledNotifier.value =
+        credentials.hasApiToken && _whewsSnetEnabled;
+    QuakeMapView.whewsKmaEnabledNotifier.value =
+        credentials.hasApiToken && _whewsKmaEnabled;
     QuakeMapView.fdsnStationLimitNotifier.value = _fdsnStationLimit;
     SourceManager().setSourceEnabled('FAN', _fanEnabled);
-    SourceManager().setSourceEnabled('WHEWS', false);
+    SourceManager().getSource<WhewsService>()?.setApiToken(credentials.apiToken);
+    SourceManager().setSourceEnabled(
+      'WHEWS', credentials.hasApiToken && _whewsEnabled,
+    );
     SourceManager().setSourceEnabled('NowQuake', _nowQuakeCencIrEnabled);
     SourceManager().setSourceEnabled(JianService.sourceName, _jianEnabled);
     if (!_cencCmtEnabled) EqlistManager().cencCmt.stop();
@@ -642,6 +647,8 @@ class _SettingsPageState extends State<SettingsPage>
     mapState.setOverlayEnabled('radarChinaLayer', _overlayRadarChina);
     mapState.setOverlayEnabled('precipitationChinaLayer', _overlayPrecipitationChina);
     mapState.setOverlayEnabled('jmaRadarLayer', _overlayJmaRadar);
+    mapState.setOverlayEnabled('jmaSatelliteCloudLayer', _overlayJmaSatelliteCloud);
+    mapState.setOverlayEnabled('nsmcSatelliteCloudLayer', _overlayNsmcSatelliteCloud);
     mapState.setOverlayEnabled('satelliteCloudLayer', _overlaySatelliteCloud);
     mapState.setOverlayEnabled('cnContour', _overlayCnContour);
     mapState.setOverlayEnabled('cnFault', _overlayCnFault);
@@ -662,13 +669,6 @@ class _SettingsPageState extends State<SettingsPage>
       _weatherLocalLevel,
       persist: false,
     );
-    if (_wauthAccessToken != null) {
-      await _confirmSavedWAuthLogin();
-    } else {
-      await prefs.remove(WAuthService.userInfoPreferenceKey);
-      _wauthRestoredFromStorage = false;
-      await _disableWhewsSources();
-    }
   }
 
   @override
@@ -677,6 +677,7 @@ class _SettingsPageState extends State<SettingsPage>
     _niedReplayStartController.dispose();
     _settingsSearchController.dispose();
     _fanApiKeyController.dispose();
+    _wauthTokenController.dispose();
     _gptSovitsUrlController.dispose();
     _gptSovitsRefAudioController.dispose();
     _gptSovitsPromptTextController.dispose();
@@ -854,109 +855,40 @@ class _SettingsPageState extends State<SettingsPage>
     await prefs.remove(WAuthService.userInfoPreferenceKey);
   }
 
-  Future<void> _confirmSavedWAuthLogin() async {
-    if (_wauthVerifying) return;
-    final prefs = await SharedPreferences.getInstance();
-    final cachedUserInfo = _wauthUserInfo ?? _readCachedWAuthUserInfo(prefs);
-    final previousApiAuthorized =
-        _whewsApiAuthorized ||
-        (prefs.getBool(WhewsService.apiAuthorizedPreferenceKey) ?? false);
-    if (mounted) {
-      setState(() {
-        _wauthVerifying = true;
-        if (cachedUserInfo != null) {
-          _wauthUserInfo = cachedUserInfo;
-        }
-        if (_wauthAccessToken != null) {
-          _wauthRestoredFromStorage = true;
-        }
-      });
-    }
-
-    WAuthStoredAuthorization status;
-    try {
-      status = await _wauthService.inspectStoredAuthorization(
-        preferences: prefs,
-      );
-    } catch (_) {
-      if (mounted) {
-        setState(() {
-          _wauthVerifying = false;
-          if (_wauthAccessToken != null) {
-            _wauthRestoredFromStorage = true;
-          }
-          _wauthError = 'WAuth 校验暂不可用，已保留本地登录状态。';
-        });
-      }
-      await _restoreCachedWhewsSources(
-        preferences: prefs,
-        keepEnabled: previousApiAuthorized,
-      );
+  Future<void> _saveWAuthApiToken() async {
+    if (_wauthBusy || _wauthSaving) return;
+    final token = _wauthTokenController.text.trim();
+    if (token.isEmpty) {
+      await _clearWAuthAuthorization();
       return;
     }
-
-    if (!status.hasCredentials) {
-      if (mounted) setState(() => _wauthVerifying = false);
-      return;
-    }
-
+    setState(() => _wauthSaving = true);
     try {
-      if (status.shouldForgetLogin) {
-        await _removeSavedWAuthLogin();
-        await _disableWhewsSources();
-        if (!mounted) return;
-        setState(() {
-          _wauthAccessToken = null;
-          _wauthUserInfo = null;
-          _wauthRestoredFromStorage = false;
-          _whewsApiAuthorized = false;
-          _wauthError = 'WAuth 登录已失效，请重新登录。';
-        });
-        return;
+      final prefs = await SharedPreferences.getInstance();
+      final changed = token != _wauthApiToken;
+      await _wauthService.credentialStore.writeApiToken(
+        apiToken: token,
+        preferences: prefs,
+      );
+      if (changed) {
+        await prefs.remove(WAuthService.userInfoPreferenceKey);
+        await prefs.remove(WAuthService.legacySessionTokenPreferenceKey);
       }
-
-      final userInfo = status.userInfo ?? cachedUserInfo;
-      if (status.accessAuthorized && status.userInfo != null) {
-        await prefs.setString(
-          WAuthService.userInfoPreferenceKey,
-          jsonEncode(status.userInfo),
-        );
-      }
-
-      if (status.apiAuthorized) {
-        await prefs.setBool(WhewsService.apiAuthorizedPreferenceKey, true);
-        await _enableWhewsSources(
-          apiToken: status.credentials.apiToken,
-          preferences: prefs,
-        );
-      } else if (status.hasTransientVerificationFailure) {
-        await _restoreCachedWhewsSources(
-          preferences: prefs,
-          keepEnabled: previousApiAuthorized,
-        );
-      } else {
-        await prefs.setBool(WhewsService.apiAuthorizedPreferenceKey, false);
-        await _disableWhewsSources();
-      }
-
+      await _enableWhewsSources(apiToken: token, preferences: prefs);
       if (!mounted) return;
       setState(() {
-        _wauthAccessToken = status.credentials.accessToken;
-        _wauthUserInfo = userInfo;
-        _wauthRestoredFromStorage = true;
-        _whewsApiAuthorized = status.apiAuthorized
-            ? true
-            : (status.hasTransientVerificationFailure
-                  ? previousApiAuthorized
-                  : false);
-        _wauthError = status.apiAuthorized
-            ? null
-            : (status.hasTransientVerificationFailure
-                  ? 'WAuth API 暂不可用，已保留本地登录状态。'
-                  : '无法确认 WAuth API 授权状态。');
+        _wauthApiToken = token;
+        _wauthTokenController.text = token;
+        _hasWAuthApiToken = true;
+        if (changed) _wauthUserInfo = null;
+        _wauthError = null;
       });
+      _showWAuthMessage('WAuth API Token 已保存。');
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _wauthError = '无法保存 WAuth API Token，请重试。');
     } finally {
-      if (mounted) setState(() => _wauthVerifying = false);
+      if (mounted) setState(() => _wauthSaving = false);
     }
   }
 
@@ -970,34 +902,14 @@ class _SettingsPageState extends State<SettingsPage>
       'WHEWS',
       preferences.getBool(_whewsEnabledKey) ?? _whewsEnabled,
     );
-    _requestForegroundConnectionReload();
+    // Secure-storage changes are not part of the preference diff.
+    _requestForegroundConnectionReload(force: true);
     QuakeMapView.whewsNiedEnabledNotifier.value =
         preferences.getBool(_whewsNiedEnabledKey) ?? _whewsNiedEnabled;
     QuakeMapView.whewsSnetEnabledNotifier.value =
         preferences.getBool(_whewsSnetEnabledKey) ?? _whewsSnetEnabled;
     QuakeMapView.whewsKmaEnabledNotifier.value =
         preferences.getBool(_whewsKmaEnabledKey) ?? _whewsKmaEnabled;
-    await BackgroundService().stopForegroundService();
-  }
-
-  Future<void> _restoreCachedWhewsSources({
-    required SharedPreferences preferences,
-    required bool keepEnabled,
-  }) async {
-    if (!keepEnabled) return;
-    WAuthCredentials credentials;
-    try {
-      credentials = await _wauthService.credentialStore.readAndMigrate(
-        preferences: preferences,
-      );
-    } catch (_) {
-      return;
-    }
-    if (!credentials.isComplete) return;
-    await _enableWhewsSources(
-      apiToken: credentials.apiToken,
-      preferences: preferences,
-    );
   }
 
   Future<void> _disableWhewsSources() async {
@@ -1015,7 +927,6 @@ class _SettingsPageState extends State<SettingsPage>
     await prefs.setBool(_whewsKmaEnabledKey, false);
     SourceManager().setSourceEnabled('WHEWS', false);
     _requestForegroundConnectionReload();
-    await BackgroundService().stopForegroundService();
     if (fallbackNied) QuakeMapView.niedSourceNotifier.value = 'lmoni';
     if (fallbackSnet) QuakeMapView.snetSourceNotifier.value = 'msil';
     if (fallbackKma) QuakeMapView.kmaSourceNotifier.value = 'pews';
@@ -1035,8 +946,8 @@ class _SettingsPageState extends State<SettingsPage>
   }
 
   bool _canEnableWhews() {
-    if (_whewsApiAuthorized) return true;
-    _showWAuthMessage('WHEWS API 需要先完成 WAuth API 授权。');
+    if (_hasWAuthApiToken) return true;
+    _showWAuthMessage('WHEWS API 需要先登录获取或填写 API Token。');
     return false;
   }
 
@@ -1062,7 +973,7 @@ class _SettingsPageState extends State<SettingsPage>
   }
 
   Future<void> _startWAuthAuthorization() async {
-    if (_wauthBusy) return;
+    if (_wauthBusy || _wauthSaving) return;
     setState(() {
       _wauthBusy = true;
       _wauthBrowserOpened = false;
@@ -1103,16 +1014,15 @@ class _SettingsPageState extends State<SettingsPage>
         WAuthService.userInfoPreferenceKey,
         jsonEncode(result.userInfo),
       );
+      await _enableWhewsSources(apiToken: apiToken, preferences: prefs);
       if (!mounted) return;
-      QuakeMapView.whewsApiTokenNotifier.value = apiToken;
-      SourceManager().getSource<WhewsService>()?.setApiToken(apiToken);
-      _requestForegroundConnectionReload(force: true);
       setState(() {
-        _wauthAccessToken = result.token.accessToken;
+        _wauthApiToken = apiToken;
+        _wauthTokenController.text = apiToken;
+        _hasWAuthApiToken = true;
         _wauthUserInfo = result.userInfo;
         _wauthError = null;
       });
-      await _confirmSavedWAuthLogin();
       _showWAuthMessage('WAuth 授权成功。');
     } catch (error) {
       if (!mounted) return;
@@ -1130,19 +1040,28 @@ class _SettingsPageState extends State<SettingsPage>
   }
 
   Future<void> _clearWAuthAuthorization() async {
-    await _removeSavedWAuthLogin();
-    QuakeMapView.whewsApiTokenNotifier.value = '';
-    SourceManager().getSource<WhewsService>()?.setApiToken('');
-    _requestForegroundConnectionReload();
-    await _disableWhewsSources();
-    if (!mounted) return;
-    setState(() {
-      _wauthAccessToken = null;
-      _wauthUserInfo = null;
-      _wauthRestoredFromStorage = false;
-      _whewsApiAuthorized = false;
-      _wauthError = null;
-    });
+    if (_wauthBusy || _wauthSaving) return;
+    setState(() => _wauthSaving = true);
+    try {
+      await _removeSavedWAuthLogin();
+      QuakeMapView.whewsApiTokenNotifier.value = '';
+      SourceManager().getSource<WhewsService>()?.setApiToken('');
+      await _disableWhewsSources();
+      if (!mounted) return;
+      setState(() {
+        _wauthApiToken = '';
+        _wauthTokenController.clear();
+        _wauthUserInfo = null;
+        _hasWAuthApiToken = false;
+        _wauthError = null;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() => _wauthError = '无法清除 WAuth API Token，请重试。');
+      }
+    } finally {
+      if (mounted) setState(() => _wauthSaving = false);
+    }
   }
 
   Future<void> _saveTileKey(String key) async {
@@ -1462,6 +1381,8 @@ class _SettingsPageState extends State<SettingsPage>
     _overlayRadarChina = map.isOverlayEnabled('radarChinaLayer');
     _overlayPrecipitationChina = map.isOverlayEnabled('precipitationChinaLayer');
     _overlayJmaRadar = map.isOverlayEnabled('jmaRadarLayer');
+    _overlayJmaSatelliteCloud = map.isOverlayEnabled('jmaSatelliteCloudLayer');
+    _overlayNsmcSatelliteCloud = map.isOverlayEnabled('nsmcSatelliteCloudLayer');
     _overlaySatelliteCloud = map.isOverlayEnabled('satelliteCloudLayer');
     _overlayTyphoon = map.isOverlayEnabled('typhoonLayer');
     _overlayWeatherStation = map.isOverlayEnabled('weatherStationLayer');
@@ -1505,6 +1426,8 @@ class _SettingsPageState extends State<SettingsPage>
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   children: [
                     _buildMapOverlaySelector(weatherOnly: true),
+                    const _SettingsDivider(),
+                    _buildJmaVolcanoPushSwitch(),
                     const _SettingsDivider(),
                     _buildWeatherAlarmScopeSelector(),
                     if (_weatherLocalOnly)
@@ -2198,6 +2121,8 @@ class _SettingsPageState extends State<SettingsPage>
             icon: Icons.warning_amber_outlined,
             title: '气象预警与实况',
             children: [
+              _buildJmaVolcanoPushSwitch(),
+              const _SettingsDivider(),
               _buildWeatherAlarmScopeSelector(),
               if (_weatherLocalOnly) ...[
                 const _SettingsDivider(),
@@ -2671,67 +2596,77 @@ class _SettingsPageState extends State<SettingsPage>
     if (_wauthBusy) {
       return _wauthBrowserOpened ? '等待在浏览器中完成 WAuth 登录' : '正在连接 WAuth 登录服务';
     }
-    final hasSavedLogin =
-        _wauthAccessToken != null || _wauthRestoredFromStorage;
+    final hasSavedLogin = _hasWAuthApiToken;
     if (hasSavedLogin) {
       final userInfo = _wauthUserInfo;
       final loginLabel = userInfo != null
           ? '已登录：${_wauthUserLabel(userInfo)}'
-          : '已登录';
+          : 'API Token 已保存';
       if (_wauthError != null && _wauthError!.isNotEmpty) {
         return '$loginLabel。$_wauthError';
       }
       return loginLabel;
     }
-    return _wauthError ?? '未登录时 WAuth 业务 API 不可开启';
+    return _wauthError ?? '未设置 API Token';
   }
 
   Widget _buildWAuthSetting() {
-    final hasSavedLogin =
-        _wauthAccessToken != null || _wauthRestoredFromStorage;
-    final status = _wauthSettingSubtitle();
+    final hasSavedLogin = _hasWAuthApiToken;
     return _buildSettingRow(
       title: 'WAuth 账号授权',
-      subtitle: status,
+      subtitle: _wauthSettingSubtitle(),
       leading: _wauthBusy
           ? Icons.hourglass_top_outlined
           : hasSavedLogin
-          ? Icons.verified_user_outlined
+          ? Icons.key_outlined
           : Icons.account_circle_outlined,
-      control: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        alignment: WrapAlignment.end,
+      control: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (_wauthAccessToken != null)
-            IconButton(
-              tooltip: '退出 WAuth 登录',
-              onPressed: _wauthBusy || _wauthVerifying
-                  ? null
-                  : _clearWAuthAuthorization,
-              icon: const Icon(Icons.logout_outlined),
-              color: Colors.white70,
-            ),
-          SizedBox(
-            width: 160,
-            height: 40,
-            child: _buildGlassActionButton(
-              label: _wauthBusy
-                  ? _wauthBrowserOpened
-                        ? '等待登录'
-                        : '正在打开'
-                  : hasSavedLogin
-                  ? '重新登录'
-                  : '登录',
-              icon: _wauthBusy
-                  ? null
-                  : (hasSavedLogin
-                        ? Icons.refresh_outlined
-                        : Icons.login_outlined),
-              busy: _wauthBusy,
-              emphasized: true,
-              onPressed: _wauthBusy ? null : _startWAuthAuthorization,
-            ),
+          WAuthTokenField(
+            controller: _wauthTokenController,
+            busy: _wauthBusy || _wauthSaving,
+            onSave: _saveWAuthApiToken,
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            alignment: WrapAlignment.end,
+            children: [
+              if (hasSavedLogin)
+                IconButton(
+                  tooltip: '清除 WAuth Token 并退出',
+                  onPressed: _wauthBusy || _wauthSaving
+                      ? null
+                      : _clearWAuthAuthorization,
+                  icon: const Icon(Icons.logout_outlined),
+                  color: Colors.white70,
+                ),
+              SizedBox(
+                width: 160,
+                height: 40,
+                child: _buildGlassActionButton(
+                  label: _wauthBusy
+                      ? _wauthBrowserOpened
+                            ? '等待登录'
+                            : '正在打开'
+                      : hasSavedLogin
+                      ? '重新登录'
+                      : '登录',
+                  icon: _wauthBusy
+                      ? null
+                      : (hasSavedLogin
+                            ? Icons.refresh_outlined
+                            : Icons.login_outlined),
+                  busy: _wauthBusy,
+                  emphasized: true,
+                  onPressed: _wauthBusy || _wauthSaving
+                      ? null
+                      : _startWAuthAuthorization,
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -2759,6 +2694,32 @@ class _SettingsPageState extends State<SettingsPage>
       ),
     );
   }
+
+  Widget _buildJmaVolcanoPushSwitch() => Selector<QuakeProvider, bool>(
+    selector: (_, provider) => provider.jmaVolcanoPushEnabled,
+    builder: (context, enabled, _) => _buildSettingRow(
+      title: 'JMA 火山信息推送',
+      leading: Icons.local_fire_department_outlined,
+      control: Align(
+        alignment: Alignment.centerRight,
+        child: Switch(
+          value: enabled,
+          key: const ValueKey('jma-volcano-push-enabled'),
+          activeThumbColor: _accentColor,
+          activeTrackColor: _accentColor.withValues(alpha: 0.38),
+          inactiveThumbColor: Colors.white70,
+          inactiveTrackColor: Colors.white24,
+          onChanged: (value) async {
+            try {
+              await context.read<QuakeProvider>().setJmaVolcanoPushEnabled(value);
+            } catch (_) {
+              if (mounted) _showToast('火山推送设置保存失败，请重试');
+            }
+          },
+        ),
+      ),
+    ),
+  );
 
   Widget _buildMapOverlaySelector({bool weatherOnly = false}) {
     final rows = [
@@ -2814,6 +2775,36 @@ class _SettingsPageState extends State<SettingsPage>
           _saveOverlayState(_overlayJmaRadarKey, val);
           context.read<MapStateProvider>().setOverlayEnabled(
             'jmaRadarLayer',
+            val,
+          );
+        },
+      ),
+      _buildInfoLayerSwitch(
+        title: 'JMA 葵花卫星云图',
+        toggleKey: const ValueKey('jma-satellite-cloud-enabled'),
+        value: _overlayJmaSatelliteCloud,
+        leading: Icons.satellite_alt_outlined,
+        onChanged: (val) async {
+          final mapState = context.read<MapStateProvider>();
+          setState(() => _overlayJmaSatelliteCloud = val);
+          await _saveOverlayState(_overlayJmaSatelliteCloudKey, val);
+          mapState.setOverlayEnabled(
+            'jmaSatelliteCloudLayer',
+            val,
+          );
+        },
+      ),
+      _buildInfoLayerSwitch(
+        title: 'NSMC 全球红外云图',
+        toggleKey: const ValueKey('nsmc-satellite-cloud-enabled'),
+        value: _overlayNsmcSatelliteCloud,
+        leading: Icons.satellite_alt_outlined,
+        onChanged: (val) async {
+          final mapState = context.read<MapStateProvider>();
+          setState(() => _overlayNsmcSatelliteCloud = val);
+          await _saveOverlayState(_overlayNsmcSatelliteCloudKey, val);
+          mapState.setOverlayEnabled(
+            'nsmcSatelliteCloudLayer',
             val,
           );
         },
@@ -2914,6 +2905,7 @@ class _SettingsPageState extends State<SettingsPage>
 
   Widget _buildInfoLayerSwitch({
     required String title,
+    Key? toggleKey,
     String? subtitle,
     required bool value,
     required IconData leading,
@@ -2926,6 +2918,7 @@ class _SettingsPageState extends State<SettingsPage>
       control: Align(
         alignment: Alignment.centerRight,
         child: Switch(
+          key: toggleKey,
           value: value,
           activeThumbColor: _accentColor,
           activeTrackColor: _accentColor.withValues(alpha: 0.38),
@@ -3639,7 +3632,7 @@ class _SettingsPageState extends State<SettingsPage>
       ('lmoni', 'Lmoni'),
       ('kmoni', 'KMONI'),
       ('yahoo', 'Yahoo'),
-      if (_whewsApiAuthorized && _whewsNiedEnabled) ('whews', 'WHEWS'),
+      if (_hasWAuthApiToken && _whewsNiedEnabled) ('whews', 'WHEWS'),
     ];
     return _buildSettingRow(
       title: 'NIED 強震モニタ 数据源',
@@ -3660,7 +3653,7 @@ class _SettingsPageState extends State<SettingsPage>
     final options = [
       ('pews', 'KMA-PEWS'),
       ('fan', 'FAN'),
-      if (_whewsApiAuthorized && _whewsKmaEnabled) ('whews', 'WHEWS'),
+      if (_hasWAuthApiToken && _whewsKmaEnabled) ('whews', 'WHEWS'),
     ];
     return _buildSettingRow(
       title: 'KMA 实时测站数据源',
@@ -3680,7 +3673,7 @@ class _SettingsPageState extends State<SettingsPage>
   Widget _buildSnetDataSourceSelector() {
     final options = [
       ('msil', 'MSIL'),
-      if (_whewsApiAuthorized && _whewsSnetEnabled) ('whews', 'WHEWS'),
+      if (_hasWAuthApiToken && _whewsSnetEnabled) ('whews', 'WHEWS'),
     ];
     return _buildSettingRow(
       title: 'S-Net 实时测站数据源',

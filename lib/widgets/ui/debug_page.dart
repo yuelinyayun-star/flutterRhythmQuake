@@ -20,7 +20,8 @@ import '../../services/sources/nied_monitor.dart';
 import '../../services/sources/lpgm_monitor_service.dart';
 import '../../services/sources/snet_service.dart';
 import '../../services/sources/global_quake_service.dart';
-import '../../services/debug/local_inject_server.dart';
+import 'local_inject_settings.dart';
+import 'history_replay_controls.dart';
 import '../../core/nied_replay_logger.dart';
 import '../map/map_config.dart';
 import '../map/quake_map_view.dart';
@@ -95,8 +96,6 @@ class _DebugPageState extends State<DebugPage> {
       TextEditingController();
   bool _globalQuakeEnabled = false;
   bool _globalQuakeLoaded = false;
-  bool _localInjectEnabled = false;
-  bool _localInjectLoaded = false;
 
   @override
   void initState() {
@@ -106,7 +105,6 @@ class _DebugPageState extends State<DebugPage> {
     NiedReplayLogger.instance.revision.addListener(_onReplayLoggerChanged);
     _initNiedDebugState();
     _initGlobalQuakeDebugState();
-    _initLocalInjectDebugState();
     _loadMapboxDebugState();
     _loadNiedLegendAssets();
     _loadLegendGeometry();
@@ -782,23 +780,6 @@ class _DebugPageState extends State<DebugPage> {
     } else {
       _globalQuakeService.disconnect();
     }
-  }
-
-  Future<void> _initLocalInjectDebugState() async {
-    final prefs = await SharedPreferences.getInstance();
-    if (!mounted) return;
-    setState(() {
-      _localInjectEnabled =
-          LocalInjectServer.isForcedByBuild ||
-          LocalInjectServer.isUserEnabled(prefs);
-      _localInjectLoaded = true;
-    });
-  }
-
-  Future<void> _setLocalInjectEnabled(bool enabled) async {
-    setState(() => _localInjectEnabled = enabled);
-    await LocalInjectServer.setEnabled(enabled);
-    if (mounted) setState(() {});
   }
 
   Future<void> _saveGlobalQuakeSettings() async {
@@ -2802,76 +2783,14 @@ class _DebugPageState extends State<DebugPage> {
     );
   }
 
-  Widget _buildLocalInjectToggle() {
-    const accent = Color(0xFF7FD4FF);
-    final supported = LocalInjectServer.isSupportedPlatform;
-    final forced = LocalInjectServer.isForcedByBuild;
-    final running = LocalInjectServer.isRunning;
-    final port = LocalInjectServer.boundPort ?? LocalInjectServer.defaultPort;
-    final subtitle = forced
-        ? 'Build flag LOCAL_INJECT=true — always on at http://127.0.0.1:$port'
-        : !supported
-        ? 'Desktop debug builds only (127.0.0.1 loopback).'
-        : running
-        ? 'Listening on http://127.0.0.1:$port (EEW / NIED GIF / K-NET / replay)'
-        : 'Off — enable to accept tools/local_inject.ps1 and inject scripts.';
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-      decoration: _glassSectionDecoration(borderColor: running ? accent : null)
-          .copyWith(
-            color: running
-                ? const Color(0xFF1A3340).withValues(alpha: 0.42)
-                : Colors.white.withValues(alpha: 0.06),
-          ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Text(
-                      'Local Inject API',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 14,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      running ? 'running' : 'stopped',
-                      style: TextStyle(
-                        color: running ? accent : Colors.white54,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  subtitle,
-                  style: const TextStyle(color: Colors.white70, fontSize: 11),
-                ),
-              ],
-            ),
-          ),
-          Switch(
-            value: _localInjectEnabled,
-            activeThumbColor: accent,
-            activeTrackColor: accent.withValues(alpha: 0.35),
-            onChanged: forced
-                ? null
-                : (_localInjectLoaded && supported
-                      ? _setLocalInjectEnabled
-                      : null),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget _buildLocalInjectToggle() => Column(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      const LocalInjectSettings(),
+      const Divider(height: 24),
+      HistoryReplayControls(controller: context.read<QuakeProvider>().historyReplay),
+    ],
+  );
 
   Widget _buildGlobalQuakeToggle() {
     final status = _globalQuakeService.status;

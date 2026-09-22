@@ -8,10 +8,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutterrhythmquake/models/eew_event_group.dart';
 import 'package:flutterrhythmquake/models/unified_quake_data.dart';
 import 'package:flutterrhythmquake/providers/quake_provider.dart';
+import 'package:flutterrhythmquake/services/debug/history_replay.dart';
 import 'package:flutterrhythmquake/widgets/ui/history_panel.dart';
 import 'package:provider/provider.dart';
 
 class HistoryProvider extends ChangeNotifier implements QuakeProvider {
+  @override
+  final historyReplay = HistoryReplayController(
+    onReport: (_) {},
+    onClear: (_) {},
+  );
   @override
   final historyListenable = ValueNotifier<int>(0);
   @override
@@ -21,6 +27,7 @@ class HistoryProvider extends ChangeNotifier implements QuakeProvider {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
   @override
   void dispose() {
+    historyReplay.dispose();
     historyListenable.dispose();
     super.dispose();
   }

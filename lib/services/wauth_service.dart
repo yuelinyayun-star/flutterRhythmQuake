@@ -139,8 +139,8 @@ class WAuthService {
   }
 
   /// Waits for the one-time result produced by the server callback.
-  /// Access tokens are intentionally not returned to, or persisted by, the
-  /// Flutter client.
+  /// The gateway exchanges the authorization code; the client securely stores
+  /// the returned credentials and uses api_token for business connections.
   Future<WAuthGatewayResult> waitForGatewayResult({
     required String state,
     Duration timeout = const Duration(minutes: 10),
@@ -228,7 +228,7 @@ class WAuthService {
     final credentials = await credentialStore.readAndMigrate(
       preferences: prefs,
     );
-    if (!credentials.isComplete) {
+    if (!credentials.hasApiToken) {
       return const WAuthStoredAuthorization(
         credentials: WAuthCredentials(),
         accessAuthorized: false,
@@ -579,12 +579,11 @@ class WAuthStoredAuthorization {
     this.userInfo,
   });
 
-  bool get hasCredentials => credentials.isComplete;
+  bool get hasCredentials => credentials.hasApiToken;
 
-  /// Forget saved login only when the business API credential is rejected, or
-  /// both the account session and API credential are rejected.
+  /// An expired OAuth session does not invalidate the business API token.
   bool get shouldForgetLogin =>
-      hasCredentials && (apiRejected || (accessRejected && !apiAuthorized));
+      hasCredentials && apiRejected;
 
   /// Network/timeouts and other non-auth failures should keep cached login UI.
   bool get hasTransientVerificationFailure =>

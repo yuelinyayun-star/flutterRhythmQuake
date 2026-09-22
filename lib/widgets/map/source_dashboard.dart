@@ -18,15 +18,26 @@ import '../../services/sources/palert_service.dart';
 import '../../services/sources/seisjs_service.dart';
 import '../../services/sources/source_manager.dart';
 import 'quake_map_view.dart';
+import '../../services/debug/local_inject_server.dart';
+import '../../services/debug/local_inject_decoder.dart';
 import '../ui/ui_scale.dart';
 
-String jianAuthenticationLabel(String? status) => switch (status) {
+String jianAuthenticationLabel(String? status, {String? errorCode}) => switch (status) {
   'anonymous' => 'Jian（未认证）',
   'unconfigured' => 'Jian（未配置凭证）',
   'authenticating' => 'Jian（认证中）',
   'authenticated' => 'Jian（已认证）',
-  'invalid' => 'Jian（凭证失效）',
-  'unavailable' => 'Jian（认证不可用）',
+  'invalid' => errorCode == 'storage' ? 'Jian（凭证读取失败）' : 'Jian（凭证失效）',
+  'unavailable' => switch (errorCode) {
+    'network' => 'Jian（鉴权连接失败）',
+    'server' => 'Jian（鉴权服务异常）',
+    'connection' => 'Jian（连接失败）',
+    'conn_limit' => 'Jian（并发已满）',
+    'cooldown' => 'Jian（请求限流）',
+    'expired_access_token' => 'Jian（令牌待刷新）',
+    'invalid_api_key' => 'Jian（访问令牌被拒）',
+    _ => 'Jian（连接暂不可用）',
+  },
   _ => 'Jian（待确认）',
 };
 
@@ -93,6 +104,7 @@ class _SourceDashboardState extends State<SourceDashboard> {
   @override
   void initState() {
     super.initState();
+    LocalInjectServer.revision.addListener(_onLocalInjectChanged);
     BackgroundService().requestJianStatus();
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       _clockTick.value++;
@@ -101,9 +113,14 @@ class _SourceDashboardState extends State<SourceDashboard> {
 
   @override
   void dispose() {
+    LocalInjectServer.revision.removeListener(_onLocalInjectChanged);
     _clockTimer?.cancel();
     _clockTick.dispose();
     super.dispose();
+  }
+
+  void _onLocalInjectChanged() {
+    if (mounted) setState(() {});
   }
 
   double _scale(BuildContext c) => widget.mobile ? 1 : UiScale.compact(c);
@@ -227,10 +244,11 @@ class _SourceDashboardState extends State<SourceDashboard> {
         (_fanLabel(fanAuthStatus, fanConnectionStatus), 'FAN'),
       if (SourceManager().isSourceEnabled('WHEWS')) ('WHEWS', 'WHEWS'),
       if (jianEnabled && !separateJian)
-        (jianAuthenticationLabel(jianAuth), 'Jian Project'),
+        (jianAuthenticationLabel(jianAuth, errorCode: jianCredential?.errorCode), 'Jian Project'),
       if (SourceManager().isSourceEnabled('NowQuake')) ('NowQuake', 'NowQuake'),
       if (SourceManager().isSourceEnabled('P2P')) ('P2PQ', 'P2P'),
       if (GlobalQuakeService().isEnabled) ('GQ', 'GlobalQuake'),
+      if (LocalInjectServer.isRunning) (localInjectApiName, localInjectApiName),
     ];
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -282,7 +300,7 @@ class _SourceDashboardState extends State<SourceDashboard> {
       children: [
         _buildStatusName(
           context,
-          auth == 'anonymous' ? 'Jian（未连接）' : jianAuthenticationLabel(auth),
+          auth == 'anonymous' ? 'Jian（未连接）' : jianAuthenticationLabel(auth, errorCode: info?.errorCode),
           status,
         ),
         Tooltip(

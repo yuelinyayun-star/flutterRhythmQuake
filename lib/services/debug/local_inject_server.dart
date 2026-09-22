@@ -8,7 +8,7 @@ import 'package:flutter/foundation.dart'
         debugPrint,
         defaultTargetPlatform,
         kIsWeb,
-        kReleaseMode,
+        ValueNotifier,
         visibleForTesting;
 
 import 'package:shared_preferences/shared_preferences.dart';
@@ -16,6 +16,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/nied_replay_logger.dart';
 import '../../core/utils/quake_time.dart';
 import '../../models/quake_message.dart';
+import 'local_inject_decoder.dart';
 import '../../widgets/map/quake_map_view.dart';
 import '../sources/mock_input_service.dart';
 import '../sources/nied_monitor.dart';
@@ -24,7 +25,8 @@ import '../sources/source_manager.dart';
 
 /// Loopback HTTP façade over [MockInputService] for camera / EEW testing.
 ///
-/// Bind: `127.0.0.1` only. Off by default; enable from Debug → 调试工具, or
+/// Bind: `127.0.0.1` only, including desktop release builds. Off by default;
+/// enable from the simulation panel or Debug tools. Build-time defaults:
 /// `--dart-define=LOCAL_INJECT=true`. Optional port:
 /// `--dart-define=LOCAL_INJECT_PORT=8765`.
 ///
@@ -36,6 +38,10 @@ class LocalInjectServer {
   static Completer<void>? _niedGifBusy;
 
   static const String enabledPreferenceKey = 'debug_local_inject_enabled';
+  static const String portPreferenceKey = 'debug_local_inject_port';
+  static final revision = ValueNotifier<int>(0);
+  static String? lastError;
+  static Future<void> _operation = Future<void>.value();
 
   static const bool _forceEnable = bool.fromEnvironment(
     'LOCAL_INJECT',
@@ -51,76 +57,124 @@ class LocalInjectServer {
   static int get defaultPort => _port;
   static bool get isForcedByBuild => _forceEnable;
 
-  static bool get isSupportedPlatform {
-    if (kIsWeb || kReleaseMode) return false;
-    return defaultTargetPlatform == TargetPlatform.windows ||
-        defaultTargetPlatform == TargetPlatform.macOS ||
-        defaultTargetPlatform == TargetPlatform.linux;
-  }
+  static bool get isSupportedPlatform =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.windows ||
+          defaultTargetPlatform == TargetPlatform.macOS ||
+          defaultTargetPlatform == TargetPlatform.linux);
 
-  static bool isUserEnabled(SharedPreferences prefs) {
-    return prefs.getBool(enabledPreferenceKey) ?? false;
-  }
+  static int configuredPort(SharedPreferences prefs) =>
+      prefs.getInt(portPreferenceKey) ?? _port;
 
-  static bool shouldStart(SharedPreferences prefs) {
-    return _forceEnable || (isSupportedPlatform && isUserEnabled(prefs));
-  }
+  static bool isUserEnabled(SharedPreferences prefs) =>
+      prefs.getBool(enabledPreferenceKey) ?? _forceEnable;
 
-  /// Start when Debug toggle (or [LOCAL_INJECT] build flag) is on.
+  static bool shouldStart(SharedPreferences prefs) =>
+      isSupportedPlatform && isUserEnabled(prefs);
+
   static Future<void> startIfEnabled({SharedPreferences? prefs}) async {
-    if (!isSupportedPlatform && !_forceEnable) return;
-    final enabled = prefs == null ? _forceEnable : shouldStart(prefs);
-    if (!enabled) return;
-    await start(port: _port);
+    final store = prefs ?? await SharedPreferences.getInstance();
+    if (!shouldStart(store)) return;
+    try {
+      await start(port: configuredPort(store));
+    } catch (error) {
+      debugPrint('[LocalInject] startup failed: $error');
+    }
+  }
+
+  static Future<void> _serialized(Future<void> Function() action) {
+    final next = _operation.then((_) => action());
+    _operation = next.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    return next;
   }
 
   static Future<void> setEnabled(
     bool enabled, {
     SharedPreferences? prefs,
-  }) async {
+    int? port,
+  }) => _serialized(() async {
     final store = prefs ?? await SharedPreferences.getInstance();
+    final nextPort = port ?? configuredPort(store);
+    _validatePort(nextPort);
+    if (enabled) {
+      if (!isSupportedPlatform) throw UnsupportedError('本地注入服务仅支持桌面端');
+      await _bind(nextPort);
+    } else {
+      await _close();
+    }
+    await store.setInt(portPreferenceKey, nextPort);
     await store.setBool(enabledPreferenceKey, enabled);
-    if (_forceEnable) {
-      if (!isRunning) await start(port: _port);
+    revision.value++;
+  });
+
+  static Future<void> setPort(int port, {SharedPreferences? prefs}) =>
+      _serialized(() async {
+        _validatePort(port);
+        final store = prefs ?? await SharedPreferences.getInstance();
+        if (isRunning) await _bind(port);
+        await store.setInt(portPreferenceKey, port);
+        lastError = null;
+        revision.value++;
+      });
+
+  static void _validatePort(int port) {
+    if (port < 1 || port > 65535) {
+      throw const FormatException('端口必须是 1 到 65535 的整数');
+    }
+  }
+
+  static Future<void> start({int port = _port}) =>
+      _serialized(() => _bind(port));
+
+  static Future<void> _bind(int port) async {
+    _validatePort(port);
+    if (_server?.port == port) {
+      lastError = null;
+      revision.value++;
       return;
     }
-    if (enabled) {
-      if (isSupportedPlatform) {
-        await start(port: _port);
-      }
-    } else {
-      await stop();
-    }
-  }
-
-  static Future<void> start({int port = 8765}) async {
-    if (_server != null) return;
     try {
-      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
-      _server = server;
-      debugPrint(
-        '[LocalInject] listening on http://127.0.0.1:${server.port} '
-        '(EEW / NIED GIF / K-NET / NIED replay)',
-      );
-      server.listen(
-        _handleRequest,
-        onError: (Object e, StackTrace st) {
-          debugPrint('[LocalInject] listen error: $e\n$st');
-        },
-      );
-    } catch (e, st) {
-      debugPrint('[LocalInject] failed to bind :$port — $e\n$st');
+      // Bind first so a failed port change leaves the existing listener alive.
+      final next = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
+      final previous = _server;
+      _server = next;
+      lastError = null;
+      next.listen(_handleRequest);
+      SourceManager().getSource<MockInputService>()?.connect();
+      revision.value++;
+      await previous?.close(force: true);
+    } catch (error) {
+      lastError = '无法监听 127.0.0.1:$port：$error';
+      revision.value++;
+      rethrow;
     }
   }
 
-  static Future<void> stop() async {
+  static Future<void> stop() => _serialized(_close);
+
+  static Future<void> _close() async {
     final server = _server;
     _server = null;
+    lastError = null;
     await server?.close(force: true);
+    SourceManager().getSource<MockInputService>()?.disconnect();
+    revision.value++;
   }
 
   static Future<void> _handleRequest(HttpRequest request) async {
-    _allowCors(request.response);
+    // An arbitrary website must not be able to send alerts to localhost.
+    if (request.headers.value('Origin') != null ||
+        !const {
+          '127.0.0.1',
+          'localhost',
+          '::1',
+        }.contains(request.requestedUri.host)) {
+      await _writeJson(request.response, HttpStatus.forbidden, {
+        'ok': false,
+        'error': '本地接口不接受浏览器跨站请求',
+      });
+      return;
+    }
     if (request.method == 'OPTIONS') {
       request.response.statusCode = HttpStatus.noContent;
       await request.response.close();
@@ -137,6 +191,8 @@ class LocalInjectServer {
         final mock = SourceManager().getSource<MockInputService>();
         await _writeJson(request.response, HttpStatus.ok, {
           'ok': true,
+          'service': 'RhythmQuake.LocalInject',
+          'apiName': localInjectApiName,
           'mockRegistered': mock != null,
           'port': _server?.port,
           'niedGifBusy': _niedGifBusy != null && !(_niedGifBusy!.isCompleted),
@@ -144,8 +200,22 @@ class LocalInjectServer {
         return;
       }
 
+      if (request.method == 'POST' && path == '/inject') {
+        final body = await _readBody(request);
+        final count = _requireMock().injectJson(
+          body,
+          format: request.uri.queryParameters['format'] ?? 'auto',
+          source: request.uri.queryParameters['source'],
+        );
+        await _writeJson(request.response, HttpStatus.ok, {
+          'ok': true,
+          'injected': count,
+          'apiName': localInjectApiName,
+        });
+        return;
+      }
       if (request.method == 'POST' && path == '/inject/eew') {
-        final body = await utf8.decoder.bind(request).join();
+        final body = await _readBody(request);
         final freshQs = request.uri.queryParameters['fresh'];
         final freshOrigin =
             freshQs == '1' ||
@@ -268,10 +338,15 @@ class LocalInjectServer {
 
   static Map<String, dynamic> _helpPayload() {
     return {
-      'service': 'LocalInjectServer',
+      'service': 'RhythmQuake.LocalInject',
       'bind': '127.0.0.1',
+      'apiName': localInjectApiName,
+      'formats': LocalInjectDecoder.formats,
+      'adapterSources': LocalInjectDecoder.adapterSources.toList(),
       'routes': {
-        'GET /health': 'server + MockInputService status',
+        'POST /inject':
+            '原始 JSON；可选 ?format=fan&source=cenc 或 {format,source,payload}；不改写时间',
+        'GET /health': '本地注入服务标识、监听端口和回放状态',
         'POST /inject/eew':
             'raw Wolfx/FAN/P2P JSON → MockInputService; fresh=1 按机构墙钟时区改写 (JMA/KMA UTC+9, 其他 UTC+8)',
         'POST /inject/nied-gif':
@@ -283,7 +358,8 @@ class LocalInjectServer {
         'POST /inject/scenario':
             '{"eew":{...},"niedGifPath":"...","delayMs":800,"freshOriginSeconds":15}',
       },
-      'ssh': 'ssh -L 8765:127.0.0.1:8765 user@host',
+      'ssh':
+          'ssh -L ${boundPort ?? _port}:127.0.0.1:${boundPort ?? _port} user@host',
     };
   }
 
@@ -377,7 +453,7 @@ class LocalInjectServer {
       final raw = eew is String ? eew : jsonEncode(eew);
       final result = _injectEew(
         raw,
-        freshOrigin: freshOrigin || eew is! String,
+        freshOrigin: freshOrigin,
         freshOriginSeconds: freshOriginSeconds,
       );
       eewCount = result.injected;
@@ -594,17 +670,23 @@ class LocalInjectServer {
   static Future<Map<String, dynamic>> _readJsonObject(
     HttpRequest request,
   ) async {
-    final raw = await utf8.decoder.bind(request).join();
+    final raw = await _readBody(request);
     if (raw.trim().isEmpty) return <String, dynamic>{};
     final decoded = jsonDecode(raw);
     if (decoded is Map<String, dynamic>) return decoded;
     throw FormatException('期望 JSON object');
   }
 
-  static void _allowCors(HttpResponse response) {
-    response.headers.set('Access-Control-Allow-Origin', '*');
-    response.headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    response.headers.set('Access-Control-Allow-Headers', 'Content-Type');
+  static Future<String> _readBody(HttpRequest request) async {
+    const limit = 8 * 1024 * 1024;
+    final bytes = <int>[];
+    await for (final chunk in request.timeout(const Duration(seconds: 10))) {
+      if (bytes.length + chunk.length > limit) {
+        throw const FormatException('报文超过 8 MiB');
+      }
+      bytes.addAll(chunk);
+    }
+    return utf8.decode(bytes);
   }
 
   static Future<void> _writeJson(

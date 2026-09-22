@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/quake_message.dart';
@@ -30,7 +30,7 @@ import 'sources/usgs_eqlist_service.dart';
 import 'sources/wolfx_service.dart';
 import 'sources/whews_service.dart';
 import 'sources/jian_service.dart';
-import 'wauth_service.dart';
+import 'wauth_credential_store.dart';
 import 'foreground_station_payload.dart';
 import 'sources/cwa_station_service.dart';
 import 'sources/kma_monitor.dart';
@@ -54,6 +54,8 @@ import 'sources/fdsn_motion_service.dart';
 import 'sources/fan_radar_service.dart';
 import 'sources/fan_satellite_cloud_service.dart';
 import 'sources/jma_radar_service.dart';
+import 'sources/jma_satellite_cloud_service.dart';
+import 'sources/nsmc_satellite_cloud_service.dart';
 import 'sources/jma_volcano_map_service.dart';
 import 'sources/typhoon_service.dart';
 import 'sources/cma_local_weather_service.dart';
@@ -66,6 +68,13 @@ import '../core/local_weather_region.dart';
 final List<StreamSubscription> _backgroundSubscriptions = [];
 final List<Timer> _backgroundTimers = [];
 SourceManager? _backgroundManager;
+BackgroundEventProcessor? _backgroundEventProcessor;
+
+void setBackgroundJmaVolcanoPushEnabled(bool enabled) {
+  _backgroundEventProcessor?.jmaVolcanoPushEnabled = enabled;
+  _backgroundSettings?[BackgroundEventProcessor.jmaVolcanoPushEnabledPreferenceKey] =
+      enabled;
+}
 
 void reloadBackgroundJianCredentials() {
   _backgroundManager?.getSource<JianService>()?.reloadCredentials();
@@ -112,6 +121,8 @@ FanRadarService? _backgroundFanRadar;
 FanRadarService? _backgroundCmaPrecipitation;
 FanSatelliteCloudService? _backgroundFanSatellite;
 JmaRadarService? _backgroundJmaRadar;
+JmaSatelliteCloudService? _backgroundJmaSatelliteCloud;
+NsmcSatelliteCloudService? _backgroundNsmcSatelliteCloud;
 JmaVolcanoMapService? _backgroundVolcanoMap;
 TyphoonService? _backgroundTyphoon;
 ChinaWeatherAlertService? _backgroundChinaWeather;
@@ -220,6 +231,45 @@ Iterable<Map<String, dynamic>> backgroundLocalWeatherSnapshots() sync* {
   }
 }
 
+Future<void> syncBackgroundSatelliteCloudLayers() async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.reload();
+  final jma = prefs.getBool('map_overlay_jmaSatelliteCloudLayer') ?? false;
+  final nsmc = prefs.getBool('map_overlay_nsmcSatelliteCloudLayer') ?? false;
+  if (jma) {
+    _backgroundJmaSatelliteCloud?.start();
+  } else {
+    _backgroundJmaSatelliteCloud?.stop(clear: true);
+  }
+  if (nsmc) {
+    _backgroundNsmcSatelliteCloud?.start();
+  } else {
+    _backgroundNsmcSatelliteCloud?.stop(clear: true);
+  }
+  for (final key in const [
+    'map_overlay_jmaSatelliteCloudLayer',
+    'map_overlay_nsmcSatelliteCloudLayer',
+  ]) {
+    final value = prefs.getBool(key);
+    if (value == null) {
+      _backgroundSettings?.remove(key);
+    } else {
+      _backgroundSettings?[key] = value;
+    }
+  }
+}
+
+Iterable<Map<String, dynamic>> backgroundSatelliteCloudSnapshots() sync* {
+  final jma = _backgroundJmaSatelliteCloud;
+  final nsmc = _backgroundNsmcSatelliteCloud;
+  if (jma?.isRunning == true && jma!.latestFrame != null) {
+    yield ForegroundStationPayload.jmaSatelliteCloud(jma.latestFrame!);
+  }
+  if (nsmc?.isRunning == true && nsmc!.latestFrame != null) {
+    yield ForegroundStationPayload.nsmcSatelliteCloud(nsmc.latestFrame!);
+  }
+}
+
 /// 前台服务 isolate 中运行的 EEW/信息数据源管理
 ///
 /// 与主 isolate 隔离，不共享 SourceManager 单例状态。
@@ -272,6 +322,9 @@ Future<void> startBackgroundSources({
   late final BackgroundEventProcessor processor;
   processor = BackgroundEventProcessor(
     sourceInfoMagFilters: sourceMagFilters,
+    jmaVolcanoPushEnabled: prefs.getBool(
+      BackgroundEventProcessor.jmaVolcanoPushEnabledPreferenceKey,
+    ) ?? true,
     infoActionWhitelist:
         prefs.getString(
           BackgroundEventProcessor.infoActionWhitelistPreferenceKey,
@@ -312,6 +365,8 @@ Future<void> startBackgroundSources({
     },
   );
 
+  _backgroundEventProcessor = processor;
+
   // 创建新的源实例（isolate 内为独立对象，避免与主 isolate 共享状态）
   final wolfx = WolfxService();
   final whews = WhewsService(apiToken: '');
@@ -345,6 +400,8 @@ Future<void> startBackgroundSources({
   final precipitation = FanRadarService.precipitation();
   final fanSatellite = FanSatelliteCloudService();
   final jmaRadar = JmaRadarService();
+  final jmaSatelliteCloud = JmaSatelliteCloudService();
+  final nsmcSatelliteCloud = NsmcSatelliteCloudService();
   final volcanoMap = JmaVolcanoMapService();
   final typhoon = TyphoonService();
   final chinaWeather = ChinaWeatherAlertService();
@@ -356,6 +413,8 @@ Future<void> startBackgroundSources({
   _backgroundCmaPrecipitation = precipitation;
   _backgroundFanSatellite = fanSatellite;
   _backgroundJmaRadar = jmaRadar;
+  _backgroundJmaSatelliteCloud = jmaSatelliteCloud;
+  _backgroundNsmcSatelliteCloud = nsmcSatelliteCloud;
   _backgroundVolcanoMap = volcanoMap;
   _backgroundTyphoon = typhoon;
   _backgroundChinaWeather = chinaWeather;
@@ -463,7 +522,7 @@ Future<void> startBackgroundSources({
     prefs.getBool('api_source_p2pquake_enabled') ?? true,
   );
 
-  await _verifyAndEnableBackgroundWhews(prefs, manager, whews);
+  await _restoreBackgroundWhews(prefs, manager, whews);
 
   void stationStatus(String source, bool connected) {
     onSourceStatus(
@@ -690,6 +749,20 @@ Future<void> startBackgroundSources({
     }),
   );
   _backgroundAuxSubscriptions.add(
+    jmaSatelliteCloud.frameStream.listen((frame) {
+      if (frame != null) {
+        onStationData(ForegroundStationPayload.jmaSatelliteCloud(frame));
+      }
+    }),
+  );
+  _backgroundAuxSubscriptions.add(
+    nsmcSatelliteCloud.frameStream.listen((frame) {
+      if (frame != null) {
+        onStationData(ForegroundStationPayload.nsmcSatelliteCloud(frame));
+      }
+    }),
+  );
+  _backgroundAuxSubscriptions.add(
     precipitation.frameStream.listen((frame) {
       if (frame != null) {
         onStationData(ForegroundStationPayload.cmaPrecipitation(frame));
@@ -755,6 +828,12 @@ Future<void> startBackgroundSources({
   }
   if (prefs.getBool('map_overlay_jmaRadarLayer') ?? false) {
     jmaRadar.start(interval: JmaRadarService.refreshInterval);
+  }
+  if (prefs.getBool('map_overlay_jmaSatelliteCloudLayer') ?? false) {
+    jmaSatelliteCloud.start(interval: JmaSatelliteCloudService.refreshInterval);
+  }
+  if (prefs.getBool('map_overlay_nsmcSatelliteCloudLayer') ?? false) {
+    nsmcSatelliteCloud.start(interval: NsmcSatelliteCloudService.refreshInterval);
   }
   if (prefs.getBool('map_overlay_satelliteCloudLayer') ?? false) {
     fanSatellite.start(interval: const Duration(minutes: 30));
@@ -958,6 +1037,8 @@ Future<void> stopBackgroundSources() async {
   _backgroundCmaPrecipitation?.stop();
   _backgroundFanSatellite?.stop();
   _backgroundJmaRadar?.stop();
+  _backgroundJmaSatelliteCloud?.stop(clear: true);
+  _backgroundNsmcSatelliteCloud?.stop(clear: true);
   _backgroundVolcanoMap?.stop();
   _backgroundTyphoon?.stop();
   _backgroundChinaWeather?.stop();
@@ -989,6 +1070,8 @@ Future<void> stopBackgroundSources() async {
   _backgroundCmaPrecipitation = null;
   _backgroundFanSatellite = null;
   _backgroundJmaRadar = null;
+  _backgroundJmaSatelliteCloud = null;
+  _backgroundNsmcSatelliteCloud = null;
   _backgroundVolcanoMap = null;
   _backgroundTyphoon = null;
   _backgroundChinaWeather = null;
@@ -1017,6 +1100,7 @@ Future<void> stopBackgroundSources() async {
   _backgroundManager?.getSource<JianService>()?.dispose();
   _backgroundManager?.reset();
   _backgroundManager = null;
+  _backgroundEventProcessor = null;
 }
 
 SourceStatus _whewsState(WhewsStationService service) {
@@ -1065,22 +1149,24 @@ Future<void> _startBackgroundWhewsStationsIfAuthorized(
   required WhewsStationService whewsKma,
   Set<String> only = const {'nied', 'snet', 'kma'},
 }) async {
-  if (!(prefs.getBool(WhewsService.apiAuthorizedPreferenceKey) ?? false)) {
+  WAuthCredentials credentials;
+  try {
+    credentials = await WAuthCredentialStore().readAndMigrate(
+      preferences: prefs,
+    );
+  } catch (_) {
+    whewsNied.stop();
+    whewsSnet.stop();
+    whewsKma.stop();
+    debugPrint('WHEWS station credential storage unavailable.');
     return;
   }
-  final authService = WAuthService();
-  final credentials = await authService.credentialStore.readAndMigrate(
-    preferences: prefs,
-  );
   final token = credentials.apiToken.trim();
-  if (token.isEmpty) {
-    authService.close();
-    return;
-  }
   final auth = prefs.getBool(WhewsService.enabledPreferenceKey) ?? false;
   whewsNied.setApiToken(token);
   whewsSnet.setApiToken(token);
   whewsKma.setApiToken(token);
+  if (token.isEmpty) return;
   if (only.contains('nied') &&
       auth &&
       (prefs.getBool('api_source_nied_monitor_enabled') ?? true) &&
@@ -1102,63 +1188,30 @@ Future<void> _startBackgroundWhewsStationsIfAuthorized(
       (prefs.getBool('api_source_whews_kma_station_enabled') ?? false)) {
     whewsKma.start();
   }
-  authService.close();
 }
 
-Future<void> _verifyAndEnableBackgroundWhews(
+Future<void> _restoreBackgroundWhews(
   SharedPreferences prefs,
   SourceManager manager,
   WhewsService whews,
 ) async {
-  if (!(prefs.getBool(WhewsService.enabledPreferenceKey) ?? false)) return;
-
-  final auth = WAuthService();
-  final previousApiAuthorized =
-      prefs.getBool(WhewsService.apiAuthorizedPreferenceKey) ?? false;
-  var savedApiToken = '';
-
-  void preservePreviousAuthorization() {
-    if (!previousApiAuthorized || savedApiToken.isEmpty) return;
-    whews.setApiToken(savedApiToken);
-    manager.setSourceEnabled('WHEWS', true);
-  }
-
+  WAuthCredentials credentials;
   try {
-    final credentials = await auth.credentialStore.readAndMigrate(
+    credentials = await WAuthCredentialStore().readAndMigrate(
       preferences: prefs,
     );
-    savedApiToken = credentials.apiToken.trim();
-    if (!credentials.isComplete) {
-      await prefs.setBool(WhewsService.apiAuthorizedPreferenceKey, false);
-      return;
-    }
-    await auth.requireAuthorizedApiToken(credentials.apiToken);
-
-    await prefs.reload();
-    final current = await auth.credentialStore.readAndMigrate(
-      preferences: prefs,
-    );
-    if (current.accessToken != credentials.accessToken ||
-        current.apiToken != credentials.apiToken ||
-        !(prefs.getBool(WhewsService.enabledPreferenceKey) ?? false)) {
-      return;
-    }
-    await prefs.setBool(WhewsService.apiAuthorizedPreferenceKey, true);
-    whews.setApiToken(credentials.apiToken);
-    manager.setSourceEnabled('WHEWS', true);
-  } on WAuthApiException catch (error) {
-    if (error.statusCode == 401 || error.statusCode == 403) {
-      await prefs.setBool(WhewsService.apiAuthorizedPreferenceKey, false);
-      whews.setApiToken('');
-      manager.setSourceEnabled('WHEWS', false);
-    } else {
-      preservePreviousAuthorization();
-    }
   } catch (_) {
-    preservePreviousAuthorization();
-  } finally {
-    auth.close();
+    whews.setApiToken('');
+    manager.setSourceEnabled('WHEWS', false);
+    debugPrint('WHEWS credential storage unavailable.');
+    return;
   }
+  whews.setApiToken(credentials.apiToken);
+  manager.setSourceEnabled(
+    'WHEWS',
+    credentials.hasApiToken &&
+        (prefs.getBool(WhewsService.enabledPreferenceKey) ?? false),
+  );
 }
 
 bool _isInfoSourceEnabled(SharedPreferences prefs, QuakeSourceType source) {

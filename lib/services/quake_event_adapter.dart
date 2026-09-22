@@ -2703,6 +2703,23 @@ class QuakeEventAdapter {
     return null;
   }
 
+  /// Read only publication fields actually used by the supported feed schemas.
+  /// Older history snapshots may predate publication-time normalization.
+  static DateTime? savedReportTime(Map<String, dynamic> payload, int timeZone) {
+    var body = payload;
+    if (body['Data'] is Map) {
+      body = Map<String, dynamic>.from(body['Data'] as Map);
+    } else if (body['data'] is Map) {
+      body = Map<String, dynamic>.from(body['data'] as Map);
+    }
+    final issue = body['issue'];
+    return _parseTime(
+      body['ReportTime'] ?? body['reportTime'] ?? body['createTime'] ??
+          body['updateTime'] ?? (issue is Map ? issue['time'] : null),
+      timeZone,
+    );
+  }
+
   static DateTime? _parseTime(dynamic value, int timeZoneOffset) {
     if (value == null) return null;
     if (value is num) {

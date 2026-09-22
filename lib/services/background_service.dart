@@ -307,7 +307,12 @@ class BackgroundService {
     // Android：后台功能开启时，数据连接由独立前台服务 isolate 维护。
     // 生命周期变化只负责确保服务继续运行；主 isolate 不再建立第二套连接。
     if (Platform.isAndroid && (_settings?.enabled ?? false)) {
-      unawaited(_startForegroundServiceIfNeededSafely());
+      unawaited(() async {
+        await _startForegroundServiceIfNeededSafely();
+        if (_state == AppLifecycleStateExt.foreground) {
+          syncSatelliteCloudLayers();
+        }
+      }());
     }
 
     for (final listener in _stateListeners.toList()) {
@@ -575,6 +580,14 @@ class BackgroundService {
     }
   }
 
+  /// Updates push filtering without restarting background connections.
+  void updateJmaVolcanoPushEnabled(bool enabled) {
+    if (!isAndroidConnectionHostedByForegroundService) return;
+    FlutterBackgroundService().invoke('jmaVolcanoPushEnabled', {
+      'value': enabled,
+    });
+  }
+
   /// Updates detector parameters without restarting background connections.
   void updatePAlertDetectionSensitivity(int sensitivity) {
     if (!isAndroidConnectionHostedByForegroundService) return;
@@ -590,6 +603,11 @@ class BackgroundService {
     if (await service.isRunning()) {
       service.invoke('reloadSources', {'force': force});
     }
+  }
+
+  void syncSatelliteCloudLayers() {
+    if (!isAndroidConnectionHostedByForegroundService) return;
+    FlutterBackgroundService().invoke('syncSatelliteCloudLayers');
   }
 
   /// 安全地尝试启动前台服务，避免 Android 12+ 限制导致未处理异常。
@@ -774,6 +792,15 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
     if (status != null) unawaited(sendSourceStatus(status));
   });
 
+  service.on('syncSatelliteCloudLayers').listen((_) {
+    unawaited(() async {
+      await syncBackgroundSatelliteCloudLayers();
+      for (final payload in backgroundSatelliteCloudSnapshots()) {
+        await sendStationData(payload);
+      }
+    }());
+  });
+
   service.on('reloadJianCredentials').listen((_) {
     reloadBackgroundJianCredentials();
   });
@@ -782,6 +809,10 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
 
   service.on('reloadSources').listen((event) {
     unawaited(reloadSources(force: event?['force'] == true));
+  });
+  service.on('jmaVolcanoPushEnabled').listen((event) {
+    final value = event?['value'];
+    if (value is bool) setBackgroundJmaVolcanoPushEnabled(value);
   });
   service.on('palertDetectionSensitivity').listen((event) {
     final value = event?['value'];

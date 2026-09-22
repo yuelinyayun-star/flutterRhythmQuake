@@ -16,6 +16,8 @@ import 'sources/fdsn_motion_service.dart';
 import 'sources/fan_radar_service.dart';
 import 'sources/fan_satellite_cloud_service.dart';
 import 'sources/jma_radar_service.dart';
+import 'sources/jma_satellite_cloud_service.dart';
+import 'sources/nsmc_satellite_cloud_service.dart';
 import '../models/jma_volcano_site.dart';
 import '../models/snet_station.dart';
 import 'sources/cma_local_weather_service.dart';
@@ -262,6 +264,31 @@ class ForegroundStationPayload {
     'validtime': frame.validtime,
     'time': frame.time.toIso8601String(),
   };
+
+  static Map<String, dynamic> jmaSatelliteCloud(JmaSatelliteCloudFrame frame) => {
+    'kind': 'jmaSatelliteCloud',
+    'basetime': frame.basetime,
+    'validtime': frame.validtime,
+    'time': frame.time.toIso8601String(),
+  };
+
+  static Map<String, dynamic> nsmcSatelliteCloud(NsmcSatelliteCloudFrame frame) => {
+    'kind': 'nsmcSatelliteCloud',
+    'time': frame.time.toIso8601String(),
+    'imageBytes': frame.imageBytes,
+  };
+
+  static NsmcSatelliteCloudFrame? decodeNsmcSatelliteCloud(Map<String, dynamic> raw) {
+    final time = _date(raw['time']);
+    final bytes = raw['imageBytes'];
+    if (time == null || bytes is! List || bytes.isEmpty ||
+        bytes.any((value) => value is! int || value < 0 || value > 255)) {
+      return null;
+    }
+    return NsmcSatelliteCloudFrame(
+      time: time.toUtc(), imageBytes: Uint8List.fromList(bytes.cast<int>()),
+    );
+  }
 
   static Map<String, dynamic> cmaWeather(CmaLocalWeatherState state) => {
     'kind': 'cmaWeather',
@@ -530,6 +557,10 @@ class ForegroundStationPayload {
       imageBytes: Uint8List.fromList(bytes.cast<int>()),
     );
   }
+
+  static JmaSatelliteCloudFrame? decodeJmaSatelliteCloud(
+    Map<String, dynamic> raw,
+  ) => jmaSatelliteFrameFromTargetTime(raw);
 
   static JmaRadarFrame? decodeJmaRadar(Map<String, dynamic> raw) {
     final basetime = raw['basetime']?.toString() ?? '';

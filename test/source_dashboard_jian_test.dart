@@ -200,7 +200,15 @@ void main() {
         provider.sourceStatusListenable.value++;
         await tester.pump();
         expect(separate, findsOneWidget);
-        expect(find.text('Jian（认证不可用）'), findsOneWidget);
+        expect(find.text('Jian（连接暂不可用）'), findsOneWidget);
+        provider.info = const SourceCredentialInfo(configured: true, errorCode: 'network');
+        provider.sourceStatusListenable.value++;
+        await tester.pump();
+        expect(find.text('Jian（鉴权连接失败）'), findsOneWidget);
+        provider.info = const SourceCredentialInfo(configured: true, errorCode: 'conn_limit');
+        provider.sourceStatusListenable.value++;
+        await tester.pump();
+        expect(find.text('Jian（并发已满）'), findsOneWidget);
         provider.info = const SourceCredentialInfo(
           configured: true,
           errorCode: 'expired_refresh_token',

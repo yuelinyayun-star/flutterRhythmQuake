@@ -8,6 +8,8 @@ import '../../models/eew_event_group.dart';
 import '../../core/utils/quake_time.dart';
 import '../../models/unified_quake_data.dart';
 import 'unified_intensity_format.dart';
+import '../../services/debug/history_replay.dart';
+import 'history_replay_controls.dart';
 
 class HistoryPanel extends StatelessWidget {
   const HistoryPanel({super.key});
@@ -26,15 +28,28 @@ class HistoryPanel extends StatelessWidget {
           );
         }
 
-        return ListView.builder(
-          padding: const EdgeInsets.all(12),
-          itemCount: groups.length,
-          itemBuilder: (context, index) {
-            return _EewEventGroupCard(
-              key: ValueKey(groups[index].eventId),
-              group: groups[index],
-            );
-          },
+        return Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: HistoryReplayControls(
+                controller: provider.historyReplay,
+                allowImport: false,
+              ),
+            ),
+            Expanded(
+              child: ListView.builder(
+                padding: const EdgeInsets.all(12),
+                itemCount: groups.length,
+                itemBuilder: (context, index) {
+                  return _EewEventGroupCard(
+                    key: ValueKey(groups[index].eventId),
+                    group: groups[index],
+                  );
+                },
+              ),
+            ),
+          ],
         );
       },
     );
@@ -53,6 +68,34 @@ class _EewEventGroupCard extends StatefulWidget {
 class _EewEventGroupCardState extends State<_EewEventGroupCard> {
   static const double _badgeSize = 42;
   bool _expanded = false;
+  bool _exporting = false;
+
+  Future<void> _replayAction({required bool export}) async {
+    try {
+      final package = HistoryReplayPackage.fromGroup(widget.group);
+      if (export) {
+        setState(() => _exporting = true);
+        final saved = await exportHistoryReplay(package);
+        if (mounted && saved) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('回放包已导出')));
+        }
+      } else {
+        final controller = context.read<QuakeProvider>().historyReplay;
+        controller.load(package);
+        controller.play();
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${export ? '导出' : '回放'}失败：$error')),
+        );
+      }
+    } finally {
+      if (mounted && _exporting) setState(() => _exporting = false);
+    }
+  }
 
   Color _colorFromClass(String className) {
     switch (className) {
@@ -88,6 +131,7 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
     final color = _colorFromClass(latest.className);
     final reports = widget.group.reports;
     final hasMultiple = reports.length > 1;
+    final savedReports = reports.where(HistoryReplayPackage.hasPayload).length;
 
     return Material(
       color: Colors.grey[900]?.withOpacity(0.8),
@@ -115,33 +159,60 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
             children: [
               _buildMainRow(latest, color),
               SizedBox(
-                height: 12 + MediaQuery.textScalerOf(context).scale(11) * 1.4,
-                child: InkWell(
-                  onTap: hasMultiple
-                      ? () => setState(() => _expanded = !_expanded)
-                      : null,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        '${widget.group.latestReportNumber}报',
-                        style: TextStyle(
-                          color: color.withValues(alpha: 0.8),
-                          fontSize: 11,
-                          height: 1.4,
-                          fontWeight: FontWeight.w500,
+                height: 32 + MediaQuery.textScalerOf(context).scale(11) * 1.4,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: InkWell(
+                        onTap: hasMultiple
+                            ? () => setState(() => _expanded = !_expanded)
+                            : null,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Flexible(
+                              child: Text(
+                                '${widget.group.latestReportNumber}报'
+                                '${savedReports > 0 && savedReports < reports.length ? ' · $savedReports 报有报文' : ''}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: color.withValues(alpha: 0.8),
+                                  fontSize: 11,
+                                  height: 1.4,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                            if (hasMultiple) ...[
+                              const SizedBox(width: 4),
+                              Icon(
+                                _expanded
+                                    ? Icons.expand_less
+                                    : Icons.expand_more,
+                                color: color.withValues(alpha: 0.6),
+                                size: 14,
+                              ),
+                            ],
+                          ],
                         ),
                       ),
-                      if (hasMultiple) ...[
-                        const SizedBox(width: 4),
-                        Icon(
-                          _expanded ? Icons.expand_less : Icons.expand_more,
-                          color: color.withValues(alpha: 0.6),
-                          size: 14,
-                        ),
-                      ],
-                    ],
-                  ),
+                    ),
+                    IconButton(
+                      tooltip: savedReports > 0 ? '回放已保存报文' : '未保存原始报文',
+                      onPressed: savedReports > 0
+                          ? () => _replayAction(export: false)
+                          : null,
+                      icon: const Icon(Icons.play_arrow, size: 20),
+                    ),
+                    IconButton(
+                      tooltip: '导出回放包',
+                      onPressed: savedReports > 0 && !_exporting
+                          ? () => _replayAction(export: true)
+                          : null,
+                      icon: const Icon(Icons.file_download_outlined, size: 20),
+                    ),
+                  ],
                 ),
               ),
               if (hasMultiple && _expanded) _buildReportList(reports, color),

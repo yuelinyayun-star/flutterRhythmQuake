@@ -49,6 +49,8 @@ import 'nmefc_tsunami_layer.dart';
 import 'typhoon_layer.dart';
 import 'fan_radar_layer.dart';
 import 'jma_radar_layer.dart';
+import 'jma_satellite_cloud_layer.dart';
+import 'nsmc_satellite_cloud_layer.dart';
 import 'fan_satellite_cloud_layer.dart';
 import 'weather_station_map_layer.dart';
 import 'weather_alert_map_layer.dart';
@@ -82,6 +84,8 @@ import '../../services/sources/shindo_color_util.dart';
 import '../../services/sources/jma_volcano_map_service.dart';
 import '../../services/sources/fan_radar_service.dart';
 import '../../services/sources/jma_radar_service.dart';
+import '../../services/sources/jma_satellite_cloud_service.dart';
+import '../../services/sources/nsmc_satellite_cloud_service.dart';
 import '../../services/sources/fan_satellite_cloud_service.dart';
 import '../../services/sources/shake_detection_service.dart';
 import '../../services/sources/kma_monitor.dart';
@@ -96,7 +100,6 @@ import '../../services/sources/seisjs_service.dart';
 import '../../services/sources/fdsn_station_service.dart';
 import '../../services/sources/fdsn_motion_service.dart';
 import '../../services/sources/snet_service.dart';
-import '../../services/sources/whews_service.dart';
 import '../../services/sources/whews_socket_client.dart';
 import '../../services/sources/whews_station_service.dart';
 import '../../services/sources/whews_nied_station_metadata.dart';
@@ -530,6 +533,14 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   StreamSubscription<JmaRadarFrame?>? _jmaRadarSubscription;
   JmaRadarFrame? _latestJmaRadarFrame;
   final ValueNotifier<int> _jmaRadarLayerRevision = ValueNotifier<int>(0);
+  final JmaSatelliteCloudService _jmaSatelliteCloudService = JmaSatelliteCloudService();
+  StreamSubscription<JmaSatelliteCloudFrame?>? _jmaSatelliteCloudSubscription;
+  JmaSatelliteCloudFrame? _latestJmaSatelliteCloudFrame;
+  final ValueNotifier<int> _jmaSatelliteCloudLayerRevision = ValueNotifier<int>(0);
+  final NsmcSatelliteCloudService _nsmcSatelliteCloudService = NsmcSatelliteCloudService();
+  StreamSubscription<NsmcSatelliteCloudFrame?>? _nsmcSatelliteCloudSubscription;
+  NsmcSatelliteCloudFrame? _latestNsmcSatelliteCloudFrame;
+  final ValueNotifier<int> _nsmcSatelliteCloudLayerRevision = ValueNotifier<int>(0);
   final FanSatelliteCloudService _fanSatelliteCloudService =
       FanSatelliteCloudService();
   StreamSubscription<FanSatelliteCloudFrame?>? _fanSatelliteCloudSubscription;
@@ -662,6 +673,18 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       if (!mounted) return;
       _latestJmaRadarFrame = frame;
       _notifyLayer(_jmaRadarLayerRevision);
+    });
+    _latestJmaSatelliteCloudFrame = _jmaSatelliteCloudService.latestFrame;
+    _jmaSatelliteCloudSubscription = _jmaSatelliteCloudService.frameStream.listen((frame) {
+      if (!mounted) return;
+      _latestJmaSatelliteCloudFrame = frame;
+      _notifyLayer(_jmaSatelliteCloudLayerRevision);
+    });
+    _latestNsmcSatelliteCloudFrame = _nsmcSatelliteCloudService.latestFrame;
+    _nsmcSatelliteCloudSubscription = _nsmcSatelliteCloudService.frameStream.listen((frame) {
+      if (!mounted) return;
+      _latestNsmcSatelliteCloudFrame = frame;
+      _notifyLayer(_nsmcSatelliteCloudLayerRevision);
     });
     _latestFanSatelliteCloudFrame = _fanSatelliteCloudService.latestFrame;
     _fanSatelliteCloudSubscription = _fanSatelliteCloudService.frameStream
@@ -961,6 +984,20 @@ class _QuakeMapViewState extends State<QuakeMapView> {
           _latestJmaRadarFrame = frame;
           _notifyLayer(_jmaRadarLayerRevision);
         }
+      case 'jmaSatelliteCloud':
+        if (_mapStateProvider?.isOverlayEnabled('jmaSatelliteCloudLayer') != true) return;
+        final frame = ForegroundStationPayload.decodeJmaSatelliteCloud(payload);
+        if (frame != null) {
+          _latestJmaSatelliteCloudFrame = frame;
+          _notifyLayer(_jmaSatelliteCloudLayerRevision);
+        }
+      case 'nsmcSatelliteCloud':
+        if (_mapStateProvider?.isOverlayEnabled('nsmcSatelliteCloudLayer') != true) return;
+        final frame = ForegroundStationPayload.decodeNsmcSatelliteCloud(payload);
+        if (frame != null) {
+          _latestNsmcSatelliteCloudFrame = frame;
+          _notifyLayer(_nsmcSatelliteCloudLayerRevision);
+        }
       case 'cmaPrecipitation':
         if (_mapStateProvider?.isOverlayEnabled('precipitationChinaLayer') != true) return;
         final frame = ForegroundStationPayload.decodeFanRadar(payload);
@@ -1126,9 +1163,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       prefs.getString(FdsnIntensity.preferenceKey),
     );
     final whewsToken = QuakeMapView.whewsApiTokenNotifier.value;
-    final whewsAuthorized =
-        (prefs.getBool(WhewsService.apiAuthorizedPreferenceKey) ?? false) &&
-        whewsToken.trim().isNotEmpty;
+    final whewsAuthorized = whewsToken.trim().isNotEmpty;
     _whewsNiedEnabled =
         whewsAuthorized &&
         (prefs.getBool(QuakeMapView.whewsNiedEnabledPreferenceKey) ?? false);
@@ -1216,6 +1251,8 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _fanRadarService.stop();
     _precipitationService.stop();
     _jmaRadarService.stop();
+    _jmaSatelliteCloudService.stop();
+    _nsmcSatelliteCloudService.stop();
     _fanSatelliteCloudService.stop();
     _whewsNiedService.stop();
     _whewsSnetService.stop();
@@ -1250,6 +1287,8 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       _syncFanRadarServiceWithOverlay();
       _syncPrecipitationServiceWithOverlay();
       _syncJmaRadarServiceWithOverlay();
+      _syncJmaSatelliteCloudServiceWithOverlay();
+      _syncNsmcSatelliteCloudServiceWithOverlay();
       _syncFanSatelliteCloudServiceWithOverlay();
       _syncLiveWeatherTileRefresh();
       _syncFdsnServicesWithOverlay();
@@ -2799,6 +2838,8 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _syncFanRadarServiceWithOverlay();
     _syncPrecipitationServiceWithOverlay();
     _syncJmaRadarServiceWithOverlay();
+    _syncJmaSatelliteCloudServiceWithOverlay();
+    _syncNsmcSatelliteCloudServiceWithOverlay();
     _syncFanSatelliteCloudServiceWithOverlay();
   }
 
@@ -2945,6 +2986,8 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _syncFanRadarServiceWithOverlay();
     _syncPrecipitationServiceWithOverlay();
     _syncJmaRadarServiceWithOverlay();
+    _syncJmaSatelliteCloudServiceWithOverlay();
+    _syncNsmcSatelliteCloudServiceWithOverlay();
     _syncFanSatelliteCloudServiceWithOverlay();
     _syncWaveAutoZoomTimer();
     if (!_showNiedEstimatedEpicenter) {
@@ -3245,6 +3288,58 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       _jmaRadarService.start(interval: JmaRadarService.refreshInterval);
     } else {
       _jmaRadarService.stop(clear: true);
+    }
+  }
+
+  void _syncJmaSatelliteCloudServiceWithOverlay() {
+    final mapState = _mapStateProvider;
+    final shouldRun =
+        mapState != null && mapState.isOverlayEnabled('jmaSatelliteCloudLayer');
+    if (BackgroundService().isAndroidConnectionHostedByForegroundService) {
+      _jmaSatelliteCloudService.stop(clear: false);
+      if (shouldRun && !_foregroundHostedOverlayKeys.contains('jmaSatelliteCloud')) {
+        _foregroundHostedOverlayKeys.add('jmaSatelliteCloud');
+        BackgroundService().syncSatelliteCloudLayers();
+      } else if (!shouldRun) {
+        if (_foregroundHostedOverlayKeys.remove('jmaSatelliteCloud')) {
+          BackgroundService().syncSatelliteCloudLayers();
+        }
+        _latestJmaSatelliteCloudFrame = null;
+        _notifyLayer(_jmaSatelliteCloudLayerRevision);
+      }
+      return;
+    }
+    _foregroundHostedOverlayKeys.remove('jmaSatelliteCloud');
+    if (shouldRun) {
+      _jmaSatelliteCloudService.start(interval: JmaSatelliteCloudService.refreshInterval);
+    } else {
+      _jmaSatelliteCloudService.stop(clear: true);
+    }
+  }
+
+  void _syncNsmcSatelliteCloudServiceWithOverlay() {
+    final mapState = _mapStateProvider;
+    final shouldRun =
+        mapState != null && mapState.isOverlayEnabled('nsmcSatelliteCloudLayer');
+    if (BackgroundService().isAndroidConnectionHostedByForegroundService) {
+      _nsmcSatelliteCloudService.stop(clear: false);
+      if (shouldRun && !_foregroundHostedOverlayKeys.contains('nsmcSatelliteCloud')) {
+        _foregroundHostedOverlayKeys.add('nsmcSatelliteCloud');
+        BackgroundService().syncSatelliteCloudLayers();
+      } else if (!shouldRun) {
+        if (_foregroundHostedOverlayKeys.remove('nsmcSatelliteCloud')) {
+          BackgroundService().syncSatelliteCloudLayers();
+        }
+        _latestNsmcSatelliteCloudFrame = null;
+        _notifyLayer(_nsmcSatelliteCloudLayerRevision);
+      }
+      return;
+    }
+    _foregroundHostedOverlayKeys.remove('nsmcSatelliteCloud');
+    if (shouldRun) {
+      _nsmcSatelliteCloudService.start(interval: NsmcSatelliteCloudService.refreshInterval);
+    } else {
+      _nsmcSatelliteCloudService.stop(clear: true);
     }
   }
 
@@ -3615,7 +3710,9 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     final points = _unifiedInfoFocusPoints(provider, event, mapEvent);
     final padding = cencIrViewportPadding(context)!;
     final stationFit = event.source == 'nowQuakeCencIr' && points.length > 1;
-    final areaFit = stationFit || (event.isVolcanoEvent && points.length > 1);
+    // JMA intensity regions need the same viewport fit as station/ash areas;
+    // degree padding plus integer zoom buckets can frame all of East Asia.
+    final areaFit = points.length > 1;
     final screenOffset = Offset(
       (padding.left - padding.right) / 2,
       (padding.top - padding.bottom) / 2,
@@ -5729,6 +5826,10 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _precipitationSubscription?.cancel();
     _precipitationService.stop(clear: false);
     _fanRadarService.stop(clear: false);
+    _jmaSatelliteCloudSubscription?.cancel();
+    _nsmcSatelliteCloudSubscription?.cancel();
+    _nsmcSatelliteCloudService.stop(clear: false);
+    _jmaSatelliteCloudService.stop(clear: false);
     _jmaRadarSubscription?.cancel();
     _jmaRadarService.stop(clear: false);
     _fanSatelliteCloudSubscription?.cancel();
@@ -5763,6 +5864,8 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _fanRadarLayerRevision.dispose();
     _precipitationLayerRevision.dispose();
     _jmaRadarLayerRevision.dispose();
+    _jmaSatelliteCloudLayerRevision.dispose();
+    _nsmcSatelliteCloudLayerRevision.dispose();
     _fanSatelliteCloudLayerRevision.dispose();
     _blinkNotifier.dispose();
     _cancelStaggeredStartupTimers();
@@ -5916,6 +6019,39 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                                   children: _buildOptionalOverlayLayers(
                                     overlays,
                                   ),
+                                );
+                              },
+                            );
+                          },
+                        ),
+                        Selector<MapStateProvider, bool>(
+                          selector: (context, mapState) =>
+                              mapState.isOverlayEnabled('jmaSatelliteCloudLayer'),
+                          builder: (context, visible, child) {
+                            if (!visible) return const SizedBox.shrink();
+                            return ValueListenableBuilder<int>(
+                              valueListenable: _jmaSatelliteCloudLayerRevision,
+                              builder: (context, revision, child) {
+                                return JmaSatelliteCloudLayer(
+                                  frame: _latestJmaSatelliteCloudFrame,
+                                  tileProvider: _tileProvider,
+                                  reset: _tileResetController.stream,
+                                  errorTileCallback: _handleTileLoadError,
+                                );
+                              },
+                            );
+                          },
+                        ),
+                        Selector<MapStateProvider, bool>(
+                          selector: (context, mapState) =>
+                              mapState.isOverlayEnabled('nsmcSatelliteCloudLayer'),
+                          builder: (context, visible, child) {
+                            if (!visible) return const SizedBox.shrink();
+                            return ValueListenableBuilder<int>(
+                              valueListenable: _nsmcSatelliteCloudLayerRevision,
+                              builder: (context, revision, child) {
+                                return NsmcSatelliteCloudLayer(
+                                  frame: _latestNsmcSatelliteCloudFrame,
                                 );
                               },
                             );

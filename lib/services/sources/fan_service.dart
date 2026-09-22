@@ -45,6 +45,7 @@ import 'fan_socket_factory.dart';
 import '../quake_event_adapter.dart';
 import '../../models/quake_message.dart';
 import '../../models/source_payload.dart';
+import '../../models/unified_quake_data.dart';
 import '../../models/cmt_moment_tensor.dart';
 import '../../models/source_status.dart';
 import '../../models/cenc_ir_data.dart';
@@ -698,6 +699,7 @@ class FanService extends BaseSourceService {
             final parsed = _parseFanEvent(
               mapped,
               QuakeSourceType.cenc,
+              onUnified: emitUnified,
               isInitialLoad: true,
             );
             if (parsed != null) emit(parsed);
@@ -851,6 +853,7 @@ class FanService extends BaseSourceService {
       final parsed = _parseFanEvent(
         Map<String, dynamic>.from(item),
         source,
+        onUnified: emitUnified,
         isInitialLoad: true,
       );
       if (parsed != null) {
@@ -984,6 +987,7 @@ class FanService extends BaseSourceService {
     final result = _parseFanEvent(
       event,
       source,
+      onUnified: emitUnified,
       isInitialLoad: isInitialLoad,
       sourceHint: sourceHint,
     );
@@ -1083,7 +1087,7 @@ class FanService extends BaseSourceService {
   /// 优先使用 sourceHint。已适配的源走专门类型。
   /// 未识别的 source 名不再回落到 CENC；没有 source 时仍走特征检测，
   /// 以免已适配的 CENC 报文在缺字段时被改成未适配源。
-  QuakeSourceType _resolveSource(
+  static QuakeSourceType _resolveSource(
     Map<String, dynamic> json,
     String? sourceHint,
   ) {
@@ -1102,7 +1106,7 @@ class FanService extends BaseSourceService {
   ///
   /// 返回：
   /// - 对应的 QuakeSourceType，如果不识别则返回 null
-  QuakeSourceType? _sourceNameToType(String name) {
+  static QuakeSourceType? _sourceNameToType(String name) {
     final key = name.trim().toLowerCase().replaceAll('-', '_');
     switch (key) {
       case 'cenc':
@@ -1165,7 +1169,7 @@ class FanService extends BaseSourceService {
   ///
   /// 返回：
   /// - 推断出的数据源类型，如果无法确定则返回 null
-  QuakeSourceType? _detectSource(Map<String, dynamic> json) {
+  static QuakeSourceType? _detectSource(Map<String, dynamic> json) {
     // CENC-IR: uniEventId, contour_geojson, instrument_intensity_json
     if (json.containsKey('uniEventId')) return QuakeSourceType.cenc;
     if (json.containsKey('contour_geojson') ||
@@ -1295,9 +1299,25 @@ class FanService extends BaseSourceService {
   ///
   /// 返回：
   /// - 解析后的 QuakeMessage，如果解析失败则返回 null
-  QuakeMessage? _parseFanEvent(
+  /// Reuses the live FAN conversion without a socket or a legacy event emission.
+  static UnifiedQuakeData? decodeEventPayload(
+    Map<String, dynamic> payload, {
+    String? sourceHint,
+  }) {
+    UnifiedQuakeData? result;
+    _parseFanEvent(
+      payload,
+      _resolveSource(payload, sourceHint),
+      sourceHint: sourceHint,
+      onUnified: (event) => result = event,
+    );
+    return result;
+  }
+
+  static QuakeMessage? _parseFanEvent(
     Map<String, dynamic> json,
     QuakeSourceType source, {
+    required void Function(UnifiedQuakeData) onUnified,
     bool isInitialLoad = false,
     String? sourceHint,
   }) {
@@ -1575,6 +1595,7 @@ class FanService extends BaseSourceService {
           _emitFanUnified(
             source,
             payload,
+            onUnified: onUnified,
             apiName: sourceHint,
             rawPayload: json,
           );
@@ -1622,7 +1643,7 @@ class FanService extends BaseSourceService {
             'centroidDepth': json['centroidDepth'],
             'momentTensor': momentTensor,
             'momentTensorConvention': 'ned',
-          }, rawPayload: json);
+          }, rawPayload: json, onUnified: onUnified);
         }
       }
 
@@ -1768,7 +1789,7 @@ class FanService extends BaseSourceService {
   /// 调试打印
   ///
   /// 封装 print 方法，便于统一管理日志输出。
-  void debugPrint(String message) {
+  static void debugPrint(String message) {
     // ignore: avoid_print
     print(message);
   }
@@ -1781,7 +1802,7 @@ class FanService extends BaseSourceService {
   ///
   /// 将各种格式的震度字符串转换为标准格式。
   /// 例如: "5弱" -> "5-", "5強" -> "5+", "5" -> "5"
-  String _normalizeJmaShindo(String shindo) {
+  static String _normalizeJmaShindo(String shindo) {
     final s = shindo.trim();
     if (s.isEmpty) return '';
 
@@ -1870,7 +1891,7 @@ class FanService extends BaseSourceService {
   ///
   /// 返回：
   /// - 格式化后的震度字符串
-  String _formatShindo(String intensity) {
+  static String _formatShindo(String intensity) {
     if (intensity.isEmpty) return intensity;
 
     return intensity
@@ -1890,7 +1911,7 @@ class FanService extends BaseSourceService {
   ///
   /// 返回：
   /// - 提取后的地点名称
-  String _extractCwaLocation(String loc) {
+  static String _extractCwaLocation(String loc) {
     if (loc.isEmpty) return loc;
 
     final start = loc.indexOf('(位於');
@@ -1905,14 +1926,15 @@ class FanService extends BaseSourceService {
 
   /// 映射 QuakeSourceType → 适配器 source 字符串
   /// 并通过适配器转换并发射统一事件
-  void _emitFanUnified(
+  static void _emitFanUnified(
     QuakeSourceType source,
     Map<String, dynamic> data, {
     String? apiName,
     required Map<String, dynamic> rawPayload,
+    required void Function(UnifiedQuakeData) onUnified,
   }) {
     if (source == QuakeSourceType.unadapted) {
-      emitUnified(
+      onUnified(
         QuakeEventAdapter.convertUnadapted(
           apiName: apiName ?? '',
           origin: 1,
@@ -1925,13 +1947,13 @@ class FanService extends BaseSourceService {
     if (adapterSource == null) return;
     final result = QuakeEventAdapter.convert(adapterSource, data, 1);
     if (result != null) {
-      emitUnified(
+      onUnified(
         result.copyWith(sourcePayload: snapshotSourcePayload(rawPayload)),
       );
     }
   }
 
-  String? _sourceToAdapterSource(QuakeSourceType source) {
+  static String? _sourceToAdapterSource(QuakeSourceType source) {
     switch (source) {
       case QuakeSourceType.jma_fan:
         return 'jmaEew';

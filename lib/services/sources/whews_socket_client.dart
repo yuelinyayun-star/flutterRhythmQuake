@@ -107,7 +107,7 @@ class WhewsSocketClient {
         (data) => _handleFrame(channel!, serial, data),
         onError: (Object error, StackTrace stackTrace) {
           if (!_isCurrent(channel!, serial)) return;
-          debugPrint('WHEWS $url WebSocket error: $error');
+          debugPrint('WHEWS $url WebSocket error: ${error.runtimeType}');
           _handleClosed(channel, serial);
         },
         onDone: () => _handleClosed(channel!, serial),
@@ -118,7 +118,7 @@ class WhewsSocketClient {
       _startHeartbeat(channel, serial);
     } catch (error) {
       if (channel != null && !_isCurrent(channel, serial)) return;
-      debugPrint('WHEWS $url connection failed: $error');
+      debugPrint('WHEWS $url connection failed: ${error.runtimeType}');
       _handleClosed(channel, serial);
     }
   }

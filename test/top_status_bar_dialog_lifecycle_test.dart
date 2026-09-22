@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutterrhythmquake/widgets/ui/top_status_bar.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   testWidgets('mock dialog remains valid through exit animation', (
     tester,
   ) async {
+    SharedPreferences.setMockInitialValues({});
     await tester.binding.setSurfaceSize(const Size(1280, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
@@ -16,7 +18,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('模拟注入'), findsOneWidget);
-    expect(find.byType(TextField), findsNWidgets(3));
+    expect(find.byType(TextField), findsNWidgets(5));
+    expect(find.text('本地注入 API'), findsOneWidget);
+    expect(find.byType(DropdownButtonFormField<String>), findsOneWidget);
 
     final dragHandle = find.byKey(const ValueKey('mock-injection-drag-handle'));
     final before = tester.getTopLeft(dragHandle);

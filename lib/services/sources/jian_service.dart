@@ -310,6 +310,11 @@ class JianService extends BaseSourceService {
     lastError = error;
     if (!preserveAuthStatus && authStatus != JianAuthStatus.anonymous) {
       authStatus = JianAuthStatus.unavailable;
+      _credentialInfo = SourceCredentialInfo(
+        configured: _credentialInfo.configured,
+        expiresAt: _credentialInfo.expiresAt,
+        errorCode: 'connection',
+      );
     }
     debugPrint('Jian Project: $error');
     if (_connectedAt != null &&

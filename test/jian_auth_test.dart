@@ -431,12 +431,14 @@ void main() {
       await tester.pump();
       expect(opens, 0);
       expect(service.authStatus, JianAuthStatus.unavailable);
+      expect(service.credentialInfo.errorCode, 'server');
       await tester.pump(const Duration(minutes: 4));
       expect(exchanges, 1);
       await tester.pump(const Duration(minutes: 1));
       expect(exchanges, 2);
       expect(opens, 1);
       expect(service.authStatus, JianAuthStatus.authenticated);
+      expect(service.credentialInfo.errorCode, isNull);
       expect(await JianCredentialStore().read(), 'rt_test');
       service.dispose();
     },
@@ -480,4 +482,27 @@ void main() {
       service.dispose();
     },
   );
+
+  testWidgets('socket failures keep credentials and report transport failure', (tester) async {
+    final expiry = DateTime.utc(2026, 10, 1);
+    await JianCredentialStore().write('rt_test', expiresAt: expiry);
+    final channel = FakeChannel();
+    final service = JianService(
+      now: tester.binding.clock.now,
+      authService: JianAuthService(client: MockClient((_) async => ticket('at_test'))),
+      socketFactory: (_, {headers}) => channel,
+    );
+    addTearDown(service.dispose);
+    service.connect();
+    await tester.pump();
+    expect(service.authStatus, JianAuthStatus.authenticated);
+    channel.frames.addError(StateError('at_secret'));
+    await tester.pump();
+    expect(service.authStatus, JianAuthStatus.unavailable);
+    expect(service.credentialInfo.errorCode, 'connection');
+    expect(service.credentialInfo.expiresAt, expiry);
+    expect(service.lastError, isNot(contains('secret')));
+    expect(await JianCredentialStore().read(), 'rt_test');
+    service.dispose();
+  });
 }

@@ -1427,6 +1427,7 @@ class _AlertModuleState extends State<AlertModule> {
   }
 
   String _weatherAlarmSourceTitle(WeatherAlarm alarm) {
+    if (alarm.apiTypeLabel.isNotEmpty) return '气象预警 · ${alarm.apiTypeLabel}';
     switch (alarm.source) {
       case WeatherAlarmSource.chinaWeatherLocal:
         return '中国气象局气象预警';
