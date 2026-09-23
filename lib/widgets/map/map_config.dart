@@ -12,6 +12,16 @@
 class MapConfig {
   static const String vectorBasemapKey = 'kaVector';
   static const String mapboxEewceDarkKey = 'mapboxEewceDark';
+  static const String jianSatelliteRoadsKey = 'jianSatelliteRoads';
+  static const Set<String> _jianBaseTileKeys = {
+    'jianSatellite',
+    'jianOcean',
+    'jianHillshade',
+    'jianTerrain',
+    'jianPhysical',
+    'jianRelief',
+    jianSatelliteRoadsKey,
+  };
   static const String mapboxUsernameKey = 'mapbox_username';
   static const String mapboxStyleIdKey = 'mapbox_style_id';
   static const String mapboxAccessTokenKey = 'mapbox_access_token';
@@ -125,6 +135,16 @@ class MapConfig {
   static const String cnContour =
       '$_fanBase/cncl/{z}/{x}/{y}?v=$_fanCacheRevision';
 
+  static const String _jianBase = 'https://tilemap.sismotide.top';
+  static const String jianSatellite = '$_jianBase/arcwi/{z}/{x}/{y}';
+  static const String jianOcean = '$_jianBase/arcwob/{z}/{x}/{y}';
+  static const String jianHillshade = '$_jianBase/arcwh/{z}/{x}/{y}';
+  static const String jianTerrain = '$_jianBase/arcterr/{z}/{x}/{y}';
+  static const String jianPhysical = '$_jianBase/arcphys/{z}/{x}/{y}';
+  static const String jianRelief = '$_jianBase/arcshade/{z}/{x}/{y}';
+  static const String jianTransportation =
+      '$_jianBase/arctrans/{z}/{x}/{y}';
+
   /// 当前使用的瓦片URL
   /// 默认使用Petal浅色主题
   static String currentTileUrl = petalLight;
@@ -147,6 +167,13 @@ class MapConfig {
     'ArcGIS 卫星': 'arcgisSatellite',
     'ArcGIS 地形': 'arcgisTopo',
     'ArcGIS 山体阴影': 'arcgisHillshade',
+    'Jian 卫星影像': 'jianSatellite',
+    'Jian 卫星影像 + 路网': jianSatelliteRoadsKey,
+    'Jian 海洋底图': 'jianOcean',
+    'Jian 山影图': 'jianHillshade',
+    'Jian 地形底图': 'jianTerrain',
+    'Jian 自然地形': 'jianPhysical',
+    'Jian 彩色晕渲': 'jianRelief',
     'DEM 高程数据': 'demElevation',
     'Mapbox Dark': mapboxEewceDarkKey,
   };
@@ -162,6 +189,20 @@ class MapConfig {
   static bool isBaseTileKey(String key) {
     return baseTileOptions.containsValue(key);
   }
+
+  static bool isJianTileKey(String key) => _jianBaseTileKeys.contains(key);
+
+  static int maxNativeZoomByKey(String key) => switch (key) {
+    'jianSatellite' || jianSatelliteRoadsKey => 18,
+    'jianOcean' => 10,
+    'jianHillshade' => 15,
+    'jianTerrain' => 9,
+    'jianPhysical' => 8,
+    'jianRelief' => 13,
+    _ => 19,
+  };
+
+  static const int jianTransportationMaxNativeZoom = 13;
 
   static String normalizeBaseTileKey(String key) {
     if (_removedBaseTileKeys.contains(key)) return 'petalLight';
@@ -186,6 +227,19 @@ class MapConfig {
         return arcgisTopo;
       case 'arcgisHillshade':
         return arcgisHillshade;
+      case 'jianSatellite':
+      case jianSatelliteRoadsKey:
+        return jianSatellite;
+      case 'jianOcean':
+        return jianOcean;
+      case 'jianHillshade':
+        return jianHillshade;
+      case 'jianTerrain':
+        return jianTerrain;
+      case 'jianPhysical':
+        return jianPhysical;
+      case 'jianRelief':
+        return jianRelief;
       case 'demElevation':
         return demElevation;
       case 'cloudLayer':

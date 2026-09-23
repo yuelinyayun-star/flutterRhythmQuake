@@ -277,10 +277,12 @@ Iterable<Map<String, dynamic>> backgroundSatelliteCloudSnapshots() sync* {
 ///
 /// 重新初始化 SourceManager 与相关源，订阅统一事件流，满足阈值时直接弹出通知。
 Future<void> startBackgroundSources({
-  required void Function(UnifiedQuakeData event) onUnifiedEvent,
+  required void Function(UnifiedQuakeData event, bool isUpdate) onUnifiedEvent,
   required void Function(QuakeMessage event) onQuakeEvent,
   required void Function(String source, List<QuakeMessage> events) onSourceList,
   required void Function(CencIrData data) onCencIrData,
+  required void Function(String source, List<Map<String, dynamic>> items)
+  onCencIrList,
   required void Function(WeatherAlarm alarm) onWeatherAlarm,
   required void Function(TsunamiMessage event) onTsunamiEvent,
   required void Function(SourceStatusUpdate update) onSourceStatus,
@@ -495,6 +497,9 @@ Future<void> startBackgroundSources({
   fan.onCwaListUpdated = (items) => onSourceList('cwa', items);
   fan.onCencIrData = onCencIrData;
   nowQuakeCencIr.onCencIrData = onCencIrData;
+  fan.onCencIrListUpdated = (items) => onCencIrList('fan', items);
+  nowQuakeCencIr.onCencIrListUpdated =
+      (items) => onCencIrList('nowquake', items);
   fan.onWeatherAlarm = onWeatherAlarm;
   whews.onWeatherAlarm = onWeatherAlarm;
   manager.registerSource(wolfx);
@@ -521,6 +526,95 @@ Future<void> startBackgroundSources({
     'P2P',
     prefs.getBool('api_source_p2pquake_enabled') ?? true,
   );
+
+  var nowQuakeStatus = SourceStatus.disconnected;
+  var fanCencIrFallbackActive = !nowQuakeCencIrEnabled;
+  void syncFanCencIrRequests() {
+    if (nowQuakeStatus == SourceStatus.connected &&
+        nowQuakeCencIr.hasUsableList) {
+      fanCencIrFallbackActive = false;
+    } else if (!nowQuakeCencIrEnabled ||
+        nowQuakeStatus == SourceStatus.error ||
+        nowQuakeStatus == SourceStatus.disconnected ||
+        (nowQuakeCencIr.hasCompletedListRequest &&
+            !nowQuakeCencIr.hasUsableList)) {
+      fanCencIrFallbackActive = true;
+    }
+    fan.setCencIrRequestsEnabled(fanCencIrFallbackActive);
+  }
+  nowQuakeCencIr.onListAvailabilityChanged = syncFanCencIrRequests;
+  _backgroundSubscriptions.add(manager.onStatusUpdate.listen((update) {
+    if (update.sourceName == nowQuakeCencIr.name) {
+      nowQuakeStatus = update.status;
+      syncFanCencIrRequests();
+    }
+    onSourceStatus(update);
+  }));
+  _backgroundSubscriptions.add(manager.onQuakeEvent.listen(onQuakeEvent));
+
+  // 先桥接所有事件，再连接基础 API；测站和地图图层不应阻塞列表获取。
+  for (final stream in [
+    jian.onUnifiedEvent,
+    wolfx.onUnifiedEvent,
+    whews.onUnifiedEvent,
+    fan.onUnifiedEvent,
+    nowQuakeCencIr.onUnifiedEvent,
+    p2p.onUnifiedEvent,
+    mock.onUnifiedEvent,
+    globalQuake.onUnifiedEvent,
+  ]) {
+    _backgroundSubscriptions.add(stream.listen(
+      (event) => _handleUnifiedEvent(event, processor, onUnifiedEvent),
+    ));
+  }
+  for (final stream in [
+    p2p.onTsunamiEvent,
+    fan.onTsunamiEvent,
+    whews.onTsunamiEvent,
+    mock.onTsunamiEvent,
+  ]) {
+    _backgroundSubscriptions.add(stream.listen(onTsunamiEvent));
+  }
+  manager.startAll();
+
+  void handleOfficialCurrent(String source, Map<String, dynamic> data) {
+    final event = QuakeEventAdapter.convert(source, data, 0);
+    if (event != null) {
+      _handleUnifiedEvent(event, processor, onUnifiedEvent);
+    }
+  }
+
+  if (_isInfoSourceEnabled(prefs, QuakeSourceType.usgs)) {
+    _backgroundOfficialUsgs = officialUsgs;
+    officialUsgs.onListUpdated = (items) => onSourceList('usgs', items);
+    officialUsgs.onCurrentUpdated = (data) =>
+        handleOfficialCurrent('usgsEqlist', data);
+    officialUsgs.start();
+  }
+  if (_isInfoSourceEnabled(prefs, QuakeSourceType.emsc)) {
+    _backgroundOfficialEmsc = officialEmsc;
+    officialEmsc.onListUpdated = (items) => onSourceList('emsc', items);
+    officialEmsc.onCurrentUpdated = (data) =>
+        handleOfficialCurrent('emsc', data);
+    officialEmsc.start();
+  }
+  if (_isInfoSourceEnabled(prefs, QuakeSourceType.cwa)) {
+    _backgroundOfficialCwa = officialCwa;
+    officialCwa.onListUpdated = (items) => onSourceList('cwa', items);
+    officialCwa.onCurrentUpdated = (data) =>
+        handleOfficialCurrent('cwaEqlist', data);
+    officialCwa.start();
+  }
+  if (_isInfoSourceEnabled(prefs, QuakeSourceType.cenc)) {
+    _backgroundOfficialCenc = officialCenc;
+    officialCenc.onListUpdated = (items) => onSourceList('cenc', items);
+    officialCenc.start();
+  }
+  if (_isInfoSourceEnabled(prefs, QuakeSourceType.jma_fan)) {
+    _backgroundOfficialJma = officialJma;
+    officialJma.onListUpdated = (items) => onSourceList('jma', items);
+    officialJma.start();
+  }
 
   await _restoreBackgroundWhews(prefs, manager, whews);
 
@@ -890,100 +984,10 @@ Future<void> startBackgroundSources({
     }),
   );
 
-  _backgroundSubscriptions.add(manager.onStatusUpdate.listen(onSourceStatus));
-  _backgroundSubscriptions.add(manager.onQuakeEvent.listen(onQuakeEvent));
-
-  // 订阅统一事件，先经过 BackgroundEventProcessor，再把已接纳结果交给主 UI。
-  _backgroundSubscriptions.add(
-    jian.onUnifiedEvent.listen(
-      (event) => _handleUnifiedEvent(event, processor, onUnifiedEvent),
-    ),
-  );
-  _backgroundSubscriptions.add(
-    wolfx.onUnifiedEvent.listen(
-      (event) => _handleUnifiedEvent(event, processor, onUnifiedEvent),
-    ),
-  );
-  _backgroundSubscriptions.add(
-    whews.onUnifiedEvent.listen(
-      (event) => _handleUnifiedEvent(event, processor, onUnifiedEvent),
-    ),
-  );
-  _backgroundSubscriptions.add(
-    fan.onUnifiedEvent.listen(
-      (event) => _handleUnifiedEvent(event, processor, onUnifiedEvent),
-    ),
-  );
-  _backgroundSubscriptions.add(
-    nowQuakeCencIr.onUnifiedEvent.listen(
-      (event) => _handleUnifiedEvent(event, processor, onUnifiedEvent),
-    ),
-  );
-  _backgroundSubscriptions.add(
-    p2p.onUnifiedEvent.listen(
-      (event) => _handleUnifiedEvent(event, processor, onUnifiedEvent),
-    ),
-  );
-  _backgroundSubscriptions.add(
-    mock.onUnifiedEvent.listen(
-      (event) => _handleUnifiedEvent(event, processor, onUnifiedEvent),
-    ),
-  );
-  _backgroundSubscriptions.add(
-    globalQuake.onUnifiedEvent.listen(
-      (event) => _handleUnifiedEvent(event, processor, onUnifiedEvent),
-    ),
-  );
-
-  _backgroundSubscriptions.add(p2p.onTsunamiEvent.listen(onTsunamiEvent));
-  _backgroundSubscriptions.add(fan.onTsunamiEvent.listen(onTsunamiEvent));
-  _backgroundSubscriptions.add(whews.onTsunamiEvent.listen(onTsunamiEvent));
-  _backgroundSubscriptions.add(mock.onTsunamiEvent.listen(onTsunamiEvent));
-
-  // 先完成所有桥接订阅，再启动连接，避免丢失首个状态或同步事件。
-  manager.startAll();
   if (prefs.getBool(GlobalQuakeService.enabledPreferenceKey) ?? false) {
     globalQuake.connect();
   }
 
-  void handleOfficialCurrent(String source, Map<String, dynamic> data) {
-    final event = QuakeEventAdapter.convert(source, data, 0);
-    if (event != null) {
-      _handleUnifiedEvent(event, processor, onUnifiedEvent);
-    }
-  }
-
-  if (_isInfoSourceEnabled(prefs, QuakeSourceType.usgs)) {
-    _backgroundOfficialUsgs = officialUsgs;
-    officialUsgs.onListUpdated = (items) => onSourceList('usgs', items);
-    officialUsgs.onCurrentUpdated = (data) =>
-        handleOfficialCurrent('usgsEqlist', data);
-    officialUsgs.start();
-  }
-  if (_isInfoSourceEnabled(prefs, QuakeSourceType.emsc)) {
-    _backgroundOfficialEmsc = officialEmsc;
-    officialEmsc.onListUpdated = (items) => onSourceList('emsc', items);
-    officialEmsc.onCurrentUpdated = (data) =>
-        handleOfficialCurrent('emsc', data);
-    officialEmsc.start();
-  }
-  if (_isInfoSourceEnabled(prefs, QuakeSourceType.cwa)) {
-    _backgroundOfficialCwa = officialCwa;
-    officialCwa.onListUpdated = (items) => onSourceList('cwa', items);
-    officialCwa.onCurrentUpdated = (data) =>
-        handleOfficialCurrent('cwaEqlist', data);
-    officialCwa.start();
-  }
-  if (_isInfoSourceEnabled(prefs, QuakeSourceType.cenc)) {
-    _backgroundOfficialCenc = officialCenc;
-    officialCenc.onListUpdated = (items) => onSourceList('cenc', items);
-    officialCenc.start();
-  }
-  if (_isInfoSourceEnabled(prefs, QuakeSourceType.jma_fan)) {
-    _backgroundOfficialJma = officialJma;
-    officialJma.onListUpdated = (items) => onSourceList('jma', items);
-    officialJma.start();
-  }
   _backgroundSettings = initialSettings;
 }
 
@@ -1382,11 +1386,11 @@ class _AcceptedEewState {
 }
 
 /// 处理统一事件：先经过 [BackgroundEventProcessor] 统一过滤/合并，
-/// 只把已接纳结果交给主 isolate；通知、语音和 UI 效果由主 UI 链处理。
+/// 只把已接纳结果交给服务回调；后台系统通知由服务处理，UI 效果交给主 isolate。
 void _handleUnifiedEvent(
   UnifiedQuakeData event,
   BackgroundEventProcessor processor,
-  void Function(UnifiedQuakeData event) onUnifiedEvent,
+  void Function(UnifiedQuakeData event, bool isUpdate) onUnifiedEvent,
 ) {
   final result = processor.process(event);
   if (result.type == BackgroundEventResultType.dropped ||
@@ -1394,5 +1398,5 @@ void _handleUnifiedEvent(
     return;
   }
 
-  onUnifiedEvent(result.event!);
+  onUnifiedEvent(result.event!, result.isUpdate);
 }

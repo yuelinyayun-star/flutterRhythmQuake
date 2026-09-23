@@ -32,4 +32,38 @@ void main() {
       expect(MapConfig.isTmsTileKey(key), isFalse);
     }
   });
+
+  test('Jian basemaps use the published XYZ paths without a token', () {
+    const sources = <String, String>{
+      'jianSatellite': 'arcwi',
+      MapConfig.jianSatelliteRoadsKey: 'arcwi',
+      'jianOcean': 'arcwob',
+      'jianHillshade': 'arcwh',
+      'jianTerrain': 'arcterr',
+      'jianPhysical': 'arcphys',
+      'jianRelief': 'arcshade',
+    };
+    for (final entry in sources.entries) {
+      expect(MapConfig.normalizeBaseTileKey(entry.key), entry.key);
+      expect(MapConfig.isJianTileKey(entry.key), isTrue);
+      expect(
+        MapConfig.urlByKey(entry.key),
+        'https://tilemap.sismotide.top/${entry.value}/{z}/{x}/{y}',
+      );
+      expect(MapConfig.isTmsTileKey(entry.key), isFalse);
+    }
+    expect(
+      MapConfig.jianTransportation,
+      'https://tilemap.sismotide.top/arctrans/{z}/{x}/{y}',
+    );
+    expect(MapConfig.jianTransportationMaxNativeZoom, 13);
+    expect(MapConfig.maxNativeZoomByKey('jianSatellite'), 18);
+    expect(MapConfig.maxNativeZoomByKey(MapConfig.jianSatelliteRoadsKey), 18);
+    expect(MapConfig.maxNativeZoomByKey('jianOcean'), 10);
+    expect(MapConfig.maxNativeZoomByKey('jianHillshade'), 15);
+    expect(MapConfig.maxNativeZoomByKey('jianTerrain'), 9);
+    expect(MapConfig.maxNativeZoomByKey('jianPhysical'), 8);
+    expect(MapConfig.maxNativeZoomByKey('jianRelief'), 13);
+    expect(MapConfig.maxNativeZoomByKey('petalLight'), 19);
+  });
 }

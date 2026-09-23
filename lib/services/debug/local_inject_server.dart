@@ -25,12 +25,13 @@ import '../sources/source_manager.dart';
 
 /// Loopback HTTP façade over [MockInputService] for camera / EEW testing.
 ///
-/// Bind: `127.0.0.1` only, including desktop release builds. Off by default;
+/// Bind: `127.0.0.1` only, including Android and desktop release builds. Off by default;
 /// enable from the simulation panel or Debug tools. Build-time defaults:
 /// `--dart-define=LOCAL_INJECT=true`. Optional port:
 /// `--dart-define=LOCAL_INJECT_PORT=8765`.
 ///
 /// SSH from another machine: `ssh -L 8765:127.0.0.1:8765 user@host`
+/// Android over USB: `adb forward tcp:8765 tcp:8765`.
 class LocalInjectServer {
   LocalInjectServer._();
 
@@ -61,7 +62,8 @@ class LocalInjectServer {
       !kIsWeb &&
       (defaultTargetPlatform == TargetPlatform.windows ||
           defaultTargetPlatform == TargetPlatform.macOS ||
-          defaultTargetPlatform == TargetPlatform.linux);
+          defaultTargetPlatform == TargetPlatform.linux ||
+          defaultTargetPlatform == TargetPlatform.android);
 
   static int configuredPort(SharedPreferences prefs) =>
       prefs.getInt(portPreferenceKey) ?? _port;
@@ -97,7 +99,7 @@ class LocalInjectServer {
     final nextPort = port ?? configuredPort(store);
     _validatePort(nextPort);
     if (enabled) {
-      if (!isSupportedPlatform) throw UnsupportedError('本地注入服务仅支持桌面端');
+      if (!isSupportedPlatform) throw UnsupportedError('当前平台不支持本地注入服务');
       await _bind(nextPort);
     } else {
       await _close();

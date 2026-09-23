@@ -46,6 +46,26 @@ void main() {
     expect(prefs.getBool(LocalInjectServer.enabledPreferenceKey), isFalse);
   });
 
+  test('Android can opt in to the loopback injection server', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    final prefs = await SharedPreferences.getInstance();
+    expect(LocalInjectServer.isSupportedPlatform, isTrue);
+    expect(LocalInjectServer.shouldStart(prefs), isFalse);
+
+    final port = await freePort();
+    await LocalInjectServer.setEnabled(true, port: port, prefs: prefs);
+    expect(LocalInjectServer.boundPort, port);
+    final client = _LoopbackHttpOverrides().createHttpClient(null);
+    addTearDown(() => client.close(force: true));
+    final response = await (await client.getUrl(
+      Uri.parse('http://127.0.0.1:$port/health'),
+    )).close();
+    final health = jsonDecode(await utf8.decoder.bind(response).join());
+    expect(response.statusCode, HttpStatus.ok);
+    expect(health['mockRegistered'], isTrue);
+    expect(health['port'], port);
+  });
+
   test(
     'failed bind cannot claim enabled or overwrite a working port',
     () async {

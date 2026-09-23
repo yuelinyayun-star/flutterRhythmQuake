@@ -461,6 +461,9 @@ class _RhythmQuakeAppState extends State<RhythmQuakeApp> {
     SoundEffectService().onLifecycleStateChanged(
       WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.detached,
     );
+    BackgroundService().onLifecycleStateChanged(
+      WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.detached,
+    );
   }
 
   @override

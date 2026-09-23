@@ -103,9 +103,9 @@ class _LocalInjectSettingsState extends State<LocalInjectSettings> {
                     ),
                     Text(
                       running
-                          ? 'http://127.0.0.1:${LocalInjectServer.boundPort}/inject'
+                          ? '${Theme.of(context).platform == TargetPlatform.android ? '手机本机 ' : ''}http://127.0.0.1:${LocalInjectServer.boundPort}/inject'
                           : !LocalInjectServer.isSupportedPlatform
-                          ? '仅桌面端可监听'
+                          ? '当前平台不可监听'
                           : '未监听',
                       style: const TextStyle(
                         fontSize: 12,

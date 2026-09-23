@@ -5986,9 +5986,31 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                             userAgentPackageName: 'flutterrhythmquake/1.0',
                             tileProvider: _tileProvider,
                             tileDimension: mapboxBase ? 512 : 256,
+                            maxNativeZoom: MapConfig.maxNativeZoomByKey(
+                              tileState.tileKey,
+                            ),
                             zoomOffset: mapboxBase ? -1 : 0,
                             tms: MapConfig.isTmsTileKey(tileState.tileKey),
-                            panBuffer: 1,
+                            panBuffer: MapConfig.isJianTileKey(tileState.tileKey)
+                                ? 0
+                                : 1,
+                            keepBuffer: 4,
+                            evictErrorTileStrategy:
+                                EvictErrorTileStrategy.dispose,
+                            reset: _tileResetController.stream,
+                            errorTileCallback: _handleTileLoadError,
+                            tileDisplay: const TileDisplay.instantaneous(),
+                          ),
+                        if (tileState.tileKey ==
+                            MapConfig.jianSatelliteRoadsKey)
+                          TileLayer(
+                            key: const ValueKey('jianTransportation'),
+                            urlTemplate: MapConfig.jianTransportation,
+                            userAgentPackageName: 'flutterrhythmquake/1.0',
+                            tileProvider: _tileProvider,
+                            maxNativeZoom:
+                                MapConfig.jianTransportationMaxNativeZoom,
+                            panBuffer: 0,
                             keepBuffer: 4,
                             evictErrorTileStrategy:
                                 EvictErrorTileStrategy.dispose,
@@ -6550,6 +6572,11 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                           ),
                         ],
                         _buildWeatherAlertMapLayer(),
+                        if (MapConfig.isJianTileKey(tileState.tileKey))
+                          const SimpleAttributionWidget(
+                            source: Text('Esri / Jian Project'),
+                            alignment: Alignment.bottomCenter,
+                          ),
                       ],
                     ),
                   ),

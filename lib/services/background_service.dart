@@ -44,6 +44,10 @@ import '../models/source_credential_info.dart';
 import '../providers/background_settings_provider.dart';
 import 'sources/source_manager.dart';
 import 'background_source_manager.dart';
+import 'background_accepted_event_buffer.dart';
+import '../core/calculator.dart';
+import '../core/intensity_calculator.dart';
+import 'location_service.dart';
 
 /// 应用前后台状态
 enum AppLifecycleStateExt {
@@ -85,23 +89,32 @@ class BackgroundService {
   // Android 前台服务相关状态
   bool _foregroundServiceConfigured = false;
   bool _isForegroundServiceRunning = false;
+  bool _foregroundNotificationsReady = false;
+  bool get foregroundNotificationsReady =>
+      isAndroidConnectionHostedByForegroundService &&
+      _foregroundNotificationsReady;
 
   StreamSubscription<Map<String, dynamic>?>? _foregroundEventSubscription;
   StreamSubscription<Map<String, dynamic>?>? _foregroundQuakeSubscription;
   StreamSubscription<Map<String, dynamic>?>? _foregroundListSubscription;
   StreamSubscription<Map<String, dynamic>?>? _foregroundCencIrSubscription;
+  StreamSubscription<Map<String, dynamic>?>? _foregroundCencIrListSubscription;
   StreamSubscription<Map<String, dynamic>?>? _foregroundWeatherSubscription;
   StreamSubscription<Map<String, dynamic>?>? _foregroundTsunamiSubscription;
   StreamSubscription<Map<String, dynamic>?>? _foregroundStatusSubscription;
   StreamSubscription<Map<String, dynamic>?>? _foregroundStationSubscription;
   StreamSubscription<Map<String, dynamic>?>? _foregroundCmtSubscription;
   StreamSubscription<Map<String, dynamic>?>? _foregroundAuxSubscription;
+  StreamSubscription<Map<String, dynamic>?>? _foregroundBufferedSubscription;
+  StreamSubscription<Map<String, dynamic>?>? _foregroundReadySubscription;
   final _foregroundUnifiedController =
       StreamController<UnifiedQuakeData>.broadcast();
   final _foregroundQuakeController = StreamController<QuakeMessage>.broadcast();
   final _foregroundListController =
       StreamController<Map<String, dynamic>>.broadcast();
   final _foregroundCencIrController = StreamController<CencIrData>.broadcast();
+  final _foregroundCencIrListController =
+      StreamController<Map<String, dynamic>>.broadcast();
   final _foregroundWeatherController =
       StreamController<WeatherAlarm>.broadcast();
   final _foregroundTsunamiController =
@@ -114,6 +127,8 @@ class BackgroundService {
       StreamController<Map<String, dynamic>>.broadcast();
   final _foregroundAuxController =
       StreamController<Map<String, dynamic>>.broadcast();
+  final _foregroundBufferedController =
+      StreamController<UnifiedQuakeData>.broadcast();
 
   static const String _foregroundChannelId = 'rhythmquake_foreground_service';
   static const String _foregroundNotificationTitle = 'RhythmQuake 后台运行中';
@@ -154,6 +169,8 @@ class BackgroundService {
       _foregroundListController.stream;
   Stream<CencIrData> get onForegroundCencIrData =>
       _foregroundCencIrController.stream;
+  Stream<Map<String, dynamic>> get onForegroundCencIrList =>
+      _foregroundCencIrListController.stream;
   Stream<WeatherAlarm> get onForegroundWeatherAlarm =>
       _foregroundWeatherController.stream;
   Stream<TsunamiMessage> get onForegroundTsunamiEvent =>
@@ -166,6 +183,30 @@ class BackgroundService {
       _foregroundCmtController.stream;
   Stream<Map<String, dynamic>> get onForegroundAuxData =>
       _foregroundAuxController.stream;
+  Stream<UnifiedQuakeData> get onForegroundBufferedEvent =>
+      _foregroundBufferedController.stream;
+
+  void requestBufferedEvents() {
+    if (!isAndroidConnectionHostedByForegroundService) return;
+    FlutterBackgroundService().invoke('requestBufferedEvents');
+  }
+
+  void requestInitialSourceState() {
+    if (!isAndroidConnectionHostedByForegroundService) return;
+    FlutterBackgroundService().invoke('requestInitialSourceState');
+  }
+
+  void requestSourceStatuses() {
+    if (!isAndroidConnectionHostedByForegroundService) return;
+    FlutterBackgroundService().invoke('requestSourceStatuses');
+  }
+
+  void _sendAppVisibility() {
+    if (!isAndroidConnectionHostedByForegroundService) return;
+    FlutterBackgroundService().invoke('appVisibility', {
+      'visible': _state == AppLifecycleStateExt.foreground,
+    });
+  }
 
   /// Android 系统是否允许本应用发送通知。
   ///
@@ -231,10 +272,11 @@ class BackgroundService {
   Future<void> initialize(
     WidgetsBinding binding, {
     BackgroundSettingsProvider? settings,
+    bool observeSettings = true,
   }) async {
     if (_initialized) return;
     _settings = settings;
-    _settings?.addListener(_onSettingsChanged);
+    if (observeSettings) _settings?.addListener(_onSettingsChanged);
     _syncConnectionHostingState();
 
     if (!_supportsNotifications) {
@@ -303,6 +345,8 @@ class BackgroundService {
     };
     if (_state == ext) return;
     _state = ext;
+    _sendAppVisibility();
+    if (ext == AppLifecycleStateExt.foreground) requestBufferedEvents();
 
     // Android：后台功能开启时，数据连接由独立前台服务 isolate 维护。
     // 生命周期变化只负责确保服务继续运行；主 isolate 不再建立第二套连接。
@@ -500,6 +544,11 @@ class BackgroundService {
         }
       },
     );
+    _foregroundCencIrListSubscription ??= service
+        .on('foregroundCencIrList')
+        .listen((payload) {
+          if (payload != null) _foregroundCencIrListController.add(payload);
+        });
     _foregroundWeatherSubscription ??= service
         .on('foregroundWeatherAlarm')
         .listen((payload) {
@@ -558,6 +607,22 @@ class BackgroundService {
       payload,
     ) {
       if (payload != null) _foregroundAuxController.add(payload);
+    });
+    _foregroundBufferedSubscription ??= service
+        .on('foregroundBufferedEvent')
+        .listen((payload) {
+          if (payload == null) return;
+          try {
+            _foregroundBufferedController.add(UnifiedQuakeData.fromMap(payload));
+          } catch (error) {
+            debugPrint('[BackgroundEvent] buffered report decode failed: $error');
+          }
+        });
+    _foregroundReadySubscription ??= service.on('foregroundBridgeReady').listen((payload) {
+      _foregroundNotificationsReady = payload?['notificationsReady'] == true;
+      _sendAppVisibility();
+      if (payload?['fromRequest'] != true) requestBufferedEvents();
+      requestSourceStatuses();
     });
   }
 
@@ -630,13 +695,16 @@ class BackgroundService {
     if (await service.isRunning()) {
       _isForegroundServiceRunning = true;
       _syncConnectionHostingState();
+      _sendAppVisibility();
       return;
     }
     _isForegroundServiceRunning = false;
+    _foregroundNotificationsReady = false;
     _syncConnectionHostingState();
     await service.startService();
     _isForegroundServiceRunning = await service.isRunning();
     _syncConnectionHostingState();
+    _sendAppVisibility();
   }
 
   /// 停止 Android 前台服务（仅在 Android 平台生效）。
@@ -653,6 +721,7 @@ class BackgroundService {
         service.invoke('stopService');
       }
       _isForegroundServiceRunning = false;
+      _foregroundNotificationsReady = false;
       _syncConnectionHostingState();
       return;
     }
@@ -660,6 +729,7 @@ class BackgroundService {
     final service = FlutterBackgroundService();
     service.invoke('stopService');
     _isForegroundServiceRunning = false;
+    _foregroundNotificationsReady = false;
     _syncConnectionHostingState();
   }
 
@@ -693,8 +763,81 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
     return;
   }
 
-  Future<void> sendUnifiedEvent(UnifiedQuakeData event) async {
+  final notificationSettings = BackgroundSettingsProvider();
+  await notificationSettings.load(preferences);
+  final notifications = BackgroundService();
+  var notificationsReady = false;
+  Future<void> initializeNotifications() async {
+    if (notificationsReady) return;
+    try {
+      await notifications.initialize(WidgetsBinding.instance,
+          settings: notificationSettings, observeSettings: false);
+      notificationsReady = true;
+      service.invoke('foregroundBridgeReady', {
+        'notificationsReady': true,
+        'fromRequest': false,
+      });
+    } catch (error) {
+      debugPrint('[BackgroundEvent] notification setup failed: $error');
+    }
+  }
+
+  await initializeNotifications();
+  final bufferedEvents = BackgroundAcceptedEventBuffer(preferences);
+  var appVisible = false;
+  final pendingEewNotifications = <String, Timer>{};
+  final eewWarnStates = <String, bool>{};
+  final latestSourceStatuses = <String, Map<String, dynamic>>{};
+  final latestSourceLists = <String, Map<String, dynamic>>{};
+  final latestCencIrLists = <String, Map<String, dynamic>>{};
+  Map<String, dynamic>? latestCencIrData;
+
+  Future<void> notifyAcceptedEvent(UnifiedQuakeData event) async {
+    if (appVisible) return;
+    try {
+      await initializeNotifications();
+      if (!notificationsReady) return;
+      await preferences.reload();
+      await notificationSettings.load(preferences);
+      if (appVisible) return;
+      if (event.isEew) {
+        await notifications.showEewNotification(event,
+          localIntensity: backgroundLocalIntensityForEvent(event));
+      } else {
+        await notifications.showReportNotification(event);
+      }
+    } catch (error) {
+      debugPrint('[BackgroundEvent] notification failed: $error');
+    }
+  }
+
+  Future<void> sendUnifiedEvent(UnifiedQuakeData event, bool isUpdate) async {
+    bufferedEvents.add(event);
     service.invoke('foregroundUnifiedEvent', event.toMap());
+    if (event.isHistory || event.isSnapshot) return;
+    if (!event.isEew) {
+      if (!isUpdate) unawaited(notifyAcceptedEvent(event));
+      return;
+    }
+
+    final key = '${event.source}|${event.eventId}';
+    final warnUpgrade = event.isWarn && eewWarnStates[key] != true;
+    eewWarnStates[key] = event.isWarn;
+    if (eewWarnStates.length > 100) {
+      eewWarnStates.remove(eewWarnStates.keys.first);
+    }
+    pendingEewNotifications.remove(key)?.cancel();
+    if (!isUpdate || event.isFinal || event.isCanceled || warnUpgrade) {
+      unawaited(notifyAcceptedEvent(event));
+    } else {
+      pendingEewNotifications[key] = Timer(
+        const Duration(milliseconds: 300),
+        () {
+          pendingEewNotifications.remove(key);
+          unawaited(notifyAcceptedEvent(event));
+        },
+      );
+    }
   }
 
   Future<void> sendQuakeEvent(QuakeMessage event) async {
@@ -702,14 +845,27 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
   }
 
   Future<void> sendSourceList(String source, List<QuakeMessage> events) async {
-    service.invoke('foregroundSourceList', {
+    final payload = <String, dynamic>{
       'source': source,
       'items': events.map((event) => event.toMap()).toList(),
-    });
+    };
+    latestSourceLists[source] = payload;
+    service.invoke('foregroundSourceList', payload);
   }
 
   Future<void> sendCencIrData(CencIrData data) async {
-    service.invoke('foregroundCencIrData', data.toMap());
+    final payload = data.toMap();
+    latestCencIrData = payload;
+    service.invoke('foregroundCencIrData', payload);
+  }
+
+  Future<void> sendCencIrList(
+    String source,
+    List<Map<String, dynamic>> items,
+  ) async {
+    final payload = <String, dynamic>{'source': source, 'items': items};
+    latestCencIrLists[source] = payload;
+    service.invoke('foregroundCencIrList', payload);
   }
 
   Future<void> sendWeatherAlarm(WeatherAlarm alarm) async {
@@ -721,12 +877,14 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
   }
 
   Future<void> sendSourceStatus(SourceStatusUpdate update) async {
-    service.invoke('foregroundSourceStatus', {
+    final payload = <String, dynamic>{
       'sourceName': update.sourceName,
       'status': update.status.name,
       'authenticationStatus': update.authenticationStatus,
       'credentialInfo': update.credentialInfo?.toMap(),
-    });
+    };
+    latestSourceStatuses[update.sourceName] = payload;
+    service.invoke('foregroundSourceStatus', payload);
   }
 
   Future<void> sendStationData(Map<String, dynamic> payload) async {
@@ -744,19 +902,38 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
     service.invoke('foregroundAuxData', payload);
   }
 
+  Timer? sourceRetryTimer;
+  var stopping = false;
   Future<void> startSources() async {
-    await startBackgroundSources(
-      onUnifiedEvent: sendUnifiedEvent,
-      onQuakeEvent: sendQuakeEvent,
-      onSourceList: sendSourceList,
-      onCencIrData: sendCencIrData,
-      onWeatherAlarm: sendWeatherAlarm,
-      onTsunamiEvent: sendTsunamiEvent,
-      onSourceStatus: sendSourceStatus,
-      onStationData: sendStationData,
-      onCmtList: sendCmtList,
-      onAuxData: sendAuxData,
-    );
+    if (stopping) return;
+    sourceRetryTimer?.cancel();
+    sourceRetryTimer = null;
+    latestSourceStatuses.clear();
+    latestSourceLists.clear();
+    latestCencIrLists.clear();
+    latestCencIrData = null;
+    try {
+      await startBackgroundSources(
+        onUnifiedEvent: sendUnifiedEvent,
+        onQuakeEvent: sendQuakeEvent,
+        onSourceList: sendSourceList,
+        onCencIrData: sendCencIrData,
+        onCencIrList: sendCencIrList,
+        onWeatherAlarm: sendWeatherAlarm,
+        onTsunamiEvent: sendTsunamiEvent,
+        onSourceStatus: sendSourceStatus,
+        onStationData: sendStationData,
+        onCmtList: sendCmtList,
+        onAuxData: sendAuxData,
+      );
+    } catch (error, stack) {
+      debugPrint('[BackgroundSources] startup failed: $error\n$stack');
+      if (!stopping) {
+        sourceRetryTimer = Timer(const Duration(seconds: 30), () {
+          unawaited(startSources());
+        });
+      }
+    }
   }
 
   Future<void>? reloadFuture;
@@ -805,7 +982,41 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
     reloadBackgroundJianCredentials();
   });
 
-  await startSources();
+  service.on('appVisibility').listen((event) {
+    appVisible = event?['visible'] == true;
+  });
+  service.on('requestBufferedEvents').listen((_) {
+    service.invoke('foregroundBridgeReady', {
+      'notificationsReady': notificationsReady,
+      'fromRequest': true,
+    });
+    for (final event in bufferedEvents.snapshot()) {
+      service.invoke('foregroundBufferedEvent', event.toMap());
+    }
+  });
+  service.on('requestInitialSourceState').listen((_) {
+    for (final payload in latestSourceStatuses.values) {
+      service.invoke('foregroundSourceStatus', payload);
+    }
+    for (final payload in latestSourceLists.values) {
+      service.invoke('foregroundSourceList', payload);
+    }
+    for (final payload in latestCencIrLists.values) {
+      service.invoke('foregroundCencIrList', payload);
+    }
+    if (latestCencIrData != null) {
+      service.invoke('foregroundCencIrData', latestCencIrData);
+    }
+  });
+  service.on('requestSourceStatuses').listen((_) {
+    for (final payload in latestSourceStatuses.values) {
+      service.invoke('foregroundSourceStatus', payload);
+    }
+  });
+  service.invoke('foregroundBridgeReady', {
+    'notificationsReady': notificationsReady,
+    'fromRequest': false,
+  });
 
   service.on('reloadSources').listen((event) {
     unawaited(reloadSources(force: event?['force'] == true));
@@ -822,10 +1033,36 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
   // 接收主 isolate 的停止指令
   service.on('stopService').listen((event) {
     unawaited(() async {
+      stopping = true;
+      sourceRetryTimer?.cancel();
+      for (final timer in pendingEewNotifications.values) {
+        timer.cancel();
+      }
+      await bufferedEvents.flush();
       await stopBackgroundSources();
       service.stopSelf();
     }());
   });
+
+  await startSources();
+}
+
+double backgroundLocalIntensityForEvent(UnifiedQuakeData event) {
+  final position = LocationService().currentPosition;
+  final lat = event.lat;
+  final lng = event.lng;
+  if (position != null && lat != null && lng != null) {
+    try {
+      final distance = QuakeCalculator.haversineDistance(
+        position.latitude, position.longitude, lat, lng);
+      return IntensityCalculator.calculate(
+        mag: event.magnitude, distance: distance);
+    } catch (error) {
+      debugPrint('[BackgroundEvent] local intensity failed: $error');
+    }
+  }
+  final maxIntensity = double.tryParse(event.maxIntensity);
+  return maxIntensity != null && maxIntensity > 0 ? maxIntensity : 0.0;
 }
 
 /// iOS 后台任务入口（flutter_background_service 要求提供，但 iOS 仍走现有 AppLifecycle 逻辑）。

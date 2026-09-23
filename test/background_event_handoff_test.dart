@@ -51,6 +51,22 @@ void main() {
       );
     },
   );
+
+  test('restored information updates UI without replaying notifications',
+      () async {
+    final provider = QuakeProvider();
+    addTearDown(provider.dispose);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    final report = _informationEvent();
+    var notificationCount = 0;
+    provider.onUnifiedEventNotified = (_, _) => notificationCount++;
+
+    provider.handleUnifiedEventForTest(report,
+        alreadyAccepted: true, suppressEffects: true);
+
+    expect(provider.unifiedEvents.single.eventId, report.eventId);
+    expect(notificationCount, 0);
+  });
 }
 
 UnifiedQuakeData _informationEvent() {

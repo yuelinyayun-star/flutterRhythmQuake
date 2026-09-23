@@ -1402,9 +1402,11 @@ class QuakeProvider with ChangeNotifier {
             _sourceStatuses[update.sourceName] != update.status || authChanged;
         if (!changed) return;
         _sourceStatuses[update.sourceName] = update.status;
+        if (update.sourceName == 'NowQuake') _rebuildCencIrList();
         _notifySourceStatusSlice();
       }),
     );
+    BackgroundService().requestSourceStatuses();
 
     final fanService = SourceManager().getSource<FanService>();
     if (fanService != null) {
@@ -1650,6 +1652,13 @@ class QuakeProvider with ChangeNotifier {
 
     final foregroundEvents = BackgroundService().onForegroundUnifiedEvent
         .listen((event) => _handleUnifiedEvent(event, alreadyAccepted: true));
+    _unifiedSubscriptions.add(
+      BackgroundService().onForegroundBufferedEvent.listen((event) {
+        _handleUnifiedEvent(event,
+            alreadyAccepted: true, suppressEffects: true);
+      }),
+    );
+    BackgroundService().requestBufferedEvents();
     final foregroundTsunami = BackgroundService().onForegroundTsunamiEvent
         .listen(_handleTsunamiEvent);
     _unifiedSubscriptions.add(foregroundEvents);
@@ -1671,6 +1680,25 @@ class QuakeProvider with ChangeNotifier {
       }),
     );
     _unifiedSubscriptions.add(
+      BackgroundService().onForegroundCencIrList.listen((payload) {
+        final source = payload['source'];
+        final rawItems = payload['items'];
+        if (rawItems is! List) return;
+        final items = <Map<String, dynamic>>[];
+        for (final raw in rawItems) {
+          if (raw is Map) items.add(Map<String, dynamic>.from(raw));
+        }
+        if (source == 'fan') {
+          _fanCencIrList = _tagCencIrList(items, 'fan');
+        } else if (source == 'nowquake') {
+          _nowQuakeCencIrList = _tagCencIrList(items, 'nowquake');
+        } else {
+          return;
+        }
+        _rebuildCencIrList();
+      }),
+    );
+    _unifiedSubscriptions.add(
       BackgroundService().onForegroundWeatherAlarm.listen(
         _acceptRemoteWeatherAlarm,
       ),
@@ -1678,6 +1706,8 @@ class QuakeProvider with ChangeNotifier {
     _unifiedSubscriptions.add(
       BackgroundService().onForegroundCmtList.listen(_handleForegroundCmtList),
     );
+
+    BackgroundService().requestInitialSourceState();
 
     if (BackgroundService().isAndroidConnectionHostedByForegroundService) {
       return;
@@ -3324,6 +3354,7 @@ class QuakeProvider with ChangeNotifier {
   void _handleUnifiedEvent(
     UnifiedQuakeData event, {
     bool alreadyAccepted = false,
+    bool suppressEffects = false,
   }) {
     // Apply to direct API input and Android's already-accepted handoff alike.
     if (event.isVolcanoEvent && !_jmaVolcanoPushEnabled) return;
@@ -3335,6 +3366,17 @@ class QuakeProvider with ChangeNotifier {
       if (elapsedSec >= timeoutSec) {
         return;
       }
+    }
+
+    if (suppressEffects && !event.isEew &&
+        ((event.arrivedAt != null &&
+                DateTime.now().difference(event.arrivedAt!) >=
+                    Duration(seconds: _getUnifiedDismissSeconds(event))) ||
+            (_usesReportTimeDisplayWindow(event) &&
+                _remainingUnifiedDisplaySeconds(event) <= 0))) {
+      _syncUnifiedToListBucket(event);
+      notifyListeners();
+      return;
     }
 
     if (!event.isEew && !alreadyAccepted) {
@@ -3588,23 +3630,25 @@ class QuakeProvider with ChangeNotifier {
       _domesticEewEffects.observe(acceptedEvent);
       _unifiedMapRevision++;
       _rememberBackgroundAcceptedUnifiedEvent(acceptedEvent);
-      if (isNewInfoEvent) {
-        ObsAutomationInputService().emitUnifiedEvent(
-          oldEvent,
-          ObsUnifiedEventPhase.removed,
-        );
-        ObsAutomationInputService().emitUnifiedEvent(
-          acceptedEvent,
-          ObsUnifiedEventPhase.added,
-        );
-      } else {
-        final automationPhase = acceptedEvent.isCanceled && !oldEvent.isCanceled
-            ? ObsUnifiedEventPhase.canceled
-            : ObsUnifiedEventPhase.updated;
-        ObsAutomationInputService().emitUnifiedEvent(
-          acceptedEvent,
-          automationPhase,
-        );
+      if (!suppressEffects) {
+        if (isNewInfoEvent) {
+          ObsAutomationInputService().emitUnifiedEvent(
+            oldEvent,
+            ObsUnifiedEventPhase.removed,
+          );
+          ObsAutomationInputService().emitUnifiedEvent(
+            acceptedEvent,
+            ObsUnifiedEventPhase.added,
+          );
+        } else {
+          final automationPhase = acceptedEvent.isCanceled && !oldEvent.isCanceled
+              ? ObsUnifiedEventPhase.canceled
+              : ObsUnifiedEventPhase.updated;
+          ObsAutomationInputService().emitUnifiedEvent(
+            acceptedEvent,
+            automationPhase,
+          );
+        }
       }
       _sortUnifiedEvents();
       _startUnifiedCarousel();
@@ -3629,7 +3673,9 @@ class QuakeProvider with ChangeNotifier {
             nextEvent.isFinal ||
             nextEvent.isCanceled ||
             (!oldEvent.isWarn && nextEvent.isWarn);
-        if (requiresImmediatePublish) {
+        if (suppressEffects) {
+          _cancelPendingUnifiedUpdateEffects(eventKey);
+        } else if (requiresImmediatePublish) {
           _cancelPendingUnifiedUpdateEffects(eventKey);
           _dispatchUnifiedEventEffects(nextEvent, isUpdate: true);
         } else {
@@ -3638,7 +3684,7 @@ class QuakeProvider with ChangeNotifier {
         _ensureUnifiedCountdownVoiceTimer();
         _publishUnifiedUi(immediate: requiresImmediatePublish);
       } else {
-        if (!suppressInfoActions) {
+        if (!suppressInfoActions && !suppressEffects) {
           _announceUnifiedEvent(nextEvent, isFirst: false);
           onUnifiedEventNotified?.call(nextEvent, true);
           _triggerBackgroundNotification(nextEvent, true);
@@ -3656,12 +3702,14 @@ class QuakeProvider with ChangeNotifier {
     if (_mobileEewCarousel && acceptedEvent.isEew) _mobileCameraInfoKey = null;
     _unifiedMapRevision++;
     _rememberBackgroundAcceptedUnifiedEvent(acceptedEvent);
-    ObsAutomationInputService().emitUnifiedEvent(
-      acceptedEvent,
-      acceptedEvent.isCanceled
-          ? ObsUnifiedEventPhase.canceled
-          : ObsUnifiedEventPhase.added,
-    );
+    if (!suppressEffects) {
+      ObsAutomationInputService().emitUnifiedEvent(
+        acceptedEvent,
+        acceptedEvent.isCanceled
+            ? ObsUnifiedEventPhase.canceled
+            : ObsUnifiedEventPhase.added,
+      );
+    }
     if (event.isEew) {
       _ignoredEewIds[eventKey] = _extractReportNum(event.reportNumText);
     }
@@ -3671,7 +3719,9 @@ class QuakeProvider with ChangeNotifier {
     _setupUnifiedDismissTimer(event);
     _syncUnifiedToListBucket(event);
     _rememberNoUpdateInfoEvent(event);
-    _dispatchUnifiedEventEffects(event, isUpdate: false);
+    if (!suppressEffects) {
+      _dispatchUnifiedEventEffects(event, isUpdate: false);
+    }
     if (event.isEew) {
       _ensureUnifiedCountdownVoiceTimer();
       _publishUnifiedUi(immediate: true);
@@ -3753,10 +3803,11 @@ class QuakeProvider with ChangeNotifier {
   ///
   /// 通知数据直接使用经过 [QuakeProvider] 统一处理后的 [UnifiedQuakeData]，
   /// 本地烈度也基于该事件实时计算，不依赖前台 UI 状态。
-  /// Android 前台服务只负责保活，主 isolate 继续负责统一事件通知。
+  /// Android 前台服务可直接通知；仅服务通知未就绪时由主 isolate 兜底。
   void _triggerBackgroundNotification(UnifiedQuakeData event, bool isUpdate) {
     if (!BackgroundService().isBackgroundHandlingEnabled) return;
     if (!BackgroundService().isInBackground) return;
+    if (BackgroundService().foregroundNotificationsReady) return;
     if (event.isEew) {
       BackgroundService().showEewNotification(
         event,
@@ -3772,38 +3823,17 @@ class QuakeProvider with ChangeNotifier {
   /// 优先根据用户位置与震源距离计算；当缺少用户位置或事件经纬度时，
   /// 再 fallback 到事件自身 maxIntensity。
   double _computeLocalIntensityForEvent(UnifiedQuakeData event) {
-    final userPos = LocationService().currentPosition;
-    final lat = event.lat;
-    final lng = event.lng;
-    if (userPos != null && lat != null && lng != null) {
-      try {
-        final distance = QuakeCalculator.haversineDistance(
-          userPos.latitude,
-          userPos.longitude,
-          lat,
-          lng,
-        );
-        return IntensityCalculator.calculate(
-          mag: event.magnitude,
-          distance: distance,
-        );
-      } catch (e) {
-        debugPrint('Local intensity calculation error: $e');
-      }
-    }
-    final maxIntensity = double.tryParse(event.maxIntensity);
-    if (maxIntensity != null && maxIntensity > 0) {
-      return maxIntensity;
-    }
-    return 0.0;
+    return backgroundLocalIntensityForEvent(event);
   }
 
   @visibleForTesting
   void handleUnifiedEventForTest(
     UnifiedQuakeData event, {
     bool alreadyAccepted = false,
+    bool suppressEffects = false,
   }) {
-    _handleUnifiedEvent(event, alreadyAccepted: alreadyAccepted);
+    _handleUnifiedEvent(event,
+        alreadyAccepted: alreadyAccepted, suppressEffects: suppressEffects);
   }
 
   @visibleForTesting
@@ -5448,7 +5478,14 @@ class QuakeProvider with ChangeNotifier {
   }
 
   bool get _shouldUseNowQuakeList {
-    return _shouldUseNowQuakeRealtime && _nowQuakeCencIrList.isNotEmpty;
+    if (!SourceManager().isSourceEnabled('NowQuake') ||
+        _nowQuakeCencIrList.isEmpty) {
+      return false;
+    }
+    final status = _sourceStatuses['NowQuake'];
+    return (status != SourceStatus.error &&
+            status != SourceStatus.disconnected) ||
+        _fanCencIrList.isEmpty;
   }
 
   void _syncFanCencIrFallbackRequests() {
