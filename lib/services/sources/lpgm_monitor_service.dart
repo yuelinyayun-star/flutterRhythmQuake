@@ -92,7 +92,9 @@ class LpgmMonitorService {
   Map<String, double> _previousSvaByCode = {};
   Map<String, double> _currentSvaByCode = {};
   final Set<String> _confirmedSupportingRiseCodes = {};
-  final HttpClient _client = HttpClient()
+  // Construct the dart:io client only when native monitoring actually starts.
+  // Flutter Web can instantiate the map without opening this native service.
+  late final HttpClient _client = HttpClient()
     ..badCertificateCallback = ((X509Certificate cert, String host, int port) =>
         true)
     ..connectionTimeout = const Duration(seconds: 8)
@@ -159,6 +161,7 @@ class LpgmMonitorService {
   LpgmInputFrame? get latestInputFrame => _latestInputFrame;
 
   Future<void> start({Duration interval = const Duration(seconds: 1)}) async {
+    if (kIsWeb) return;
     if (_running && _interval == interval) return;
     if (_running) {
       stop();
