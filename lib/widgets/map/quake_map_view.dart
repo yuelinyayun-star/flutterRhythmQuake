@@ -1829,11 +1829,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       unawaited(BackgroundService().requestSourceReload());
       return;
     }
-    // The CWA/TREM client uses dart:io HttpClient and cannot run in browsers.
-    if (kIsWeb) {
-      provider.updateSourceStatus('TREM', SourceStatus.disconnected);
-      return;
-    }
     if (!_cwaService.isRunning) {
       _cwaService.start();
     }
