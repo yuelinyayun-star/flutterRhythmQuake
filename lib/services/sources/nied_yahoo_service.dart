@@ -123,7 +123,7 @@ class NiedYahooService {
       final url =
           '$_stationListUrl?time=${DateTime.now().millisecondsSinceEpoch}';
       final response = await http
-          .get(Uri.parse(url), headers: _noCacheHeaders)
+          .get(Uri.parse(url), headers: kIsWeb ? null : _noCacheHeaders)
           .timeout(const Duration(seconds: 10));
       if (!_isCurrentRun(generation)) return;
       if (response.statusCode == 200) {
@@ -309,7 +309,7 @@ class NiedYahooService {
 
       try {
         final response = await http
-            .get(Uri.parse(url), headers: _noCacheHeaders)
+            .get(Uri.parse(url), headers: kIsWeb ? null : _noCacheHeaders)
             .timeout(const Duration(seconds: 5));
         if (!_isCurrentRun(generation)) return;
 
@@ -415,7 +415,7 @@ class NiedYahooService {
 
     try {
       final response = await http
-          .get(Uri.parse(url), headers: _noCacheHeaders)
+          .get(Uri.parse(url), headers: kIsWeb ? null : _noCacheHeaders)
           .timeout(const Duration(seconds: 5));
       if (!_isCurrentRun(generation)) return;
 
