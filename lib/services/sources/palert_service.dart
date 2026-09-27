@@ -169,9 +169,9 @@ class PAlertService {
     };
   }
 
-  static final Uri _graphqlUri = Uri.parse(
-    'https://palert.earth.sinica.edu.tw/graphql/',
-  );
+  static Uri get _graphqlUri => kIsWeb
+      ? Uri.base.resolve('/api/palert/graphql/')
+      : Uri.parse('https://palert.earth.sinica.edu.tw/graphql/');
   static const String _stationFilter = 'onlineDot15';
   static const Duration intensityHoldDuration = Duration(seconds: 3);
   static const Duration realtimePollInterval = Duration(seconds: 1);
@@ -500,9 +500,11 @@ query (\$recordTime: Float!, \$token: String!) {
           headers: const {
             'Accept': 'application/json, text/plain, */*',
             'Content-Type': 'application/json;charset=UTF-8',
-            'Origin': 'https://palert.earth.sinica.edu.tw',
-            'Referer': 'https://palert.earth.sinica.edu.tw/realtime',
-            'User-Agent': 'FlutterRhythmQuake/1.0',
+            if (!kIsWeb) ...{
+              'Origin': 'https://palert.earth.sinica.edu.tw',
+              'Referer': 'https://palert.earth.sinica.edu.tw/realtime',
+              'User-Agent': 'FlutterRhythmQuake/1.0',
+            },
           },
           body: jsonEncode({'query': query, 'variables': variables}),
         )
