@@ -456,6 +456,10 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   bool get _usesWhewsSnet => _whewsSnetEnabled && _snetSource == 'whews';
   bool get _usesWhewsKma => _whewsKmaEnabled && _kmaSource == 'whews';
   bool get _usesArrayNied => _usesWhewsNied || _niedSource == 'jian';
+  bool get _usesYahooData =>
+      _useYahooSource ||
+      (kIsWeb && (_niedSource == 'lmoni' || _niedSource == 'kmoni'));
+
   bool get _usesArraySnet => _usesWhewsSnet || _snetSource == 'jian';
   bool get _usesArrayKma => _usesWhewsKma || _kmaSource == 'jian';
 
@@ -1705,7 +1709,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _jianNiedService.stop();
     _whewsNiedStations = [];
     _lastWhewsNiedDataTime = null;
-    if (_useYahooSource || kIsWeb) {
+    if (_usesYahooData) {
       NiedMonitorService().setPhysicalLayersEnabled(false);
       _lmoniService.stop();
       NiedMonitorService().stop();
@@ -5097,11 +5101,11 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     }
 
     _lmoniService.onStatusChanged = (connected) {
-      if (_usesArrayNied || _useYahooSource) return;
+      if (_usesArrayNied || _usesYahooData) return;
       updateNiedStatus(connected);
     };
     _yahooService.onStatusChanged = (connected) {
-      if (_usesArrayNied || !_useYahooSource) return;
+      if (_usesArrayNied || !_usesYahooData) return;
       updateNiedStatus(connected);
     };
     _kmaService.onStatusChanged = (connected) {
@@ -5379,12 +5383,12 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     );
 
     _lmoniStationSub = _lmoniService.stationStream.listen((stations) {
-      if (!mounted || _useYahooSource || _usesArrayNied) return;
+      if (!mounted || _usesYahooData || _usesArrayNied) return;
       _acceptNiedStations(stations);
     });
 
     _yahooStationSub = _yahooService.stationStream.listen((stations) {
-      if (!mounted || !_useYahooSource || _usesArrayNied) return;
+      if (!mounted || !_usesYahooData || _usesArrayNied) return;
       _acceptNiedStations(stations);
     });
 
