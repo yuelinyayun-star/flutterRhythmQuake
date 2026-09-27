@@ -26,6 +26,19 @@ jobs:
         run: |
           flutter pub get
           flutter build web --profile
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          version = os.environ['GITHUB_SHA'][:12]
+          index = Path('build/web/index.html')
+          index.write_text(index.read_text().replace('src="flutter_bootstrap.js"', f'src="flutter_bootstrap.js?v={version}"'))
+          bootstrap = Path('build/web/flutter_bootstrap.js')
+          source = bootstrap.read_text()
+          target = '"mainJsPath":"main.dart.js"'
+          if target not in source:
+              raise SystemExit('Flutter bootstrap main script path not found')
+          bootstrap.write_text(source.replace(target, f'"mainJsPath":"main.dart.js?v={version}"'))
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: rhythmquake-deploy
