@@ -98,9 +98,10 @@ void _startDeferredServices(
   WidgetsBinding.instance.addPostFrameCallback((_) {
     unawaited(SoundEffectService().warmUp());
     unawaited(() async {
-      // A saved/manual location is restored before this callback. Only new
-      // mobile installs need an automatic request after the first UI frame.
-      if (_isMobilePlatform && LocationService().currentPosition == null) {
+      // A saved/manual location is restored before this callback. On a new
+      // install, ask the device or browser for a position after the first frame.
+      if ((_isMobilePlatform || kIsWeb) &&
+          LocationService().currentPosition == null) {
         unawaited(LocationService().requestCurrentPosition());
       }
 
