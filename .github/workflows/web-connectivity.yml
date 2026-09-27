@@ -43,3 +43,13 @@ jobs:
           grep -iE '^(HTTP/|access-control-|content-type:)' /tmp/source-headers || true
           head -c 200 /tmp/palert-body || true
           echo "::endgroup::"
+          echo "::group::TREM station"
+          curl -sS --max-time 12 -D /tmp/source-headers -o /tmp/trem-station -w 'HTTP %{http_code}\n' -H 'Origin: https://eew.yuelinrhythm.top' 'https://api-1.exptech.dev/api/v1/trem/station' || true
+          grep -iE '^(HTTP/|access-control-|content-type:)' /tmp/source-headers || true
+          head -c 120 /tmp/trem-station || true
+          echo "::endgroup::"
+          echo "::group::TREM RTS"
+          curl -sS --max-time 12 -D /tmp/source-headers -o /tmp/trem-rts -w 'HTTP %{http_code}\n' -H 'Accept: application/json' -H 'Origin: https://eew.yuelinrhythm.top' 'https://api.lb-tpe1.exptech.dev/api/v2/trem/rts' || true
+          grep -iE '^(HTTP/|access-control-|content-type:)' /tmp/source-headers || true
+          head -c 120 /tmp/trem-rts || true
+          echo "::endgroup::"
