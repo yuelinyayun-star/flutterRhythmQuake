@@ -17,7 +17,9 @@ class SnetService {
 
   final http.Client _client;
 
-  static const String _baseUrl = 'https://www.msil.go.jp/data/tiles/smoni';
+  static String get _baseUrl => kIsWeb
+      ? '${Uri.base.origin}/api/snet'
+      : 'https://www.msil.go.jp/data/tiles/smoni';
   static const int _z = 5;
   static const int _xMin = 28, _xMax = 28;
   static const int _yMin = 11, _yMax = 12;
@@ -315,7 +317,7 @@ class SnetService {
   Future<Map<String, String>?> _fetchTargetTimes() async {
     try {
       final response = await _client
-          .get(Uri.parse('$_baseUrl/targetTimes.json'), headers: _headers)
+          .get(Uri.parse('$_baseUrl/targetTimes.json'), headers: kIsWeb ? null : _headers)
           .timeout(const Duration(seconds: 20));
       if (response.statusCode != 200) return null;
       final List<dynamic> times = jsonDecode(response.body);
@@ -381,7 +383,7 @@ class SnetService {
     try {
       final url = '$_baseUrl/tileimage/$basetime/$validtime/$z/$x/$y.png';
       final response = await _client
-          .get(Uri.parse(url), headers: _headers)
+          .get(Uri.parse(url), headers: kIsWeb ? null : _headers)
           .timeout(const Duration(seconds: 15));
       if (response.statusCode != 200 || response.bodyBytes.isEmpty) {
         debugPrint(
