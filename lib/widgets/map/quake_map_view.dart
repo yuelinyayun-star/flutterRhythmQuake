@@ -1705,7 +1705,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _jianNiedService.stop();
     _whewsNiedStations = [];
     _lastWhewsNiedDataTime = null;
-    if (_useYahooSource) {
+    if (_useYahooSource || kIsWeb) {
       NiedMonitorService().setPhysicalLayersEnabled(false);
       _lmoniService.stop();
       NiedMonitorService().stop();
@@ -1731,6 +1731,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   }
 
   void _syncLpgmMonitorService() {
+    if (kIsWeb) return;
     if (BackgroundService().isAndroidConnectionHostedByForegroundService) {
       _lpgmService.stop();
       _lpgmSnapshotSubscription?.cancel();
@@ -1822,6 +1823,11 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     if (BackgroundService().isAndroidConnectionHostedByForegroundService) {
       _cwaService.stop();
       unawaited(BackgroundService().requestSourceReload());
+      return;
+    }
+    // The CWA/TREM client uses dart:io HttpClient and cannot run in browsers.
+    if (kIsWeb) {
+      provider.updateSourceStatus('TREM', SourceStatus.disconnected);
       return;
     }
     if (!_cwaService.isRunning) {
