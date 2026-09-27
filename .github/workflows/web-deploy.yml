@@ -96,6 +96,21 @@ jobs:
               }
           }
           CONF
+          mkdir -p /var/www/letsencrypt
+          cat > /etc/nginx/conf.d/rhythmquake-eew.conf <<'CONF'
+          server {
+              listen 80;
+              server_name eew.yuelinrhythm.top;
+              root /var/www/rhythmquake/current;
+              index index.html;
+              location /.well-known/acme-challenge/ {
+                  root /var/www/letsencrypt;
+              }
+              location / {
+                  try_files $uri $uri/ /index.html;
+              }
+          }
+          CONF
           ln -sfn "releases/$deploy_id" /var/www/rhythmquake/next
           mv -Tf /var/www/rhythmquake/next /var/www/rhythmquake/current
           nginx -t
@@ -105,5 +120,7 @@ jobs:
             ufw allow 18080/tcp
           fi
           curl --fail --silent --show-error http://127.0.0.1:18080/ -o /dev/null
+          curl --fail --silent --show-error -H 'Host: eew.yuelinrhythm.top' http://127.0.0.1/ -o /dev/null
           REMOTE
           curl --fail --silent --show-error --connect-timeout 10 --max-time 30 http://64.90.20.78:18080/ -o /dev/null
+          curl --fail --silent --show-error --connect-timeout 10 --max-time 30 -H 'Host: eew.yuelinrhythm.top' http://64.90.20.78/ -o /dev/null
