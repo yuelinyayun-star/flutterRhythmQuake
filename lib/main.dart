@@ -110,17 +110,17 @@ void _startDeferredServices(
         SourceManager().startAll();
       }
 
-      if (AppEdition.hasGlobalQuake &&
+      if (!kIsWeb && AppEdition.hasGlobalQuake &&
           !BackgroundService().isAndroidConnectionHostedByForegroundService &&
           (prefs.getBool(GlobalQuakeService.enabledPreferenceKey) ?? false)) {
         globalQuake.connect();
       }
-      if (AppEdition.hasIcl &&
+      if (!kIsWeb && AppEdition.hasIcl &&
           !BackgroundService().isAndroidConnectionHostedByForegroundService &&
           (prefs.getBool(JianIclService.enabledPreferenceKey) ?? false)) {
         jianIcl.connect();
       }
-      if (AppEdition.hasIcl &&
+      if (!kIsWeb && AppEdition.hasIcl &&
           !BackgroundService().isAndroidConnectionHostedByForegroundService &&
           (prefs.getBool(ChinaEewIclService.enabledPreferenceKey) ?? false)) {
         chinaEewIcl.connect();
@@ -289,7 +289,7 @@ void main() async {
   SourceManager().registerSource(whews);
   SourceManager().registerSource(jian);
   SourceManager().setSourceEnabled(jian.name,
-    prefs.getBool(JianService.enabledPreferenceKey) ?? false);
+    !kIsWeb && (prefs.getBool(JianService.enabledPreferenceKey) ?? false));
   SourceManager().registerSource(fan);
   SourceManager().registerSource(nowQuakeCencIr);
   SourceManager().registerSource(p2p);
