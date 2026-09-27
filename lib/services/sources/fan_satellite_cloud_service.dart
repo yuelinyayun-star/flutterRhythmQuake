@@ -26,12 +26,14 @@ class FanSatelliteCloudService {
   factory FanSatelliteCloudService() => _instance;
   FanSatelliteCloudService._internal();
 
-  static const String _cloudChinaUrl =
-      'https://api.fanstudio.tech/we/img/cloud_china.php';
+  // Keep the legacy type name for the existing foreground/background payload.
+  static const String _zhejiangCloudUrl =
+      'https://typhoon.slt.zj.gov.cn/Api/LeastCloud/?type=30';
 
   static const Map<String, String> _headers = {
     'User-Agent': 'flutterrhythmquake/1.0',
     'Accept': 'application/json',
+    'Referer': 'https://typhoon.slt.zj.gov.cn/',
   };
 
   final StreamController<FanSatelliteCloudFrame?> _frameController =
@@ -104,85 +106,104 @@ class FanSatelliteCloudService {
   Future<bool> _fetchOnce(int session) async {
     try {
       final response = await http
-          .get(Uri.parse(_cloudChinaUrl), headers: _headers)
+          .get(Uri.parse(_zhejiangCloudUrl), headers: _headers)
           .timeout(const Duration(seconds: 20));
       if (!_started || session != _session) return false;
       if (response.statusCode != 200) {
-        debugPrint('[FanSatelliteCloud] HTTP ${response.statusCode}');
+        debugPrint('[ZhejiangSatelliteCloud] HTTP ${response.statusCode}');
         return false;
       }
       final json = jsonDecode(utf8.decode(response.bodyBytes));
       if (json is! Map) {
-        debugPrint('[FanSatelliteCloud] response is not an object');
+        debugPrint('[ZhejiangSatelliteCloud] response is not an object');
         return false;
       }
-      final frame = _parseFrame(Map<String, dynamic>.from(json));
+      final frame = parseZhejiangFrame(Map<String, dynamic>.from(json));
       if (frame == null) return false;
       if (!_started || session != _session) return false;
       _latestFrame = frame;
       _frameController.add(frame);
-      debugPrint('[FanSatelliteCloud] updated: ${frame.time}');
+      debugPrint('[ZhejiangSatelliteCloud] updated: ${frame.time}');
       return true;
     } catch (e) {
-      debugPrint('[FanSatelliteCloud] fetch error: $e');
+      debugPrint('[ZhejiangSatelliteCloud] fetch error: $e');
       return false;
     }
   }
 
-  FanSatelliteCloudFrame? _parseFrame(Map<String, dynamic> raw) {
-    if ('${raw['status'] ?? ''}' != 'success') {
-      debugPrint('[FanSatelliteCloud] status=${raw['status']}');
+  static FanSatelliteCloudFrame? parseZhejiangFrame(Map<String, dynamic> raw) {
+    final diffTime = _parseDouble(raw['diffTime']);
+    if (diffTime == null || diffTime < 0 || diffTime >= 30000) {
+      debugPrint('[ZhejiangSatelliteCloud] stale or missing cloud frame');
       return null;
     }
-    final time = _parseTime(raw['time']);
-    final bounds = raw['bounds'];
-    final image = raw['image'];
-    if (time == null || bounds is! Map || image is! String || image.isEmpty) {
-      debugPrint('[FanSatelliteCloud] missing fields');
+    final time = _parseTime(raw['timeStr']);
+    final south = _parseDouble(raw['minLat']);
+    final north = _parseDouble(raw['maxLat']);
+    final west = _parseDouble(raw['minLng']);
+    final east = _parseDouble(raw['maxLng']);
+    final image = raw['cloudname'];
+    if (time == null ||
+        south == null ||
+        north == null ||
+        west == null ||
+        east == null ||
+        south < -90 ||
+        north > 90 ||
+        south >= north ||
+        west < -180 ||
+        east > 180 ||
+        west >= east ||
+        image is! String ||
+        !image.startsWith('data:image/png;base64,')) {
+      debugPrint('[ZhejiangSatelliteCloud] invalid cloud frame metadata');
       return null;
     }
-    final southWest = _parseLatLng(bounds['sw']);
-    final northEast = _parseLatLng(bounds['ne']);
-    if (southWest == null || northEast == null) {
-      debugPrint('[FanSatelliteCloud] invalid bounds');
-      return null;
-    }
-    final comma = image.indexOf(',');
-    final payload = comma >= 0 ? image.substring(comma + 1) : image;
     try {
-      final bytes = base64Decode(payload);
-      if (bytes.isEmpty) {
-        debugPrint('[FanSatelliteCloud] empty image');
+      final bytes = base64Decode(
+        image.substring('data:image/png;base64,'.length),
+      );
+      if (bytes.length < 24 ||
+          bytes[0] != 0x89 ||
+          bytes[1] != 0x50 ||
+          bytes[2] != 0x4e ||
+          bytes[3] != 0x47) {
+        debugPrint('[ZhejiangSatelliteCloud] invalid PNG image');
         return null;
       }
       return FanSatelliteCloudFrame(
         time: time,
-        southWest: southWest,
-        northEast: northEast,
+        southWest: LatLng(south, west),
+        northEast: LatLng(north, east),
         imageBytes: bytes,
       );
     } catch (e) {
-      debugPrint('[FanSatelliteCloud] image decode error: $e');
+      debugPrint('[ZhejiangSatelliteCloud] image decode error: $e');
       return null;
     }
   }
 
-  DateTime? _parseTime(Object? value) {
+  static DateTime? _parseTime(Object? value) {
     final text = '${value ?? ''}'.trim();
-    if (text.isEmpty) return null;
-    return DateTime.tryParse(text.replaceFirst(' ', 'T'));
+    final match = RegExp(
+      r'^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})\.png$',
+    ).firstMatch(text);
+    if (match == null) return null;
+    final parts = [
+      for (var index = 1; index <= 5; index++) int.parse(match[index]!),
+    ];
+    final time = DateTime(parts[0], parts[1], parts[2], parts[3], parts[4]);
+    if (time.year != parts[0] ||
+        time.month != parts[1] ||
+        time.day != parts[2] ||
+        time.hour != parts[3] ||
+        time.minute != parts[4]) {
+      return null;
+    }
+    return time;
   }
 
-  LatLng? _parseLatLng(Object? value) {
-    if (value is! List || value.length < 2) return null;
-    final lat = _parseDouble(value[0]);
-    final lng = _parseDouble(value[1]);
-    if (lat == null || lng == null) return null;
-    if (!lat.isFinite || !lng.isFinite) return null;
-    return LatLng(lat, lng);
-  }
-
-  double? _parseDouble(Object? value) {
+  static double? _parseDouble(Object? value) {
     if (value is num) return value.toDouble();
     if (value is String) return double.tryParse(value);
     return null;

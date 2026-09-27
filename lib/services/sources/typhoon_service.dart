@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models/typhoon_data.dart';
+import 'jian_get_rate_limit.dart';
 
 class TyphoonService {
   static const String _baseUrl = 'https://typhoon.slt.zj.gov.cn/Api/';
@@ -63,7 +64,7 @@ class TyphoonService {
     _timer?.cancel();
     var complete = false;
     try {
-      final result = await _fetchSnapshot(_lastTyphoons);
+      final result = await _fetchWithFallback(_lastTyphoons);
       if (generation != _generation) return;
       complete = result.complete;
       _revision++;
@@ -80,7 +81,7 @@ class TyphoonService {
   }
 
   Future<List<TyphoonData>> fetchActiveNow() async {
-    final result = await _fetchSnapshot(const []);
+    final result = await _fetchWithFallback(const []);
     if (!result.complete) {
       throw const FormatException('Incomplete typhoon data');
     }
@@ -138,7 +139,150 @@ class TyphoonService {
         if (retained != null && retained.isActive) items.add(retained);
       }
     }
-    return _TyphoonSnapshot(items, rawDetails, complete);
+    return _TyphoonSnapshot(items, rawDetails, complete, activeIds: sortedIds);
+  }
+
+  Future<_TyphoonSnapshot> _fetchWithFallback(
+    List<TyphoonData> previous,
+  ) async {
+    _TyphoonSnapshot? primary;
+    try {
+      primary = await _fetchSnapshot(previous);
+      if (primary.complete) return primary;
+    } catch (_) {
+      // The activity endpoint itself may be unavailable.
+    }
+    try {
+      final fallback = await _fetchJianSnapshot();
+      if (primary == null) {
+        if (fallback.typhoons.isEmpty && previous.isNotEmpty) {
+          return _TyphoonSnapshot(previous, const [], false, fromJian: true);
+        }
+        return fallback;
+      }
+      if (fallback.typhoons.isEmpty) return primary;
+      final activeIds = primary.activeIds.toSet();
+      final backupById = {
+        for (final item in fallback.typhoons)
+          if (activeIds.contains(item.tfid)) item.tfid: item,
+      };
+      if (backupById.isEmpty) return primary;
+      final merged = <TyphoonData>[
+        ...backupById.values,
+        for (final item in primary.typhoons)
+          if (!backupById.containsKey(item.tfid)) item,
+      ]..sort((a, b) => a.tfid.compareTo(b.tfid));
+      final primaryDetailIds = {
+        for (final raw in primary.rawDetails)
+          if (raw is Map && raw['tfid'] is String) raw['tfid'] as String,
+      };
+      final complete = activeIds.every(
+        (id) => backupById.containsKey(id) || primaryDetailIds.contains(id),
+      );
+      return _TyphoonSnapshot(merged, const [], complete, fromJian: true);
+    } catch (_) {
+      if (primary != null) return primary;
+      rethrow;
+    }
+  }
+
+  Future<_TyphoonSnapshot> _fetchJianSnapshot() async {
+    final uri = Uri.https('api.sismotide.top', '/get/typhoon.php');
+    final response = await (_client == null
+        ? JianGetRateLimit.run(() => http.get(uri).timeout(_timeout))
+        : _client.get(uri).timeout(_timeout));
+    if (response.statusCode != 200) {
+      throw http.ClientException(
+        'Jian typhoon HTTP ${response.statusCode}',
+        uri,
+      );
+    }
+    final items = parseJianTyphoons(
+      jsonDecode(utf8.decode(response.bodyBytes)),
+    );
+    return _TyphoonSnapshot(items, const [], true, fromJian: true);
+  }
+
+  static List<TyphoonData> parseJianTyphoons(dynamic raw) {
+    if (raw is! List) {
+      throw const FormatException('Invalid Jian typhoon list');
+    }
+    final ids = <String>{};
+    final items = <TyphoonData>[];
+    for (final entry in raw) {
+      if (entry is! Map) {
+        throw const FormatException('Invalid Jian typhoon entry');
+      }
+      final id = entry['id'];
+      if (id is! String || !RegExp(r'^\d{6}$').hasMatch(id) || !ids.add(id)) {
+        throw const FormatException('Invalid Jian typhoon ID');
+      }
+      final points = <TyphoonPoint>[];
+      final rawPoints = entry['points'];
+      if (rawPoints != null && rawPoints is! List) {
+        throw const FormatException('Invalid Jian typhoon track');
+      }
+      for (final rawPoint in rawPoints ?? const []) {
+        if (rawPoint is! Map) {
+          throw const FormatException('Invalid Jian typhoon track point');
+        }
+        final point = TyphoonPoint.fromJson({
+          ...rawPoint,
+          'lat': rawPoint['lat'] ?? rawPoint['latitude'],
+          'lng': rawPoint['lng'] ?? rawPoint['longitude'],
+          'time': rawPoint['time'] ?? rawPoint['updateTime'],
+        });
+        if (point == null ||
+            !point.hasLocation ||
+            DateTime.tryParse(point.time) == null) {
+          continue;
+        }
+        points.add(point);
+      }
+      final current = TyphoonPoint.fromJson({
+        'time': entry['updateTime'],
+        'lat': entry['latitude'],
+        'lng': entry['longitude'],
+        'strong': entry['type'],
+        'power': entry['power'],
+        'speed': entry['windSpeed'],
+        'pressure': entry['pressure'],
+        'movespeed': entry['moveSpeed'],
+        'movedirection': entry['moveDirection'],
+        'radius7': entry['radius7'],
+        'radius10': entry['radius10'],
+      });
+      if (current != null &&
+          current.hasLocation &&
+          DateTime.tryParse(current.time) != null &&
+          (points.isEmpty ||
+              points.last.time != current.time ||
+              points.last.lat != current.lat ||
+              points.last.lng != current.lng)) {
+        points.add(current);
+      }
+      if (points.isEmpty) {
+        throw const FormatException('Jian typhoon has no located track point');
+      }
+      items.add(
+        TyphoonData(
+          tfid: id,
+          name: entry['name'] is String ? entry['name'] as String : '',
+          enname: entry['name_en'] is String ? entry['name_en'] as String : '',
+          isActive: true,
+          startTime: '',
+          endTime: '',
+          warnLevel: '',
+          centerLng: points.last.lng,
+          centerLat: points.last.lat,
+          land: const [],
+          points: List.unmodifiable(points),
+          ckposition: '',
+          jl: '',
+        ),
+      );
+    }
+    return items;
   }
 
   static TyphoonData _parseDetail(dynamic raw, String id) {
@@ -201,6 +345,7 @@ class TyphoonService {
   }
 
   Future<void> _saveActiveCache(_TyphoonSnapshot result, int generation) async {
+    if (result.fromJian) return;
     try {
       final prefs = await SharedPreferences.getInstance();
       if (generation != _generation) return;
@@ -224,6 +369,14 @@ class _TyphoonSnapshot {
   final List<TyphoonData> typhoons;
   final List<dynamic> rawDetails;
   final bool complete;
+  final bool fromJian;
+  final List<String> activeIds;
 
-  const _TyphoonSnapshot(this.typhoons, this.rawDetails, this.complete);
+  const _TyphoonSnapshot(
+    this.typhoons,
+    this.rawDetails,
+    this.complete, {
+    this.fromJian = false,
+    this.activeIds = const [],
+  });
 }

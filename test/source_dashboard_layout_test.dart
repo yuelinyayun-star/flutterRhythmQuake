@@ -5,9 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutterrhythmquake/core/app_edition.dart';
 import 'package:flutterrhythmquake/models/source_status.dart';
 import 'package:flutterrhythmquake/models/source_credential_info.dart';
 import 'package:flutterrhythmquake/providers/quake_provider.dart';
+import 'package:flutterrhythmquake/services/sources/chinaeew_icl_service.dart';
+import 'package:flutterrhythmquake/services/sources/jian_icl_service.dart';
 import 'package:flutterrhythmquake/services/sources/source_manager.dart';
 import 'package:flutterrhythmquake/widgets/map/source_dashboard.dart';
 import 'package:provider/provider.dart';
@@ -15,9 +18,10 @@ import 'package:provider/provider.dart';
 class _StatusProvider extends ChangeNotifier implements QuakeProvider {
   @override
   final sourceStatusListenable = ValueNotifier<int>(0);
+  final statuses = <String, SourceStatus>{};
 
   @override
-  Map<String, SourceStatus> get sourceStatuses => const {};
+  Map<String, SourceStatus> get sourceStatuses => statuses;
 
   @override
   String? sourceAuthenticationStatus(String source) => null;
@@ -62,6 +66,64 @@ void main() {
     'NowQuake',
     'P2PQ',
   ];
+
+  for (final (size, mobile) in [
+    (const Size(320, 640), true),
+    (const Size(800, 900), false),
+  ]) {
+    testWidgets('ICL API statuses follow source state at $size', (tester) async {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      JianIclService().disconnect();
+      ChinaEewIclService().disconnect();
+      final provider = _StatusProvider();
+      await tester.pumpWidget(
+        ChangeNotifierProvider<QuakeProvider>.value(
+          value: provider,
+          child: MaterialApp(
+            home: Scaffold(
+              body: Stack(children: [SourceDashboard(mobile: mobile)]),
+            ),
+          ),
+        ),
+      );
+      expect(find.text('Jian ICL'), findsNothing);
+      expect(find.text('China EEW ICL'), findsNothing);
+
+      provider.statuses[JianIclService.sourceName] = SourceStatus.connected;
+      provider.statuses[ChinaEewIclService.sourceName] = SourceStatus.connecting;
+      provider.sourceStatusListenable.value++;
+      await tester.pump();
+      if (AppEdition.hasIcl) {
+        expect(find.text('Jian ICL'), findsOneWidget);
+        expect(find.text('China EEW ICL'), findsOneWidget);
+        expect(tester.widget<Text>(find.text('Jian ICL')).style?.color,
+            const Color(0xFF008000));
+        expect(tester.widget<Text>(find.text('China EEW ICL')).style?.color,
+            const Color(0xFFFFFF00));
+        for (final label in ['Jian ICL', 'China EEW ICL']) {
+          final rect = tester.getRect(find.text(label));
+          expect(rect.left, greaterThanOrEqualTo(0));
+          expect(rect.right, lessThanOrEqualTo(size.width));
+        }
+      } else {
+        expect(find.text('Jian ICL'), findsNothing);
+        expect(find.text('China EEW ICL'), findsNothing);
+      }
+
+      provider.statuses[JianIclService.sourceName] = SourceStatus.disconnected;
+      provider.statuses[ChinaEewIclService.sourceName] = SourceStatus.disconnected;
+      provider.sourceStatusListenable.value++;
+      await tester.pump();
+      expect(find.text('Jian ICL'), findsNothing);
+      expect(find.text('China EEW ICL'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      provider.dispose();
+    });
+  }
 
   for (final size in [
     const Size(320, 640),

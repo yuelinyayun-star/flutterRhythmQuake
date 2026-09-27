@@ -10,6 +10,7 @@ import 'package:latlong2/latlong.dart';
 
 import '../../models/nied_scan_positions.dart';
 import '../../models/nied_station_db.dart';
+import 'http_response_bytes.dart';
 
 class LpgmStationReading {
   final String code;
@@ -94,7 +95,8 @@ class LpgmMonitorService {
   final HttpClient _client = HttpClient()
     ..badCertificateCallback = ((X509Certificate cert, String host, int port) =>
         true)
-    ..connectionTimeout = const Duration(seconds: 8);
+    ..connectionTimeout = const Duration(seconds: 8)
+    ..maxConnectionsPerHost = 2;
 
   /// 多项式拟合系数（Approach G: 分段 H→pos + 正向最小距离红色区）
   /// 从 LPGM 色标图片采样后用最小二乘法拟合
@@ -646,18 +648,26 @@ class LpgmMonitorService {
   static String get latestMetadataUrlForTesting => _latestUrl;
 
   Future<String?> _fetchText(String url) async {
+    HttpClientRequest? request;
     try {
-      final req = await _client
-          .getUrl(Uri.parse(url))
-          .timeout(_metadataTimeout);
-      req.headers.set('Referer', 'https://www.lmoni.bosai.go.jp/monitor/');
-      req.headers.set('User-Agent', _ua);
-      req.headers.set('Cache-Control', 'no-cache');
-      req.headers.set('Pragma', 'no-cache');
-      final res = await req.close().timeout(_metadataTimeout);
-      if (res.statusCode != 200) return null;
-      return await utf8.decoder.bind(res).join().timeout(_metadataTimeout);
+      request = await _client.getUrl(Uri.parse(url)).timeout(_metadataTimeout);
+      request.headers.set('Referer', 'https://www.lmoni.bosai.go.jp/monitor/');
+      request.headers.set('User-Agent', _ua);
+      request.headers.set('Cache-Control', 'no-cache');
+      request.headers.set('Pragma', 'no-cache');
+      final res = await request.close().timeout(_metadataTimeout);
+      if (res.statusCode != 200) {
+        await readHttpResponseBytes(
+          res,
+          timeout: _metadataTimeout,
+          discard: true,
+        );
+        return null;
+      }
+      final bytes = await readHttpResponseBytes(res, timeout: _metadataTimeout);
+      return utf8.decode(bytes);
     } catch (_) {
+      request?.abort();
       return null;
     }
   }
@@ -669,17 +679,19 @@ class LpgmMonitorService {
   }
 
   Future<(List<int>, int, int, Uint8List)?> _fetchGifOrPng(String url) async {
+    HttpClientRequest? request;
     try {
-      final req = await _client.getUrl(Uri.parse(url)).timeout(_imageTimeout);
-      req.headers.set('Referer', 'https://www.lmoni.bosai.go.jp/monitor/');
-      req.headers.set('User-Agent', _ua);
-      req.headers.set('Cache-Control', 'no-cache');
-      req.headers.set('Pragma', 'no-cache');
-      final res = await req.close().timeout(_imageTimeout);
-      if (res.statusCode != 200) return null;
-      final bytes = await consolidateHttpClientResponseBytes(
-        res,
-      ).timeout(_imageTimeout);
+      request = await _client.getUrl(Uri.parse(url)).timeout(_imageTimeout);
+      request.headers.set('Referer', 'https://www.lmoni.bosai.go.jp/monitor/');
+      request.headers.set('User-Agent', _ua);
+      request.headers.set('Cache-Control', 'no-cache');
+      request.headers.set('Pragma', 'no-cache');
+      final res = await request.close().timeout(_imageTimeout);
+      if (res.statusCode != 200) {
+        await readHttpResponseBytes(res, timeout: _imageTimeout, discard: true);
+        return null;
+      }
+      final bytes = await readHttpResponseBytes(res, timeout: _imageTimeout);
       final codec = await ui.instantiateImageCodec(bytes);
       final frame = await codec.getNextFrame();
       final img = frame.image;
@@ -707,6 +719,7 @@ class LpgmMonitorService {
       codec.dispose();
       return (out, w, h, bytes);
     } catch (_) {
+      request?.abort();
       return null;
     }
   }

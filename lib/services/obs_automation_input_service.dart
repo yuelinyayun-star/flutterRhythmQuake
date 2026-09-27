@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../core/event_detection/event_detection_models.dart';
+import '../core/app_edition.dart';
 import '../models/unified_quake_data.dart';
 
 enum ObsAutomationInputKind { unifiedEvent, networkDetection, stationChange }
@@ -80,7 +81,7 @@ const obsAutomationInputFields = <ObsAutomationInputFieldDefinition>[
       'kma': 'KMA',
       'trem': 'TREM',
       'snet': 'S-Net',
-      'palert': 'P-Alert',
+      if (AppEdition.hasPAlertStations) 'palert': 'P-Alert',
       'fdsn': 'FDSN/SeedLink',
       'seisjs': 'Wolfx SeisJS',
     },
@@ -104,7 +105,7 @@ const obsAutomationInputFields = <ObsAutomationInputFieldDefinition>[
       'chongqing': '重庆市地震局',
       'kma': 'KMA',
       'shakeAlert': 'ShakeAlert',
-      'globalQuake': 'GlobalQuake',
+      if (AppEdition.hasGlobalQuake) 'globalQuake': 'GlobalQuake',
       'cenc': 'CENC',
       'usgs': 'USGS',
       'fssn': 'FSSN',

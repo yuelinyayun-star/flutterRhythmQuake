@@ -44,6 +44,7 @@ migrate_working_dir/
 /tmp_*
 /build_output.txt
 /nuget.exe
+/.wrangler/
 
 # Local research inputs and generated diagnostics
 /.workbuddy/

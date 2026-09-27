@@ -6,6 +6,7 @@ import 'package:flutterrhythmquake/core/utils/alert_voice_helper.dart';
 import 'package:flutterrhythmquake/core/utils/jma_voice_location.dart';
 import 'package:flutterrhythmquake/models/unified_quake_data.dart';
 import 'package:flutterrhythmquake/services/quake_event_adapter.dart';
+import 'package:flutterrhythmquake/services/sources/p2pquake_service.dart';
 
 String voice(UnifiedQuakeData event) =>
     AlertVoiceHelper.generateUnifiedEventText(event, phase: 'first');
@@ -28,6 +29,36 @@ UnifiedQuakeData observation(List<Map<String, dynamic>> areas) =>
     );
 
 void main() {
+  test('captured Kumamoto P2P frame reaches regional voice text', () async {
+    final raw = File(
+      'test/fixtures/jma_voice/p2p_kumamoto_20260924.json',
+    ).readAsStringSync(encoding: utf8);
+    final service = P2PQuakeService();
+    final received = <UnifiedQuakeData>[];
+    final subscription = service.onUnifiedEvent.listen(received.add);
+    addTearDown(subscription.cancel);
+    addTearDown(service.dispose);
+
+    service.handleMessageForTesting(raw);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(received, hasLength(1));
+    final event = received.single;
+    expect(event.titleText, '各地の震度に関する情報');
+    expect(event.sourcePayload?['id'], '6ab52873e88ee598246bf352');
+    final text = voice(event);
+    expect(text, contains('观测到震度2的地区：'));
+    for (final area in (jsonDecode(event.warnArea) as List).whereType<Map>()) {
+      expect(text, contains(jmaVoiceLocation(area['name'] as String)));
+    }
+    expect(
+      File(
+        'test/fixtures/jma_voice/p2p_kumamoto_20260924.json',
+      ).readAsStringSync(encoding: utf8),
+      raw,
+    );
+  });
+
   test(
     'raw P2P ScalePrompt announces every area, including more than three',
     () {
@@ -308,7 +339,12 @@ void main() {
         contains('深度30公里'),
       );
     }
-    for (final title in ['震源に関する情報', '震度・震源に関する情報', '遠地地震に関する情報', 'その他の情報']) {
+    for (final title in ['震源・震度に関する情報', '震度・震源に関する情報']) {
+      final text = voice(event.copyWith(titleText: title));
+      expect(text, contains('深度很浅'));
+      expect(text, contains('观测到震度4的地区：新雪谷町'));
+    }
+    for (final title in ['震源に関する情報', '遠地地震に関する情報', 'その他の情報']) {
       final text = voice(event.copyWith(titleText: title));
       expect(text, contains('深度很浅'));
       expect(text, isNot(contains('观测到')));
@@ -365,4 +401,30 @@ void main() {
       }
     },
   );
+
+  test('captured WHEWS hypocenter-intensity bulletin speaks its raw areas', () {
+    final frames =
+        jsonDecode(
+              File(
+                'test/fixtures/catalog_20260917/whews_all.json',
+              ).readAsStringSync(encoding: utf8),
+            )
+            as List;
+    final frame = frames.whereType<Map>().firstWhere(
+      (item) => item['source'] == 'jma',
+    );
+    final raw = Map<String, dynamic>.from(frame['Data'] as Map);
+    final before = jsonEncode(raw);
+    final event = QuakeEventAdapter.convertWhews('jma', raw)!;
+    final text = voice(event);
+
+    expect(raw['title'], '震源・震度に関する情報');
+    expect(text, contains('观测到震度1的地区：'));
+    for (final pref in (raw['intensities'] as List).whereType<Map>()) {
+      for (final area in (pref['areas'] as List).whereType<Map>()) {
+        expect(text, contains(jmaVoiceLocation(area['area'] as String)));
+      }
+    }
+    expect(jsonEncode(raw), before);
+  });
 }

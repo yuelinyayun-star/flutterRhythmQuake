@@ -13,7 +13,8 @@ bool hasCatalogCoordinates(double? latitude, double? longitude) =>
 
 /// Preserve upstream Chinese names; map foreign catalog names offline.
 String catalogDisplayLocation(String original, double? lat, double? lng) {
-  if (RegExp(r'[\u4e00-\u9fff]').hasMatch(original)) {
+  if (original.trim() != '未知地区' &&
+      RegExp(r'[\u4e00-\u9fff]').hasMatch(original)) {
     return original;
   }
   if (!hasCatalogCoordinates(lat, lng)) {

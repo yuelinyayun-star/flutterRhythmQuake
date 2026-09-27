@@ -60,10 +60,16 @@ class EewEventGroup {
 
   EewEventGroup addReport(UnifiedQuakeData newReport) {
     final existingIndex = reports.indexWhere(
-      (r) => r.reportNumText == newReport.reportNumText,
+      (r) => r.source == 'iclEew' && newReport.source == 'iclEew'
+          ? _reportSortKey(r) == _reportSortKey(newReport)
+          : r.reportNumText == newReport.reportNumText,
     );
     final updated = List<UnifiedQuakeData>.from(reports);
     if (existingIndex >= 0) {
+      if (newReport.source == 'iclEew' &&
+          updated[existingIndex].source == 'iclEew') {
+        return this;
+      }
       updated[existingIndex] = newReport;
     } else {
       updated.insert(0, newReport);

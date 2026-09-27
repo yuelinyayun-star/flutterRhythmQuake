@@ -7,6 +7,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 
 import 'epicenter_region_service.dart';
+import 'sources/jian_get_rate_limit.dart';
 
 enum LocationServiceStatus {
   idle,
@@ -36,7 +37,7 @@ enum LocationSource {
 ///
 /// 优先使用设备原生定位（geolocator）；
 /// 当设备无 GPS（例如部分平板）或定位服务关闭/权限被拒时，
-/// 回退到 IP 地理定位（fanstudio/wolfx/ip-api）拿一个城市级粗略位置。
+/// 回退到 IP 地理定位（fanstudio/wolfx/Jian/ip-api）拿一个城市级粗略位置。
 /// 主要功能：
 /// - 请求位置权限
 /// - 获取当前位置（原生优先，IP 兜底）
@@ -158,10 +159,11 @@ class LocationService {
 
   /// 通过 IP 地理定位拿一个城市级粗略位置，作为无 GPS 设备的兜底。
   ///
-  /// 三段回退链，按可用性与平台兼容性排序：
+  /// IP 回退链，按可用性与平台兼容性排序：
   /// 1. fanstudio geo_ip.php（https，返回中文省/市/区 + 经纬度，iOS/Web/Android 通吃）
   /// 2. wolfx ip.php 取公网 IP 后，带 ?ip= 显式查 fanstudio（应对 CDN 误判访客 IP）
-  /// 3. ip-api.com（http，Android cleartext 已开，最后兜底）
+  /// 3. Jian GET IP 查询（https，无需令牌）
+  /// 4. ip-api.com（http，Android cleartext 已开，最后兜底）
   ///
   /// 任一步成功即返回；全部失败才置 failed。
   /// IP 坐标精度仅城市级，行政区文本会结合离线反查尽量细化到县/区。
@@ -177,7 +179,11 @@ class LocationService {
       if (pos2 != null) return pos2;
     }
 
-    // 3. ip-api.com 兜底（http，Android cleartext 已开）
+    // 3. Jian GET IP 查询备用，和其他 Jian GET 共用每 IP 限频队列。
+    final jianPosition = await _requestJianGeoIp();
+    if (jianPosition != null) return jianPosition;
+
+    // 4. ip-api.com 兜底（http，Android cleartext 已开）
     final pos3 = await _requestIpApiGeo();
     if (pos3 != null) return pos3;
 
@@ -238,6 +244,28 @@ class LocationService {
       final ipv6 = RegExp(r'^[0-9a-fA-F:]+$');
       if (!ipv4.hasMatch(ip) && !ipv6.hasMatch(ip)) return null;
       return ip;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<Position?> _requestJianGeoIp() async {
+    try {
+      final response = await JianGetRateLimit.run(
+        () => http
+            .get(Uri.https('api.sismotide.top', '/get/ip.php'))
+            .timeout(const Duration(seconds: 5)),
+      );
+      if (response.statusCode != 200) return null;
+      final data = json.decode(utf8.decode(response.bodyBytes));
+      if (data is! Map) return null;
+      final lookup = parseJianGeoIpResponse(Map<String, dynamic>.from(data));
+      if (lookup == null) return null;
+      return _buildIpPosition(
+        lookup.latitude,
+        lookup.longitude,
+        lookup.regionLabel,
+      );
     } catch (_) {
       return null;
     }
@@ -358,8 +386,8 @@ class LocationService {
   }
 }
 
-class FanstudioGeoIpLookup {
-  const FanstudioGeoIpLookup({
+class IpGeoLookup {
+  const IpGeoLookup({
     required this.latitude,
     required this.longitude,
     this.ip,
@@ -384,7 +412,7 @@ class FanstudioGeoIpLookup {
 }
 
 @visibleForTesting
-FanstudioGeoIpLookup? parseFanstudioGeoIpResponse(Map<String, dynamic> data) {
+IpGeoLookup? parseFanstudioGeoIpResponse(Map<String, dynamic> data) {
   if (data['error'] != null) return null;
 
   final lat = _parseGeoDouble(data['latitude']);
@@ -401,7 +429,41 @@ FanstudioGeoIpLookup? parseFanstudioGeoIpResponse(Map<String, dynamic> data) {
     city = null;
   }
 
-  return FanstudioGeoIpLookup(
+  return IpGeoLookup(
+    ip: _cleanGeoField(data['ip']),
+    country: _cleanGeoField(data['country']),
+    province: province,
+    city: city,
+    district: district,
+    isp: _cleanGeoField(data['isp']),
+    latitude: lat,
+    longitude: lon,
+  );
+}
+
+@visibleForTesting
+IpGeoLookup? parseJianGeoIpResponse(Map<String, dynamic> data) {
+  if (data['error'] != null || data['skipped'] == true) return null;
+  final lat = _parseGeoDouble(data['lat']);
+  final lon = _parseGeoDouble(data['lon']);
+  if (lat == null ||
+      lon == null ||
+      !lat.isFinite ||
+      !lon.isFinite ||
+      lat.abs() > 90 ||
+      lon.abs() > 180) {
+    return null;
+  }
+
+  final province = _cleanGeoField(data['province']);
+  var city = _cleanGeoField(data['city']);
+  var district = _cleanGeoField(data['district']);
+  if (district == null && city != null && _looksLikeDistrictName(city)) {
+    district = city;
+    city = null;
+  }
+
+  return IpGeoLookup(
     ip: _cleanGeoField(data['ip']),
     country: _cleanGeoField(data['country']),
     province: province,

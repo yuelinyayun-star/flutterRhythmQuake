@@ -8,6 +8,9 @@
 #ifndef MyAppBuild
   #define MyAppBuild "0"
 #endif
+#ifndef MyAppEdition
+  #error MyAppEdition must be personal or public
+#endif
 #ifndef ChineseMessagesFile
   #error ChineseMessagesFile must point to the verified Simplified Chinese .isl file
 #endif
@@ -39,7 +42,7 @@ OutputDir=build\installer\preview
 OutputBaseFilename=RhythmQuake_UI_Preview
 #else
 OutputDir=build\installer
-OutputBaseFilename=RhythmQuake_Setup_{#MyAppVersion}.{#MyAppBuild}_x64
+OutputBaseFilename=RhythmQuake_Setup_{#MyAppVersion}.{#MyAppBuild}_{#MyAppEdition}_x64
 #endif
 SetupIconFile=windows\runner\resources\app_icon.ico
 Compression=lzma2/max

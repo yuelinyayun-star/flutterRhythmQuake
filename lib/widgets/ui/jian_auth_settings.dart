@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/jian_auth_service.dart';
@@ -90,6 +91,27 @@ class _JianAuthSettingsState extends State<JianAuthSettings> {
     }
   }
 
+  Future<void> _showToken() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final token = await _store.read();
+      if (!mounted) return;
+      if (token.isEmpty) {
+        await _load();
+        return;
+      }
+      await showDialog<void>(
+        context: context,
+        builder: (_) => _JianTokenDialog(token: token),
+      );
+    } catch (_) {
+      if (mounted) setState(() => _error = '无法读取安全存储');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) => SettingsControlRow(
     title: 'Jian 个人鉴权',
@@ -106,6 +128,13 @@ class _JianAuthSettingsState extends State<JianAuthSettings> {
       runSpacing: 8,
       alignment: WrapAlignment.end,
       children: [
+        if (_saved)
+          IconButton(
+            tooltip: '查看长期 Token',
+            onPressed: _busy ? null : _showToken,
+            icon: const Icon(Icons.visibility_outlined),
+            color: Colors.white70,
+          ),
         if (_saved)
           IconButton(
             tooltip: '移除凭证',
@@ -129,6 +158,110 @@ class _JianAuthSettingsState extends State<JianAuthSettings> {
         ),
       ],
     ),
+  );
+}
+
+class _JianTokenDialog extends StatefulWidget {
+  const _JianTokenDialog({required this.token});
+  final String token;
+
+  @override
+  State<_JianTokenDialog> createState() => _JianTokenDialogState();
+}
+
+class _JianTokenDialogState extends State<_JianTokenDialog>
+    with WidgetsBindingObserver {
+  bool _copied = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed && mounted) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  Future<void> _copy() async {
+    try {
+      await Clipboard.setData(ClipboardData(text: widget.token));
+      if (mounted) {
+        setState(() {
+          _copied = true;
+          _error = null;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _error = '复制失败，请手动选择 Token');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => _JianDialogSurface(
+    title: '长期 Token',
+    icon: Icons.key_outlined,
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          '可在其他设备的 Jian 个人鉴权中直接配置。请勿分享给他人。',
+          style: TextStyle(
+            color: SettingsControlStyle.muted,
+            fontSize: 12,
+            height: 1.5,
+          ),
+        ),
+        const SizedBox(height: 12),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            color: SettingsControlStyle.field,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: SettingsControlStyle.divider),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: SelectableText(
+              widget.token,
+              style: const TextStyle(
+                color: Colors.white,
+                fontFamily: 'monospace',
+                fontSize: 12,
+                height: 1.5,
+              ),
+            ),
+          ),
+        ),
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Text(
+              _error!,
+              style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+            ),
+          ),
+      ],
+    ),
+    actions: [
+      SettingsGlassAction(label: '关闭', onPressed: () => Navigator.pop(context)),
+      SettingsGlassAction(
+        label: _copied ? '已复制' : '复制',
+        icon: _copied ? Icons.check : Icons.copy_outlined,
+        emphasized: true,
+        onPressed: _copy,
+      ),
+    ],
   );
 }
 

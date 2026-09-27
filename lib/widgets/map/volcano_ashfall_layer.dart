@@ -14,6 +14,29 @@ class VolcanoAshfallLayer extends StatefulWidget {
 
   const VolcanoAshfallLayer({super.key, required this.events});
 
+  static List<Polygon> polygonsForWindow(VolcanoAshfallWindow window) {
+    final polygons = <Polygon>[];
+    final items = window.items.toList()
+      ..sort((a, b) => _paintOrder(a).compareTo(_paintOrder(b)));
+    for (final item in items) {
+      final style = _styleFor(item);
+      for (final coordinates in item.polygons) {
+        if (coordinates.length < 3) continue;
+        polygons.add(
+          Polygon(
+            points: coordinates
+                .map((point) => LatLng(point.latitude, point.longitude))
+                .toList(growable: false),
+            color: style.fill,
+            borderColor: style.border,
+            borderStrokeWidth: style.borderWidth,
+          ),
+        );
+      }
+    }
+    return polygons;
+  }
+
   @override
   State<VolcanoAshfallLayer> createState() => _VolcanoAshfallLayerState();
 }
@@ -60,43 +83,51 @@ class _VolcanoAshfallLayerState extends State<VolcanoAshfallLayer> {
     for (final event in widget.events) {
       final window = event.volcanoEvent?.mapAshfallWindow(now: _now);
       if (window == null) continue;
-      for (final item in window.items) {
-        final style = _styleFor(item);
-        for (final coordinates in item.polygons) {
-          if (coordinates.length < 3) continue;
-          polygons.add(
-            Polygon(
-              points: coordinates
-                  .map((point) => LatLng(point.latitude, point.longitude))
-                  .toList(growable: false),
-              color: style.fill,
-              borderColor: style.border,
-              borderStrokeWidth: style.borderWidth,
-            ),
-          );
-        }
-      }
+      polygons.addAll(VolcanoAshfallLayer.polygonsForWindow(window));
     }
     if (polygons.isEmpty) return const SizedBox.shrink();
     return RepaintBoundary(child: PolygonLayer(polygons: polygons));
   }
+}
 
-  _AshfallStyle _styleFor(VolcanoAshfallItem item) {
-    final isPyroclast =
-        item.phenomenonCode == '75' || item.phenomenon.contains('噴石');
-    if (isPyroclast) {
+_AshfallStyle _styleFor(VolcanoAshfallItem item) {
+  switch (_paintOrder(item)) {
+    case 3:
       return _AshfallStyle(
-        fill: const Color(0xFFFF5B39).withValues(alpha: 0.18),
-        border: const Color(0xFFFF6A45).withValues(alpha: 0.88),
+        fill: const Color(0xFFFF5B39).withValues(alpha: 0.24),
+        border: const Color(0xFFFF6A45).withValues(alpha: 0.9),
         borderWidth: 1.35,
       );
-    }
-    return _AshfallStyle(
-      fill: const Color(0xFFFFD34A).withValues(alpha: 0.16),
-      border: const Color(0xFFFFD34A).withValues(alpha: 0.82),
-      borderWidth: 1.15,
-    );
+    case 2:
+      return _AshfallStyle(
+        fill: const Color(0xFFE04444).withValues(alpha: 0.38),
+        border: const Color(0xFFFF6262).withValues(alpha: 0.95),
+        borderWidth: 1.35,
+      );
+    case 1:
+      return _AshfallStyle(
+        fill: const Color(0xFFFFD34A).withValues(alpha: 0.3),
+        border: const Color(0xFFFFD34A).withValues(alpha: 0.9),
+        borderWidth: 1.2,
+      );
+    default:
+      return _AshfallStyle(
+        fill: const Color(0xFFB8C4D0).withValues(alpha: 0.2),
+        border: const Color(0xFFD5DFE8).withValues(alpha: 0.82),
+        borderWidth: 1.1,
+      );
   }
+}
+
+int _paintOrder(VolcanoAshfallItem item) {
+  if (item.phenomenonCode == '75' || item.phenomenon.contains('噴石')) {
+    return 3;
+  }
+  return switch (item.phenomenonCode) {
+    '73' => 2,
+    '72' => 1,
+    _ => 0,
+  };
 }
 
 class _AshfallStyle {

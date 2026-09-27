@@ -1,15 +1,20 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutterrhythmquake/core/travel_time_service.dart';
 import 'package:flutterrhythmquake/models/unified_quake_data.dart';
 import 'package:flutterrhythmquake/providers/quake_provider.dart';
 import 'package:flutterrhythmquake/services/sound_effect_service.dart';
+import 'package:flutterrhythmquake/services/tts_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  setUp(() {
+  setUp(() async {
     SharedPreferences.setMockInitialValues({});
     SoundEffectService().enabled = false;
+    await TravelTimeService().load();
   });
 
   tearDown(() => SoundEffectService().enabled = true);
@@ -114,6 +119,77 @@ void main() {
       expect(listenerCalls, 2);
       expect(effectReports, ['第1報', '第3報']);
       provider.dispose();
+    },
+  );
+
+  test('unchanged EEW reports do not fill the voice queue', () async {
+    if (!Platform.isWindows) return;
+    final tts = TtsService();
+    await tts.init();
+    await tts.stop();
+    await tts.configure(
+      enabled: true,
+      eventEnabled: true,
+      updateEnabled: true,
+      gptSovitsEnabled: false,
+      persist: false,
+    );
+    final spoken = <String>[];
+    tts.windowsSpeechOverrideForTest = (text) async => spoken.add(text);
+    addTearDown(() async {
+      await tts.stop();
+      tts.windowsSpeechOverrideForTest = null;
+    });
+    final provider = QuakeProvider();
+    addTearDown(provider.dispose);
+
+    for (var report = 1; report <= 20; report++) {
+      provider.handleUnifiedEventForTest(_jmaEew(report));
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 1600));
+    expect(spoken, hasLength(1));
+    expect(spoken.single, contains('第1报'));
+
+    provider.handleUnifiedEventForTest(_jmaEew(21).copyWith(maxIntensity: '6'));
+    await Future<void>.delayed(const Duration(milliseconds: 1700));
+    expect(spoken, hasLength(2));
+    expect(spoken.last, contains('第21报'));
+  });
+
+  test(
+    'warning upgrade speaks even when ordinary updates are disabled',
+    () async {
+      if (!Platform.isWindows) return;
+      final tts = TtsService();
+      await tts.init();
+      await tts.stop();
+      await tts.configure(
+        enabled: true,
+        eventEnabled: true,
+        updateEnabled: false,
+        gptSovitsEnabled: false,
+        persist: false,
+      );
+      final spoken = <String>[];
+      tts.windowsSpeechOverrideForTest = (text) async => spoken.add(text);
+      addTearDown(() async {
+        await tts.stop();
+        tts.windowsSpeechOverrideForTest = null;
+      });
+      final provider = QuakeProvider();
+      addTearDown(provider.dispose);
+
+      provider.handleUnifiedEventForTest(
+        _jmaEew(
+          1,
+        ).copyWith(isWarn: false, maxIntensity: '2', className: 'gray'),
+      );
+      provider.handleUnifiedEventForTest(
+        _jmaEew(2).copyWith(isWarn: true, maxIntensity: '5', className: 'red'),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 1600));
+      expect(spoken, hasLength(1));
+      expect(spoken.single, contains('第2报'));
     },
   );
 }

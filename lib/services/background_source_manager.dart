@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/quake_message.dart';
+import '../core/app_edition.dart';
 import '../models/cenc_ir_data.dart';
 import '../models/weather_alarm.dart';
 import '../models/unified_quake_data.dart';
@@ -22,6 +23,8 @@ import 'sources/eqlist/cenc_eqlist_service.dart';
 import 'sources/eqlist/jma_eqlist_service.dart';
 import 'sources/fan_service.dart';
 import 'sources/global_quake_service.dart';
+import 'sources/jian_icl_service.dart';
+import 'sources/chinaeew_icl_service.dart';
 import 'sources/mock_input_service.dart';
 import 'sources/nowquake_cenc_intensity_service.dart';
 import 'sources/p2pquake_service.dart';
@@ -30,6 +33,7 @@ import 'sources/usgs_eqlist_service.dart';
 import 'sources/wolfx_service.dart';
 import 'sources/whews_service.dart';
 import 'sources/jian_service.dart';
+import 'sources/jian_station_service.dart';
 import 'wauth_credential_store.dart';
 import 'foreground_station_payload.dart';
 import 'sources/cwa_station_service.dart';
@@ -108,6 +112,9 @@ PAlertService? _backgroundPAlert;
 WhewsStationService? _backgroundWhewsNied;
 WhewsStationService? _backgroundWhewsSnet;
 WhewsStationService? _backgroundWhewsKma;
+JianStationService? _backgroundJianNied;
+JianStationService? _backgroundJianSnet;
+JianStationService? _backgroundJianKma;
 CencCmtService? _backgroundCencCmt;
 UsgsCmtService? _backgroundUsgsCmt;
 JmaCmtService? _backgroundJmaCmt;
@@ -161,11 +168,13 @@ Future<bool> reloadBackgroundStationSettings() async {
         _backgroundLmoni!.stop();
         _backgroundYahoo!.stop();
         _backgroundWhewsNied!.stop();
+        _backgroundJianNied!.stop();
         _backgroundNiedSource = prefs.getString('nied_data_source') ?? 'lmoni';
         if (prefs.getBool('api_source_nied_monitor_enabled') ?? true) {
           if (_backgroundNiedSource == 'yahoo') {
             _backgroundYahoo!.start();
-          } else if (_backgroundNiedSource != 'whews') {
+          } else if (_backgroundNiedSource != 'whews' &&
+              _backgroundNiedSource != 'jian') {
             _backgroundNiedMonitor!.configureEndpoint(_backgroundNiedSource);
             _backgroundLmoni!.start();
             _backgroundNiedMonitor!.start();
@@ -174,9 +183,10 @@ Future<bool> reloadBackgroundStationSettings() async {
       case 'kma':
         _backgroundKma!.disconnect();
         _backgroundWhewsKma!.stop();
+        _backgroundJianKma!.stop();
         final source = prefs.getString('kma_data_source') ?? 'pews';
         if ((prefs.getBool('api_source_kma_pews_enabled') ?? true) &&
-            source != 'whews') {
+            source != 'whews' && source != 'jian') {
           _backgroundKma!.setConnectionSource(source);
           _backgroundKma!.setExternalInputEnabled(false);
           _backgroundKma!.connect();
@@ -184,8 +194,9 @@ Future<bool> reloadBackgroundStationSettings() async {
       case 'snet':
         _backgroundSnet!.stopMonitoring();
         _backgroundWhewsSnet!.stop();
+        _backgroundJianSnet!.stop();
         if ((prefs.getBool('api_source_snet_enabled') ?? true) &&
-            prefs.getString('snet_data_source') != 'whews') {
+            !const {'whews', 'jian'}.contains(prefs.getString('snet_data_source'))) {
           unawaited(_backgroundSnet!.startMonitoring());
         }
       case 'trem':
@@ -200,7 +211,8 @@ Future<bool> reloadBackgroundStationSettings() async {
         }
       case 'palert':
         _backgroundPAlert!.stop();
-        if (prefs.getBool('api_source_palert_enabled') ?? true) {
+        if (AppEdition.hasPAlertStations &&
+            (prefs.getBool('api_source_palert_enabled') ?? true)) {
           _backgroundPAlert!.start();
         }
     }
@@ -213,6 +225,13 @@ Future<bool> reloadBackgroundStationSettings() async {
       whewsNied: _backgroundWhewsNied!,
       whewsKma: _backgroundWhewsKma!,
       whewsSnet: _backgroundWhewsSnet!,
+      only: plan.stations,
+    );
+    _startBackgroundJianStations(
+      prefs,
+      nied: _backgroundJianNied!,
+      snet: _backgroundJianSnet!,
+      kma: _backgroundJianKma!,
       only: plan.stations,
     );
   }
@@ -384,6 +403,8 @@ Future<void> startBackgroundSources({
   final p2p = P2PQuakeService();
   final mock = MockInputService();
   final globalQuake = GlobalQuakeService();
+  final jianIcl = JianIclService();
+  final chinaEewIcl = ChinaEewIclService();
   final officialUsgs = UsgsEqlistService();
   final officialEmsc = EmscEqlistService();
   final officialCwa = CwaEqlistService();
@@ -456,6 +477,9 @@ Future<void> startBackgroundSources({
     kind: WhewsStationKind.kma,
     apiToken: '',
   );
+  final jianNied = JianStationService(kind: WhewsStationKind.nied);
+  final jianSnet = JianStationService(kind: WhewsStationKind.snet);
+  final jianKma = JianStationService(kind: WhewsStationKind.kma);
   _backgroundLmoni = lmoni;
   _backgroundNiedMonitor = niedMonitor;
   _backgroundYahoo = yahoo;
@@ -467,6 +491,9 @@ Future<void> startBackgroundSources({
   _backgroundWhewsNied = whewsNied;
   _backgroundWhewsSnet = whewsSnet;
   _backgroundWhewsKma = whewsKma;
+  _backgroundJianNied = jianNied;
+  _backgroundJianSnet = jianSnet;
+  _backgroundJianKma = jianKma;
   globalQuake.configureServers(
     primaryHost:
         prefs.getString(GlobalQuakeService.primaryHostPreferenceKey) ??
@@ -511,7 +538,11 @@ Future<void> startBackgroundSources({
   manager.registerSource(nowQuakeCencIr);
   manager.registerSource(p2p);
   manager.registerSource(mock);
-  manager.registerSource(globalQuake);
+  if (AppEdition.hasGlobalQuake) manager.registerSource(globalQuake);
+  if (AppEdition.hasIcl) {
+    manager.registerSource(jianIcl);
+    manager.registerSource(chinaEewIcl);
+  }
   manager.setSourceEnabled(
     'FAN',
     prefs.getBool('api_source_fan_enabled') ?? true,
@@ -561,7 +592,9 @@ Future<void> startBackgroundSources({
     nowQuakeCencIr.onUnifiedEvent,
     p2p.onUnifiedEvent,
     mock.onUnifiedEvent,
-    globalQuake.onUnifiedEvent,
+    if (AppEdition.hasGlobalQuake) globalQuake.onUnifiedEvent,
+    if (AppEdition.hasIcl) jianIcl.onUnifiedEvent,
+    if (AppEdition.hasIcl) chinaEewIcl.onUnifiedEvent,
   ]) {
     _backgroundSubscriptions.add(stream.listen(
       (event) => _handleUnifiedEvent(event, processor, onUnifiedEvent),
@@ -673,6 +706,24 @@ Future<void> startBackgroundSources({
   whewsKma.stateNotifier.addListener(() {
     onSourceStatus(SourceStatusUpdate('KMA', _whewsState(whewsKma)));
   });
+  jianNied.stateNotifier.addListener(() {
+    if (prefs.getString('nied_data_source') == 'jian') {
+      onSourceStatus(SourceStatusUpdate(
+        'NIED', _stationSocketState(jianNied.stateNotifier.value)));
+    }
+  });
+  jianSnet.stateNotifier.addListener(() {
+    if (prefs.getString('snet_data_source') == 'jian') {
+      onSourceStatus(SourceStatusUpdate(
+        'S-net', _stationSocketState(jianSnet.stateNotifier.value)));
+    }
+  });
+  jianKma.stateNotifier.addListener(() {
+    if (prefs.getString('kma_data_source') == 'jian') {
+      onSourceStatus(SourceStatusUpdate(
+        'KMA', _stationSocketState(jianKma.stateNotifier.value)));
+    }
+  });
 
   _backgroundStationSubscriptions.add(
     lmoni.stationStream.listen((stations) {
@@ -763,10 +814,19 @@ Future<void> startBackgroundSources({
       onStationData(_whewsKmaPayload(frame));
     }),
   );
+  _backgroundStationSubscriptions.add(
+    jianNied.frameStream.listen((frame) => onStationData(_whewsNiedPayload(frame))),
+  );
+  _backgroundStationSubscriptions.add(
+    jianSnet.frameStream.listen((frame) => onStationData(_whewsSnetPayload(frame))),
+  );
+  _backgroundStationSubscriptions.add(
+    jianKma.frameStream.listen((frame) => onStationData(_whewsKmaPayload(frame))),
+  );
 
   if (prefs.getBool('api_source_nied_monitor_enabled') ?? true) {
-    if (niedSource == 'whews') {
-      // The authenticated WHEWS station socket is started below.
+    if (niedSource == 'whews' || niedSource == 'jian') {
+      // The selected array station socket is started below.
     } else if (niedSource == 'yahoo') {
       yahoo.start();
     } else {
@@ -777,7 +837,7 @@ Future<void> startBackgroundSources({
   }
   if (prefs.getBool('api_source_kma_pews_enabled') ?? true) {
     final kmaSource = prefs.getString('kma_data_source') ?? 'pews';
-    if (kmaSource != 'whews') {
+    if (kmaSource != 'whews' && kmaSource != 'jian') {
       kma.setConnectionSource(kmaSource);
       kma.setExternalInputEnabled(false);
       kma.connect();
@@ -785,16 +845,25 @@ Future<void> startBackgroundSources({
   }
   if (prefs.getBool('trem_station_enabled') ?? true) cwa.start();
   if ((prefs.getBool('api_source_snet_enabled') ?? true) &&
-      prefs.getString('snet_data_source') != 'whews')
+      !const {'whews', 'jian'}.contains(prefs.getString('snet_data_source')))
     snet.startMonitoring();
   if (prefs.getBool('api_source_wolfx_seisjs_enabled') ?? true)
     seisJs.connect();
-  if (prefs.getBool('api_source_palert_enabled') ?? true) pAlert.start();
+  if (AppEdition.hasPAlertStations &&
+      (prefs.getBool('api_source_palert_enabled') ?? true)) {
+    pAlert.start();
+  }
   await _startBackgroundWhewsStationsIfAuthorized(
     prefs,
     whewsNied: whewsNied,
     whewsSnet: whewsSnet,
     whewsKma: whewsKma,
+  );
+  _startBackgroundJianStations(
+    prefs,
+    nied: jianNied,
+    snet: jianSnet,
+    kma: jianKma,
   );
 
   _backgroundAuxSubscriptions.add(
@@ -984,8 +1053,17 @@ Future<void> startBackgroundSources({
     }),
   );
 
-  if (prefs.getBool(GlobalQuakeService.enabledPreferenceKey) ?? false) {
+  if (AppEdition.hasGlobalQuake &&
+      (prefs.getBool(GlobalQuakeService.enabledPreferenceKey) ?? false)) {
     globalQuake.connect();
+  }
+  if (AppEdition.hasIcl &&
+      (prefs.getBool(JianIclService.enabledPreferenceKey) ?? false)) {
+    jianIcl.connect();
+  }
+  if (AppEdition.hasIcl &&
+      (prefs.getBool(ChinaEewIclService.enabledPreferenceKey) ?? false)) {
+    chinaEewIcl.connect();
   }
 
   _backgroundSettings = initialSettings;
@@ -1028,6 +1106,9 @@ Future<void> stopBackgroundSources() async {
   _backgroundWhewsNied?.stop();
   _backgroundWhewsSnet?.stop();
   _backgroundWhewsKma?.stop();
+  _backgroundJianNied?.dispose();
+  _backgroundJianSnet?.dispose();
+  _backgroundJianKma?.dispose();
   _backgroundCencCmt?.stop();
   _backgroundUsgsCmt?.stop();
   _backgroundJmaCmt?.stop();
@@ -1061,6 +1142,9 @@ Future<void> stopBackgroundSources() async {
   _backgroundWhewsNied = null;
   _backgroundWhewsSnet = null;
   _backgroundWhewsKma = null;
+  _backgroundJianNied = null;
+  _backgroundJianSnet = null;
+  _backgroundJianKma = null;
   _backgroundCencCmt = null;
   _backgroundUsgsCmt = null;
   _backgroundJmaCmt = null;
@@ -1102,13 +1186,19 @@ Future<void> stopBackgroundSources() async {
   _backgroundOfficialCenc = null;
   _backgroundOfficialJma = null;
   _backgroundManager?.getSource<JianService>()?.dispose();
+  _backgroundManager?.getSource<JianIclService>()?.disconnect();
+  _backgroundManager?.getSource<ChinaEewIclService>()?.disconnect();
   _backgroundManager?.reset();
   _backgroundManager = null;
   _backgroundEventProcessor = null;
 }
 
 SourceStatus _whewsState(WhewsStationService service) {
-  return switch (service.stateNotifier.value) {
+  return _stationSocketState(service.stateNotifier.value);
+}
+
+SourceStatus _stationSocketState(WhewsSocketState state) {
+  return switch (state) {
     WhewsSocketState.connected => SourceStatus.connected,
     WhewsSocketState.connecting => SourceStatus.connecting,
     WhewsSocketState.disconnected => SourceStatus.disconnected,
@@ -1119,6 +1209,11 @@ SourceStatus _whewsState(WhewsStationService service) {
 
 Map<String, dynamic> _whewsNiedPayload(WhewsStationFrame frame) => {
   'kind': 'whewsNied',
+  'source': frame.source,
+  'codes': frame.codes,
+  'names': frame.names,
+  'regions': frame.regions,
+  'stationTypes': frame.stationTypes,
   'dataTime': frame.dataTime.toIso8601String(),
   'coordinates': frame.coordinates
       .map((value) => {'lat': value.latitude, 'lng': value.longitude})
@@ -1130,6 +1225,8 @@ Map<String, dynamic> _whewsNiedPayload(WhewsStationFrame frame) => {
 
 Map<String, dynamic> _whewsSnetPayload(WhewsStationFrame frame) => {
   'kind': 'whewsSnet',
+  'source': frame.source,
+  'codes': frame.codes,
   'dataTime': frame.dataTime.toIso8601String(),
   'coordinates': frame.coordinates
       .map((value) => {'lat': value.latitude, 'lng': value.longitude})
@@ -1139,12 +1236,37 @@ Map<String, dynamic> _whewsSnetPayload(WhewsStationFrame frame) => {
 
 Map<String, dynamic> _whewsKmaPayload(WhewsStationFrame frame) => {
   'kind': 'whewsKma',
+  'source': frame.source,
   'dataTime': frame.dataTime.toIso8601String(),
   'coordinates': frame.coordinates
       .map((value) => {'lat': value.latitude, 'lng': value.longitude})
       .toList(growable: false),
   'values': frame.values,
 };
+
+void _startBackgroundJianStations(
+  SharedPreferences prefs, {
+  required JianStationService nied,
+  required JianStationService snet,
+  required JianStationService kma,
+  Set<String> only = const {'nied', 'snet', 'kma'},
+}) {
+  if (only.contains('nied') &&
+      (prefs.getBool('api_source_nied_monitor_enabled') ?? true) &&
+      prefs.getString('nied_data_source') == 'jian') {
+    nied.start();
+  }
+  if (only.contains('snet') &&
+      (prefs.getBool('api_source_snet_enabled') ?? true) &&
+      prefs.getString('snet_data_source') == 'jian') {
+    snet.start();
+  }
+  if (only.contains('kma') &&
+      (prefs.getBool('api_source_kma_pews_enabled') ?? true) &&
+      prefs.getString('kma_data_source') == 'jian') {
+    kma.start();
+  }
+}
 
 Future<void> _startBackgroundWhewsStationsIfAuthorized(
   SharedPreferences prefs, {
@@ -1392,6 +1514,7 @@ void _handleUnifiedEvent(
   BackgroundEventProcessor processor,
   void Function(UnifiedQuakeData event, bool isUpdate) onUnifiedEvent,
 ) {
+  if (!AppEdition.allowsUnifiedSource(event.source)) return;
   final result = processor.process(event);
   if (result.type == BackgroundEventResultType.dropped ||
       result.event == null) {

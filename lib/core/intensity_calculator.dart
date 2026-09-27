@@ -138,17 +138,6 @@ class IntensityCalculator {
     return IntensityLevel("X+", "毁灭性破坏", 0xFFB71C1C);
   }
 
-  static int calcCwbLevel(double magnitude, double depth, double distance) {
-    if (magnitude.isNaN || distance.isNaN) return 0;
-    if (distance < 1) distance = 1;
-
-    double intensity = magnitude * 0.8 - log(distance) / ln10 * 1.2 + 1.0;
-
-    if (intensity.isNaN || intensity.isInfinite) return 0;
-
-    return intensity.clamp(0, 7).round();
-  }
-
   static double calcJmaShindo(
     double mj,
     double dep,

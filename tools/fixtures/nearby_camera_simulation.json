@@ -1,0 +1,28 @@
+[
+  {
+    "source": "cenc",
+    "eventId": "SIM-CAMERA-A-20260922143317",
+    "shockTime": "2026-09-22 14:32:47",
+    "createTime": "2026-09-22 14:33:17",
+    "placeName": "SIMULATION A - NOT A REAL EARTHQUAKE",
+    "latitude": 30.6,
+    "longitude": 103.9,
+    "magnitude": 5.0,
+    "depth": 10,
+    "maxIntensity": 5,
+    "reviewType": "reviewed"
+  },
+  {
+    "source": "cenc",
+    "eventId": "SIM-CAMERA-B-20260922143317",
+    "shockTime": "2026-09-22 14:32:47",
+    "createTime": "2026-09-22 14:33:17",
+    "placeName": "SIMULATION B - NOT A REAL EARTHQUAKE",
+    "latitude": 30.85,
+    "longitude": 104.15,
+    "magnitude": 5.2,
+    "depth": 10,
+    "maxIntensity": 5,
+    "reviewType": "reviewed"
+  }
+]

@@ -12,15 +12,19 @@ import '../../models/tsunami_message.dart';
 import '../quake_event_adapter.dart';
 import 'base_source.dart';
 import 'jma_ashfall_forecast_service.dart';
+import 'noaa_tsunami_area_service.dart';
 import 'whews_socket_client.dart';
 
 class WhewsService extends BaseSourceService {
   WhewsService({
     required String apiToken,
     JmaAshfallForecastService? ashfallForecastService,
+    NoaaTsunamiAreaService? noaaTsunamiAreaService,
   }) : _apiToken = apiToken.trim(),
        _ashfallForecastService =
-           ashfallForecastService ?? JmaAshfallForecastService();
+           ashfallForecastService ?? JmaAshfallForecastService(),
+       _noaaTsunamiAreaService =
+           noaaTsunamiAreaService ?? NoaaTsunamiAreaService();
 
   static const String enabledPreferenceKey = 'api_source_whews_enabled';
   static const String apiAuthorizedPreferenceKey =
@@ -44,6 +48,8 @@ class WhewsService extends BaseSourceService {
   final LinkedHashSet<String> _seenFrames = LinkedHashSet<String>();
   final Map<String, WhewsSocketState> _states = {};
   final JmaAshfallForecastService _ashfallForecastService;
+  final NoaaTsunamiAreaService _noaaTsunamiAreaService;
+  final Map<String, Future<void>> _noaaAreaFetches = {};
   final LinkedHashMap<String, List<VolcanoAshfallWindow>>
   _ashfallWindowsByRevision = LinkedHashMap();
   final Map<String, Future<void>> _ashfallFetches = {};
@@ -258,12 +264,16 @@ class WhewsService extends BaseSourceService {
     };
     if (internationalSource != null) {
       try {
-        emitTsunami(
-          TsunamiMessage.parseInternationalTsunami(
-            internationalSource,
-            data,
-          ).copyWith(isInitialSnapshot: isInitialSnapshot),
-        );
+        final event = TsunamiMessage.parseInternationalTsunami(
+          internationalSource,
+          data,
+        ).copyWith(isInitialSnapshot: isInitialSnapshot);
+        emitTsunami(event);
+        if (event.isActive &&
+            (internationalSource == TsunamiSource.ptwc ||
+                internationalSource == TsunamiSource.ntwc)) {
+          _enrichNoaaTsunamiAreas(event, data['jsonUrl']?.toString() ?? '');
+        }
       } catch (_) {
         // Keep malformed international tsunami frames out of the pipeline.
       }
@@ -276,6 +286,32 @@ class WhewsService extends BaseSourceService {
           ? event.copyWith(isSnapshot: isInitialSnapshot)
           : event,
     );
+  }
+
+  void _enrichNoaaTsunamiAreas(TsunamiMessage event, String jsonUrl) {
+    if (jsonUrl.isEmpty || event.areas.isNotEmpty) return;
+    final key = '${event.source.name}|${event.id}|${event.reportTime}';
+    if (_noaaAreaFetches.containsKey(key)) return;
+    final generation = _connectionGeneration;
+    final fetch = _fetchNoaaTsunamiAreas(event, jsonUrl, generation);
+    _noaaAreaFetches[key] = fetch;
+    unawaited(
+      fetch.whenComplete(() {
+        if (identical(_noaaAreaFetches[key], fetch)) {
+          _noaaAreaFetches.remove(key);
+        }
+      }),
+    );
+  }
+
+  Future<void> _fetchNoaaTsunamiAreas(
+    TsunamiMessage event,
+    String jsonUrl,
+    int generation,
+  ) async {
+    final areas = await _noaaTsunamiAreaService.fetch(jsonUrl);
+    if (areas.isEmpty || generation != _connectionGeneration) return;
+    emitTsunami(event.copyWith(areas: areas));
   }
 
   void _emitUnifiedWithAshfallEnrichment(UnifiedQuakeData event) {
@@ -400,6 +436,7 @@ class WhewsService extends BaseSourceService {
     _seenFrames.clear();
     _ashfallFetches.clear();
     _ashfallWindowsByRevision.clear();
+    _noaaAreaFetches.clear();
   }
 
   @override

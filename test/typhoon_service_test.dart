@@ -24,9 +24,161 @@ http.Response detailResponse() => http.Response.bytes(detailBytes, 200);
 bool isActivity(http.Request request) =>
     request.url.path.endsWith('TyhoonActivity');
 
+// The fields and values below follow the published Jian GET example.
+Map<String, dynamic> jianDocumentedTyphoon() => {
+  'id': '202625',
+  'name': '杜鹃',
+  'name_en': 'DUJUAN',
+  'latitude': 38.2,
+  'longitude': 147.4,
+  'moveDirection': '东北东',
+  'moveSpeed': 50,
+  'power': 10,
+  'pressure': 985,
+  'windSpeed': 25,
+  'type': '强热带风暴',
+  'radius7': '400|300|300|300',
+  'updateTime': '2026-09-22 08:00:00',
+  'points': [],
+};
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  test('maps documented Jian active snapshot without inventing track data', () {
+    final item = TyphoonService.parseJianTyphoons([
+      jianDocumentedTyphoon(),
+    ]).single;
+    expect(item.tfid, '202625');
+    expect(item.isActive, isTrue);
+    expect(item.latestPoint!.lat, 38.2);
+    expect(item.latestPoint!.lng, 147.4);
+    expect(item.latestPoint!.time, '2026-09-22 08:00:00');
+    expect(item.latestPoint!.radius7, [400, 300, 300, 300]);
+    expect(item.latestPoint!.forecast, isEmpty);
+    expect(item.startTime, isEmpty);
+  });
+
+  test('unknown Jian history fields do not hide a valid current center', () {
+    final raw = jianDocumentedTyphoon()
+      ..['points'] = [
+        {'undocumentedField': 'unrecognized'},
+      ];
+    final item = TyphoonService.parseJianTyphoons([raw]).single;
+    expect(item.points, hasLength(1));
+    expect(item.latestPoint!.lat, 38.2);
+    expect(item.latestPoint!.lng, 147.4);
+  });
+
+  test(
+    'Jian fallback replaces failed primary and primary can recover',
+    () async {
+      var primaryAvailable = false;
+      final requests = <Uri>[];
+      final service = TyphoonService(
+        client: MockClient((request) async {
+          requests.add(request.url);
+          if (request.url.host == 'api.sismotide.top') {
+            return http.Response.bytes(
+              utf8.encode(jsonEncode([jianDocumentedTyphoon()])),
+              200,
+            );
+          }
+          if (!primaryAvailable) return http.Response('', 503);
+          return isActivity(request) ? activityResponse() : detailResponse();
+        }),
+      );
+      final updates = <List<TyphoonData>>[];
+      service.onActiveTyphoonsChanged = updates.add;
+      await service.fetchNow();
+      expect(updates.single.single.latestPoint!.time, '2026-09-22 08:00:00');
+      expect(requests.map((uri) => uri.path), [
+        '/Api/TyhoonActivity',
+        '/get/typhoon.php',
+      ]);
+      expect(
+        (await SharedPreferences.getInstance()).containsKey(cacheKey),
+        isFalse,
+      );
+
+      primaryAvailable = true;
+      await service.fetchNow();
+      expect(updates, hasLength(2));
+      expect(
+        updates.last.single.points.length,
+        (detail()['points'] as List).length,
+      );
+      expect(
+        requests.where((uri) => uri.path == '/get/typhoon.php'),
+        hasLength(1),
+      );
+      expect(
+        (await SharedPreferences.getInstance()).containsKey(cacheKey),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'empty Jian backup does not erase a previously active typhoon',
+    () async {
+      var failPrimary = false;
+      final service = TyphoonService(
+        client: MockClient((request) async {
+          if (request.url.host == 'api.sismotide.top') {
+            return http.Response('[]', 200);
+          }
+          if (failPrimary) return http.Response('', 503);
+          return isActivity(request) ? activityResponse() : detailResponse();
+        }),
+      );
+      final updates = <List<TyphoonData>>[];
+      service.onActiveTyphoonsChanged = updates.add;
+      await service.fetchNow();
+      failPrimary = true;
+      await service.fetchNow();
+      expect(updates, hasLength(1));
+      expect(updates.single.single.tfid, '202625');
+    },
+  );
+
+  test('incomplete Zhejiang detail uses a matching Jian typhoon', () async {
+    final service = TyphoonService(
+      client: MockClient((request) async {
+        if (request.url.host == 'api.sismotide.top') {
+          return http.Response.bytes(
+            utf8.encode(jsonEncode([jianDocumentedTyphoon()])),
+            200,
+          );
+        }
+        return isActivity(request)
+            ? activityResponse()
+            : http.Response('', 503);
+      }),
+    );
+    final items = await service.fetchActiveNow();
+    expect(items.single.tfid, '202625');
+    expect(items.single.latestPoint!.time, '2026-09-22 08:00:00');
+  });
+
+  test('empty backup cannot turn known active IDs into a clear', () async {
+    final service = TyphoonService(
+      client: MockClient((request) async {
+        if (request.url.host == 'api.sismotide.top') {
+          return http.Response('[]', 200);
+        }
+        return isActivity(request)
+            ? activityResponse()
+            : http.Response('', 503);
+      }),
+    );
+    await expectLater(service.fetchActiveNow(), throwsFormatException);
+    final updates = <List<TyphoonData>>[];
+    service.onActiveTyphoonsChanged = updates.add;
+    await service.fetchNow();
+    expect(updates, isEmpty);
+  });
 
   test(
     'uses Zhejiang activity and detail endpoints with original captured data',
@@ -107,7 +259,7 @@ void main() {
           if (isActivity(r)) {
             return phase == 2 ? http.Response('[]', 200) : activityResponse();
           }
-          detailCalls++;
+          if (r.url.host == 'typhoon.slt.zj.gov.cn') detailCalls++;
           return phase == 0 ? detailResponse() : http.Response('', 503);
         }),
       );
@@ -279,7 +431,7 @@ void main() {
     var failing = false;
     final service = TyphoonService(
       client: MockClient((r) async {
-        calls++;
+        if (r.url.host == 'typhoon.slt.zj.gov.cn') calls++;
         return failing ? http.Response('', 503) : http.Response('[]', 200);
       }),
     );
@@ -326,6 +478,12 @@ void main() {
       0,
       300,
       400,
+    ]);
+    expect(TyphoonPoint.fromJson({'radius7': 300})!.radius7, [
+      300,
+      300,
+      300,
+      300,
     ]);
     for (final value in [
       '100|bad|300|400',

@@ -11,7 +11,6 @@ void main() {
     'demElevation',
     'cloudLayer',
     'rainLayer',
-    'windLayer',
     'cnContour',
   ];
 
@@ -31,6 +30,11 @@ void main() {
     for (final key in fanTileKeys) {
       expect(MapConfig.isTmsTileKey(key), isFalse);
     }
+  });
+
+  test('GFS wind is data-backed rather than a FAN tile overlay', () {
+    expect(MapConfig.overlayOptions['GFS 风场'], 'windLayer');
+    expect(MapConfig.urlByKey('windLayer'), isEmpty);
   });
 
   test('Jian basemaps use the published XYZ paths without a token', () {

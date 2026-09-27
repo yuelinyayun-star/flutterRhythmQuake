@@ -94,9 +94,16 @@ String? _prefectureAt(LatLng point) {
   return null;
 }
 
-/// Resolve only an unambiguous local catalogue entry in a small coordinate
-/// tolerance. Do not replace the API coordinate or reorder its station array.
-List<NiedStation> buildWhewsNiedStations(List<LatLng> coordinates) {
+/// Keep the API's coordinate and array order. Jian supplies names directly;
+/// WHEWS resolves only unambiguous local catalogue matches.
+List<NiedStation> buildWhewsNiedStations(
+  List<LatLng> coordinates, {
+  String source = 'whews',
+  List<String> codes = const [],
+  List<String> names = const [],
+  List<String> regions = const [],
+  List<String> stationTypes = const [],
+}) {
   const tolerance = 0.001;
   // Exact historical coordinates published by NIED, not nearest-site guesses:
   // https://www.kyoshin.bosai.go.jp/en/stationlocationinfobefore20220201/
@@ -130,15 +137,33 @@ List<NiedStation> buildWhewsNiedStations(List<LatLng> coordinates) {
         : matches.length == 1
         ? matches.single
         : null;
+    final fromJian = source == 'jian';
+    final sourceCode = fromJian && codes.length == coordinates.length
+        ? codes[index].trim()
+        : '';
+    final sourceName = fromJian && names.length == coordinates.length
+        ? names[index].trim()
+        : '';
+    final sourceRegion = fromJian && regions.length == coordinates.length
+        ? regions[index].trim()
+        : '';
+    final sourceNetwork = fromJian && stationTypes.length == coordinates.length
+        ? stationTypes[index].trim()
+        : '';
     return NiedStation(
       id: index,
       // The API's array index remains its identity, even for co-located sites.
-      code: 'WHEWS-NIED-${index + 1}',
-      name: metadata?['name'] as String? ?? '',
+      code: fromJian ? sourceCode : 'WHEWS-NIED-${index + 1}',
+      name: sourceName.isNotEmpty
+          ? sourceName
+          : metadata?['name'] as String? ?? '',
       coordinate: coordinate,
-      network: metadata?['network'] as String? ?? 'WHEWS',
-      prefecture:
-          _prefectureAt(coordinate) ?? metadata?['pref'] as String? ?? '',
+      network: sourceNetwork.isNotEmpty
+          ? sourceNetwork
+          : metadata?['network'] as String? ?? source.toUpperCase(),
+      prefecture: sourceRegion.isNotEmpty
+          ? sourceRegion
+          : _prefectureAt(coordinate) ?? metadata?['pref'] as String? ?? '',
       expireSeconds: NiedStation.kaExpireSeconds,
     );
   });

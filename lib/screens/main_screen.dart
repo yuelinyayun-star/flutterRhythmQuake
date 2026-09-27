@@ -7,7 +7,9 @@ import 'package:flutter/foundation.dart'
 import 'package:provider/provider.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../providers/map_state_provider.dart';
+import '../core/app_edition.dart';
 import '../providers/quake_provider.dart';
 import '../providers/notification_settings_provider.dart';
 import '../services/notification_service.dart';
@@ -25,6 +27,7 @@ import '../widgets/ui/cmt_sidebar_panel.dart';
 import '../widgets/ui/jma_lpgm_sidebar_panel.dart';
 import '../widgets/ui/jma_megaquake_sidebar_panel.dart';
 import '../widgets/ui/volcano_sidebar_panel.dart';
+import '../widgets/ui/local_eew_sidebar_panel.dart';
 import '../widgets/ui/ui_runtime_flags.dart';
 import '../widgets/ui/ui_scale.dart';
 import '../widgets/ui/mobile_sections.dart';
@@ -34,6 +37,8 @@ import '../core/source_estimation/source_estimation_models.dart';
 import '../core/source_estimation/station_event_tracker.dart';
 import '../services/sources/shake_detection_service.dart';
 import '../services/sources/global_quake_service.dart';
+import '../services/sources/jian_icl_service.dart';
+import '../services/sources/chinaeew_icl_service.dart';
 import '../core/local_weather_region.dart';
 import '../services/sources/cma_local_weather_service.dart';
 import '../services/sources/china_weather_hourly_service.dart';
@@ -47,6 +52,7 @@ import '../services/location_service.dart';
 import '../widgets/map/ka_shindo_marker_style.dart';
 import '../models/tsunami_message.dart';
 import '../models/quake_message.dart';
+import '../models/source_status.dart';
 import '../models/unified_quake_data.dart';
 import '../models/jma_lpgm_bulletin.dart';
 import '../models/jma_megaquake_advisory.dart';
@@ -85,8 +91,11 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       : _mobileSection == MobileSection.weather;
   bool _sideInfoSettingLoaded = false;
   bool _sideInfoAutoShowBeta = true;
+  bool _localEewDomestic = true;
+  bool _localEewForeign = false;
   String? _lastAutoTriggerSignature;
   String _lastNiedInfoSignature = '-';
+  String _lastLocalEewInfoSignature = '-';
   String _lastSnetInfoSignature = '-';
   String _lastJmaTsunamiInfoSignature = '-';
   String _lastNmefcTsunamiInfoSignature = '-';
@@ -119,6 +128,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   static const int _rightActionButtonCount = 4;
   static const String _sideInfoAutoShowBetaKey = 'side_info_auto_show_beta';
   static const String _infoPageNied = 'nied';
+  static const String _infoPageLocalEew = 'localEew';
   static const String _infoPageSnet = 'snet';
   static const String _infoPageJmaTsunami = 'jmaTsunami';
   static const String _infoPageNmefcTsunami = 'nmefcTsunami';
@@ -175,6 +185,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
 
   bool _hasAutoInfoContent(StationSummaryData data, QuakeProvider provider) {
     return _hasFormalNiedDetect(data) ||
+        _localEewEvent(provider) != null ||
         data.snetTopStations.isNotEmpty ||
         _activeCmtMapEvent(provider) != null ||
         _activeVolcanoEvent(provider) != null ||
@@ -187,6 +198,14 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         (provider.incoisTsunami?.isActive == true);
   }
 
+  UnifiedQuakeData? _localEewEvent(QuakeProvider provider) =>
+      selectLocalEewSidebarEvent(
+        provider.unifiedEvents,
+        provider.currentUnifiedIndex,
+        domesticEnabled: _localEewDomestic,
+        foreignEnabled: _localEewForeign,
+      );
+
   @override
   void initState() {
     super.initState();
@@ -194,6 +213,12 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     _loadSideInfoAutoShowBeta();
     UiRuntimeFlags.sideInfoAutoShowBetaNotifier.addListener(
       _onSideInfoAutoShowSettingChanged,
+    );
+    UiRuntimeFlags.localEewDomesticNotifier.addListener(
+      _onLocalEewSettingChanged,
+    );
+    UiRuntimeFlags.localEewForeignNotifier.addListener(
+      _onLocalEewSettingChanged,
     );
     _cmaWeatherService.stateNotifier.addListener(_onCmaWeatherStateChanged);
     _jmaWeatherService.stateNotifier.addListener(_onJmaWeatherStateChanged);
@@ -249,6 +274,12 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   void dispose() {
     UiRuntimeFlags.sideInfoAutoShowBetaNotifier.removeListener(
       _onSideInfoAutoShowSettingChanged,
+    );
+    UiRuntimeFlags.localEewDomesticNotifier.removeListener(
+      _onLocalEewSettingChanged,
+    );
+    UiRuntimeFlags.localEewForeignNotifier.removeListener(
+      _onLocalEewSettingChanged,
     );
     LocationService().positionListenable.removeListener(
       _onLocalWeatherPositionChanged,
@@ -749,13 +780,34 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       valueListenable: provider.sourceStatusListenable,
       builder: (context, _, child) {
         final globalQuakeEnabled = GlobalQuakeService().isEnabled;
+        final jianIclEnabled =
+            JianIclService().isEnabled ||
+            provider.sourceStatuses[JianIclService.sourceName] != null &&
+                provider.sourceStatuses[JianIclService.sourceName] !=
+                    SourceStatus.disconnected;
+        final chinaEewIclEnabled =
+            ChinaEewIclService().isEnabled ||
+            provider.sourceStatuses[ChinaEewIclService.sourceName] != null &&
+                provider.sourceStatuses[ChinaEewIclService.sourceName] !=
+                    SourceStatus.disconnected;
         final rows =
             provider.sourceStatuses.entries
                 .where(
                   (entry) =>
                       entry.key != 'CENC' &&
                       entry.key != 'S-net' &&
-                      (entry.key != 'GlobalQuake' || globalQuakeEnabled),
+                      (AppEdition.hasPAlertStations ||
+                          entry.key != 'P-Alert') &&
+                      (AppEdition.hasGlobalQuake ||
+                          entry.key != 'GlobalQuake') &&
+                      (AppEdition.hasIcl ||
+                          (entry.key != JianIclService.sourceName &&
+                              entry.key != ChinaEewIclService.sourceName)) &&
+                      (entry.key != 'GlobalQuake' || globalQuakeEnabled) &&
+                      (entry.key != JianIclService.sourceName ||
+                          jianIclEnabled) &&
+                      (entry.key != ChinaEewIclService.sourceName ||
+                          chinaEewIclEnabled),
                 )
                 .toList()
               ..sort((a, b) => a.key.compareTo(b.key));
@@ -853,22 +905,30 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         final incois = qp.incoisTsunami;
         final cmt = _activeCmtMapEvent(qp);
         final volcano = _activeVolcanoEvent(qp);
-        return Object.hash(
+        return Object.hashAll([
           qp.unifiedMapRevision,
           qp.currentUnifiedIndex,
+          _localEewDomestic,
+          _localEewForeign,
           jma?.id,
           jma?.isActive,
           nmefc?.id,
           nmefc?.isActive,
           ptwc?.id,
-          ptwc?.isActive,
+          ptwc?.reportTime,
+          ptwc?.isDisplayableAt(DateTime.now()),
+          ptwc?.warnAreaJson,
           ntwc?.id,
-          ntwc?.isActive,
+          ntwc?.reportTime,
+          ntwc?.isDisplayableAt(DateTime.now()),
+          ntwc?.warnAreaJson,
           incois?.id,
-          incois?.isActive,
+          incois?.reportTime,
+          incois?.isDisplayableAt(DateTime.now()),
+          incois?.warnAreaJson,
           _cmtInfoSignature(cmt),
           _volcanoInfoSignature(volcano),
-        );
+        ]);
       },
       builder: (context, _, child) {
         final provider = context.read<QuakeProvider>();
@@ -881,18 +941,31 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         final nmefc = provider.nmefcTsunami;
         final hasNmefc = nmefc != null && nmefc.isActive;
         final ptwc = provider.ptwcTsunami;
-        final hasPtwc = ptwc != null && ptwc.isActive;
+        final hasPtwc = ptwc != null && ptwc.isDisplayableAt(DateTime.now());
         final ntwc = provider.ntwcTsunami;
-        final hasNtwc = ntwc != null && ntwc.isActive;
+        final hasNtwc = ntwc != null && ntwc.isDisplayableAt(DateTime.now());
         final incois = provider.incoisTsunami;
-        final hasIncois = incois != null && incois.isActive;
+        final hasIncois =
+            incois != null && incois.isDisplayableAt(DateTime.now());
         final cmt = _activeCmtMapEvent(provider);
         final volcano = _activeVolcanoEvent(provider);
+        final localEew = _localEewEvent(provider);
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) _handleAutoInfoPopup(_stationData, provider);
         });
 
         final mainPages = <_InfoDrawerPage>[];
+        if (localEew != null) {
+          mainPages.add(
+            _InfoDrawerPage(
+              key: _infoPageLocalEew,
+              child: LocalEewSidebarPanel(
+                event: localEew,
+                scale: (value) => _s(value, context),
+              ),
+            ),
+          );
+        }
         if (cmt != null) {
           mainPages.add(
             _InfoDrawerPage(
@@ -1149,6 +1222,10 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   ) {
     final areas = tsunami.areas.take(4).toList();
     final title = _tsunamiSideTitle(tsunami, sourceLabel);
+    final bulletinUri = Uri.tryParse(tsunami.htmlUrl);
+    final hasBulletin =
+        bulletinUri != null &&
+        (bulletinUri.scheme == 'https' || bulletinUri.scheme == 'http');
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1177,14 +1254,31 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                 ),
               ),
             ),
-            Text(
-              '${tsunami.areas.length} 区域',
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.55),
-                fontSize: _s(10, context),
-                fontWeight: FontWeight.w700,
+            if (hasBulletin)
+              IconButton(
+                tooltip: '查看原始海啸报文',
+                onPressed: () => launchUrl(
+                  bulletinUri,
+                  mode: LaunchMode.externalApplication,
+                ),
+                icon: const Icon(Icons.open_in_new),
+                color: Colors.white70,
+                iconSize: _s(15, context),
+                padding: EdgeInsets.zero,
+                constraints: BoxConstraints.tightFor(
+                  width: _s(24, context),
+                  height: _s(24, context),
+                ),
               ),
-            ),
+            if (tsunami.areas.isNotEmpty)
+              Text(
+                '${tsunami.areas.length} 区域',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.55),
+                  fontSize: _s(10, context),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
           ],
         ),
         if (tsunami.reportTime.isNotEmpty) ...[
@@ -1281,6 +1375,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   }
 
   String _tsunamiSideTitle(TsunamiMessage tsunami, String sourceLabel) {
+    if (tsunami.isInformation) return '$sourceLabel 海啸信息';
     final title = tsunami.title.trim().isNotEmpty
         ? tsunami.title.trim()
         : tsunami.titleText.trim();
@@ -2108,14 +2203,31 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   Future<void> _loadSideInfoAutoShowBeta() async {
     final prefs = await SharedPreferences.getInstance();
     final enabled = prefs.getBool(_sideInfoAutoShowBetaKey) ?? true;
+    final domestic = prefs.getBool(UiRuntimeFlags.localEewDomesticKey) ?? true;
+    final foreign = prefs.getBool(UiRuntimeFlags.localEewForeignKey) ?? false;
     if (!mounted) return;
     setState(() {
       _sideInfoSettingLoaded = true;
       _sideInfoAutoShowBeta = enabled;
+      _localEewDomestic = domestic;
+      _localEewForeign = foreign;
       _showInfoDrawer = enabled;
     });
     _syncLocalWeatherActivity();
     UiRuntimeFlags.sideInfoAutoShowBetaNotifier.value = enabled;
+    UiRuntimeFlags.localEewDomesticNotifier.value = domestic;
+    UiRuntimeFlags.localEewForeignNotifier.value = foreign;
+  }
+
+  void _onLocalEewSettingChanged() {
+    if (!mounted) return;
+    final domestic = UiRuntimeFlags.localEewDomesticNotifier.value;
+    final foreign = UiRuntimeFlags.localEewForeignNotifier.value;
+    if (_localEewDomestic == domestic && _localEewForeign == foreign) return;
+    setState(() {
+      _localEewDomestic = domestic;
+      _localEewForeign = foreign;
+    });
   }
 
   void _onSideInfoAutoShowSettingChanged() {
@@ -2533,6 +2645,10 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   void _handleAutoInfoPopup(StationSummaryData data, QuakeProvider provider) {
     if (!_sideInfoAutoShowBeta) return;
 
+    final localEew = _localEewEvent(provider);
+    final localEewSignature = localEew == null
+        ? '-'
+        : '${localEew.source}|${localEew.eventId}|${localEew.originTime}';
     final detectTriggered = _hasFormalNiedDetect(data);
     final snetTriggered = data.snetTopStations.isNotEmpty;
     final jmaTsunami = provider.jmaTsunami;
@@ -2562,6 +2678,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     if (!shouldShow) {
       _lastAutoTriggerSignature = null;
       _lastNiedInfoSignature = '-';
+      _lastLocalEewInfoSignature = '-';
       _lastSnetInfoSignature = '-';
       _lastJmaTsunamiInfoSignature = '-';
       _lastNmefcTsunamiInfoSignature = '-';
@@ -2604,7 +2721,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         ? '${incoisTsunami!.id}|${incoisTsunami.status}|${incoisTsunami.grade.name}'
         : '-';
     final signature =
-        '$niedSignature|$snetSignature|$jmaTsunamiSignature|$nmefcTsunamiSignature|$ptwcTsunamiSignature|$ntwcTsunamiSignature|$incoisTsunamiSignature|$cmtSignature|$volcanoSignature|$jmaLpgmSignature|$megaquakeSignature';
+        '$localEewSignature|$niedSignature|$snetSignature|$jmaTsunamiSignature|$nmefcTsunamiSignature|$ptwcTsunamiSignature|$ntwcTsunamiSignature|$incoisTsunamiSignature|$cmtSignature|$volcanoSignature|$jmaLpgmSignature|$megaquakeSignature';
     if (signature == _lastAutoTriggerSignature) {
       return;
     }
@@ -2650,6 +2767,10 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         megaquakeSignature != _lastJmaMegaquakeInfoSignature) {
       focusPageKey = _infoPageKeyForMegaquake(megaquakeAdvisories.first);
     }
+    if (localEew != null && localEewSignature != _lastLocalEewInfoSignature) {
+      focusPageKey = _infoPageLocalEew;
+    }
+    _lastLocalEewInfoSignature = localEewSignature;
     _lastNiedInfoSignature = niedSignature;
     _lastSnetInfoSignature = snetSignature;
     _lastJmaTsunamiInfoSignature = jmaTsunamiSignature;

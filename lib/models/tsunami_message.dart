@@ -168,6 +168,8 @@ class TsunamiMessage {
   final String amplitudeMapUrl;
   final String coastalMapUrl;
   final String className;
+  final String bulletinLevel;
+  final String expires;
   final bool isInitialSnapshot;
 
   const TsunamiMessage({
@@ -191,10 +193,33 @@ class TsunamiMessage {
     this.amplitudeMapUrl = '',
     this.coastalMapUrl = '',
     this.className = 'gray',
+    this.bulletinLevel = '',
+    this.expires = '',
     this.isInitialSnapshot = false,
   });
 
   bool get isActive => grade != TsunamiGrade.none;
+
+  bool get isInformation =>
+      (source == TsunamiSource.ptwc ||
+          source == TsunamiSource.ntwc ||
+          source == TsunamiSource.incois) &&
+      bulletinLevel.toLowerCase() == 'information';
+
+  DateTime? get informationDisplayUntilUtc {
+    if (!isInformation) return null;
+    final issued = reportInstantUtc;
+    if (issued == null) return null;
+    final sourceExpiry = _parseSourceTimeUtc(expires, timeZone);
+    if (sourceExpiry != null && sourceExpiry.isAfter(issued)) {
+      return sourceExpiry;
+    }
+    // Presentation freshness only; this does not assert a warning expiry.
+    return issued.add(const Duration(hours: 3));
+  }
+
+  bool isDisplayableAt(DateTime now) =>
+      isActive || (informationDisplayUntilUtc?.isAfter(now.toUtc()) ?? false);
 
   bool get isCancellation =>
       !isActive &&
@@ -204,7 +229,11 @@ class TsunamiMessage {
           titleText.contains('なし'));
 
   DateTime? get reportInstantUtc {
-    final value = reportTime.trim().replaceAll('/', '-');
+    return _parseSourceTimeUtc(reportTime, timeZone);
+  }
+
+  static DateTime? _parseSourceTimeUtc(String raw, int timeZone) {
+    final value = raw.trim().replaceAll('/', '-');
     if (value.isEmpty) return null;
     final parsed = DateTime.tryParse(value);
     if (parsed == null) return null;
@@ -274,6 +303,8 @@ class TsunamiMessage {
     'amplitudeMapUrl': amplitudeMapUrl,
     'coastalMapUrl': coastalMapUrl,
     'className': className,
+    'bulletinLevel': bulletinLevel,
+    'expires': expires,
     'isInitialSnapshot': isInitialSnapshot,
   };
 
@@ -341,6 +372,8 @@ class TsunamiMessage {
       amplitudeMapUrl: map['amplitudeMapUrl']?.toString() ?? '',
       coastalMapUrl: map['coastalMapUrl']?.toString() ?? '',
       className: map['className']?.toString() ?? 'gray',
+      bulletinLevel: map['bulletinLevel']?.toString() ?? '',
+      expires: map['expires']?.toString() ?? '',
       isInitialSnapshot: map['isInitialSnapshot'] == true,
     );
   }
@@ -366,6 +399,8 @@ class TsunamiMessage {
     String? amplitudeMapUrl,
     String? coastalMapUrl,
     String? className,
+    String? bulletinLevel,
+    String? expires,
     bool? isInitialSnapshot,
   }) {
     return TsunamiMessage(
@@ -389,6 +424,8 @@ class TsunamiMessage {
       amplitudeMapUrl: amplitudeMapUrl ?? this.amplitudeMapUrl,
       coastalMapUrl: coastalMapUrl ?? this.coastalMapUrl,
       className: className ?? this.className,
+      bulletinLevel: bulletinLevel ?? this.bulletinLevel,
+      expires: expires ?? this.expires,
       isInitialSnapshot: isInitialSnapshot ?? this.isInitialSnapshot,
     );
   }
@@ -787,6 +824,8 @@ class TsunamiMessage {
       titleText: titleText,
       grade: grade,
       className: _internationalClassName(grade),
+      bulletinLevel: level,
+      expires: json['expires']?.toString().trim() ?? '',
       epicenterLat: _parseDouble(json['latitude']),
       epicenterLng: _parseDouble(json['longitude']),
       magnitude: _parseDouble(json['magnitude']),

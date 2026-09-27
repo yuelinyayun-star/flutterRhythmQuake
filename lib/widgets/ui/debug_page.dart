@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models/snet_station.dart';
+import '../../core/app_edition.dart';
 import '../../models/source_status.dart';
 import '../../core/source_estimation/source_estimation_models.dart';
 import '../../core/source_estimation/station_event_tracker.dart';
@@ -20,6 +21,9 @@ import '../../services/sources/nied_monitor.dart';
 import '../../services/sources/lpgm_monitor_service.dart';
 import '../../services/sources/snet_service.dart';
 import '../../services/sources/global_quake_service.dart';
+import '../../services/sources/jian_icl_service.dart';
+import '../../services/sources/chinaeew_icl_service.dart';
+import '../../services/background_service.dart';
 import 'local_inject_settings.dart';
 import 'history_replay_controls.dart';
 import '../../core/nied_replay_logger.dart';
@@ -96,6 +100,19 @@ class _DebugPageState extends State<DebugPage> {
       TextEditingController();
   bool _globalQuakeEnabled = false;
   bool _globalQuakeLoaded = false;
+  final JianIclService _jianIclService = JianIclService();
+  final TextEditingController _jianIclTokenController = TextEditingController();
+  StreamSubscription<void>? _jianIclSub;
+  bool _jianIclEnabled = false;
+  bool _jianIclConfigured = false;
+  bool _jianIclLoaded = false;
+  bool _jianIclBusy = false;
+  bool _jianIclTokenVisible = false;
+  final ChinaEewIclService _chinaEewIclService = ChinaEewIclService();
+  StreamSubscription<void>? _chinaEewIclSub;
+  bool _chinaEewIclEnabled = false;
+  bool _chinaEewIclLoaded = false;
+  bool _chinaEewIclBusy = false;
 
   @override
   void initState() {
@@ -105,6 +122,8 @@ class _DebugPageState extends State<DebugPage> {
     NiedReplayLogger.instance.revision.addListener(_onReplayLoggerChanged);
     _initNiedDebugState();
     _initGlobalQuakeDebugState();
+    _initJianIclDebugState();
+    _initChinaEewIclDebugState();
     _loadMapboxDebugState();
     _loadNiedLegendAssets();
     _loadLegendGeometry();
@@ -135,6 +154,9 @@ class _DebugPageState extends State<DebugPage> {
     _niedStationSub?.cancel();
     _niedGifFrameSub?.cancel();
     _globalQuakeSub?.cancel();
+    _jianIclSub?.cancel();
+    _chinaEewIclSub?.cancel();
+    _jianIclTokenController.dispose();
     _globalQuakePrimaryHostController.dispose();
     _globalQuakePrimaryPortController.dispose();
     _globalQuakeSecondaryHostController.dispose();
@@ -610,8 +632,16 @@ class _DebugPageState extends State<DebugPage> {
           _buildReplayLoggerToggle(),
           const SizedBox(height: 12),
           _buildLocalInjectToggle(),
-          const SizedBox(height: 12),
-          _buildGlobalQuakeToggle(),
+          if (AppEdition.hasGlobalQuake) ...[
+            const SizedBox(height: 12),
+            _buildGlobalQuakeToggle(),
+          ],
+          if (AppEdition.hasIcl) ...[
+            const SizedBox(height: 12),
+            _buildJianIclToggle(),
+            const SizedBox(height: 12),
+            _buildChinaEewIclToggle(),
+          ],
         ];
       case _DebugCategory.snet:
         return [_buildSnetPanel()];
@@ -769,6 +799,147 @@ class _DebugPageState extends State<DebugPage> {
         _globalQuakeLoaded = true;
       });
     }
+  }
+
+  Future<void> _initJianIclDebugState() async {
+    final prefs = await SharedPreferences.getInstance();
+    bool configured;
+    try {
+      configured = await _jianIclService.tokenStore.hasToken();
+    } catch (_) {
+      configured = false;
+    }
+    _jianIclSub = _jianIclService.onDebugStateChanged.listen((_) {
+      if (mounted) setState(() {});
+    });
+    if (!mounted) return;
+    setState(() {
+      _jianIclConfigured = configured;
+      _jianIclEnabled =
+          prefs.getBool(JianIclService.enabledPreferenceKey) ?? false;
+      _jianIclLoaded = true;
+    });
+  }
+
+  Future<void> _initChinaEewIclDebugState() async {
+    final prefs = await SharedPreferences.getInstance();
+    _chinaEewIclSub = _chinaEewIclService.onDebugStateChanged.listen((_) {
+      if (mounted) setState(() {});
+    });
+    if (!mounted) return;
+    setState(() {
+      _chinaEewIclEnabled =
+          prefs.getBool(ChinaEewIclService.enabledPreferenceKey) ?? false;
+      _chinaEewIclLoaded = true;
+    });
+  }
+
+  Future<void> _setChinaEewIclEnabled(bool enabled) async {
+    setState(() => _chinaEewIclBusy = true);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(ChinaEewIclService.enabledPreferenceKey, enabled);
+      if (!mounted) return;
+      setState(() => _chinaEewIclEnabled = enabled);
+      if (BackgroundService().isAndroidConnectionHostedByForegroundService) {
+        _chinaEewIclService.disconnect();
+        await BackgroundService().requestSourceReload(force: true);
+      } else if (enabled) {
+        _chinaEewIclService.connect();
+      } else {
+        _chinaEewIclService.disconnect();
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('无法更新 ICL EEW 开关')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _chinaEewIclBusy = false);
+    }
+  }
+
+  Future<void> _setJianIclEnabled(bool enabled) async {
+    if (enabled && !_jianIclConfigured) {
+      _showJianIclMessage('请先保存 ICL Token');
+      return;
+    }
+    setState(() => _jianIclBusy = true);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(JianIclService.enabledPreferenceKey, enabled);
+      if (!mounted) return;
+      setState(() => _jianIclEnabled = enabled);
+      if (BackgroundService().isAndroidConnectionHostedByForegroundService) {
+        _jianIclService.disconnect();
+        await BackgroundService().requestSourceReload(force: true);
+      } else if (enabled) {
+        _jianIclService.connect();
+      } else {
+        _jianIclService.disconnect();
+      }
+    } catch (_) {
+      _showJianIclMessage('无法更新 ICL 开关');
+    } finally {
+      if (mounted) setState(() => _jianIclBusy = false);
+    }
+  }
+
+  Future<void> _saveJianIclToken() async {
+    final token = _jianIclTokenController.text.trim();
+    setState(() => _jianIclBusy = true);
+    try {
+      await _jianIclService.tokenStore.write(token);
+      _jianIclTokenController.clear();
+      if (!mounted) return;
+      setState(() => _jianIclConfigured = true);
+      if (_jianIclEnabled) {
+        if (BackgroundService().isAndroidConnectionHostedByForegroundService) {
+          await BackgroundService().requestSourceReload(force: true);
+        } else {
+          _jianIclService.reloadToken();
+        }
+      }
+      _showJianIclMessage('ICL Token 已保存');
+    } on FormatException {
+      _showJianIclMessage('请填写 ja_ 开头的 Token，不要填写完整 URL');
+    } catch (_) {
+      _showJianIclMessage('ICL Token 保存失败');
+    } finally {
+      if (mounted) setState(() => _jianIclBusy = false);
+    }
+  }
+
+  Future<void> _clearJianIclToken() async {
+    setState(() => _jianIclBusy = true);
+    try {
+      _jianIclService.disconnect();
+      await _jianIclService.tokenStore.clear();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(JianIclService.enabledPreferenceKey, false);
+      if (BackgroundService().isAndroidConnectionHostedByForegroundService) {
+        await BackgroundService().requestSourceReload(force: true);
+      }
+      _jianIclTokenController.clear();
+      if (!mounted) return;
+      setState(() {
+        _jianIclEnabled = false;
+        _jianIclConfigured = false;
+      });
+      _showJianIclMessage('ICL Token 已清除');
+    } catch (_) {
+      _showJianIclMessage('清除失败，请重试');
+    } finally {
+      if (mounted) setState(() => _jianIclBusy = false);
+    }
+  }
+
+  void _showJianIclMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
   Future<void> _setGlobalQuakeEnabled(bool enabled) async {
@@ -2936,6 +3107,191 @@ class _DebugPageState extends State<DebugPage> {
     );
   }
 
+  Widget _buildJianIclToggle() {
+    final hosted = BackgroundService().isAndroidConnectionHostedByForegroundService;
+    final status = hosted
+        ? context.watch<QuakeProvider>().sourceStatuses[JianIclService.sourceName] ??
+            SourceStatus.disconnected
+        : _jianIclService.status;
+    final color = switch (status) {
+      SourceStatus.connected => const Color(0xFF3AFF6F),
+      SourceStatus.connecting || SourceStatus.synchronizing => Colors.amber,
+      SourceStatus.error => const Color(0xFFFF6673),
+      SourceStatus.disconnected => Colors.white54,
+    };
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: _glassSectionDecoration(
+        borderColor: _jianIclEnabled ? color : null,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Jian ICL 地震预警',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+              Text(status.name, style: TextStyle(color: color, fontSize: 11)),
+              const SizedBox(width: 8),
+              Switch(
+                value: _jianIclEnabled,
+                onChanged: _jianIclLoaded && !_jianIclBusy
+                    ? _setJianIclEnabled
+                    : null,
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _jianIclConfigured ? 'Token 已配置 · 仅在本机安全存储' : '未配置 Token',
+            style: const TextStyle(color: Colors.white70, fontSize: 11),
+          ),
+          if (_jianIclService.lastError != null && !hosted)
+            Text(
+              _jianIclService.lastError!,
+              style: const TextStyle(color: Color(0xFFFFA0A8), fontSize: 11),
+            ),
+          if (_jianIclEnabled && !hosted)
+            Text(
+              '已接收 ${_jianIclService.receivedEvents} 条 · 未识别 ${_jianIclService.unrecognizedFrames} 条',
+              style: const TextStyle(color: Colors.white54, fontSize: 10),
+            ),
+          const SizedBox(height: 10),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: TextField(
+              controller: _jianIclTokenController,
+              obscureText: !_jianIclTokenVisible,
+              enableSuggestions: false,
+              autocorrect: false,
+              style: const TextStyle(color: Colors.white, fontSize: 12),
+              decoration: InputDecoration(
+                labelText: 'ICL Token (ja_)',
+                labelStyle: const TextStyle(color: Colors.white54),
+                isDense: true,
+                filled: true,
+                fillColor: Colors.white.withValues(alpha: 0.06),
+                suffixIcon: IconButton(
+                  tooltip: _jianIclTokenVisible ? '隐藏 Token' : '显示 Token',
+                  icon: Icon(
+                    _jianIclTokenVisible ? Icons.visibility_off : Icons.visibility,
+                    size: 18,
+                  ),
+                  onPressed: () => setState(
+                    () => _jianIclTokenVisible = !_jianIclTokenVisible,
+                  ),
+                ),
+                enabledBorder: const OutlineInputBorder(
+                  borderSide: BorderSide(color: Colors.white12),
+                ),
+                focusedBorder: const OutlineInputBorder(
+                  borderSide: BorderSide(color: Color(0xFF82B1FF)),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            children: [
+              OutlinedButton.icon(
+                style: _glassButtonStyle(emphasize: true),
+                onPressed: _jianIclLoaded && !_jianIclBusy
+                    ? _saveJianIclToken
+                    : null,
+                icon: const Icon(Icons.save_outlined, size: 16),
+                label: const Text('保存 Token'),
+              ),
+              TextButton.icon(
+                onPressed: _jianIclConfigured && !_jianIclBusy
+                    ? _clearJianIclToken
+                    : null,
+                icon: const Icon(Icons.delete_outline, size: 16),
+                label: const Text('清除'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChinaEewIclToggle() {
+    final hosted = BackgroundService().isAndroidConnectionHostedByForegroundService;
+    final status = hosted
+        ? context.watch<QuakeProvider>().sourceStatuses[ChinaEewIclService.sourceName] ??
+            SourceStatus.disconnected
+        : _chinaEewIclService.status;
+    final color = switch (status) {
+      SourceStatus.connected => const Color(0xFF3AFF6F),
+      SourceStatus.connecting || SourceStatus.synchronizing => Colors.amber,
+      SourceStatus.error => const Color(0xFFFF6673),
+      SourceStatus.disconnected => Colors.white54,
+    };
+    final latest = _chinaEewIclService.latestListedEvent;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: _glassSectionDecoration(
+        borderColor: _chinaEewIclEnabled ? color : null,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'China EEW ICL 地震预警',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700,
+                      fontSize: 14),
+                ),
+              ),
+              Text(status.name, style: TextStyle(color: color, fontSize: 11)),
+              const SizedBox(width: 8),
+              Switch(
+                value: _chinaEewIclEnabled,
+                onChanged: _chinaEewIclLoaded && !_chinaEewIclBusy
+                    ? _setChinaEewIclEnabled
+                    : null,
+              ),
+            ],
+          ),
+          if (_chinaEewIclService.lastError != null && !hosted)
+            Text(_chinaEewIclService.lastError!,
+                style: const TextStyle(color: Color(0xFFFFA0A8), fontSize: 11)),
+          Text(
+            hosted
+                ? '由 Android 前台服务连接'
+                : '列表 ${_chinaEewIclService.listedEvents} 条 · 新报 ${_chinaEewIclService.receivedReports} 条',
+            style: const TextStyle(color: Colors.white70, fontSize: 11),
+          ),
+          if (latest != null && !hosted)
+            Text(
+              '${latest.hypocenter} · ${latest.reportNumText} · M${latest.magnitude.toStringAsFixed(1)}',
+              style: const TextStyle(color: Colors.white54, fontSize: 11),
+            ),
+          if (!hosted && _chinaEewIclEnabled)
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: _chinaEewIclBusy ? null : _chinaEewIclService.refresh,
+                icon: const Icon(Icons.refresh, size: 16),
+                label: const Text('刷新'),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _globalQuakeField({
     required String label,
     required double width,
@@ -3076,7 +3432,9 @@ const List<_DebugCategoryInfo> _debugCategories = [
     category: _DebugCategory.tools,
     title: '调试工具',
     pageTitle: '调试工具',
-    subtitle: 'Replay / Inject / GlobalQuake',
+    subtitle: AppEdition.isPublic
+        ? 'Replay / Inject'
+        : 'Replay / Inject / GlobalQuake / ICL',
     icon: Icons.build_outlined,
     accent: Color(0xFFAEB8CC),
   ),

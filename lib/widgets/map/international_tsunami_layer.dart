@@ -14,7 +14,7 @@ class InternationalTsunamiLayer extends StatelessWidget {
     final data = tsunami;
     if (data == null ||
         !_isInternationalSource(data.source) ||
-        !data.isActive) {
+        !data.isDisplayableAt(DateTime.now())) {
       return const SizedBox.shrink();
     }
     final lat = data.epicenterLat;
@@ -30,7 +30,10 @@ class InternationalTsunamiLayer extends StatelessWidget {
       return const SizedBox.shrink();
     }
 
-    final color = _gradeColor(data.className);
+    final isInformation = data.isInformation;
+    final color = isInformation
+        ? const Color(0xFF4AA3FF)
+        : _gradeColor(data.className);
     return MarkerLayer(
       markers: [
         Marker(
@@ -49,7 +52,11 @@ class InternationalTsunamiLayer extends StatelessWidget {
                 shape: BoxShape.circle,
                 border: Border.all(color: Colors.white, width: 2),
               ),
-              child: const Icon(Icons.waves, color: Colors.white, size: 14),
+              child: Icon(
+                isInformation ? Icons.info_outline : Icons.waves,
+                color: Colors.white,
+                size: 14,
+              ),
             ),
           ),
         ),

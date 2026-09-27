@@ -4,11 +4,14 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/quake_provider.dart';
+import '../../core/app_edition.dart';
 import '../../models/source_status.dart';
 import '../../models/source_credential_info.dart';
 import '../../services/sources/cwa_station_service.dart';
 import '../../services/sources/fdsn_motion_service.dart';
 import '../../services/sources/fan_service.dart';
+import '../../services/sources/chinaeew_icl_service.dart';
+import '../../services/sources/jian_icl_service.dart';
 import '../../services/background_service.dart';
 import '../../services/sources/global_quake_service.dart';
 import '../../services/sources/kma_monitor.dart';
@@ -238,6 +241,9 @@ class _SourceDashboardState extends State<SourceDashboard> {
     final separateJian =
         jianEnabled &&
         (jianAuth == 'authenticated' || jianCredential?.configured == true);
+    final jianIclStatus = provider.sourceStatuses[JianIclService.sourceName];
+    final chinaEewIclStatus =
+        provider.sourceStatuses[ChinaEewIclService.sourceName];
     final names = <(String, String)>[
       if (SourceManager().isSourceEnabled('Wolfx')) ('Wolfx', 'Wolfx'),
       if (SourceManager().isSourceEnabled('FAN'))
@@ -247,7 +253,14 @@ class _SourceDashboardState extends State<SourceDashboard> {
         (jianAuthenticationLabel(jianAuth, errorCode: jianCredential?.errorCode), 'Jian Project'),
       if (SourceManager().isSourceEnabled('NowQuake')) ('NowQuake', 'NowQuake'),
       if (SourceManager().isSourceEnabled('P2P')) ('P2PQ', 'P2P'),
-      if (GlobalQuakeService().isEnabled) ('GQ', 'GlobalQuake'),
+      if (AppEdition.hasGlobalQuake && GlobalQuakeService().isEnabled)
+        ('GQ', 'GlobalQuake'),
+      if (AppEdition.hasIcl &&
+          _showIclStatus(JianIclService().isEnabled, jianIclStatus))
+        ('Jian ICL', JianIclService.sourceName),
+      if (AppEdition.hasIcl &&
+          _showIclStatus(ChinaEewIclService().isEnabled, chinaEewIclStatus))
+        ('China EEW ICL', ChinaEewIclService.sourceName),
       if (LocalInjectServer.isRunning) (localInjectApiName, localInjectApiName),
     ];
     return Column(
@@ -272,6 +285,9 @@ class _SourceDashboardState extends State<SourceDashboard> {
       ],
     );
   }
+
+  bool _showIclStatus(bool enabled, SourceStatus? status) =>
+      enabled || (status != null && status != SourceStatus.disconnected);
 
   Widget _buildJianCredentialLine(
     BuildContext context,
@@ -405,7 +421,8 @@ class _SourceDashboardState extends State<SourceDashboard> {
             now: now,
           ),
         ),
-      if (QuakeMapView.pAlertEnabledNotifier.value)
+      if (AppEdition.hasPAlertStations &&
+          QuakeMapView.pAlertEnabledNotifier.value)
         _buildStationLine(
           context,
           'P-Alert:',

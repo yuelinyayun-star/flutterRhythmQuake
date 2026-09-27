@@ -296,8 +296,15 @@ int? _toInt(dynamic value) {
 }
 
 List<double> _parseRadius(dynamic value) {
+  if (value is num && value.isFinite && value >= 0) {
+    return List<double>.filled(4, value.toDouble());
+  }
   final text = _clean(value);
   if (text.isEmpty) return const [];
+  final single = double.tryParse(text);
+  if (single != null && single.isFinite && single >= 0) {
+    return List<double>.filled(4, single);
+  }
   final radii = text
       .split('|')
       .map((part) => double.tryParse(part.trim()))

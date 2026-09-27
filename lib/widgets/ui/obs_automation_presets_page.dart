@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models/obs_automation_preset.dart';
+import '../../core/app_edition.dart';
 import '../../models/obs_automation_builtin_presets.dart';
 import '../../models/obs_automation_value_expression.dart';
 import '../../services/obs_automation_input_service.dart';
@@ -1623,7 +1624,7 @@ class _ObsAutomationPresetsPageState extends State<ObsAutomationPresetsPage> {
         return _enumConditionEditor(
           block,
           label: 'EEW 机构',
-          values: const {
+          values: {
             'jma': 'JMA',
             'cwa': 'CWA',
             'cea': 'CEA',
@@ -1632,7 +1633,7 @@ class _ObsAutomationPresetsPageState extends State<ObsAutomationPresetsPage> {
             'chongqing': '重庆市地震局',
             'kma': 'KMA',
             'shakeAlert': 'ShakeAlert',
-            'globalQuake': 'GlobalQuake',
+            if (AppEdition.hasGlobalQuake) 'globalQuake': 'GlobalQuake',
           },
         );
       case ObsAutomationBlockType.informationAgency:
@@ -2622,16 +2623,19 @@ class _ObsAutomationPresetsPageState extends State<ObsAutomationPresetsPage> {
     bool detectionOnly = false,
   }) {
     return _inlineDropdown(
-      value: block.parameters['network'] ?? 'any',
+      value: !AppEdition.hasPAlertStations &&
+              block.parameters['network'] == 'palert'
+          ? 'any'
+          : block.parameters['network'] ?? 'any',
       values: detectionOnly
           ? const {'any': '任意台网', 'nied': 'NIED', 'kma': 'KMA', 'trem': 'TREM'}
-          : const {
+          : {
               'any': '任意台网',
               'nied': 'NIED',
               'kma': 'KMA',
               'trem': 'TREM',
               'snet': 'S-Net',
-              'palert': 'P-Alert',
+              if (AppEdition.hasPAlertStations) 'palert': 'P-Alert',
               'fdsn': 'FDSN/SeedLink',
               'seisjs': 'Wolfx SeisJS',
             },

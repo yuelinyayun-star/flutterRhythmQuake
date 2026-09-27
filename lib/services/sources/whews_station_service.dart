@@ -14,6 +14,11 @@ class WhewsStationFrame {
     required this.dataTime,
     required this.coordinates,
     required this.values,
+    this.source = 'whews',
+    this.codes = const [],
+    this.names = const [],
+    this.regions = const [],
+    this.stationTypes = const [],
     this.pga = const [],
     this.pgv = const [],
   });
@@ -22,6 +27,11 @@ class WhewsStationFrame {
   final DateTime dataTime;
   final List<LatLng> coordinates;
   final List<double> values;
+  final String source;
+  final List<String> codes;
+  final List<String> names;
+  final List<String> regions;
+  final List<String> stationTypes;
   final List<double> pga;
   final List<double> pgv;
 }

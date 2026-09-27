@@ -61,8 +61,8 @@ void main() {
       expect(hasSeenCatalogReport(second, remember(first)), isTrue);
       expect(hasSeenCatalogReport(first, remember(second)), isTrue);
       expect(
-      catalogCanonicalEventId(first, {}),
-      catalogCanonicalEventId(second, remember(first)),
+        catalogCanonicalEventId(first, {}),
+        catalogCanonicalEventId(second, remember(first)),
       );
       final provider = QuakeProvider();
       addTearDown(provider.dispose);
@@ -88,6 +88,80 @@ void main() {
         File('test/fixtures/catalog_20260917/jian_all.json').readAsStringSync(),
         jianText,
       );
+    },
+  );
+
+  test(
+    'captured CENC reports share identity without changing original IDs',
+    () {
+      final whewsCenc = w('cenc');
+      final jianCenc = j('cenc');
+      expect(whewsCenc.eventId, 'CD.20260916135200.000');
+      expect(jianCenc.eventId, 'WB.202609161352.378.956.36_M');
+      expect(whewsCenc.sourcePayload, wRaw('cenc'));
+      expect(jianCenc.sourcePayload, jRaw('cenc'));
+      expect(
+        catalogCanonicalEventId(whewsCenc, {}),
+        catalogCanonicalEventId(jianCenc, {}),
+      );
+      expect(catalogReportKey(whewsCenc), catalogReportKey(jianCenc));
+      expect(hasSeenCatalogReport(jianCenc, remember(whewsCenc)), isTrue);
+      expect(hasSeenCatalogReport(whewsCenc, remember(jianCenc)), isTrue);
+
+      final provider = QuakeProvider();
+      addTearDown(provider.dispose);
+      final whewsRow = provider.unifiedToQuakeMessageForTest(whewsCenc);
+      final jianRow = provider.unifiedToQuakeMessageForTest(jianCenc);
+      expect(sameCatalogHistoryEvent('cencEqlist', whewsRow, jianRow), isTrue);
+      EqlistManager().updateCencList(const []);
+      EqlistManager().upsertBucketItem('cencEqlist', whewsRow);
+      EqlistManager().upsertBucketItem('cencEqlist', jianRow);
+      expect(EqlistManager().cencList, hasLength(1));
+    },
+  );
+
+  test(
+    'CENC matching requires exact origin and coordinates; revisions remain',
+    () {
+      final event = w('cenc');
+      final seen = remember(event);
+      expect(catalogReportKey(event), isNotNull);
+      for (final revised in [
+        event.copyWith(magnitude: 3.7),
+        event.copyWith(depth: 11),
+        event.copyWith(reportNumText: '自动测定'),
+      ]) {
+        expect(hasSeenCatalogReport(revised, seen), isFalse);
+        expect(
+          catalogCanonicalEventId(revised, {}),
+          catalogCanonicalEventId(event, {}),
+        );
+      }
+      for (final distinct in [
+        event.copyWith(
+          originTime: event.originTime!.add(const Duration(seconds: 1)),
+        ),
+        event.copyWith(lat: event.lat! + 0.01),
+        event.copyWith(lng: event.lng! + 0.01),
+      ]) {
+        expect(
+          catalogCanonicalEventId(distinct, {}),
+          isNot(catalogCanonicalEventId(event, {})),
+        );
+        expect(hasSeenCatalogReport(distinct, seen), isFalse);
+      }
+      expect(catalogReportKey(event.copyWith(lat: double.nan)), isNull);
+      expect(catalogReportKey(event.copyWith(depth: -1)), isNull);
+
+      final revisedOrigin = event.copyWith(
+        originTime: event.originTime!.add(const Duration(seconds: 10)),
+        reportTime: event.reportTime!.add(const Duration(seconds: 10)),
+      );
+      expect(
+        catalogCanonicalEventId(revisedOrigin, seen),
+        catalogCanonicalEventId(event, seen),
+      );
+      expect(hasSeenCatalogReport(revisedOrigin, seen), isFalse);
     },
   );
 

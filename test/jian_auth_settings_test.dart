@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -28,6 +29,49 @@ void main() {
     const Size(390, 844),
     const Size(320, 568),
   ]) {
+    testWidgets('saved token can be viewed and copied at $size', (
+      tester,
+    ) async {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      String? copiedToken;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+            if (call.method == 'Clipboard.setData') {
+              copiedToken =
+                  (call.arguments as Map<Object?, Object?>)['text'] as String?;
+            }
+            return null;
+          });
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(SystemChannels.platform, null),
+      );
+      final token = 'rt_${'a' * 96}';
+      await JianCredentialStore().write(token);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: JianAuthSettings(onChanged: () async {})),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text(token), findsNothing);
+      await tester.tap(find.byTooltip('查看长期 Token'));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text(token), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.text('复制'));
+      await tester.pump();
+      expect(copiedToken, token);
+      await tester.tap(find.text('关闭'));
+      await tester.pumpAndSettle();
+      expect(find.text(token), findsNothing);
+      expect(await JianCredentialStore().read(), token);
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('configure and remove credential at $size', (tester) async {
       tester.view.physicalSize = size;
       tester.view.devicePixelRatio = 1;
@@ -75,6 +119,27 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets('token view closes when the app enters background', (
+    tester,
+  ) async {
+    await JianCredentialStore().write('rt_background_test');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: JianAuthSettings(onChanged: () async {})),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('查看长期 Token'));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('rt_background_test'), findsOneWidget);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pumpAndSettle();
+    expect(find.text('rt_background_test'), findsNothing);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('one-time exchange survives failed secure write and cancel', (
     tester,

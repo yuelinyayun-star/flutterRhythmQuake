@@ -65,6 +65,17 @@ void main() {
   });
   tearDown(() => SoundEffectService().enabled = true);
 
+  test('captured CWA EEW without forecast areas keeps intensity unknown', () {
+    final raw = Map<String, dynamic>.from(
+      (captured['source：cwa-eew'] as Map)['Data'] as Map,
+    );
+    final original = jsonEncode(raw);
+    final event = QuakeEventAdapter.convertJian('cwa-eew', raw)!;
+    expect(event.maxIntensity, '-');
+    expect(event.isWarn, isFalse);
+    expect(jsonEncode(raw), original);
+  });
+
   for (final type in jianEarthquakeSources.keys) {
     test('raw $type capture: identity, timestamp, raw immutability, voice', () {
       final raw = Map<String, dynamic>.from(

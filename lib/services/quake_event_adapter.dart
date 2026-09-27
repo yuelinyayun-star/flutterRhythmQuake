@@ -25,6 +25,162 @@ class QuakeEventAdapter {
   QuakeEventAdapter._();
 
   static const jianOrigin = 4;
+  static const jianIclOrigin = 5;
+  static const chinaEewIclOrigin = 6;
+
+  static UnifiedQuakeData? convertChinaEewIcl(
+    Map<String, dynamic> raw, {
+    bool isSnapshot = false,
+  }) {
+    final id = _stringValue(raw['eventId']);
+    final revision = _parseInt(raw['updates']);
+    final lat = _catalogNumber(raw['latitude']);
+    final lng = _catalogNumber(raw['longitude']);
+    final magnitude = _catalogNumber(raw['magnitude']);
+    final originTime = _parseTime(raw['shockTime'] ?? raw['startAt'], 8);
+    if (id == null || revision == null || revision < 1 ||
+        !hasCatalogCoordinates(lat, lng) || magnitude == null ||
+        originTime == null) {
+      return null;
+    }
+    final depth = _catalogNumber(raw['depth']) ?? -1.0;
+    final intensity = _iclIntensity(
+      raw,
+      magnitude: magnitude,
+      depth: depth,
+      allowEstimate: !isSnapshot,
+    );
+    final intensityText = intensity.value?.toStringAsFixed(1) ?? '-';
+    return UnifiedQuakeData(
+      source: 'iclEew',
+      origin: chinaEewIclOrigin,
+      eventId: id,
+      isEew: true,
+      timeZone: 8,
+      titleText: '成都高新减灾研究所地震预警',
+      reportNumText: intensity.estimated
+          ? '第$revision报（烈度估算）'
+          : '第$revision报',
+      useShindo: false,
+      maxIntensity: intensityText,
+      className: _setClassName(intensityText, false, false),
+      hypocenter: _stringValue(raw['placeName']) ??
+          _stringValue(raw['epicenter']) ?? '',
+      originTime: originTime,
+      reportTime: _parseTime(raw['updateTime'] ?? raw['updateAt'], 8),
+      magnitude: magnitude,
+      depth: depth,
+      depthText: _formatDepthText(depth, 8),
+      lat: lat,
+      lng: lng,
+      isWarn: intensity.value != null && intensity.value! >= 6.5,
+      apiTypeLabel: 'China EEW ICL',
+      isSnapshot: isSnapshot,
+      useSourceTimeForExpiry: true,
+      arrivedAt: DateTime.now(),
+      sourcePayload: snapshotSourcePayload(raw),
+    );
+  }
+
+  /// Dedicated ICL socket. Accept only the fields used by KA's ICL EEW
+  /// contract; unknown frames remain visible in DEBUG, not as alerts.
+  static UnifiedQuakeData? convertJianIcl(Map<String, dynamic> frame) {
+    final type = frame['type']?.toString();
+    final sourceFrame = type == 'all'
+        ? frame['source：icl'] ?? frame['source:icl']
+        : frame;
+    if (sourceFrame is! Map) return null;
+    if (type != null &&
+        type.isNotEmpty &&
+        type != 'icl' &&
+        type != 'iclEew' &&
+        type != 'update' &&
+        type != 'all') {
+      return null;
+    }
+    final body = sourceFrame['Data'] ?? sourceFrame['data'] ?? sourceFrame;
+    if (body is! Map) return null;
+    final raw = Map<String, dynamic>.from(body);
+    final id = _stringValue(raw['eventId']);
+    final revision = _parseInt(raw['updates']);
+    final lat = _catalogNumber(raw['latitude']);
+    final lng = _catalogNumber(raw['longitude']);
+    final magnitude = _catalogNumber(raw['magnitude']);
+    final originTime = _parseTime(raw['shockTime'] ?? raw['startAt'], 8);
+    if (id == null || id.isEmpty || revision == null || revision < 1 ||
+        !hasCatalogCoordinates(lat, lng) || magnitude == null ||
+        originTime == null) {
+      return null;
+    }
+    final depth = _catalogNumber(raw['depth']) ?? -1.0;
+    final intensity = _iclIntensity(
+      raw,
+      magnitude: magnitude,
+      depth: depth,
+      allowEstimate: type != 'all',
+    );
+    final intensityText = intensity.value?.toStringAsFixed(1) ?? '-';
+    final location = _stringValue(raw['placeName']) ??
+        _stringValue(raw['epicenter']) ?? '';
+    final reportTime = _parseTime(raw['updateTime'] ?? raw['updateAt'], 8);
+    return UnifiedQuakeData(
+      source: 'iclEew',
+      origin: jianIclOrigin,
+      eventId: id,
+      isEew: true,
+      timeZone: 8,
+      titleText: '成都高新减灾研究所地震预警',
+      reportNumText: intensity.estimated
+          ? '第$revision报（烈度估算）'
+          : '第$revision报',
+      useShindo: false,
+      maxIntensity: intensityText,
+      className: _setClassName(intensityText, false, false),
+      hypocenter: location,
+      originTime: originTime,
+      reportTime: reportTime,
+      magnitude: magnitude,
+      depth: depth,
+      depthText: _formatDepthText(depth, 8),
+      lat: lat,
+      lng: lng,
+      isWarn: intensity.value != null && intensity.value! >= 6.5,
+      apiTypeLabel: 'Jian ICL',
+      isSnapshot: type == 'all',
+      useSourceTimeForExpiry: true,
+      arrivedAt: DateTime.now(),
+      sourcePayload: snapshotSourcePayload(raw),
+    );
+  }
+
+  static ({double? value, bool estimated}) _iclIntensity(
+    Map<String, dynamic> raw, {
+    required double magnitude,
+    required double depth,
+    required bool allowEstimate,
+  }) {
+    var value = parseReportedIntensity(raw['epiIntensity']);
+    if (value == null && raw['counties'] is List) {
+      for (final county in (raw['counties'] as List).whereType<Map>()) {
+        final candidate = parseReportedIntensity(county['intensity']);
+        if (candidate != null && (value == null || candidate > value)) {
+          value = candidate;
+        }
+      }
+    }
+    if (value != null) return (value: value, estimated: false);
+    if (!allowEstimate ||
+        !magnitude.isFinite ||
+        magnitude <= 0 ||
+        !depth.isFinite ||
+        depth < 0) {
+      return (value: null, estimated: false);
+    }
+    return (
+      value: IntensityCalculator.calcCsisLevel(magnitude, depth, 0).toDouble(),
+      estimated: true,
+    );
+  }
 
   /// Jian has its own wire contract, but emits the same agency identities as
   /// the other APIs. Never mutate raw data or manufacture a report timestamp.

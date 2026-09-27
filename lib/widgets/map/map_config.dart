@@ -125,11 +125,6 @@ class MapConfig {
   static const String rainLayer =
       '$_fanBase/rain/{z}/{x}/{y}?v=$_fanCacheRevision';
 
-  /// 实况风图层
-  /// 实时风场图叠加层
-  static const String windLayer =
-      '$_fanBase/wind/{z}/{x}/{y}?v=$_fanCacheRevision';
-
   /// 中国境内等高线
   /// 中国区域等高线地形图
   static const String cnContour =
@@ -142,8 +137,7 @@ class MapConfig {
   static const String jianTerrain = '$_jianBase/arcterr/{z}/{x}/{y}';
   static const String jianPhysical = '$_jianBase/arcphys/{z}/{x}/{y}';
   static const String jianRelief = '$_jianBase/arcshade/{z}/{x}/{y}';
-  static const String jianTransportation =
-      '$_jianBase/arctrans/{z}/{x}/{y}';
+  static const String jianTransportation = '$_jianBase/arctrans/{z}/{x}/{y}';
 
   /// 当前使用的瓦片URL
   /// 默认使用Petal浅色主题
@@ -181,7 +175,7 @@ class MapConfig {
   /// 可选叠加图层 (显示名 -> 图层键名)
   static Map<String, String> get overlayOptions => {
     '实况云图': 'cloudLayer',
-    '实况风场': 'windLayer',
+    'GFS 风场': 'windLayer',
     '实况降水': 'rainLayer',
     '中国等高线': 'cnContour',
   };
@@ -247,7 +241,7 @@ class MapConfig {
       case 'rainLayer':
         return rainLayer;
       case 'windLayer':
-        return windLayer;
+        return '';
       case 'cnContour':
         return cnContour;
       case 'cartoDark':

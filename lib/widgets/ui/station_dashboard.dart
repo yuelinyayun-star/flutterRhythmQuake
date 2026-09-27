@@ -9,6 +9,7 @@ import '../../services/sources/kma_monitor.dart';
 import '../../services/sources/palert_service.dart';
 import '../../models/snet_station.dart';
 import '../../core/intensity_calculator.dart';
+import '../../core/app_edition.dart';
 import 'ui_scale.dart';
 
 @visibleForTesting
@@ -279,7 +280,7 @@ class StationDashboard extends StatelessWidget {
         const Color(0xFF1ABC9C),
         valueColor: _tremMaxColor(),
       ),
-      if (!phoneMode)
+      if (!phoneMode && AppEdition.hasPAlertStations)
         Container(
           width: _ws(1, context),
           height: _s(30, context),
@@ -287,7 +288,7 @@ class StationDashboard extends StatelessWidget {
             color: Colors.white.withValues(alpha: 0.35),
           ),
         ),
-      _maxCard(
+      if (AppEdition.hasPAlertStations) _maxCard(
         context,
         'P-Alert',
         '当前最大震度',

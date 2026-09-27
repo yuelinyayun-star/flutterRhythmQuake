@@ -31,6 +31,20 @@ void main() {
     expect(plan.requiresFullReload, isFalse);
     expect(plan.stations, {'nied'});
   });
+  test('Jian station source selections only reload their own networks', () {
+    for (final entry in {
+      'nied_data_source': ('lmoni', 'nied'),
+      'kma_data_source': ('pews', 'kma'),
+      'snet_data_source': ('msil', 'snet'),
+    }.entries) {
+      final plan = BackgroundSourceReloadPlan(
+        {entry.key: entry.value.$1},
+        {entry.key: 'jian'},
+      );
+      expect(plan.requiresFullReload, isFalse);
+      expect(plan.stations, {entry.value.$2});
+    }
+  });
   test('each supported switch, including disable, targets its station', () {
     for (final entry in BackgroundSourceReloadPlan.stationKeys.entries) {
       final plan = BackgroundSourceReloadPlan(

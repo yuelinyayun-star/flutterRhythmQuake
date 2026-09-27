@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'dart:ui';
 import 'package:provider/provider.dart';
 import '../../providers/quake_provider.dart';
+import '../../core/app_edition.dart';
 import '../../providers/map_state_provider.dart';
 import '../../models/intensity_theme.dart';
 import '../../models/quake_message.dart';
@@ -377,7 +378,8 @@ class _AlertModuleState extends State<AlertModule> {
     return [
       ?_sourceEstimationUnifiedEventV2(nied),
       for (final event in PAlertSourceState.events.value)
-        if (event.estimate != null && shouldShowPAlertSource(
+        if (AppEdition.hasPAlertStations &&
+            event.estimate != null && shouldShowPAlertSource(
           event.estimate!, provider.unifiedEvents,
           hideOnMatchingEew: UiRuntimeFlags.hideGridOnEewNotifier.value,
         ))
@@ -2099,7 +2101,7 @@ class _AlertModuleState extends State<AlertModule> {
 
   /// 获取徽章烈度/震度值
   ///
-  /// 优先级：API 原始值 > 当地标准震中(距离=0)公式
+  /// 优先级：API 原始值 > 有依据的非 CWA 本地估算
   /// 注意：本方法不用于"本地烈度"行，本地烈度在 _buildBody 中单独计算
   double _badgeIntensity(QuakeMessage event) {
     if (event.maxIntensity != null) {
@@ -2123,11 +2125,7 @@ class _AlertModuleState extends State<AlertModule> {
         ).toDouble();
       case QuakeSourceType.cwa_eew:
       case QuakeSourceType.cwa:
-        return IntensityCalculator.calcCwbLevel(
-          event.magnitude,
-          event.depth,
-          0,
-        ).toDouble();
+        return -1;
       default:
         // JMA 公式计算震中震度 (distance=1 最小值)
         return IntensityCalculator.calculate(mag: event.magnitude, distance: 1);

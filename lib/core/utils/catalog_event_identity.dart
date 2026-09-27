@@ -52,8 +52,55 @@ String? _observationKey({
       '$lat|$lng|$magnitude|$depth';
 }
 
+String? _cencObservationKey({
+  required DateTime? instant,
+  required double? lat,
+  required double? lng,
+}) {
+  if (instant == null ||
+      lat == null ||
+      lng == null ||
+      !lat.isFinite ||
+      !lng.isFinite ||
+      lat.abs() > 90 ||
+      lng.abs() > 180 ||
+      (lat == 0 && lng == 0)) {
+    return null;
+  }
+  return 'cencEqlist|observation|${instant.microsecondsSinceEpoch}|$lat|$lng';
+}
+
+String? _cencReportKey(UnifiedQuakeData event) {
+  if (event.source != 'cencEqlist' || event.isEew) return null;
+  final observation = _cencObservationKey(
+    instant: event.originTime == null
+        ? null
+        : QuakeTime.unifiedInstantUtc(event),
+    lat: event.lat,
+    lng: event.lng,
+  );
+  if (observation == null ||
+      !event.magnitude.isFinite ||
+      event.magnitude < 0 ||
+      !event.depth.isFinite ||
+      event.depth < 0) {
+    return null;
+  }
+  // API-specific estimated intensity and publication time are not bulletin identity.
+  return '$observation|report|${event.magnitude}|${event.depth}|'
+      '${_catalogReview(event)}|${event.isCanceled}';
+}
+
 String? catalogObservationKey(UnifiedQuakeData event) => event.isEew
     ? null
+    : event.source == 'cencEqlist'
+    ? _cencObservationKey(
+        instant: event.originTime == null
+            ? null
+            : QuakeTime.unifiedInstantUtc(event),
+        lat: event.lat,
+        lng: event.lng,
+      )
     : _observationKey(
         source: event.source,
         instant: event.originTime == null
@@ -66,6 +113,7 @@ String? catalogObservationKey(UnifiedQuakeData event) => event.isEew
       );
 
 String? catalogReportKey(UnifiedQuakeData event) {
+  if (event.source == 'cencEqlist') return _cencReportKey(event);
   final observation = catalogObservationKey(event);
   if (observation == null) return null;
   final intensity =
@@ -91,6 +139,17 @@ String _catalogReview(UnifiedQuakeData event) {
 }
 
 const _gaReportPrefix = 'whews_ga|cross-api-v1|';
+const _cencIdentityPrefix = 'cencEqlist|identity-v1|';
+
+Map<String, dynamic>? _cencIdentityFromKey(String key) {
+  if (!key.startsWith(_cencIdentityPrefix)) return null;
+  try {
+    final value = jsonDecode(key.substring(_cencIdentityPrefix.length));
+    return value is Map ? Map<String, dynamic>.from(value) : null;
+  } on FormatException {
+    return null;
+  }
+}
 
 bool _gaTransportId(String id, String api) => switch (api) {
   'WHEWS' => RegExp(r'^ga\d{4}[a-z]+$').hasMatch(id),
@@ -162,6 +221,24 @@ String catalogCanonicalEventId(
   UnifiedQuakeData event,
   Map<String, DateTime> seen,
 ) {
+  if (event.source == 'cencEqlist' && !event.isEew) {
+    final observation = catalogObservationKey(event);
+    if (observation != null) {
+      String? matchingObservation;
+      for (final key in seen.keys) {
+        final known = _cencIdentityFromKey(key);
+        if (known == null || known['identity'] is! String) continue;
+        if (known['id'] == event.eventId &&
+            known['api'] == event.apiTypeLabel) {
+          return known['identity'] as String;
+        }
+        if (known['observation'] == observation) {
+          matchingObservation ??= known['identity'] as String;
+        }
+      }
+      return matchingObservation ?? observation;
+    }
+  }
   final incoming = _gaReport(event);
   if (incoming == null) return catalogEventId(event.source, event.eventId);
   Map<String, dynamic>? first;
@@ -177,9 +254,10 @@ String catalogCanonicalEventId(
     if (old is! Map || old['identity'] is! String) {
       continue;
     }
-    final sameTransportId = old['id'] == incoming['id'] &&
-        old['api'] == incoming['api'];
-    final provenCrossApi = old['api'] != incoming['api'] &&
+    final sameTransportId =
+        old['id'] == incoming['id'] && old['api'] == incoming['api'];
+    final provenCrossApi =
+        old['api'] != incoming['api'] &&
         old['observation'] == incoming['observation'];
     if (!sameTransportId && !provenCrossApi) continue;
     if (firstSeen == null || entry.value.isBefore(firstSeen)) {
@@ -197,6 +275,12 @@ Iterable<String> catalogReportKeys(
 ]) sync* {
   final exact = catalogReportKey(event);
   if (exact != null) yield exact;
+  if (event.source == 'cencEqlist' && !event.isEew) {
+    final observation = catalogObservationKey(event);
+    if (observation != null && event.eventId.trim().isNotEmpty) {
+      yield '$_cencIdentityPrefix${jsonEncode({'id': event.eventId, 'api': event.apiTypeLabel, 'observation': observation, 'identity': catalogCanonicalEventId(event, seen)})}';
+    }
+  }
   final ga = _gaReport(event);
   if (ga != null) {
     ga['identity'] = catalogCanonicalEventId(
@@ -243,6 +327,17 @@ bool hasSeenCatalogReport(UnifiedQuakeData event, Map<String, DateTime> seen) {
 }
 
 bool sameCatalogHistoryEvent(String bucket, QuakeMessage a, QuakeMessage b) {
+  if (bucket == 'cencEqlist' &&
+      a.source == QuakeSourceType.cenc &&
+      b.source == QuakeSourceType.cenc) {
+    String? key(QuakeMessage event) => _cencObservationKey(
+      instant: QuakeTime.eventInstantUtc(event),
+      lat: event.latitude,
+      lng: event.longitude,
+    );
+    final first = key(a);
+    return first != null && first == key(b);
+  }
   final agency = unifiedCatalogSources[bucket];
   if (agency == null || a.source != agency || b.source != agency) return false;
   final id = catalogEventId(bucket, a.eventId);

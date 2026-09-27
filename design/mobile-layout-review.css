@@ -1,0 +1,36 @@
+/* Mobile composition only. Original module styles remain in the HTML. */
+body{background:#111416;color-scheme:dark;overflow:auto}
+.app{width:min(100%,430px);height:calc(100dvh - 32px);min-width:0;min-height:620px;margin:16px auto;border:1px solid #ffffff25;border-radius:22px;box-shadow:0 12px 50px #0006;--safe-top:env(safe-area-inset-top,0px);--safe-bottom:env(safe-area-inset-bottom,0px);--group-height:150px}
+.topbar,.weatherline,.tools,.maptools{display:none}
+.mobile-nav{position:absolute;left:12px;right:12px;top:calc(12px + var(--safe-top));height:46px;display:flex;align-items:center;padding:4px;gap:4px;border-radius:24px;background:#16191d80;backdrop-filter:blur(16px);border:1px solid #ffffff38;box-shadow:0 4px 18px #0004;z-index:7}
+.mobile-nav button{flex:1;min-width:0;height:36px;border-radius:20px;color:#c0c8cf;font-size:12px;transition:background .18s,box-shadow .18s,color .18s;white-space:nowrap}
+.mobile-nav button.active{color:#e6f4ff;background:#82b1ff20;box-shadow:inset 0 0 10px #82b1ff2b,0 0 10px #82b1ff24;border:1px solid #b5dcff5c;text-shadow:0 0 8px #a2d2ff70}
+.preview-status{position:absolute;top:calc(64px + var(--safe-top));left:15px;right:15px;display:flex;justify-content:space-between;align-items:center;font-size:9px;color:#d1d9dc;text-shadow:0 1px 3px #000;pointer-events:none}
+.preview-status button{font-size:9px;color:#f0d6a1;pointer-events:auto;padding:0;min-height:20px}
+.stations{top:calc(90px + var(--safe-top));left:12px;right:auto;bottom:calc(var(--group-height) + 42px + var(--safe-bottom));width:62px;height:auto;max-height:366px;min-height:252px;display:grid;grid-template-columns:1fr;grid-template-rows:repeat(6,minmax(0,1fr));gap:7px;padding:0;background:none;border:0;backdrop-filter:none;border-radius:0}
+.station,.station:nth-child(3n){border:1px solid #ffffff24;border-radius:8px;background:#080b1080;backdrop-filter:blur(8px);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:2px;height:100%;overflow:hidden}
+.station b{font-size:9px}.station small{font-size:8px;white-space:nowrap}.station strong{font-size:17px}.station .dash{margin:2px auto}
+.sidebar{top:calc(90px + var(--safe-top));right:12px;bottom:auto;width:148px;height:270px;max-height:calc(100% - var(--group-height) - 142px - var(--safe-top) - var(--safe-bottom));min-height:155px;padding:10px 9px;background:#0a0d1278;border-color:#ffffff2e;box-shadow:0 3px 16px #0003;z-index:2}
+.sidecontent h2{font-size:12px}.sidecontent p{font-size:11px}.sidecontent .kv{font-size:10px;flex-wrap:wrap}.kv span{overflow-wrap:anywhere}.pager{flex-wrap:wrap;gap:0;font-size:9px}.pager button{height:26px;width:26px}.pager #pagerlabel{order:-1;width:100%;text-align:center;margin-bottom:3px}.sidefooter{font-size:8px}.beach{width:118px;height:118px;max-width:100%}.sidecontent{overscroll-behavior:contain}
+.left{top:auto;bottom:calc(22px + var(--safe-bottom));left:12px;right:12px;width:auto;gap:5px;z-index:3;max-height:calc(100% - 105px - var(--safe-top) - var(--safe-bottom))}
+.alerts{width:100%;max-height:188px;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;flex:0 1 auto;min-height:0}
+.alert{flex:none;background:#0d0d0d99}.alerttitle{font-size:11.5px;height:29px}.alertmain{min-height:80px;gap:10px;padding:6px 9px}.badge{width:60px;height:64px;font-size:26px;flex:none}.badge img{width:60px;height:43px}.badge small{font-size:9px}.alertcopy strong{font-size:14px}.alertcopy p{font-size:11px;overflow-wrap:anywhere}.alertcopy time{font-size:10px}.api{font-size:8px}
+.idle-alert{height:65px;display:flex;align-items:center;justify-content:center;font-size:16px;color:#ffffffa8;background:#0d0d0d80;backdrop-filter:blur(10px);border:1px solid #ffffff24;border-radius:10px}
+.eqlist,.eqlist.collapsed{width:100%;flex:none;height:208px;transition:height .25s;pointer-events:none;padding-top:0}
+.listbody{width:100%;top:28px;bottom:0;transition:opacity .18s;transform:none;pointer-events:auto;overflow:hidden}
+.eqlist.collapsed{height:28px}.eqlist.collapsed .listbody{transform:none;opacity:0;visibility:hidden;pointer-events:none}
+.collapse,.collapsed .collapse{position:absolute;top:0;right:0;left:0;bottom:auto;transform:none;width:100%;height:28px;border-radius:0;background:none;border:0;backdrop-filter:none;display:grid;place-items:center;touch-action:none;cursor:ns-resize}
+.collapse::before,.collapse::after{content:'';position:absolute;left:0;right:0;height:1px;background:#0d0d0dcc;pointer-events:none}
+.collapse::before{top:11px}.collapse::after{top:15px}
+.collapse .mi{display:none}.filterbar{background:#14141699;padding:5px 8px}.sources button{padding:4px 6px}.entries{background:#10101299;overscroll-behavior:contain}.eqrow{padding:9px;gap:8px}.eqcopy strong{font-size:12px}.eqcopy p{font-size:9px}.eqbadge{width:34px;height:38px;font-size:19px}.eqmeta b{font-size:15px}.listcount{padding:5px 8px;background:#14141699}
+.sourcepanel{bottom:auto;top:calc(91px + var(--safe-top));right:12px;z-index:8}.attribution{left:8px;right:8px;bottom:calc(4px + var(--safe-bottom));transform:none;font-size:7px;text-align:center;white-space:normal;pointer-events:auto}.dialogbox{width:calc(100% - 30px);max-height:72%;background:#141416d0}.dialog{z-index:12}.dialogbox select{background:#262c31;border:1px solid #ffffff35;border-radius:4px;padding:7px;width:100%;margin:10px 0}
+.mobile-map-actions{position:absolute;right:12px;bottom:calc(var(--group-height) + 34px + var(--safe-bottom));display:flex;flex-direction:row;gap:7px;z-index:2}.mobile-map-actions button{width:29px;height:29px;border-radius:50%;background:#10151a77;border:1px solid #ffffff28;backdrop-filter:blur(8px);color:#b4d6ff;padding:0}.mobile-map-actions .mi{font-size:17px}
+.settings-page{position:absolute;inset:0;width:100%;height:100%;padding:0;border:0;border-radius:0;background:#020208;z-index:4}
+.app[data-page=settings]{background:#020208}
+.app[data-page=settings] .map,.app[data-page=settings] .preview-status,.app[data-page=settings] .attribution,.app[data-page=settings] .sourcepanel{display:none}
+.app[data-page=settings] .left,.app[data-page=settings] .stations,.app[data-page=settings] .sidebar,.app[data-page=settings] .mobile-map-actions,.app[data-page=weather] .stations{display:none}
+@media(max-width:520px){.app{width:100%;height:100dvh;min-height:0;margin:0;border:0;border-radius:0;box-shadow:none}}
+@media(max-height:740px){.stations{gap:5px;min-height:240px;max-height:312px}.station .dash{display:none}.sidebar{height:235px}.alerts{max-height:128px}.eqlist:not(.collapsed){height:175px}.app.list-open .stations{min-height:0;gap:3px}.app.list-open .station small{font-size:7px}.app.list-open .station strong{font-size:14px}.app.list-open .station b{font-size:8px}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+.eqlist:not(.collapsed){height:clamp(105px,calc(100dvh - 550px),208px)}
+@media(max-height:740px){.app.list-open .stations{min-height:240px}.app.list-open .station{overflow:visible}.app.list-open .station small{font-size:8px}.app.list-open .station b{font-size:9px}}

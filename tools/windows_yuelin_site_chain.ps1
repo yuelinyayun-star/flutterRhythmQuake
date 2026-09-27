@@ -1,0 +1,7 @@
+$ErrorActionPreference='Stop'
+$OutputEncoding=[Console]::OutputEncoding=[Text.UTF8Encoding]::new()
+$files=@('C:\BtSoft\nginx\conf\vhost\yuelinrhythm.top.conf','C:\BtSoft\nginx\conf\php\83.conf','C:\BtSoft\nginx\conf\vhost\extension\yuelinrhythm.top\site_total.conf')
+$configs=@(foreach($p in $files){if(Test-Path $p){[pscustomobject]@{Path=$p;Lines=@(Get-Content -Encoding UTF8 $p|Where-Object{$_ -notmatch '^\s*(#|$)'})}}})
+$php=@(Get-CimInstance Win32_Process -Filter "Name='php-cgi.exe'"|ForEach-Object{[pscustomobject]@{Pid=$_.ProcessId;Parent=$_.ParentProcessId;Path=$_.ExecutablePath;MiB=[math]::Round($_.WorkingSetSize/1MB,1);Started=$_.CreationDate}})
+$tests=@(foreach($u in @('http://127.0.0.1/','https://127.0.0.1/')){$q=[Net.HttpWebRequest]::Create($u);$q.Proxy=$null;$q.Timeout=12000;$q.Host='yuelinrhythm.top';if($u.StartsWith('https:')){$q.ServerCertificateValidationCallback={$true}};$x=$null;$e=$null;try{$x=$q.GetResponse()}catch [Net.WebException]{$x=$_.Exception.Response;$e=[string]$_.Exception.Status};if($x){$o=[pscustomobject]@{Url=$u;Status=[int]$x.StatusCode;Server=$x.Headers['Server'];Type=$x.ContentType;Length=$x.ContentLength;Location=$x.Headers['Location'];PoweredBy=$x.Headers['X-Powered-By']};$x.Close();$o}else{[pscustomobject]@{Url=$u;Error=$e}}})
+[pscustomobject]@{CapturedAt=[DateTime]::UtcNow.ToString('o');Configs=$configs;Php=$php;Tests=$tests}|ConvertTo-Json -Depth 6 -Compress

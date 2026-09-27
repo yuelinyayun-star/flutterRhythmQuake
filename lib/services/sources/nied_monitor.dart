@@ -12,6 +12,7 @@ import 'lmoni_image_service.dart';
 import 'jp_shindo_scale.dart';
 import 'nied_gif_observation.dart';
 import 'nied_background_worker.dart';
+import 'http_response_bytes.dart';
 
 class NiedReplayConfig {
   final bool enabled;
@@ -682,8 +683,9 @@ class NiedMonitorService extends ChangeNotifier {
   }) async {
     final client = _client;
     if (!_isCurrentRun(generation) || client == null) return null;
+    HttpClientRequest? request;
     try {
-      final request = await client.getUrl(Uri.parse(url)).timeout(timeout);
+      request = await client.getUrl(Uri.parse(url)).timeout(timeout);
       if (!_isCurrentRun(generation) || !identical(client, _client)) {
         request.abort();
         return null;
@@ -694,15 +696,24 @@ class NiedMonitorService extends ChangeNotifier {
       request.headers.set('Pragma', 'no-cache');
       final httpResponse = await request.close().timeout(timeout);
       if (!_isCurrentRun(generation) || !identical(client, _client)) {
+        await readHttpResponseBytes(
+          httpResponse,
+          timeout: timeout,
+          discard: true,
+        );
         return null;
       }
       if (httpResponse.statusCode != 200) {
+        await readHttpResponseBytes(
+          httpResponse,
+          timeout: timeout,
+          discard: true,
+        );
         return null;
       }
-      return await consolidateHttpClientResponseBytes(
-        httpResponse,
-      ).timeout(timeout);
+      return await readHttpResponseBytes(httpResponse, timeout: timeout);
     } catch (e) {
+      request?.abort();
       return null;
     }
   }
@@ -1168,10 +1179,9 @@ class NiedMonitorService extends ChangeNotifier {
   Future<String?> _fetchText(String url, int generation) async {
     final client = _client;
     if (!_isCurrentRun(generation) || client == null) return null;
+    HttpClientRequest? request;
     try {
-      final request = await client
-          .getUrl(Uri.parse(url))
-          .timeout(_metadataTimeout);
+      request = await client.getUrl(Uri.parse(url)).timeout(_metadataTimeout);
       if (!_isCurrentRun(generation) || !identical(client, _client)) {
         request.abort();
         return null;
@@ -1182,11 +1192,28 @@ class NiedMonitorService extends ChangeNotifier {
       request.headers.set('Pragma', 'no-cache');
       final response = await request.close().timeout(_metadataTimeout);
       if (!_isCurrentRun(generation) || !identical(client, _client)) {
+        await readHttpResponseBytes(
+          response,
+          timeout: _metadataTimeout,
+          discard: true,
+        );
         return null;
       }
-      if (response.statusCode != 200) return null;
-      return await utf8.decoder.bind(response).join().timeout(_metadataTimeout);
+      if (response.statusCode != 200) {
+        await readHttpResponseBytes(
+          response,
+          timeout: _metadataTimeout,
+          discard: true,
+        );
+        return null;
+      }
+      final bytes = await readHttpResponseBytes(
+        response,
+        timeout: _metadataTimeout,
+      );
+      return utf8.decode(bytes);
     } catch (_) {
+      request?.abort();
       return null;
     }
   }
@@ -1194,7 +1221,8 @@ class NiedMonitorService extends ChangeNotifier {
   HttpClient _createHttpClient() => HttpClient()
     ..badCertificateCallback = ((X509Certificate cert, String host, int port) =>
         true)
-    ..connectionTimeout = const Duration(seconds: 8);
+    ..connectionTimeout = const Duration(seconds: 8)
+    ..maxConnectionsPerHost = 8;
 
   bool _isCurrentRun(int generation) =>
       _isRunning && _runGeneration == generation;

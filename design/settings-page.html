@@ -4,6 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>RhythmQuake · 设置中心（UI 原型）</title>
+  <script>
+    if (new URLSearchParams(location.search).get('embed') === 'mobile') {
+      document.documentElement.classList.add('mobile-embedded');
+    }
+  </script>
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined" rel="stylesheet" />
   <style>
     :root {
@@ -754,6 +759,19 @@
       .seg { flex-wrap: wrap; }
       .btn-pair { flex-direction: column; }
     }
+    /* Reuse this page inside the mobile review without a second panel wrapper. */
+    .mobile-embedded .app > .shell {
+      width: calc(100% - 28px);
+      height: calc(100% - 100px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+      max-height: none;
+      aspect-ratio: auto;
+      margin: calc(86px + env(safe-area-inset-top, 0px)) 14px calc(14px + env(safe-area-inset-bottom, 0px));
+      flex: none;
+      min-height: 0;
+    }
+    .mobile-embedded .panel,
+    .mobile-embedded .panel-main,
+    .mobile-embedded .content-body { min-height: 0; }
   </style>
 </head>
 <body>
@@ -1867,6 +1885,11 @@
     });
 
     // Init
+    if (document.documentElement.classList.contains('mobile-embedded')) {
+      document.querySelector('.back').addEventListener('click', () => {
+        parent.postMessage({type: 'settings-preview-back'}, '*');
+      });
+    }
     renderApiSwitches();
     renderOverlays();
     renderMagFilters();

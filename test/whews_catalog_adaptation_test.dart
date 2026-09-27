@@ -193,6 +193,19 @@ void main() {
     );
   });
 
+  test('unknown-region placeholder uses coordinates only for display', () {
+    const original = '未知地区';
+    final mapped = catalogDisplayLocation(original, -4.222, 152.794);
+    expect(mapped, isNot(original));
+    expect(mapped, isNotEmpty);
+    expect(catalogDisplayLocation(original, null, 152.794), original);
+    expect(catalogDisplayLocation(original, 0, 0), original);
+    expect(
+      catalogDisplayLocation('四川省成都市', -4.222, 152.794),
+      '四川省成都市',
+    );
+  });
+
   test(
     'empty compatibility fields do not mask documented time, id or name',
     () {

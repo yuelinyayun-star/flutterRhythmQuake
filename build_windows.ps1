@@ -5,7 +5,9 @@
 
 param(
     [switch]$Clean,
-    [switch]$Release
+    [switch]$Release,
+    [ValidateSet('personal', 'public')]
+    [string]$Edition = 'personal'
 )
 
 # Force UTF-8 in terminal
@@ -97,7 +99,7 @@ Write-Host "[4/4] Running Flutter..." -ForegroundColor Cyan
 
 if ($Release) {
     Write-Host "      Mode: Release build" -ForegroundColor Yellow
-    flutter build windows --release
+    flutter build windows --release "--dart-define=RQ_EDITION=$Edition"
 } else {
-    flutter run -d windows
+    flutter run -d windows "--dart-define=RQ_EDITION=$Edition"
 }

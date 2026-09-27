@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../providers/quake_provider.dart';
+import '../../core/app_edition.dart';
 import '../../providers/map_state_provider.dart';
 import '../../providers/notification_settings_provider.dart';
 import '../../providers/background_settings_provider.dart';
@@ -91,7 +92,7 @@ class _SettingsPageState extends State<SettingsPage>
   bool _wolfxSeisJsEnabled = true;
   bool _p2pquakeEnabled = true;
   bool _kmaPewsEnabled = true;
-  bool _pAlertEnabled = true;
+  bool _pAlertEnabled = AppEdition.hasPAlertStations;
   bool _niedMonitorEnabled = true;
   bool _niedLpgmEnabled = true;
   bool _snetEnabled = true;
@@ -131,6 +132,8 @@ class _SettingsPageState extends State<SettingsPage>
   int _kmaIntensityHoldFrames = 1;
   bool _hideGridOnEew = false;
   bool _sideInfoAutoShowBeta = true;
+  bool _localEewDomestic = true;
+  bool _localEewForeign = false;
   bool _showEpicenter = false;
   static const String _showEpicenterKey = 'show_estimated_epicenter';
   bool _weatherMarqueeEnabled = false;
@@ -397,6 +400,9 @@ class _SettingsPageState extends State<SettingsPage>
         '高级',
         '网格',
         '侧边',
+        '本地预估',
+        '烈度',
+        'EEW',
         '震中',
         '调试',
         '开发',
@@ -494,7 +500,8 @@ class _SettingsPageState extends State<SettingsPage>
       _wolfxSeisJsEnabled = prefs.getBool(_wolfxSeisJsEnabledKey) ?? true;
       _p2pquakeEnabled = prefs.getBool(_p2pquakeEnabledKey) ?? true;
       _kmaPewsEnabled = prefs.getBool(_kmaPewsEnabledKey) ?? true;
-      _pAlertEnabled = prefs.getBool(_pAlertEnabledKey) ?? true;
+      _pAlertEnabled = AppEdition.hasPAlertStations &&
+          (prefs.getBool(_pAlertEnabledKey) ?? true);
       _niedMonitorEnabled = prefs.getBool(_niedMonitorEnabledKey) ?? true;
       _niedLpgmEnabled = prefs.getBool(_niedLpgmEnabledKey) ?? true;
       _snetEnabled = prefs.getBool(_snetEnabledKey) ?? true;
@@ -542,11 +549,14 @@ class _SettingsPageState extends State<SettingsPage>
       _kmaDataSource = switch (savedKmaDataSource) {
         'fan' => 'fan',
         'whews' => 'whews',
+        'jian' => 'jian',
         _ => 'pews',
       };
-      _snetDataSource = prefs.getString(_snetDataSourceKey) == 'whews'
-          ? 'whews'
-          : 'msil';
+      _snetDataSource = switch (prefs.getString(_snetDataSourceKey)) {
+        'whews' => 'whews',
+        'jian' => 'jian',
+        _ => 'msil',
+      };
       _niedReplayEnabled = prefs.getBool(_niedReplayEnabledKey) ?? false;
       _niedReplayStart =
           prefs.getString(_niedReplayStartKey) ?? '2026-05-30 23:34:00';
@@ -560,6 +570,10 @@ class _SettingsPageState extends State<SettingsPage>
           prefs.getInt(QuakeMapView.kmaIntensityHoldPreferenceKey) ?? 1;
       _hideGridOnEew = prefs.getBool(_hideGridOnEewKey) ?? false;
       _sideInfoAutoShowBeta = prefs.getBool(_sideInfoAutoShowBetaKey) ?? true;
+      _localEewDomestic =
+          prefs.getBool(UiRuntimeFlags.localEewDomesticKey) ?? true;
+      _localEewForeign =
+          prefs.getBool(UiRuntimeFlags.localEewForeignKey) ?? false;
       _showEpicenter = prefs.getBool(_showEpicenterKey) ?? false;
       _weatherMarqueeEnabled =
           prefs.getBool(_weatherMarqueeEnabledKey) ?? false;
@@ -635,6 +649,8 @@ class _SettingsPageState extends State<SettingsPage>
     SourceManager().setSourceEnabled('Wolfx', _wolfxEnabled);
     SourceManager().setSourceEnabled('P2P', _p2pquakeEnabled);
     UiRuntimeFlags.sideInfoAutoShowBetaNotifier.value = _sideInfoAutoShowBeta;
+    UiRuntimeFlags.localEewDomesticNotifier.value = _localEewDomestic;
+    UiRuntimeFlags.localEewForeignNotifier.value = _localEewForeign;
     UiRuntimeFlags.hideGridOnEewNotifier.value = _hideGridOnEew;
     UiRuntimeFlags.weatherMarqueeEnabledNotifier.value = _weatherMarqueeEnabled;
     _niedReplayStartController.text = _niedReplayStart;
@@ -1188,6 +1204,16 @@ class _SettingsPageState extends State<SettingsPage>
   Future<void> _saveSideInfoAutoShowBeta(bool val) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_sideInfoAutoShowBetaKey, val);
+  }
+
+  Future<void> _saveLocalEewSidebar(bool domestic, bool val) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(
+      domestic
+          ? UiRuntimeFlags.localEewDomesticKey
+          : UiRuntimeFlags.localEewForeignKey,
+      val,
+    );
   }
 
   Future<void> _saveShowEpicenter(bool val) async {
@@ -2167,6 +2193,10 @@ class _SettingsPageState extends State<SettingsPage>
               const _SettingsDivider(),
               _buildSideInfoAutoShowSwitch(),
               const _SettingsDivider(),
+              _buildLocalEewSidebarSwitch(domestic: true),
+              const _SettingsDivider(),
+              _buildLocalEewSidebarSwitch(domestic: false),
+              const _SettingsDivider(),
               _buildEpicenterShowSwitch(),
               const _SettingsDivider(),
               _buildPageBackgroundSettings(),
@@ -2392,7 +2422,7 @@ class _SettingsPageState extends State<SettingsPage>
           QuakeMapView.kmaPewsEnabledNotifier.value = val;
         },
       ),
-      _buildApiSwitch(
+      if (AppEdition.hasPAlertStations) _buildApiSwitch(
         title: 'P-Alert',
         value: _pAlertEnabled,
         onChanged: (val) {
@@ -2678,6 +2708,12 @@ class _SettingsPageState extends State<SettingsPage>
       title: '地图底图',
       subtitle: _tileKey == MapConfig.vectorBasemapKey
           ? null
+          : MapConfig.isJianTileKey(_tileKey)
+          ? '© Esri / Jian Project'
+          : _tileKey == 'arcgisSatellite' ||
+                _tileKey == 'arcgisTopo' ||
+                _tileKey == 'arcgisHillshade'
+          ? '© Esri'
           : '调整主地图底图样式',
       leading: Icons.layers_outlined,
       control: _buildDropdown<String>(
@@ -2734,7 +2770,8 @@ class _SettingsPageState extends State<SettingsPage>
         },
       ),
       _buildInfoLayerSwitch(
-        title: '实况风场',
+        title: 'GFS 风场',
+        subtitle: 'NOAA GFS · Open-Meteo / Jian 备用',
         value: _overlayWind,
         leading: Icons.air,
         onChanged: (val) {
@@ -2826,6 +2863,7 @@ class _SettingsPageState extends State<SettingsPage>
       ),
       _buildInfoLayerSwitch(
         title: '东南沿海及西太卫星云图',
+        subtitle: '浙江省水利厅 · 30分钟云图',
         value: _overlaySatelliteCloud,
         leading: Icons.cloud_queue_outlined,
         onChanged: (val) {
@@ -2867,6 +2905,7 @@ class _SettingsPageState extends State<SettingsPage>
         ),
       _buildInfoLayerSwitch(
         title: '台风路径',
+        subtitle: '浙江省水利厅 · Jian 备用',
         value: _overlayTyphoon,
         leading: Icons.storm_outlined,
         onChanged: (val) {
@@ -3633,6 +3672,7 @@ class _SettingsPageState extends State<SettingsPage>
       ('kmoni', 'KMONI'),
       ('yahoo', 'Yahoo'),
       if (_hasWAuthApiToken && _whewsNiedEnabled) ('whews', 'WHEWS'),
+      ('jian', 'Jian'),
     ];
     return _buildSettingRow(
       title: 'NIED 強震モニタ 数据源',
@@ -3654,6 +3694,7 @@ class _SettingsPageState extends State<SettingsPage>
       ('pews', 'KMA-PEWS'),
       ('fan', 'FAN'),
       if (_hasWAuthApiToken && _whewsKmaEnabled) ('whews', 'WHEWS'),
+      ('jian', 'Jian'),
     ];
     return _buildSettingRow(
       title: 'KMA 实时测站数据源',
@@ -3674,6 +3715,7 @@ class _SettingsPageState extends State<SettingsPage>
     final options = [
       ('msil', 'MSIL'),
       if (_hasWAuthApiToken && _whewsSnetEnabled) ('whews', 'WHEWS'),
+      ('jian', 'Jian'),
     ];
     return _buildSettingRow(
       title: 'S-Net 实时测站数据源',
@@ -3802,7 +3844,9 @@ class _SettingsPageState extends State<SettingsPage>
   Widget _buildDisplayShindo0Switch() {
     return _buildSettingRow(
       title: '显示低烈度数字',
-      subtitle: 'NIED / TREM / P-Alert 显示震度0，KMA 显示 MMI 1',
+      subtitle: AppEdition.hasPAlertStations
+          ? 'NIED / TREM / P-Alert 显示震度0，KMA 显示 MMI 1'
+          : 'NIED / TREM 显示震度0，KMA 显示 MMI 1',
       leading: Icons.looks_one_outlined,
       control: Align(
         alignment: Alignment.centerRight,
@@ -4044,10 +4088,45 @@ class _SettingsPageState extends State<SettingsPage>
     );
   }
 
+  Widget _buildLocalEewSidebarSwitch({required bool domestic}) {
+    return _buildSettingRow(
+      title: domestic ? '本地烈度预估与倒计时' : '国外预警烈度预估与倒计时',
+      subtitle: domestic
+          ? '预警侧栏显示本地烈度、震中距离与 S 波倒计时'
+          : '国外地震预警也显示本地烈度与 S 波倒计时',
+      leading: Icons.track_changes_outlined,
+      control: Align(
+        alignment: Alignment.centerRight,
+        child: Switch(
+          value: domestic ? _localEewDomestic : _localEewForeign,
+          activeThumbColor: _accentColor,
+          activeTrackColor: _accentColor.withValues(alpha: 0.38),
+          inactiveThumbColor: Colors.white70,
+          inactiveTrackColor: Colors.white24,
+          onChanged: (val) {
+            setState(() {
+              if (domestic) {
+                _localEewDomestic = val;
+              } else {
+                _localEewForeign = val;
+              }
+            });
+            _saveLocalEewSidebar(domestic, val);
+            if (domestic) {
+              UiRuntimeFlags.localEewDomesticNotifier.value = val;
+            } else {
+              UiRuntimeFlags.localEewForeignNotifier.value = val;
+            }
+          },
+        ),
+      ),
+    );
+  }
+
   Widget _buildEpicenterShowSwitch() {
     return _buildSettingRow(
       title: '推算震中显示（beta）',
-      subtitle: 'NIED / P-Alert',
+      subtitle: AppEdition.hasPAlertStations ? 'NIED / P-Alert' : 'NIED',
       leading: Icons.crisis_alert_outlined,
       control: Align(
         alignment: Alignment.centerRight,
@@ -4786,7 +4865,7 @@ class _SettingsPageState extends State<SettingsPage>
   }) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final useColumn = constraints.maxWidth < 300;
+        final useColumn = constraints.maxWidth < options.length * 78;
         Widget buildItem(_SelectOption<T> option) {
           final selected = option.value == value;
           return Material(

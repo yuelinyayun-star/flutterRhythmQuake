@@ -44,4 +44,28 @@ void main() {
   test('rejects geo_ip error payloads', () {
     expect(parseFanstudioGeoIpResponse({'error': 'AUV俺不中了'}), isNull);
   });
+
+  test('parses Jian GET IP district and coordinates', () {
+    final lookup = parseJianGeoIpResponse({
+      'ip': '222.137.1.1',
+      'country': '中国',
+      'province': '河南',
+      'city': '郑州',
+      'district': '金水',
+      'lat': 34.757,
+      'lon': 113.649,
+    });
+
+    expect(lookup, isNotNull);
+    expect(lookup!.regionLabel, '河南 郑州 金水');
+    expect(lookup.latitude, 34.757);
+    expect(lookup.longitude, 113.649);
+  });
+
+  test('rejects Jian GET IP errors, private addresses, and missing coordinates', () {
+    expect(parseJianGeoIpResponse({'error': 'invalid ip'}), isNull);
+    expect(parseJianGeoIpResponse({'ip': '127.0.0.1', 'skipped': true}), isNull);
+    expect(parseJianGeoIpResponse({'province': '河南', 'city': '郑州'}), isNull);
+    expect(parseJianGeoIpResponse({'lat': 91, 'lon': 113.649}), isNull);
+  });
 }

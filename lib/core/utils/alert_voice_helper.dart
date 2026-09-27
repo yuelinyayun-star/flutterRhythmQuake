@@ -60,6 +60,9 @@ class AlertVoiceHelper {
   }) {
     final source = message.source.voiceLabel;
     if (!message.isActive) {
+      if (message.isInformation) {
+        return '$source，发布海啸信息。';
+      }
       if (message.title.contains('信息') || message.titleText.contains('信息')) {
         return '$source，发布${message.title.isNotEmpty ? message.title : "海啸信息"}。';
       }
@@ -144,9 +147,13 @@ class AlertVoiceHelper {
     final isObservationBulletin =
         event.source == 'jmaEqlist' &&
         _isJmaObservationBulletin(event.titleText);
+    final hasJmaIntensityAreas =
+        event.source == 'jmaEqlist' &&
+        (isObservationBulletin ||
+            _isJmaHypocenterIntensityBulletin(event.titleText));
     final hasObservationLocation =
         event.source == 'jmaEqlist' && _isUnknownJmaLocation(event.hypocenter);
-    final observations = hasObservationLocation || isObservationBulletin
+    final observations = hasObservationLocation || hasJmaIntensityAreas
         ? _jmaObservedAreas(event.warnArea, event.maxIntensity)
         : (text: '', includesMaximum: false);
     final location = hasObservationLocation
@@ -313,6 +320,9 @@ class AlertVoiceHelper {
 
   static bool _isJmaObservationBulletin(String title) =>
       const {'震度速報', '震度速报', '各地の震度に関する情報', '各地の震度情報'}.contains(title.trim());
+
+  static bool _isJmaHypocenterIntensityBulletin(String title) =>
+      const {'震源・震度に関する情報', '震度・震源に関する情報'}.contains(title.trim());
 
   static bool _isUnknownJmaLocation(String name) => const {
     '',

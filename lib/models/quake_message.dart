@@ -244,6 +244,7 @@ enum QuakeSourceType {
   csn,
   igepn,
   earlyEst,
+  icl,
 }
 
 /// QuakeSourceType 扩展方法
@@ -388,6 +389,8 @@ extension QuakeSourceTypeExtension on QuakeSourceType {
         return 'Hi-net AQUA 震源机制解';
       case QuakeSourceType.unadapted:
         return '地震信息';
+      case QuakeSourceType.icl:
+        return '成都高新减灾研究所 (ICL)';
     }
   }
 
@@ -509,6 +512,8 @@ extension QuakeSourceTypeExtension on QuakeSourceType {
         return 'Hi-net AQUA 震源机制解';
       case QuakeSourceType.unadapted:
         return '地震信息';
+      case QuakeSourceType.icl:
+        return 'ICL 地震预警';
     }
   }
 }

@@ -814,6 +814,7 @@ class BackgroundEventProcessor {
       'kmaEew': QuakeSourceType.kma_eew_fan,
       'sa': QuakeSourceType.sa,
       'globalQuakeEew': QuakeSourceType.usgs,
+      'iclEew': QuakeSourceType.icl,
       'jmaEqlist': QuakeSourceType.jma_fan,
       'p2pJmaEqlist': QuakeSourceType.p2p,
       'cwaEqlist': QuakeSourceType.cwa,

@@ -1483,3 +1483,94 @@ RMS：原系数约 3.5 km 震中误差且 `solved`，冻结系数约 6.1 km 且�
 来源并列的前向诊断；未知事件没有已观测断层面，不能据此把 JMA 矩形接入点源搜索，也不能
 按单事件 RMS 选择系数或几何。下一步如果继续，只能在预声明的独立事件集合上做来源分层的
 联合标定/评价。
+
+## EXP1-DEC-065：JMA 源过程参数核对推进到震级/矩阵口径一致性
+
+- 日期：2026-08-21
+- 状态：参数一致性诊断扩展完成；不接生产；不修改算法输入
+- 完整记录：`matsuzaki_2006_jma_source_process_audit.dart`
+- 机器报告：`.dart_tool/matsuzaki_2006_jma_source_process_audit/report.{json,md}`
+
+本轮在不变的事件集合与文件约束下，增加了以下审计字段：
+
+- `02fault.txt` 的 `Vr`、`Ntmw`、`Dtmw`、`Shift_tmw`，并输出到 JSON/Markdown 表头。
+- `03mom.txt` 的 fault 级别累计释放样本、非零样本、总释放量与总最大值，便于与 `01event.txt`
+  的 `Mo` 做口径对照。`03mom` 当前按原始数值序列读（将后续时序作为矩量释放样本），并支持
+  从 `#mom` 后接续多行采样值。
+- `04slip.txt` 的最大滑移与 `01event.txt` `Mxslp` 差值，验证 `0/-` 行不应作零观测补全。
+- 报告新增 `momentConsistency` 与 `maxSlipConsistency` 结构，但仍保留边界：`M`/`Mo/Mw`、`03mom`
+  与烈度观测时间列不是同一类变量，不直接喂入未知事件前向震源估计。
+
+这轮只做核对，不引入 `sourceProcessMoment`、`03mom` 口径到推算主流程；如果后续做参数替代试验，
+须先固定独立事件、固定搜索规格，并保留同一套对照指标。
+
+## EXP1-DEC-066：`03mom` 口径核对改为积分比值
+
+- 日期：2026-09-13
+- 状态：`03mom` 与 `Mo` 的比值核对补齐；不接生产；不修改算法输入
+- 完整记录：`tool/matsuzaki_2006_jma_source_process_audit.dart`
+- 机器报告：`.dart_tool/matsuzaki_2006_jma_source_process_audit/report.{json,md}`
+
+本轮将核对口径拆为两条，避免把“样本和”直接当作积分量，并基于现有脚本约定将 `#mom` 首值作为触发语义入口处理后进行积分校验，
+在报告中附加 `Type` 标记以区分近地版本：
+
+- `sampleRatio`：`sum(03mom)` / `Mo`
+- `integrationRatio`：`Dt * sum(03mom)` / `Mo`
+
+结果：
+
+- 福岛：`Type=near01`，`sampleRatio≈1.112`、`integrationRatio≈0.222`
+- 长野、熊本、鸟取、茨城：`Type=near02`，`integrationRatio≈0.998~1.000`
+
+结论：在同一近地版本内（`near02`）可见 `03mom` 口径与 `Mo` 的积分口径基本一致；`near01` 与 `near02`
+存在实现差异，未发现近场观测数据拼接错误。当前不据此改动推算输入，继续按版本源分层管理。
+
+## EXP1-DEC-067：把 near01 与 near02 标注并并列，而非判定为单事件异常
+
+- 日期：2026-09-13
+- 状态：`near01`/`near02` 口径差异已并列，作为后续候选输入替代/对比实验的筛选条件
+- 完整记录：`tool/matsuzaki_2006_jma_source_process_audit.dart`
+- 机器报告：`.dart_tool/matsuzaki_2006_jma_source_process_audit/report.{json,md}`（`schemaVersion=v5`）
+
+本轮同步两点：
+
+- 01event.type 按 `Type` 字段在报告里保留（福岛为 `near01`，其余五行是 `near02`）。
+- 产物中明确 `Type=near01` 与 `Type=near02` 来源口径差异，不把近源过程版本差异当作个别事件异常处理。
+
+## EXP1-DEC-068：为 near01/near02 补充版本内推荐口径估计
+
+- 日期：2026-09-13
+- 状态：在不接生产输入前提下，补充每事件的版本内推荐与备选 `03mom` 口径评估
+- 完整记录：`tool/matsuzaki_2006_jma_source_process_audit.dart`
+- 机器报告：`.dart_tool/matsuzaki_2006_jma_source_process_audit/report.{json,md}`（`schemaVersion=v6`）
+
+新增输出：
+
+- `baselineEstimatedMomentE18Nm`：按版本推荐口径估计的总释放量（事件内当前实现为 `near01 -> sum`、`near02 -> Dt*sum`）
+- `baselineRatioToMo`：推荐估计与 `Mo` 的差值比
+- `alternativeEstimatedMomentE18Nm` / `alternativeRatioToMo`：另一个口径版本作对照
+
+结果用于实验分层：
+
+- `near01`（福岛）在“sum 口径”上更接近 `Mo`；“Dt*sum 口径”偏离明显；
+- `near02`（长野、熊本、鸟取、茨城）在“Dt*sum 口径”上与 `Mo` 接近，sum 口径偏离明显。
+
+结论：继续严格按版本分层，后续任何实验都要先固定 `Type`，避免将推荐口径混淆。
+
+## EXP1-DEC-069：源过程时间窗核对仅保留审计，不改输入链路
+
+- 日期：2026-09-13
+- 状态：新增时序核对输出，确认 `Ntmw/Dtmw/Shift_tmw` 不是可直接投喂未知事件搜索的实时窗口参数
+- 完整记录：`tool/matsuzaki_2006_jma_source_process_temporal_audit.dart`
+- 机器报告：`.dart_tool/matsuzaki_2006_jma_source_process_temporal_audit/report.{json,md}`
+
+发现：
+
+- 五个已审计事件里 `firstWindowTriggerSeconds` 都为 0，`Shift_tmw` 与 `firstWindowTrigger` 的数值不可直接等同。
+- `Observed Coverage / Expected Coverage` 出现系统性偏差（`near01` 约 `158.33%`，`near02` 范围 `114.58%~170.83%`），说明时序口径与 `Ntmw/Dtmw` 定义存在分歧。
+- `coverage` 的统计为审计字段，`nonZeroRatio` 在本次样本内全部是 `1.0`，但不应被误读为窗口长度一致。
+
+规则：
+
+- 这类时序窗口数据仍然只用于版本来源比较与边界识别，不进入未知事件推算的触发/输入链路。
+- 后续若要做“`03mom` 语义试验”，必须以该报告为输入约束，按 `near01`/`near02` 族内统一口径开展。

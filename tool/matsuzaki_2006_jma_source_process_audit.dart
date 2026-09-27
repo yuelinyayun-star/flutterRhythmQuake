@@ -72,6 +72,28 @@ void main(List<String> arguments) {
     final fault = _parseFault(faultText);
     final momentRelease = _parseMomentRelease(momentText);
     final slipDistribution = _parseSlip(slipText);
+    final eventMomentE18Nm = event['seismicMomentE18Nm'];
+    final magnitudeDifference = _doubleDiffOrNull(
+      event['magnitude'],
+      event['momentMagnitudeMw'],
+    );
+    final momentConsistency = _makeMomentConsistency(
+      magnitudeDifference: magnitudeDifference,
+      sourceProcessMomentE18Nm: eventMomentE18Nm is num
+          ? eventMomentE18Nm.toDouble()
+          : null,
+      eventType: event['type']?.toString(),
+      totalReleaseE18Nm: momentRelease['totalReleaseSumE18Nm'] as double?,
+      sampleIntervalSeconds: momentRelease['sampleIntervalSeconds'] as double?,
+    );
+    final maxSlipCheck = {
+      'eventMaximumSlipM': event['maximumSlipM'],
+      'fileMaximumSlipM': slipDistribution['maximumSlipM'],
+      'differenceEventMinusFile': _doubleDiffOrNull(
+        event['maximumSlipM'],
+        slipDistribution['maximumSlipM'],
+      ),
+    };
     final currentGeometry = Matsuzaki2006SourceBackedDistanceOverrides
         .eventGeometries
         .singleWhere((geometry) => geometry.eventId == config.eventId);
@@ -87,6 +109,8 @@ void main(List<String> arguments) {
       'eventFile': event,
       'faultFile': fault,
       'momentReleaseFile': momentRelease,
+      'momentConsistency': momentConsistency,
+      'maxSlipConsistency': maxSlipCheck,
       'slipDistributionFile': slipDistribution,
       'currentGeometryVariantId': currentVariant.id,
       'currentGeometryRecord': currentGeometry.geometryRecord,
@@ -102,7 +126,7 @@ void main(List<String> arguments) {
     });
   }
   final report = <String, Object?>{
-    'schemaVersion': 'matsuzaki_2006_jma_source_process_audit_v2',
+    'schemaVersion': 'matsuzaki_2006_jma_source_process_audit_v6',
     'purpose':
         'Audit official JMA source-process metadata and separate source families before any distance experiment.',
     'inputPolicy': {
@@ -133,6 +157,12 @@ void main(List<String> arguments) {
 }
 
 Map<String, Object?> _parseEvent(String text, String eventId) {
+  final seismicMomentNm = _scientific(
+    RegExp(
+      r'^Mo=\s*([-+\d.]+E[-+\d]+)',
+      multiLine: true,
+    ).firstMatch(text)?.group(1),
+  );
   final location = RegExp(
     r'Lon=\s*([-+\d.]+)\s+Lat=\s*([-+\d.]+)\s+Dep=\s*([-+\d.]+)',
   ).firstMatch(text);
@@ -160,12 +190,7 @@ Map<String, Object?> _parseEvent(String text, String eventId) {
       r'^#Last updated:\s*(.+)$',
       multiLine: true,
     ).firstMatch(text)?.group(1),
-    'seismicMomentNm': _scientific(
-      RegExp(
-        r'^Mo=\s*([-+\d.]+E[-+\d]+)',
-        multiLine: true,
-      ).firstMatch(text)?.group(1),
-    ),
+    'seismicMomentNm': seismicMomentNm,
     'momentMagnitudeMw': _doubleOrNull(
       RegExp(
         r'^Mo=.*?Mw=\s*([-+\d.]+)',
@@ -181,10 +206,21 @@ Map<String, Object?> _parseEvent(String text, String eventId) {
     'waveformResidual': _doubleOrNull(
       RegExp(r'^Res=\s*([-+\d.]+)', multiLine: true).firstMatch(text)?.group(1),
     ),
+    'seismicMomentE18Nm': seismicMomentNm == null
+        ? null
+        : (seismicMomentNm.toDouble() / 1e18),
   };
 }
 
 Map<String, Object?> _parseFault(String text) {
+  final ruptureVelocity = RegExp(
+    r'^Vr=\s*([-+\d.]+)',
+    multiLine: true,
+  ).firstMatch(text);
+  final temporal = RegExp(
+    r'^Ntmw=\s*(\d+)\s+Dtmw=\s*([-+\d.]+)\s+Shift_tmw=\s*([-+\d.]+)',
+    multiLine: true,
+  ).firstMatch(text);
   final origin = RegExp(r'Xorg=\s*(\d+)\s+Worg=\s*(\d+)').firstMatch(text);
   final reference = RegExp(
     r'Lon=\s*([-+\d.]+)\s+Lat=\s*([-+\d.]+)\s+Dep=\s*([-+\d.]+)',
@@ -241,6 +277,10 @@ Map<String, Object?> _parseFault(String text) {
             'alongStrikeKm': _double(spacing.group(1)!),
             'downDipKm': _double(spacing.group(2)!),
           },
+    'ruptureVelocityKmPerS': _doubleOrNull(ruptureVelocity?.group(1)),
+    'momentWindowCount': _int(temporal?.group(1)),
+    'momentWindowDurationSeconds': _doubleOrNull(temporal?.group(2)),
+    'momentWindowShiftSeconds': _doubleOrNull(temporal?.group(3)),
     'allSubfaultCount': rows.length,
     'activeSubfaultCount': active.length,
     'activeXRange': active.isEmpty
@@ -271,37 +311,66 @@ Map<String, Object?> _parseMomentRelease(String text) {
   );
   final lines = text.split(RegExp(r'\r?\n'));
   final histories = <Map<String, Object?>>[];
+  var totalReleaseSamples = 0;
+  var totalNonZeroReleaseSamples = 0;
+  var totalReleaseSum = 0.0;
+  double? totalMaximumRelease;
   for (var index = 0; index < lines.length; index++) {
     final faultMatch = RegExp(r'^#(\d+)\s*$').firstMatch(lines[index].trim());
     if (faultMatch == null || index + 2 >= lines.length) continue;
     if (!lines[index + 1].trim().startsWith('#mom')) continue;
-    final values = lines[index + 2]
-        .trim()
-        .split(RegExp(r'\s+'))
-        .where((value) => value.isNotEmpty)
-        .map(double.parse)
-        .toList();
+    final values = <double>[];
+    for (var dataIndex = index + 2; dataIndex < lines.length; dataIndex++) {
+      final candidate = lines[dataIndex].trim();
+      if (candidate.isEmpty || candidate.startsWith('#')) {
+        break;
+      }
+      values.addAll(
+        candidate
+            .split(RegExp(r'\s+'))
+            .where((value) => value.isNotEmpty)
+            .map(double.parse),
+      );
+    }
     if (values.isEmpty) continue;
-    final release = values.sublist(1);
-    final nonZero = release.where((value) => value > 0).toList();
+    final releaseHistory = values.skip(1).toList();
+    final nonZero = releaseHistory.where((value) => value > 0).toList();
+    final maximumRelease = releaseHistory.isEmpty
+        ? 0.0
+        : releaseHistory.reduce(math.max);
+    final releaseSum = releaseHistory.fold<double>(
+      0,
+      (sum, value) => sum + value,
+    );
+    totalReleaseSamples += releaseHistory.length;
+    totalNonZeroReleaseSamples += nonZero.length;
+    totalReleaseSum += releaseSum;
+    if (totalMaximumRelease == null || maximumRelease > totalMaximumRelease) {
+      totalMaximumRelease = maximumRelease;
+    }
     histories.add({
       'faultNumber': int.parse(faultMatch.group(1)!),
       'firstWindowTriggerSeconds': values.first,
-      'sampleCountIncludingTrigger': values.length,
-      'releaseSampleCount': release.length,
+      'sampleCount': releaseHistory.length,
       'nonZeroReleaseSampleCount': nonZero.length,
-      'durationSeconds': interval == null ? null : release.length * interval,
+      'durationSeconds': interval == null
+          ? null
+          : releaseHistory.length * interval,
       'nonZeroDurationSeconds': interval == null
           ? null
           : nonZero.length * interval,
-      'maximumReleaseE18Nm': release.reduce(math.max),
-      'sumReleaseE18Nm': release.fold<double>(0, (sum, value) => sum + value),
+      'maximumReleaseE18Nm': maximumRelease,
+      'sumReleaseE18Nm': releaseSum,
     });
   }
   return {
     'sampleIntervalSeconds': interval,
     'faultHistories': histories,
     'faultCount': histories.length,
+    'totalReleaseSamples': totalReleaseSamples,
+    'totalNonZeroReleaseSamples': totalNonZeroReleaseSamples,
+    'totalReleaseSumE18Nm': totalReleaseSum,
+    'totalMaximumReleaseE18Nm': totalMaximumRelease,
   };
 }
 
@@ -477,6 +546,72 @@ double _undirectedAngleDifference(double left, double right) {
   return difference;
 }
 
+Map<String, Object?> _makeMomentConsistency({
+  required double? magnitudeDifference,
+  required double? sourceProcessMomentE18Nm,
+  required double? totalReleaseE18Nm,
+  required double? sampleIntervalSeconds,
+  String? eventType,
+}) {
+  double? sampleIntervalRatio;
+  double? integratedRatio;
+  double? baselineEstimatedMomentE18Nm;
+  double? baselineRatioToMo;
+  double? alternativeEstimatedMomentE18Nm;
+  double? alternativeRatioToMo;
+  final totalReleaseIntegratedE18Nm =
+      (sampleIntervalSeconds == null || totalReleaseE18Nm == null)
+      ? null
+      : totalReleaseE18Nm * sampleIntervalSeconds;
+  if (sourceProcessMomentE18Nm != null &&
+      totalReleaseE18Nm != null &&
+      sourceProcessMomentE18Nm != 0) {
+    sampleIntervalRatio = totalReleaseE18Nm / sourceProcessMomentE18Nm;
+  }
+  if (sourceProcessMomentE18Nm != null &&
+      totalReleaseIntegratedE18Nm != null &&
+      sourceProcessMomentE18Nm != 0) {
+    integratedRatio = totalReleaseIntegratedE18Nm / sourceProcessMomentE18Nm;
+  }
+  if (eventType == 'near01') {
+    baselineEstimatedMomentE18Nm = totalReleaseE18Nm;
+    alternativeEstimatedMomentE18Nm = totalReleaseIntegratedE18Nm;
+  } else {
+    baselineEstimatedMomentE18Nm = totalReleaseIntegratedE18Nm;
+    alternativeEstimatedMomentE18Nm = totalReleaseE18Nm;
+  }
+  if (sourceProcessMomentE18Nm != null &&
+      baselineEstimatedMomentE18Nm != null &&
+      sourceProcessMomentE18Nm != 0) {
+    baselineRatioToMo = baselineEstimatedMomentE18Nm / sourceProcessMomentE18Nm;
+  }
+  if (sourceProcessMomentE18Nm != null &&
+      alternativeEstimatedMomentE18Nm != null &&
+      sourceProcessMomentE18Nm != 0) {
+    alternativeRatioToMo = alternativeEstimatedMomentE18Nm / sourceProcessMomentE18Nm;
+  }
+  return {
+    'eventType': eventType,
+    'magnitudeDifference': magnitudeDifference,
+    'sourceProcessMomentE18Nm': sourceProcessMomentE18Nm,
+    'totalReleaseE18Nm': totalReleaseE18Nm,
+    'totalReleaseIntegratedE18Nm': totalReleaseIntegratedE18Nm,
+    'baselineEstimatedMomentE18Nm': baselineEstimatedMomentE18Nm,
+    'baselineRatioToMo': baselineRatioToMo,
+    'alternativeEstimatedMomentE18Nm': alternativeEstimatedMomentE18Nm,
+    'alternativeRatioToMo': alternativeRatioToMo,
+    'sampleIntervalRatio': sampleIntervalRatio,
+    'integrationRatio': integratedRatio,
+  };
+}
+
+double? _doubleDiffOrNull(Object? leftValue, Object? rightValue) {
+  if (leftValue is num && rightValue is num) {
+    return leftValue.toDouble() - rightValue.toDouble();
+  }
+  return null;
+}
+
 double _double(String value) => double.parse(value);
 
 int _int(String? value) => value == null ? 0 : int.parse(value);
@@ -506,20 +641,26 @@ String _markdown(List<Map<String, Object?>> reports) {
     )
     ..writeln()
     ..writeln(
-      '| 事件 | JMA 深度 km | M/Mw | Mo (Nm) | 最大滑移 m | 网格原点 | 间距 km | 活跃范围 | 与当前几何关系 |',
+      '| 事件 | Type | JMA 深度 km | M | Mw | M-Mw | Vr | Ntmw | Dtmw | Shift_tmw | Mo (Nm) | 最大滑移 m | 网格原点 | 间距 km | 活跃范围 | 与当前几何关系 |',
     )
-    ..writeln('|---|---:|---:|---:|---:|---|---|---|---|');
+    ..writeln(
+      '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|---|',
+    );
   for (final report in reports) {
     final event = report['eventFile']! as Map<String, Object?>;
     final fault = report['faultFile']! as Map<String, Object?>;
+    final consistency = report['momentConsistency']! as Map<String, Object?>;
     final slip = report['slipDistributionFile']! as Map<String, Object?>;
     final origin = fault['originGrid'] as Map<String, Object?>?;
     final spacing = fault['gridSpacingKm'] as Map<String, Object?>?;
     final xRange = fault['activeXRange'] as Map<String, Object?>?;
     final wRange = fault['activeWRange'] as Map<String, Object?>?;
     buffer.writeln(
-      '| `${report['eventId']}` | ${_fixed(event['depthKm'])} | '
-      '${_fixed(event['magnitude'])}/${_fixed(event['momentMagnitudeMw'])} | '
+      '| `${report['eventId']}` | ${consistency['eventType'] ?? '-'} | ${_fixed(event['depthKm'])} | '
+      '${_fixed(event['magnitude'])} | ${_fixed(event['momentMagnitudeMw'])} | '
+      '${_fixed(consistency['magnitudeDifference'])} | '
+      '${_fixed(fault['ruptureVelocityKmPerS'])} | ${_fixed(fault['momentWindowCount'])} | '
+      '${_fixed(fault['momentWindowDurationSeconds'])} | ${_fixed(fault['momentWindowShiftSeconds'])} | '
       '${_scientificText(event['seismicMomentNm'])} | ${_fixed(event['maximumSlipM'])} | '
       '${origin == null ? '-' : '${origin['x']},${origin['w']}'} | '
       '${spacing == null ? '-' : '${_fixed(spacing['alongStrikeKm'])} x ${_fixed(spacing['downDipKm'])}'} | '
@@ -533,13 +674,23 @@ String _markdown(List<Map<String, Object?>> reports) {
       ..writeln('### `${report['eventId']}` 源过程统计')
       ..writeln()
       ..writeln(
-        '- `03mom.txt`：采样间隔 ${_fixed(moments['sampleIntervalSeconds'])} s；fault 数 ${moments['faultCount']}；${_momentHistoryText(histories)}',
+        '- `03mom.txt`：采样间隔 ${_fixed(moments['sampleIntervalSeconds'])} s；fault 数 '
+        '${moments['faultCount']}；${_momentHistoryText(histories)}；累计采样 ${_fixed(moments['totalReleaseSamples'])}，非零采样 '
+        '${_fixed(moments['totalNonZeroReleaseSamples'])}；总释放 ${_scientificText(moments['totalReleaseSumE18Nm'])} e18 Nm（样本和）；积分后总释放 '
+        '${_scientificText(consistency['totalReleaseIntegratedE18Nm'])} e18 Nm。 对 `01event` 中 `Mo`（${_scientificText(consistency['sourceProcessMomentE18Nm'])}）做口径对照：'
+        '样本和比值=${_fixed(consistency['sampleIntervalRatio'])}；积分比值=${_fixed(consistency['integrationRatio'])}（积分口径）。 '
+        '对应 Type=${consistency['eventType'] ?? '-'}。 '
+        '版本内推荐口径估计=${_scientificText(consistency['baselineEstimatedMomentE18Nm'])} e18 Nm，推荐比值=${_fixed(consistency['baselineRatioToMo'])}；'
+        '备选口径估计=${_scientificText(consistency['alternativeEstimatedMomentE18Nm'])} e18 Nm，备选比值=${_fixed(consistency['alternativeRatioToMo'])}。 '
+        ' 该比值用于核对口径，不作为输入替换。',
       )
       ..writeln(
         '- `04slip.txt`：刚度层数 ${((slip['rigidityRows']! as List<Object?>).length)}；子断层行 ${slip['subfaultRowCount']}；用于反演 ${slip['usedSubfaultCount']}；未用于反演 ${slip['unusedSubfaultCount']}；平均已用滑移 ${_fixed(slip['meanUsedSlipM'])} m；最大已用滑移 ${_fixed(slip['maximumSlipM'])} m。',
       )
       ..writeln(
-        '- 几何差异仅作为来源核对：${_geometryComparisonText(report['geometryComparison'])}',
+        '- `04slip` 与 `Mxslp` 一致性：'
+        '${_fixed((report['maxSlipConsistency']! as Map<String, Object?>)['differenceEventMinusFile'])}；'
+        '几何差异仅作为来源核对：${_geometryComparisonText(report['geometryComparison'])}',
       );
   }
   buffer
@@ -551,7 +702,10 @@ String _markdown(List<Map<String, Object?>> reports) {
     )
     ..writeln('- `03mom.txt` 描述断层模型内部的时间释放过程；它不能从测站烈度观测中直接得到，也不是 JMA 计测震度时间序列。')
     ..writeln(
-      '- `04slip.txt` 的滑移、rake 和 rigidity 用于源过程/断层模型解释。当前实验没有把它们混入点源烈度前向式；几何差异报告也不选择模型。',
+      '- `04slip.txt` 的滑移、rake 和 rigidity 用于源过程/断层模型解释。当前实验没有把它们混入点源烈度前向式；几何差异报告也不选择模型。'
+    )
+    ..writeln(
+      '- `Type=near01` 与 `Type=near02` 在近地近场反演版本和 `03mom` 口径上存在历史差异，不建议跨版本混用比值核对。'
     )
     ..writeln('- `0` 或 `-` 的子断层表示假设网格中未用于反演的单元，不能补成零烈度、零滑移观测，也不能当作已观测站。');
   buffer
@@ -583,7 +737,7 @@ String _momentHistoryText(List<Object?> histories) {
   return histories
       .map((history) {
         final row = history! as Map<String, Object?>;
-        return 'fault ${row['faultNumber']} 首窗 ${_fixed(row['firstWindowTriggerSeconds'])} s，'
+        return 'fault ${row['faultNumber']} 首触发 ${_fixed(row['firstWindowTriggerSeconds'])} s，'
             '释放时长 ${_fixed(row['durationSeconds'])} s，最大 ${_fixed(row['maximumReleaseE18Nm'])} e18 Nm';
       })
       .join('；');

@@ -19,6 +19,7 @@ import 'providers/page_background_provider.dart';
 import 'screens/main_screen.dart';
 import 'widgets/map/map_config.dart';
 import 'core/frame_rate_limiter.dart';
+import 'core/app_edition.dart';
 import 'core/nied_replay_logger.dart';
 import 'services/database_helper.dart';
 import 'services/ntp_service.dart';
@@ -38,6 +39,8 @@ import 'services/sources/nowquake_cenc_intensity_service.dart';
 import 'services/sources/p2pquake_service.dart';
 import 'services/sources/mock_input_service.dart';
 import 'services/sources/global_quake_service.dart';
+import 'services/sources/jian_icl_service.dart';
+import 'services/sources/chinaeew_icl_service.dart';
 import 'services/sources/fdsn_motion_service.dart';
 import 'services/debug/local_inject_server.dart';
 import 'services/sources/china_weather_alert_map_service.dart';
@@ -89,6 +92,8 @@ Future<void> _clearLegacyFanTileCacheOnce(SharedPreferences prefs) async {
 void _startDeferredServices(
   SharedPreferences prefs,
   GlobalQuakeService globalQuake,
+  JianIclService jianIcl,
+  ChinaEewIclService chinaEewIcl,
 ) {
   WidgetsBinding.instance.addPostFrameCallback((_) {
     unawaited(SoundEffectService().warmUp());
@@ -105,9 +110,20 @@ void _startDeferredServices(
         SourceManager().startAll();
       }
 
-      if (!BackgroundService().isAndroidConnectionHostedByForegroundService &&
+      if (AppEdition.hasGlobalQuake &&
+          !BackgroundService().isAndroidConnectionHostedByForegroundService &&
           (prefs.getBool(GlobalQuakeService.enabledPreferenceKey) ?? false)) {
         globalQuake.connect();
+      }
+      if (AppEdition.hasIcl &&
+          !BackgroundService().isAndroidConnectionHostedByForegroundService &&
+          (prefs.getBool(JianIclService.enabledPreferenceKey) ?? false)) {
+        jianIcl.connect();
+      }
+      if (AppEdition.hasIcl &&
+          !BackgroundService().isAndroidConnectionHostedByForegroundService &&
+          (prefs.getBool(ChinaEewIclService.enabledPreferenceKey) ?? false)) {
+        chinaEewIcl.connect();
       }
 
       // NTP 网络对时与本地注入服务延迟 2 秒后台启动，彻底释放冷启动 CPU
@@ -247,6 +263,8 @@ void main() async {
   final p2p = P2PQuakeService();
   final mock = MockInputService();
   final globalQuake = GlobalQuakeService();
+  final jianIcl = JianIclService();
+  final chinaEewIcl = ChinaEewIclService();
   globalQuake.configureServers(
     primaryHost:
         prefs.getString(GlobalQuakeService.primaryHostPreferenceKey) ??
@@ -276,7 +294,11 @@ void main() async {
   SourceManager().registerSource(nowQuakeCencIr);
   SourceManager().registerSource(p2p);
   SourceManager().registerSource(mock);
-  SourceManager().registerSource(globalQuake);
+  if (AppEdition.hasGlobalQuake) SourceManager().registerSource(globalQuake);
+  if (AppEdition.hasIcl) {
+    SourceManager().registerSource(jianIcl);
+    SourceManager().registerSource(chinaEewIcl);
+  }
   SourceManager().setSourceEnabled(
     'FAN',
     prefs.getBool('api_source_fan_enabled') ?? true,
@@ -292,7 +314,7 @@ void main() async {
     prefs.getBool('api_source_p2pquake_enabled') ?? true,
   );
   _restoreWhewsConnections(prefs, whews, whewsCredentials);
-  _startDeferredServices(prefs, globalQuake);
+  _startDeferredServices(prefs, globalQuake, jianIcl, chinaEewIcl);
 
   // 4. 桌面端窗口初始化（Web 自动跳过）
   await initDesktopWindow();

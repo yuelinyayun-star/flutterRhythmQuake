@@ -1,5 +1,12 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutterrhythmquake/core/utils/alert_voice_helper.dart';
 import 'package:flutterrhythmquake/models/tsunami_message.dart';
+import 'package:flutterrhythmquake/services/sources/noaa_tsunami_area_service.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 void main() {
   test('NMEFC parser prefers alarmDate code and handles dismissal level', () {
@@ -85,5 +92,66 @@ void main() {
     expect(incois.grade, TsunamiGrade.none);
     expect(incois.isActive, isFalse);
     expect(incois.htmlUrl, 'https://tsunami.incois.gov.in/example');
+  });
+
+  test('saved WHEWS information frames stay non-warning and expire', () {
+    final raw =
+        jsonDecode(
+              File(
+                'test/fixtures/catalog_20260917/whews_all.json',
+              ).readAsStringSync(),
+            )
+            as List<dynamic>;
+    for (final frame in raw.whereType<Map<String, dynamic>>()) {
+      final source = switch (frame['source']) {
+        'ptwc' => TsunamiSource.ptwc,
+        'ntwc' => TsunamiSource.ntwc,
+        'incois' => TsunamiSource.incois,
+        _ => null,
+      };
+      if (source == null) continue;
+      final data = Map<String, dynamic>.from(frame['Data'] as Map);
+      final message = TsunamiMessage.parseInternationalTsunami(source, data);
+      expect(message.isInformation, isTrue);
+      expect(message.isActive, isFalse);
+      expect(message.areas, isEmpty);
+      final issued = message.reportInstantUtc!;
+      expect(message.isDisplayableAt(issued), isTrue);
+      expect(
+        message.isDisplayableAt(message.informationDisplayUntilUtc!),
+        isFalse,
+      );
+      expect(TsunamiMessage.fromMap(message.toMap()).expires, message.expires);
+      expect(
+        AlertVoiceHelper.generateTsunamiText(message, isUpdate: false),
+        contains('发布海啸信息'),
+      );
+      expect(
+        AlertVoiceHelper.generateTsunamiText(message, isUpdate: false),
+        isNot(contains('解除')),
+      );
+    }
+  });
+
+  test('NOAA detail uses actual advisory coastline labels only', () async {
+    final bytes = File(
+      'test/fixtures/noaa_ntwc_advisory_20250918.json',
+    ).readAsBytesSync();
+    Uri? requested;
+    final client = MockClient((request) async {
+      requested = request.url;
+      return http.Response.bytes(bytes, 200);
+    });
+    final service = NoaaTsunamiAreaService(client: client);
+    final areas = await service.fetch(
+      'http://www.tsunami.gov/events/PAAQ/2025/09/18/t2ssp5/1/WEAK51/PAAQ.json',
+    );
+    expect(requested?.scheme, 'https');
+    expect(areas, hasLength(1));
+    expect(areas.single.grade, TsunamiGrade.watch);
+    expect(areas.single.name, contains('Amchitka Pass'));
+    expect(areas.single.name, contains('Attu'));
+    expect(await service.fetch('https://example.com/other.json'), isEmpty);
+    client.close();
   });
 }

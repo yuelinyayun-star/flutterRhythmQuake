@@ -406,8 +406,11 @@ JMA 官方源过程原始包审计见
 `.dart_tool/matsuzaki_2006_jma_source_process_audit/report.{json,md}`，原始 ZIP 保存在
 `tmp/jma_source_process_raw`，解压文本保存在 `tmp/jma_source_process_audit`。该审计解析
 `01event.txt` 的 `M/Mo/Mw/Mxslp`、`02fault.txt` 的有效子断层、`03mom.txt` 的矩量释放
-时间序列和 `04slip.txt` 的滑移/刚度，不把这些波形源过程量当成实时烈度输入。福岛、长野、
-茨城的 JMA 活跃足迹与当前 JMA 修订矩形在尺寸、走向、倾角和参考深度上相符；熊本、鸟取
+时间序列和 `04slip.txt` 的滑移/刚度，不把这些波形源过程量当成实时烈度输入。`03mom.txt`
+中首项是每个 fault 的触发时刻（按 `format_english.txt`），后续项才是矩量释放量；审计同时
+给出未积分样本和与积分后的物理口径。福岛（`Type=near01`）、长野、茨城的 JMA 活跃足迹与当前
+JMA 修订矩形在尺寸、走向、倾角和参考深度上相符。当前五事件中仅福岛是 `near01`（2014年前
+版本），其余是 `near02`（2014后版本），因此近场源过程口径已按版本分层；熊本、鸟取
 分别存在 `24 x 18` 对 `22 x 14 km`、`22 x 16` 对 `16 x 16 km` 的来源差异，因此 JMA
 源过程模型与当前 NIED 几何只允许并列诊断，不能拼接或按单事件 RMS 选择。大阪没有本地
 JMA 源过程索引条目，继续保持独立资料边界。
@@ -418,3 +421,7 @@ JMA 矩形的下倾方位由原始 `02fault.txt` 有效子断层中心的 `w -> 
 为与走向严格正交的方向。福岛、长野、茨城与当前同源矩形的逐站距离和 RMS 完全一致；
 熊本、鸟取的 JMA/NIED 距离不同，且在原系数和冻结系数下 RMS 改善方向相反。因此这轮
 只支持“来源并列、距离与系数联合诊断”，不支持把 JMA 矩形写入未知事件搜索。
+
+JMA 源过程时间窗核对见
+`.dart_tool/matsuzaki_2006_jma_source_process_temporal_audit/report.{json,md}`，用于核验
+`02fault.txt` 的 `Ntmw/Dtmw/Shift_tmw` 与 `03mom.txt` 的时序口径差异，仍保持“只审计不替代输入”的边界。

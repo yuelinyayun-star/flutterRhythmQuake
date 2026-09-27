@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutterrhythmquake/core/travel_time_service.dart';
 import 'package:flutterrhythmquake/models/eew_event_group.dart';
 import 'package:flutterrhythmquake/models/unified_quake_data.dart';
 import 'package:flutterrhythmquake/providers/map_state_provider.dart';
@@ -15,9 +16,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  setUp(() {
+  setUp(() async {
     SharedPreferences.setMockInitialValues({});
     SoundEffectService().enabled = false;
+    await TravelTimeService().load();
   });
 
   tearDown(() => SoundEffectService().enabled = true);

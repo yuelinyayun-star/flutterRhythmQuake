@@ -5,6 +5,12 @@
 #  3. 调用 Inno Setup 编译 RhythmQuake 自有安装器
 # ============================================================
 
+param(
+    [ValidateSet('personal', 'public')]
+    [string]$Edition = 'personal'
+)
+
+$OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = "Stop"
 $projectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $projectDir
@@ -44,7 +50,7 @@ foreach ($path in $isccPaths) {
 
 # 步骤 1: 构建 Release
 Write-Host "[1/4] Building Windows Release $appVersion+$appBuild..." -ForegroundColor Cyan
-& ".\build_windows.ps1" -Release
+& ".\build_windows.ps1" -Release -Edition $Edition
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  Build failed! Exit code: $LASTEXITCODE" -ForegroundColor Red
@@ -84,6 +90,7 @@ $manifestFiles = @(
 )
 $releaseManifest = [ordered]@{
     product = "RhythmQuake"
+    edition = $Edition
     version = "$appVersion+$appBuild"
     architecture = "x64"
     files = $manifestFiles
@@ -128,7 +135,7 @@ Write-Host "      Verified: $chineseMessagesHash" -ForegroundColor Green
 
 # 步骤 4: 编译安装包
 Write-Host "[4/4] Compiling branded installer..." -ForegroundColor Cyan
-& $iscc "/DMyAppVersion=$appVersion" "/DMyAppBuild=$appBuild" "/DChineseMessagesFile=$chineseMessagesFile" "installer_rhythmquake.iss"
+& $iscc "/DMyAppVersion=$appVersion" "/DMyAppBuild=$appBuild" "/DMyAppEdition=$Edition" "/DChineseMessagesFile=$chineseMessagesFile" "installer_rhythmquake.iss"
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  Installer compilation failed! Exit code: $LASTEXITCODE" -ForegroundColor Red
@@ -139,7 +146,7 @@ Write-Host "============================================" -ForegroundColor Green
 Write-Host "  Done! Installer created in: build\installer" -ForegroundColor Green
 Write-Host "============================================" -ForegroundColor Green
 
-$installerPath = Join-Path $projectDir "build\installer\RhythmQuake_Setup_${packageVersion}_x64.exe"
+$installerPath = Join-Path $projectDir "build\installer\RhythmQuake_Setup_${packageVersion}_${Edition}_x64.exe"
 if (-not (Test-Path -LiteralPath $installerPath)) {
     throw "Expected installer was not created: $installerPath"
 }

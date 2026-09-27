@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutterrhythmquake/models/cenc_ir_data.dart';
 import 'package:flutterrhythmquake/models/unified_quake_data.dart';
 import 'package:flutterrhythmquake/providers/quake_provider.dart';
+import 'package:flutterrhythmquake/services/background_event_processor.dart';
 import 'package:flutterrhythmquake/services/sound_effect_service.dart';
 import 'package:flutterrhythmquake/services/sources/eqlist/eqlist_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -52,6 +53,54 @@ void main() {
 
     provider.handleUnifiedEventForTest(event);
     expect(provider.unifiedEvents, isEmpty);
+  });
+
+  test('FAN and WHEWS copies notify once in foreground and background', () {
+    final fan = _cencEvent(
+      reviewed: false,
+    ).copyWith(eventId: 'fan-report-id', origin: 1, apiTypeLabel: 'FAN');
+    final whews = fan.copyWith(
+      eventId: 'whews-report-id',
+      origin: 3,
+      apiTypeLabel: 'WHEWS',
+      maxIntensity: '6.9',
+      reportTime: fan.reportTime!.add(const Duration(seconds: 2)),
+    );
+    for (final reports in [
+      [fan, whews],
+      [whews, fan],
+    ]) {
+      final provider = QuakeProvider();
+      addTearDown(provider.dispose);
+      final processor = BackgroundEventProcessor(sourceInfoMagFilters: {});
+      var notifications = 0;
+      provider.onUnifiedEventNotified = (_, _) => notifications++;
+
+      provider.handleUnifiedEventForTest(reports.first);
+      expect(
+        processor.process(reports.first).type,
+        BackgroundEventResultType.newEvent,
+      );
+      provider.handleUnifiedEventForTest(reports.last);
+      expect(
+        processor.process(reports.last).type,
+        BackgroundEventResultType.dropped,
+      );
+      expect(provider.unifiedEvents, hasLength(1));
+      expect(provider.unifiedEvents.single.eventId, reports.first.eventId);
+      expect(notifications, 1);
+
+      final revised = whews.copyWith(
+        reportNumText: '正式测定',
+        magnitude: 6.0,
+        reportTime: fan.reportTime!.add(const Duration(seconds: 31)),
+      );
+      provider.handleUnifiedEventForTest(revised);
+      expect(processor.process(revised).type, BackgroundEventResultType.update);
+      expect(provider.unifiedEvents.single.reportNumText, '正式测定');
+      expect(provider.unifiedEvents.single.magnitude, 6.0);
+      expect(notifications, 2);
+    }
   });
 
   test(
