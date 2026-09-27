@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/quake_provider.dart';
@@ -171,6 +172,7 @@ class _SourceDashboardState extends State<SourceDashboard> {
                             animation: Listenable.merge([
                               NiedMonitorService().dataFrameTime,
                               NiedYahooService().dataFrameTime,
+                              QuakeMapView.niedArrayFrameTimeNotifier,
                               QuakeMapView.niedSourceNotifier,
                               CwaStationService().dataTimeNotifier,
                               KmaMonitorService().dataTimeNotifier,
@@ -463,9 +465,15 @@ class _SourceDashboardState extends State<SourceDashboard> {
   }
 
   DateTime? get _niedFrameTime {
-    return QuakeMapView.niedSourceNotifier.value == 'yahoo'
-        ? NiedYahooService().dataFrameTime.value
-        : NiedMonitorService().dataFrameTime.value;
+    final source = QuakeMapView.niedSourceNotifier.value;
+    if (source == 'jian' || source == 'whews') {
+      return QuakeMapView.niedArrayFrameTimeNotifier.value;
+    }
+    if (source == 'yahoo' ||
+        (kIsWeb && (source == 'lmoni' || source == 'kmoni'))) {
+      return NiedYahooService().dataFrameTime.value;
+    }
+    return NiedMonitorService().dataFrameTime.value;
   }
 
   bool _isDataProgressFresh({
