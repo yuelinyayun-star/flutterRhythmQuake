@@ -1,25 +1,29 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import '../../services/debug/history_replay.dart';
+import 'history_replay_file_web.dart'
+    if (dart.library.io) 'history_replay_file_io.dart'
+    as replay_file;
 
 Future<bool> exportHistoryReplay(HistoryReplayPackage package) async {
   final bytes = Uint8List.fromList(utf8.encode(package.encode()));
-  final mobile = Platform.isAndroid || Platform.isIOS;
   final path = await FilePicker.platform.saveFile(
     dialogTitle: '导出回放包',
     fileName:
         'RhythmQuake_${package.times.first.millisecondsSinceEpoch}.rqreplay',
     type: FileType.custom,
     allowedExtensions: ['rqreplay'],
-    bytes: mobile ? bytes : null,
+    bytes: kIsWeb || replay_file.isMobile ? bytes : null,
   );
   if (path == null) return false;
-  if (!mobile) await File(path).writeAsBytes(bytes, flush: true);
+  if (!kIsWeb && !replay_file.isMobile) {
+    await replay_file.writeBytes(path, bytes);
+  }
   return true;
 }
 
@@ -52,7 +56,7 @@ class _HistoryReplayControlsState extends State<HistoryReplayControls> {
         type: FileType.custom,
         allowedExtensions: ['rqreplay', 'json'],
         allowMultiple: false,
-        withData: false,
+        withData: kIsWeb,
       );
       if (result == null || !mounted) return;
       final selected = result.files.single;
@@ -60,15 +64,14 @@ class _HistoryReplayControlsState extends State<HistoryReplayControls> {
         throw const FormatException('回放包超过 16 MiB');
       }
       final bytes = BytesBuilder(copy: false);
-      if (selected.path != null) {
-        await for (final chunk in File(selected.path!).openRead()) {
-          if (bytes.length + chunk.length > HistoryReplayPackage.maxBytes) {
-            throw const FormatException('回放包超过 16 MiB');
-          }
-          bytes.add(chunk);
-        }
-      } else if (selected.bytes != null) {
+      if (selected.bytes != null) {
         bytes.add(selected.bytes!);
+      } else if (selected.path != null) {
+        final fileBytes = await replay_file.readBytes(selected.path!);
+        if (fileBytes.length > HistoryReplayPackage.maxBytes) {
+          throw const FormatException('回放包超过 16 MiB');
+        }
+        bytes.add(fileBytes);
       } else {
         throw const FormatException('无法读取选中的回放包');
       }

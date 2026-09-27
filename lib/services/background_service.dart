@@ -9,7 +9,7 @@
 library;
 
 import 'dart:async';
-import 'dart:io' show Platform;
+import '../core/platform_info.dart';
 import 'dart:ui' show DartPluginRegistrant;
 
 import 'package:flutter/foundation.dart' show kIsWeb;

@@ -1,12 +1,11 @@
 {
-    "name": "flutterrhythmquake",
-    "short_name": "flutterrhythmquake",
+    "name": "RhythmQuake",
+    "short_name": "RhythmQuake",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
-    "orientation": "portrait-primary",
+    "background_color": "#101827",
+    "theme_color": "#101827",
+    "description": "实时地震与多灾种监测",
     "prefer_related_applications": false,
     "icons": [
         {

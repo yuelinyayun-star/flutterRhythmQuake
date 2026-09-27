@@ -4650,7 +4650,7 @@ class _SettingsPageState extends State<SettingsPage>
               label: '选择图片',
               icon: Icons.image_outlined,
               emphasized: true,
-              onPressed: kIsWeb ? null : _pickCustomPageBackground,
+              onPressed: _pickCustomPageBackground,
             ),
             _buildGlassActionButton(
               label: usingCustom ? '恢复默认' : (canEnableSaved ? '启用自定义' : '恢复默认'),
@@ -4675,9 +4675,23 @@ class _SettingsPageState extends State<SettingsPage>
         type: FileType.custom,
         allowedExtensions: const ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'],
         allowMultiple: false,
-        withData: false,
+        withData: kIsWeb,
       );
       if (!mounted || result == null || result.files.isEmpty) return;
+
+      if (kIsWeb) {
+        final selected = result.files.single;
+        final bytes = selected.bytes;
+        final ok = bytes != null &&
+            await context.read<PageBackgroundProvider>().setCustomImageBytes(
+              bytes,
+              selected.name,
+            );
+        if (mounted) {
+          _showPageBackgroundSnack(ok ? '已应用自定义背景' : '图片读取失败或超过 2 MiB');
+        }
+        return;
+      }
 
       final path = result.files.single.path;
       if (path == null || path.trim().isEmpty) {

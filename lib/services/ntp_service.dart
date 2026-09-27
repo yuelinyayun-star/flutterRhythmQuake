@@ -109,6 +109,12 @@ class NtpService {
         }
       }
 
+      // Browsers cannot open the UDP socket used by NTP. Keep local time when
+      // the HTTP endpoint is unavailable and retry on the next interval.
+      if (kIsWeb) {
+        throw lastError ?? StateError('HTTP time source unavailable');
+      }
+
       final servers = <String>[
         lookUpAddress,
         ..._ntpServers.where((server) => server != lookUpAddress),

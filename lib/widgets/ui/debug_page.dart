@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io';
+import '../../core/platform_info.dart';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 

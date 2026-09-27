@@ -26,10 +26,12 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
-import 'package:flutter/foundation.dart';
+
 import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:web_socket_channel/io.dart';
+
+import 'wolfx_socket_stub.dart'
+    if (dart.library.io) 'wolfx_socket_io.dart'
+    as socket;
 import 'base_source.dart';
 import '../quake_event_adapter.dart';
 import '../../models/quake_message.dart';
@@ -114,20 +116,7 @@ class WolfxService extends BaseSourceService {
 
     WebSocketChannel? channel;
     try {
-      WebSocketChannel newChannel;
-      if (!kIsWeb) {
-        final client = HttpClient()
-          ..badCertificateCallback = ((cert, host, port) => true)
-          ..connectionTimeout = const Duration(seconds: 8);
-        final ws = await WebSocket.connect(
-          targetUrl,
-          customClient: client,
-        ).timeout(const Duration(seconds: 10));
-        newChannel = IOWebSocketChannel(ws);
-      } else {
-        newChannel = WebSocketChannel.connect(Uri.parse(targetUrl));
-        await newChannel.ready.timeout(const Duration(seconds: 10));
-      }
+      final newChannel = await socket.connectWolfxSocket(targetUrl);
 
       channel = newChannel;
       if (!_isCurrentConnection(serial)) {

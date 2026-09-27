@@ -25,7 +25,7 @@ import 'dart:async';
 import 'dart:convert';
 import '../core/utils/catalog_event_identity.dart';
 import '../core/app_edition.dart';
-import 'dart:io' show Platform;
+import '../core/platform_info.dart';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart'
     show kIsWeb, mapEquals, visibleForTesting;
