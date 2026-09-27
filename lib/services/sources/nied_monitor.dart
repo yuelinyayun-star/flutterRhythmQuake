@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import '../../../core/nied_replay_logger.dart';
 import '../ntp_service.dart';
@@ -409,7 +410,8 @@ class NiedMonitorService extends ChangeNotifier {
     _realtimeDelayMs = _defaultRealtimeDelayMs;
     _resetLiveFrameAnchor();
     _runGeneration++;
-    _client = _createHttpClient();
+    _baseUrl = _baseUrlForSource(_sourceName);
+    _client = kIsWeb ? null : _createHttpClient();
     unawaited(_tick());
     _timer = Timer.periodic(
       const Duration(seconds: 1),
@@ -681,8 +683,20 @@ class NiedMonitorService extends ChangeNotifier {
     required Duration timeout,
     required int generation,
   }) async {
+    if (!_isCurrentRun(generation)) return null;
+    if (kIsWeb) {
+      try {
+        final response = await http.get(Uri.parse(url)).timeout(timeout);
+        if (!_isCurrentRun(generation) || response.statusCode != 200) {
+          return null;
+        }
+        return response.bodyBytes;
+      } catch (_) {
+        return null;
+      }
+    }
     final client = _client;
-    if (!_isCurrentRun(generation) || client == null) return null;
+    if (client == null) return null;
     HttpClientRequest? request;
     try {
       request = await client.getUrl(Uri.parse(url)).timeout(timeout);
@@ -1013,8 +1027,12 @@ class NiedMonitorService extends ChangeNotifier {
         .toString();
   }
 
-  static String _baseUrlForSource(String source) =>
-      source == 'kmoni' ? _kmoniBaseUrl : _lmoniBaseUrl;
+  static String _baseUrlForSource(String source) {
+    if (kIsWeb) {
+      return '${Uri.base.origin}/api/${source == 'kmoni' ? 'kmoni' : 'lmoni'}';
+    }
+    return source == 'kmoni' ? _kmoniBaseUrl : _lmoniBaseUrl;
+  }
 
   static List<DateTime> _buildLocalFallbackCandidateTimes({
     required DateTime correctedNow,
@@ -1162,7 +1180,7 @@ class NiedMonitorService extends ChangeNotifier {
     // A network handover can leave a pooled socket bound to the old route.
     // Recreate the client before the mandatory upstream-time refresh.
     final previousClient = _client;
-    _client = _createHttpClient();
+    _client = kIsWeb ? null : _createHttpClient();
     previousClient?.close(force: true);
   }
 
@@ -1177,8 +1195,22 @@ class NiedMonitorService extends ChangeNotifier {
   }
 
   Future<String?> _fetchText(String url, int generation) async {
+    if (!_isCurrentRun(generation)) return null;
+    if (kIsWeb) {
+      try {
+        final response = await http
+            .get(Uri.parse(url))
+            .timeout(_metadataTimeout);
+        if (!_isCurrentRun(generation) || response.statusCode != 200) {
+          return null;
+        }
+        return utf8.decode(response.bodyBytes);
+      } catch (_) {
+        return null;
+      }
+    }
     final client = _client;
-    if (!_isCurrentRun(generation) || client == null) return null;
+    if (client == null) return null;
     HttpClientRequest? request;
     try {
       request = await client.getUrl(Uri.parse(url)).timeout(_metadataTimeout);
@@ -1233,7 +1265,7 @@ class NiedMonitorService extends ChangeNotifier {
     _runGeneration++;
     _tickingGeneration = null;
     _physicalLayerGeneration = null;
-    _client = _createHttpClient();
+    _client = kIsWeb ? null : _createHttpClient();
     previousClient?.close(force: true);
     unawaited(_tick());
   }

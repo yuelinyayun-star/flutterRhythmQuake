@@ -198,6 +198,25 @@ jobs:
                   proxy_connect_timeout 10s;
                   proxy_read_timeout 15s;
               }
+              location /api/lmoni/ {
+                  proxy_pass https://www.lmoni.bosai.go.jp/img_svr/;
+                  proxy_ssl_server_name on;
+                  proxy_set_header Host www.lmoni.bosai.go.jp;
+                  proxy_set_header Referer https://www.lmoni.bosai.go.jp/monitor/;
+                  proxy_set_header User-Agent 'Mozilla/5.0 RhythmQuake-Web';
+                  proxy_set_header Origin "";
+                  proxy_connect_timeout 5s;
+                  proxy_read_timeout 8s;
+              }
+              location /api/kmoni/ {
+                  proxy_pass http://www.kmoni.bosai.go.jp/;
+                  proxy_set_header Host www.kmoni.bosai.go.jp;
+                  proxy_set_header Referer http://www.kmoni.bosai.go.jp/;
+                  proxy_set_header User-Agent 'Mozilla/5.0 RhythmQuake-Web';
+                  proxy_set_header Origin "";
+                  proxy_connect_timeout 5s;
+                  proxy_read_timeout 8s;
+              }
               location /api/snet/ {
                   proxy_pass https://www.msil.go.jp/data/tiles/smoni/;
                   proxy_ssl_server_name on;

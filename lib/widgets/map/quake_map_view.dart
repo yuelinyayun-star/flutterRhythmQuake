@@ -459,9 +459,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   bool get _usesWhewsSnet => _whewsSnetEnabled && _snetSource == 'whews';
   bool get _usesWhewsKma => _whewsKmaEnabled && _kmaSource == 'whews';
   bool get _usesArrayNied => _usesWhewsNied || _niedSource == 'jian';
-  bool get _usesYahooData =>
-      _useYahooSource ||
-      (kIsWeb && (_niedSource == 'lmoni' || _niedSource == 'kmoni'));
+  bool get _usesYahooData => _useYahooSource;
 
   bool get _usesArraySnet => _usesWhewsSnet || _snetSource == 'jian';
   bool get _usesArrayKma => _usesWhewsKma || _kmaSource == 'jian';
@@ -5350,11 +5348,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     if (!mounted) return;
     var niedSource = prefs.getString('nied_data_source') ?? 'lmoni';
     if (niedSource == 'whews' && !_whewsNiedEnabled) {
-      niedSource = kIsWeb ? 'yahoo' : 'lmoni';
-      unawaited(prefs.setString('nied_data_source', niedSource));
-    }
-    if (kIsWeb && (niedSource == 'lmoni' || niedSource == 'kmoni')) {
-      niedSource = 'yahoo';
+      niedSource = 'lmoni';
       unawaited(prefs.setString('nied_data_source', niedSource));
     }
     _niedSource = niedSource;
@@ -5499,11 +5493,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   void _onNiedSourceChanged() {
     var newSource = QuakeMapView.niedSourceNotifier.value;
     if (newSource == 'whews' && !_whewsNiedEnabled) {
-      QuakeMapView.niedSourceNotifier.value = kIsWeb ? 'yahoo' : 'lmoni';
-      return;
-    }
-    if (kIsWeb && (newSource == 'lmoni' || newSource == 'kmoni')) {
-      QuakeMapView.niedSourceNotifier.value = 'yahoo';
+      QuakeMapView.niedSourceNotifier.value = 'lmoni';
       return;
     }
     final useYahoo = newSource == 'yahoo';
@@ -5538,11 +5528,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     if (!mounted) return;
     var source = QuakeMapView.niedSourceNotifier.value;
     if (source == 'whews' && !_whewsNiedEnabled) {
-      source = kIsWeb ? 'yahoo' : 'lmoni';
-      QuakeMapView.niedSourceNotifier.value = source;
-    }
-    if (kIsWeb && (source == 'lmoni' || source == 'kmoni')) {
-      source = 'yahoo';
+      source = 'lmoni';
       QuakeMapView.niedSourceNotifier.value = source;
     }
 

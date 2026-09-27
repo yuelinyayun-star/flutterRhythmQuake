@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/quake_provider.dart';
@@ -469,8 +468,7 @@ class _SourceDashboardState extends State<SourceDashboard> {
     if (source == 'jian' || source == 'whews') {
       return QuakeMapView.niedArrayFrameTimeNotifier.value;
     }
-    if (source == 'yahoo' ||
-        (kIsWeb && (source == 'lmoni' || source == 'kmoni'))) {
+    if (source == 'yahoo') {
       return NiedYahooService().dataFrameTime.value;
     }
     return NiedMonitorService().dataFrameTime.value;

@@ -548,9 +548,6 @@ class _SettingsPageState extends State<SettingsPage>
         prefs.getString(FdsnIntensity.preferenceKey),
       );
       _niedDataSource = prefs.getString(_niedDataSourceKey) ?? 'lmoni';
-      if (kIsWeb && (_niedDataSource == 'lmoni' || _niedDataSource == 'kmoni')) {
-        _niedDataSource = 'yahoo';
-      }
       final savedKmaDataSource = prefs.getString(_kmaDataSourceKey);
       _kmaDataSource = switch (savedKmaDataSource) {
         'fan' => 'fan',
@@ -937,7 +934,7 @@ class _SettingsPageState extends State<SettingsPage>
   Future<void> _disableWhewsSources() async {
     final prefs = await SharedPreferences.getInstance();
     final fallbackNied = _niedDataSource == 'whews';
-    final niedFallback = kIsWeb ? 'yahoo' : 'lmoni';
+    const niedFallback = 'lmoni';
     final fallbackSnet = _snetDataSource == 'whews';
     final fallbackKma = _kmaDataSource == 'whews';
     if (fallbackNied) await prefs.setString(_niedDataSourceKey, niedFallback);
@@ -2506,7 +2503,7 @@ class _SettingsPageState extends State<SettingsPage>
         onChanged: (val) async {
           if (val && !_canEnableWhews()) return;
           if (!val && _niedDataSource == 'whews') {
-            _setNiedDataSource(kIsWeb ? 'yahoo' : 'lmoni');
+            _setNiedDataSource('lmoni');
           }
           setState(() => _whewsNiedEnabled = val);
           await _saveApiSourceEnabled(_whewsNiedEnabledKey, val);
@@ -3709,15 +3706,15 @@ class _SettingsPageState extends State<SettingsPage>
 
   Widget _buildNiedDataSourceSelector() {
     final options = [
-      if (!kIsWeb) ('lmoni', 'Lmoni'),
-      if (!kIsWeb) ('kmoni', 'KMONI'),
+      ('lmoni', 'Lmoni'),
+      ('kmoni', 'KMONI'),
       ('yahoo', 'Yahoo'),
       if (_hasWAuthApiToken && _whewsNiedEnabled) ('whews', 'WHEWS'),
       ('jian', 'Jian'),
     ];
     return _buildSettingRow(
       title: 'NIED 強震モニタ 数据源',
-      subtitle: kIsWeb ? '浏览器可用：Yahoo / Jian 测站' : '切换强震监测数据输入来源',
+      subtitle: '切换强震监测数据输入来源',
       leading: Icons.public_outlined,
       control: _buildSegmentedSelector<String>(
         value: _niedDataSource,
