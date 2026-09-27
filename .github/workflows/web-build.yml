@@ -22,3 +22,9 @@ jobs:
         run: flutter pub get
       - name: Build for web
         run: flutter build web --release
+      - name: Save web build
+        uses: actions/upload-artifact@v4
+        with:
+          name: rhythmquake-web
+          path: build/web/
+          retention-days: 7
