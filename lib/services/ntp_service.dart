@@ -3,7 +3,10 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'package:ntp/ntp.dart';
+
+import 'ntp_client_web.dart'
+    if (dart.library.io) 'ntp_client_io.dart'
+    as ntp_client;
 
 enum NtpSyncState { local, synced, stale }
 
@@ -122,7 +125,7 @@ class NtpService {
       for (final server in servers) {
         try {
           debugPrint('--- 正在同步 NTP 时间自: $server ---');
-          final offset = await NTP.getNtpOffset(
+          final offset = await ntp_client.getNtpOffset(
             lookUpAddress: server,
             timeout: const Duration(seconds: 5),
           );
