@@ -1,0 +1,38 @@
+name: Probe Web data sources
+
+on:
+  push:
+    branches: [web]
+    paths: [.github/workflows/web-connectivity.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe browser access headers
+        shell: bash
+        run: |
+          set -u
+          probe() {
+            name="$1"
+            url="$2"
+            echo "::group::$name GET"
+            curl -sS --max-time 15 -D /tmp/source-headers -o /dev/null -w 'HTTP %{http_code}\n' \
+              -H 'Origin: https://eew.yuelinrhythm.top' "$url" || true
+            grep -iE '^(HTTP/|access-control-|content-type:)' /tmp/source-headers || true
+            echo "::endgroup::"
+            echo "::group::$name OPTIONS"
+            curl -sS --max-time 15 -X OPTIONS -D /tmp/source-headers -o /dev/null -w 'HTTP %{http_code}\n' \
+              -H 'Origin: https://eew.yuelinrhythm.top' \
+              -H 'Access-Control-Request-Method: GET' \
+              -H 'Access-Control-Request-Headers: cache-control,pragma' "$url" || true
+            grep -iE '^(HTTP/|access-control-|content-type:)' /tmp/source-headers || true
+            echo "::endgroup::"
+          }
+          probe Yahoo 'https://weather-kyoshin.east.edge.storage-yahoo.jp/SiteList/sitelist.json?time=1'
+          probe Snet 'https://www.msil.go.jp/data/tiles/smoni/'
+          probe PAlert 'https://palert.earth.sinica.edu.tw/graphql/'
