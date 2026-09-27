@@ -124,3 +124,70 @@ jobs:
           REMOTE
           curl --fail --silent --show-error --connect-timeout 10 --max-time 30 http://64.90.20.78:18080/ -o /dev/null
           curl --fail --silent --show-error --connect-timeout 10 --max-time 30 -H 'Host: eew.yuelinrhythm.top' http://64.90.20.78/ -o /dev/null
+      - name: Enable HTTPS when DNS is ready
+        env:
+          SSHPASS: ${{ secrets.RHYTHMQUAKE_SSH_PASSWORD }}
+        run: |
+          set -euo pipefail
+          domain=eew.yuelinrhythm.top
+          records=$(getent ahostsv4 "$domain" 2>/dev/null | awk '{print $1}' | sort -u || true)
+          if [ "$records" != '64.90.20.78' ]; then
+            echo "HTTPS pending: $domain must have only the A record 64.90.20.78 (found: ${records:-none})."
+            exit 0
+          fi
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          ssh-keyscan -T 10 -H 64.90.20.78 >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          sshpass -e ssh -o StrictHostKeyChecking=yes -o ConnectTimeout=15 root@64.90.20.78 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          if command -v ufw >/dev/null 2>&1 && ufw status | grep -q '^Status: active'; then
+            ufw allow 80/tcp
+            ufw allow 443/tcp
+          fi
+          if ! command -v certbot >/dev/null 2>&1; then
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y certbot
+          fi
+          certbot certonly --webroot -w /var/www/letsencrypt \
+            -d eew.yuelinrhythm.top --non-interactive --agree-tos \
+            --register-unsafely-without-email --keep-until-expiring \
+            --deploy-hook 'systemctl reload nginx'
+          cp /etc/nginx/conf.d/rhythmquake-eew.conf /etc/nginx/conf.d/rhythmquake-eew.conf.bak
+          cat > /etc/nginx/conf.d/rhythmquake-eew.conf <<'CONF'
+          server {
+              listen 80;
+              server_name eew.yuelinrhythm.top;
+              location /.well-known/acme-challenge/ {
+                  root /var/www/letsencrypt;
+              }
+              location / {
+                  return 301 https://$host$request_uri;
+              }
+          }
+          server {
+              listen 443 ssl;
+              server_name eew.yuelinrhythm.top;
+              ssl_certificate /etc/letsencrypt/live/eew.yuelinrhythm.top/fullchain.pem;
+              ssl_certificate_key /etc/letsencrypt/live/eew.yuelinrhythm.top/privkey.pem;
+              ssl_protocols TLSv1.2 TLSv1.3;
+              root /var/www/rhythmquake/current;
+              index index.html;
+              location / {
+                  try_files $uri $uri/ /index.html;
+              }
+          }
+          CONF
+          if nginx -t; then
+            systemctl reload nginx
+            rm -f /etc/nginx/conf.d/rhythmquake-eew.conf.bak
+          else
+            mv -f /etc/nginx/conf.d/rhythmquake-eew.conf.bak /etc/nginx/conf.d/rhythmquake-eew.conf
+            exit 1
+          fi
+          if systemctl list-unit-files certbot.timer --no-legend 2>/dev/null | grep -q 'certbot.timer'; then
+            systemctl enable --now certbot.timer
+          fi
+          curl --fail --silent --show-error https://eew.yuelinrhythm.top/ -o /dev/null
+          REMOTE
+          curl --fail --silent --show-error --connect-timeout 10 --max-time 30 https://eew.yuelinrhythm.top/ -o /dev/null
