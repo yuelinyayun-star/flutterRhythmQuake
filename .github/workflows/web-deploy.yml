@@ -70,13 +70,13 @@ jobs:
             apt-get update
             DEBIAN_FRONTEND=noninteractive apt-get install -y nginx
           fi
-          if [ ! -f /etc/nginx/conf.d/rhythmquake-web.conf ] && ss -ltn | grep -Eq '(^|[[:space:]])[^[:space:]]+:8080[[:space:]]'; then
-            echo 'Port 8080 is already occupied; no web server configuration was changed.' >&2
+          if [ ! -f /etc/nginx/conf.d/rhythmquake-web.conf ] && ss -ltn | grep -Eq '(^|[[:space:]])[^[:space:]]+:18080[[:space:]]'; then
+            echo 'Port 18080 is already occupied; no web server configuration was changed.' >&2
             exit 1
           fi
           cat > /etc/nginx/conf.d/rhythmquake-web.conf <<'CONF'
           server {
-              listen 8080;
+              listen 18080;
               server_name _;
               root /var/www/rhythmquake/current;
               index index.html;
@@ -91,8 +91,8 @@ jobs:
           systemctl enable --now nginx
           systemctl reload nginx
           if command -v ufw >/dev/null 2>&1 && ufw status | grep -q '^Status: active'; then
-            ufw allow 8080/tcp
+            ufw allow 18080/tcp
           fi
-          curl --fail --silent --show-error http://127.0.0.1:8080/ -o /dev/null
+          curl --fail --silent --show-error http://127.0.0.1:18080/ -o /dev/null
           REMOTE
-          curl --fail --silent --show-error --connect-timeout 10 --max-time 30 http://64.90.20.78:8080/ -o /dev/null
+          curl --fail --silent --show-error --connect-timeout 10 --max-time 30 http://64.90.20.78:18080/ -o /dev/null
