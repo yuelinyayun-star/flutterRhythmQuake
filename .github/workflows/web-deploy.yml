@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: rhythmquake-web-deploy
+  cancel-in-progress: false
+
 jobs:
   build:
     if: github.ref == 'refs/heads/web'
