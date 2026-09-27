@@ -486,7 +486,8 @@ class _SettingsPageState extends State<SettingsPage>
     setState(() {
       _fanEnabled = prefs.getBool(_fanEnabledKey) ?? true;
       _whewsEnabled = prefs.getBool(_whewsEnabledKey) ?? false;
-      _jianEnabled = prefs.getBool(JianService.enabledPreferenceKey) ?? false;
+      _jianEnabled = !kIsWeb &&
+          (prefs.getBool(JianService.enabledPreferenceKey) ?? false);
       _whewsNiedEnabled = prefs.getBool(_whewsNiedEnabledKey) ?? false;
       _whewsSnetEnabled = prefs.getBool(_whewsSnetEnabledKey) ?? false;
       _whewsKmaEnabled = prefs.getBool(_whewsKmaEnabledKey) ?? false;
@@ -503,9 +504,11 @@ class _SettingsPageState extends State<SettingsPage>
       _pAlertEnabled = AppEdition.hasPAlertStations &&
           (prefs.getBool(_pAlertEnabledKey) ?? true);
       _niedMonitorEnabled = prefs.getBool(_niedMonitorEnabledKey) ?? true;
-      _niedLpgmEnabled = prefs.getBool(_niedLpgmEnabledKey) ?? true;
+      _niedLpgmEnabled = !kIsWeb &&
+          (prefs.getBool(_niedLpgmEnabledKey) ?? true);
       _snetEnabled = prefs.getBool(_snetEnabledKey) ?? true;
-      _fdsnSeedLinkEnabled = prefs.getBool(_fdsnSeedLinkEnabledKey) ?? false;
+      _fdsnSeedLinkEnabled = !kIsWeb &&
+          (prefs.getBool(_fdsnSeedLinkEnabledKey) ?? false);
       _fanApiKeyController.text =
           prefs.getString(FanService.apiKeyPreferenceKey) ?? '';
       _wauthApiToken = credentials.apiToken;
@@ -545,6 +548,9 @@ class _SettingsPageState extends State<SettingsPage>
         prefs.getString(FdsnIntensity.preferenceKey),
       );
       _niedDataSource = prefs.getString(_niedDataSourceKey) ?? 'lmoni';
+      if (kIsWeb && (_niedDataSource == 'lmoni' || _niedDataSource == 'kmoni')) {
+        _niedDataSource = 'yahoo';
+      }
       final savedKmaDataSource = prefs.getString(_kmaDataSourceKey);
       _kmaDataSource = switch (savedKmaDataSource) {
         'fan' => 'fan',
@@ -931,9 +937,10 @@ class _SettingsPageState extends State<SettingsPage>
   Future<void> _disableWhewsSources() async {
     final prefs = await SharedPreferences.getInstance();
     final fallbackNied = _niedDataSource == 'whews';
+    final niedFallback = kIsWeb ? 'yahoo' : 'lmoni';
     final fallbackSnet = _snetDataSource == 'whews';
     final fallbackKma = _kmaDataSource == 'whews';
-    if (fallbackNied) await prefs.setString(_niedDataSourceKey, 'lmoni');
+    if (fallbackNied) await prefs.setString(_niedDataSourceKey, niedFallback);
     if (fallbackSnet) await prefs.setString(_snetDataSourceKey, 'msil');
     if (fallbackKma) await prefs.setString(_kmaDataSourceKey, 'pews');
     await prefs.setBool(_whewsEnabledKey, false);
@@ -943,7 +950,7 @@ class _SettingsPageState extends State<SettingsPage>
     await prefs.setBool(_whewsKmaEnabledKey, false);
     SourceManager().setSourceEnabled('WHEWS', false);
     _requestForegroundConnectionReload();
-    if (fallbackNied) QuakeMapView.niedSourceNotifier.value = 'lmoni';
+    if (fallbackNied) QuakeMapView.niedSourceNotifier.value = niedFallback;
     if (fallbackSnet) QuakeMapView.snetSourceNotifier.value = 'msil';
     if (fallbackKma) QuakeMapView.kmaSourceNotifier.value = 'pews';
     QuakeMapView.whewsNiedEnabledNotifier.value = false;
@@ -955,7 +962,7 @@ class _SettingsPageState extends State<SettingsPage>
       _whewsNiedEnabled = false;
       _whewsSnetEnabled = false;
       _whewsKmaEnabled = false;
-      if (fallbackNied) _niedDataSource = 'lmoni';
+      if (fallbackNied) _niedDataSource = niedFallback;
       if (fallbackSnet) _snetDataSource = 'msil';
       if (fallbackKma) _kmaDataSource = 'pews';
     });
@@ -2002,14 +2009,22 @@ class _SettingsPageState extends State<SettingsPage>
             icon: Icons.key_outlined,
             title: '账号与 API 授权',
             children: [
-              JianAuthSettings(onChanged: () async {
-                if (BackgroundService()
-                    .isAndroidConnectionHostedByForegroundService) {
-                  await BackgroundService().requestJianCredentialReload();
-                } else {
-                  SourceManager().getSource<JianService>()?.reloadCredentials();
-                }
-              }),
+              if (kIsWeb)
+                _buildSettingRow(
+                  title: 'Jian 个人鉴权',
+                  subtitle: '浏览器无法在 WebSocket 握手中设置授权请求头',
+                  leading: Icons.lock_outline,
+                  control: const Text('Web 暂不可用'),
+                )
+              else
+                JianAuthSettings(onChanged: () async {
+                  if (BackgroundService()
+                      .isAndroidConnectionHostedByForegroundService) {
+                    await BackgroundService().requestJianCredentialReload();
+                  } else {
+                    SourceManager().getSource<JianService>()?.reloadCredentials();
+                  }
+                }),
               const _SettingsDivider(),
               _buildFanApiKeySetting(),
               const _SettingsDivider(),
@@ -2049,11 +2064,13 @@ class _SettingsPageState extends State<SettingsPage>
               const _SettingsDivider(),
               _buildKmaIntensityHoldSelector(),
               const _SettingsDivider(),
-              _buildFdsnStationSelector(),
-              const _SettingsDivider(),
-              _buildFdsnStationLimitSelector(),
-              const _SettingsDivider(),
-              _buildFdsnIntensitySelector(),
+              if (!kIsWeb) ...[
+                _buildFdsnStationSelector(),
+                const _SettingsDivider(),
+                _buildFdsnStationLimitSelector(),
+                const _SettingsDivider(),
+                _buildFdsnIntensitySelector(),
+              ],
             ],
           ),
           const Padding(
@@ -2257,7 +2274,15 @@ class _SettingsPageState extends State<SettingsPage>
 
   Widget _buildApiInterfaceSwitches() {
     final rows = [
-      _buildApiSwitch(
+      if (kIsWeb)
+        _buildSettingRow(
+          title: 'Jian Project 地震预警/情报',
+          subtitle: '浏览器暂不支持个人鉴权连接；Jian 测站数据可单独使用',
+          leading: Icons.lock_outline,
+          control: const Text('Web 暂不可用'),
+        )
+      else
+        _buildApiSwitch(
         title: 'Jian Project 地震预警/情报',
         value: _jianEnabled,
         onChanged: (val) async {
@@ -2449,7 +2474,15 @@ class _SettingsPageState extends State<SettingsPage>
           QuakeMapView.niedMonitorEnabledNotifier.value = val;
         },
       ),
-      _buildApiSwitch(
+      if (kIsWeb)
+        _buildSettingRow(
+          title: 'NIED 長周期地震動モニタ',
+          subtitle: '长周期原生数据客户端尚未接入浏览器',
+          leading: Icons.link_off_outlined,
+          control: const Text('Web 暂不可用'),
+        )
+      else
+        _buildApiSwitch(
         title: 'NIED 長周期地震動モニタ',
         value: _niedLpgmEnabled,
         onChanged: (val) {
@@ -2473,7 +2506,7 @@ class _SettingsPageState extends State<SettingsPage>
         onChanged: (val) async {
           if (val && !_canEnableWhews()) return;
           if (!val && _niedDataSource == 'whews') {
-            _setNiedDataSource('lmoni');
+            _setNiedDataSource(kIsWeb ? 'yahoo' : 'lmoni');
           }
           setState(() => _whewsNiedEnabled = val);
           await _saveApiSourceEnabled(_whewsNiedEnabledKey, val);
@@ -2509,7 +2542,15 @@ class _SettingsPageState extends State<SettingsPage>
           await BackgroundService().stopForegroundService();
         },
       ),
-      _buildApiSwitch(
+      if (kIsWeb)
+        _buildSettingRow(
+          title: 'FDSN / SeedLink 实时测站',
+          subtitle: '浏览器无法直连 SeedLink TCP 测站流',
+          leading: Icons.link_off_outlined,
+          control: const Text('Web 暂不可用'),
+        )
+      else
+        _buildApiSwitch(
         title: 'FDSN / SeedLink 实时测站',
         value: _fdsnSeedLinkEnabled,
         onChanged: (val) {
@@ -3668,15 +3709,15 @@ class _SettingsPageState extends State<SettingsPage>
 
   Widget _buildNiedDataSourceSelector() {
     final options = [
-      ('lmoni', 'Lmoni'),
-      ('kmoni', 'KMONI'),
+      if (!kIsWeb) ('lmoni', 'Lmoni'),
+      if (!kIsWeb) ('kmoni', 'KMONI'),
       ('yahoo', 'Yahoo'),
       if (_hasWAuthApiToken && _whewsNiedEnabled) ('whews', 'WHEWS'),
       ('jian', 'Jian'),
     ];
     return _buildSettingRow(
       title: 'NIED 強震モニタ 数据源',
-      subtitle: '切换强震监测数据输入来源',
+      subtitle: kIsWeb ? '浏览器可用：Yahoo / Jian 测站' : '切换强震监测数据输入来源',
       leading: Icons.public_outlined,
       control: _buildSegmentedSelector<String>(
         value: _niedDataSource,
