@@ -34,5 +34,12 @@ jobs:
             echo "::endgroup::"
           }
           probe Yahoo 'https://weather-kyoshin.east.edge.storage-yahoo.jp/SiteList/sitelist.json?time=1'
-          probe Snet 'https://www.msil.go.jp/data/tiles/smoni/'
+          probe Snet 'https://www.msil.go.jp/data/tiles/smoni/targetTimes.json'
           probe PAlert 'https://palert.earth.sinica.edu.tw/graphql/'
+          echo "::group::PAlert GraphQL POST"
+          curl -sS --max-time 15 -D /tmp/source-headers -o /tmp/palert-body -w 'HTTP %{http_code}\n' \
+            -H 'Content-Type: application/json' -H 'Origin: https://eew.yuelinrhythm.top' \
+            --data '{"query":"{ __typename }"}' 'https://palert.earth.sinica.edu.tw/graphql/' || true
+          grep -iE '^(HTTP/|access-control-|content-type:)' /tmp/source-headers || true
+          head -c 200 /tmp/palert-body || true
+          echo "::endgroup::"
