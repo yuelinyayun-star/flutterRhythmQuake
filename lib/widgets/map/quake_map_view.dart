@@ -1204,16 +1204,16 @@ class _QuakeMapViewState extends State<QuakeMapView> {
         (prefs.getBool(QuakeMapView.pAlertEnabledPreferenceKey) ?? true);
     _niedMonitorEnabled =
         prefs.getBool(QuakeMapView.niedMonitorEnabledPreferenceKey) ?? true;
-    _niedLpgmEnabled =
-        prefs.getBool(QuakeMapView.niedLpgmEnabledPreferenceKey) ?? true;
+    _niedLpgmEnabled = !kIsWeb &&
+        (prefs.getBool(QuakeMapView.niedLpgmEnabledPreferenceKey) ?? true);
     _snetEnabled = prefs.getBool(QuakeMapView.snetEnabledPreferenceKey) ?? true;
     _snetSource = switch (prefs.getString(QuakeMapView.snetDataSourcePreferenceKey)) {
       'whews' => 'whews',
       'jian' => 'jian',
       _ => 'msil',
     };
-    _fdsnSeedLinkEnabled =
-        prefs.getBool(QuakeMapView.fdsnSeedLinkEnabledPreferenceKey) ?? false;
+    _fdsnSeedLinkEnabled = !kIsWeb &&
+        (prefs.getBool(QuakeMapView.fdsnSeedLinkEnabledPreferenceKey) ?? false);
     FdsnIntensity.scale.value = FdsnIntensity.parseScale(
       prefs.getString(FdsnIntensity.preferenceKey),
     );
@@ -5350,7 +5350,11 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     if (!mounted) return;
     var niedSource = prefs.getString('nied_data_source') ?? 'lmoni';
     if (niedSource == 'whews' && !_whewsNiedEnabled) {
-      niedSource = 'lmoni';
+      niedSource = kIsWeb ? 'yahoo' : 'lmoni';
+      unawaited(prefs.setString('nied_data_source', niedSource));
+    }
+    if (kIsWeb && (niedSource == 'lmoni' || niedSource == 'kmoni')) {
+      niedSource = 'yahoo';
       unawaited(prefs.setString('nied_data_source', niedSource));
     }
     _niedSource = niedSource;
@@ -5495,8 +5499,12 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   void _onNiedSourceChanged() {
     var newSource = QuakeMapView.niedSourceNotifier.value;
     if (newSource == 'whews' && !_whewsNiedEnabled) {
-      newSource = 'lmoni';
-      QuakeMapView.niedSourceNotifier.value = newSource;
+      QuakeMapView.niedSourceNotifier.value = kIsWeb ? 'yahoo' : 'lmoni';
+      return;
+    }
+    if (kIsWeb && (newSource == 'lmoni' || newSource == 'kmoni')) {
+      QuakeMapView.niedSourceNotifier.value = 'yahoo';
+      return;
     }
     final useYahoo = newSource == 'yahoo';
     if (newSource == _niedSource) return;
@@ -5530,7 +5538,11 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     if (!mounted) return;
     var source = QuakeMapView.niedSourceNotifier.value;
     if (source == 'whews' && !_whewsNiedEnabled) {
-      source = 'lmoni';
+      source = kIsWeb ? 'yahoo' : 'lmoni';
+      QuakeMapView.niedSourceNotifier.value = source;
+    }
+    if (kIsWeb && (source == 'lmoni' || source == 'kmoni')) {
+      source = 'yahoo';
       QuakeMapView.niedSourceNotifier.value = source;
     }
 
