@@ -89,22 +89,42 @@ class LocationService {
   /// 一次性请求当前位置。
   ///
   /// 执行流程：
-  /// 1. 非 web 平台先尝试设备原生定位（GPS/网络）
-  /// 2. 原生拿不到（无 GPS / 服务关闭 / 权限被拒）时，回退到 IP 定位
+  /// 1. Web 使用浏览器定位（需 HTTPS 和用户授权），失败后由用户手动设置
+  /// 2. 其他平台先尝试设备原生定位，失败时回退到 IP 定位
   /// 平板等无 GPS 设备会走 IP 兜底，仍能拿到城市级粗略位置。
   Future<Position?> requestCurrentPosition() async {
     _statusNotifier.value = LocationServiceStatus.locating;
 
-    // 非 web 平台先试原生定位。
-    if (!kIsWeb) {
-      final native = await _requestNativePosition();
-      if (native != null) {
-        return native;
-      }
-      // 原生失败（无 GPS / 服务关闭 / 权限被拒），继续走 IP 兜底。
+    if (kIsWeb) {
+      // 代理转发的 IP 是服务器出口，不能作为访问者的所在地。
+      return _requestWebPosition();
     }
 
+    final native = await _requestNativePosition();
+    if (native != null) return native;
+    // 原生失败（无 GPS / 服务关闭 / 权限被拒），继续走 IP 兜底。
+
     return _requestIpFallbackPosition();
+  }
+
+  Future<Position?> _requestWebPosition() async {
+    try {
+      // 部分浏览器不实现 Permissions API，预先 checkPermission 会误报
+      // denied；直接请求位置才能触发浏览器自己的授权提示。
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 15),
+      );
+      _applyPosition(position, LocationSource.native, ipRegion: null);
+      return position;
+    } on PermissionDeniedException {
+      _setStatus(LocationServiceStatus.permissionDenied);
+    } on LocationServiceDisabledException {
+      _setStatus(LocationServiceStatus.serviceDisabled);
+    } catch (_) {
+      _setStatus(LocationServiceStatus.failed);
+    }
+    return null;
   }
 
   /// 设备原生定位（geolocator）。

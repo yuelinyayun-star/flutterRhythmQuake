@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -53,7 +54,10 @@ class WAuthService {
     WAuthCredentialStore? credentialStore,
   }) : _client = client ?? http.Client(),
        credentialStore = credentialStore ?? WAuthCredentialStore(),
-       gatewayBaseUrlValue = gatewayBaseUrl ?? WAuthService.gatewayBaseUrl;
+       gatewayBaseUrlValue = gatewayBaseUrl ??
+           (kIsWeb
+               ? Uri.base.resolve('/api/wauth').toString()
+               : WAuthService.gatewayBaseUrl);
 
   void close() {
     _closed = true;

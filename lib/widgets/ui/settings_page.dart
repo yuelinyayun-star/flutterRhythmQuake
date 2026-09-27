@@ -15,6 +15,8 @@ import '../../providers/background_settings_provider.dart';
 import '../../providers/page_background_provider.dart';
 import '../../models/notification_event_settings.dart';
 import '../../services/location_service.dart';
+import '../../services/wauth_browser_stub.dart'
+    if (dart.library.html) '../../services/wauth_browser_web.dart';
 import '../../services/background_service.dart';
 import '../../services/tts_service.dart';
 import '../../services/sources/fan_service.dart';
@@ -994,6 +996,9 @@ class _SettingsPageState extends State<SettingsPage>
 
   Future<void> _startWAuthAuthorization() async {
     if (_wauthBusy || _wauthSaving) return;
+    // This must happen synchronously in the button handler on Web.
+    final loginWindow = kIsWeb ? WAuthBrowserWindow.openPending() : null;
+    var browserOpened = false;
     setState(() {
       _wauthBusy = true;
       _wauthBrowserOpened = false;
@@ -1002,13 +1007,27 @@ class _SettingsPageState extends State<SettingsPage>
     _showWAuthMessage('正在打开 WAuth 登录页面…');
     try {
       final session = await _wauthService.createGatewaySession();
-      final launched = await launchUrl(
-        session.authorizationUri,
-        mode: LaunchMode.externalApplication,
-      );
-      if (!launched) {
-        throw const WAuthApiException(statusCode: 0, message: '无法打开系统浏览器。');
+      if (kIsWeb) {
+        if (loginWindow == null) {
+          throw const WAuthApiException(
+            statusCode: 0,
+            message: '浏览器阻止了登录窗口，请允许此站点打开弹出窗口。',
+          );
+        }
+        loginWindow.navigate(session.authorizationUri);
+      } else {
+        final launched = await launchUrl(
+          session.authorizationUri,
+          mode: LaunchMode.externalApplication,
+        );
+        if (!launched) {
+          throw const WAuthApiException(
+            statusCode: 0,
+            message: '无法打开系统浏览器。',
+          );
+        }
       }
+      browserOpened = true;
       if (!mounted) return;
       setState(() => _wauthBrowserOpened = true);
       _showWAuthMessage('请在浏览器中完成 WAuth 登录。');
@@ -1044,7 +1063,9 @@ class _SettingsPageState extends State<SettingsPage>
         _wauthError = null;
       });
       _showWAuthMessage('WAuth 授权成功。');
+      loginWindow?.close();
     } catch (error) {
+      if (!browserOpened) loginWindow?.close();
       if (!mounted) return;
       final message = _wauthErrorText(error);
       setState(() => _wauthError = message);
@@ -1290,11 +1311,17 @@ class _SettingsPageState extends State<SettingsPage>
     }
   }
 
-  Future<void> _saveMapViewCenter(double lat, double lng) async {
+  Future<void> _saveMapViewCenter(
+    double lat,
+    double lng, {
+    bool updateLocation = true,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble(_mapViewLatKey, lat);
     await prefs.setDouble(_mapViewLngKey, lng);
-    LocationService().setCurrentLatLng(lat, lng);
+    if (updateLocation) {
+      LocationService().setCurrentLatLng(lat, lng);
+    }
     if (!mounted) return;
     setState(() {
       _mapViewLat = lat;
@@ -1318,7 +1345,11 @@ class _SettingsPageState extends State<SettingsPage>
   }
 
   String _mapCenterText() {
-    if (_mapViewLat == null || _mapViewLng == null) return '当前：未设置（跟随系统定位）';
+    if (_mapViewLat == null || _mapViewLng == null) {
+      return kIsWeb
+          ? '当前：未设置（点击自动获取定位）'
+          : '当前：未设置（跟随系统定位）';
+    }
     return '当前：${_mapViewLat!.toStringAsFixed(4)}, ${_mapViewLng!.toStringAsFixed(4)}';
   }
 
@@ -1337,7 +1368,11 @@ class _SettingsPageState extends State<SettingsPage>
         return;
       }
 
-      await _saveMapViewCenter(pos.latitude, pos.longitude);
+      await _saveMapViewCenter(
+        pos.latitude,
+        pos.longitude,
+        updateLocation: false,
+      );
       _showToast(
         '已更新所在地：${pos.latitude.toStringAsFixed(4)}, ${pos.longitude.toStringAsFixed(4)}${_locationSourceTag()}',
       );
