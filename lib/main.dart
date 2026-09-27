@@ -289,8 +289,10 @@ void main() async {
   SourceManager().registerSource(wolfx);
   SourceManager().registerSource(whews);
   SourceManager().registerSource(jian);
-  SourceManager().setSourceEnabled(jian.name,
-    !kIsWeb && (prefs.getBool(JianService.enabledPreferenceKey) ?? false));
+  SourceManager().setSourceEnabled(
+    jian.name,
+    prefs.getBool(JianService.enabledPreferenceKey) ?? false,
+  );
   SourceManager().registerSource(fan);
   SourceManager().registerSource(nowQuakeCencIr);
   SourceManager().registerSource(p2p);

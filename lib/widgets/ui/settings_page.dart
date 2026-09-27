@@ -488,8 +488,7 @@ class _SettingsPageState extends State<SettingsPage>
     setState(() {
       _fanEnabled = prefs.getBool(_fanEnabledKey) ?? true;
       _whewsEnabled = prefs.getBool(_whewsEnabledKey) ?? false;
-      _jianEnabled = !kIsWeb &&
-          (prefs.getBool(JianService.enabledPreferenceKey) ?? false);
+      _jianEnabled = prefs.getBool(JianService.enabledPreferenceKey) ?? false;
       _whewsNiedEnabled = prefs.getBool(_whewsNiedEnabledKey) ?? false;
       _whewsSnetEnabled = prefs.getBool(_whewsSnetEnabledKey) ?? false;
       _whewsKmaEnabled = prefs.getBool(_whewsKmaEnabledKey) ?? false;
@@ -2041,22 +2040,14 @@ class _SettingsPageState extends State<SettingsPage>
             icon: Icons.key_outlined,
             title: '账号与 API 授权',
             children: [
-              if (kIsWeb)
-                _buildSettingRow(
-                  title: 'Jian 个人鉴权',
-                  subtitle: '浏览器无法在 WebSocket 握手中设置授权请求头',
-                  leading: Icons.lock_outline,
-                  control: const Text('Web 暂不可用'),
-                )
-              else
-                JianAuthSettings(onChanged: () async {
-                  if (BackgroundService()
-                      .isAndroidConnectionHostedByForegroundService) {
-                    await BackgroundService().requestJianCredentialReload();
-                  } else {
-                    SourceManager().getSource<JianService>()?.reloadCredentials();
-                  }
-                }),
+              JianAuthSettings(onChanged: () async {
+                if (BackgroundService()
+                    .isAndroidConnectionHostedByForegroundService) {
+                  await BackgroundService().requestJianCredentialReload();
+                } else {
+                  SourceManager().getSource<JianService>()?.reloadCredentials();
+                }
+              }),
               const _SettingsDivider(),
               _buildFanApiKeySetting(),
               const _SettingsDivider(),
@@ -2306,15 +2297,7 @@ class _SettingsPageState extends State<SettingsPage>
 
   Widget _buildApiInterfaceSwitches() {
     final rows = [
-      if (kIsWeb)
-        _buildSettingRow(
-          title: 'Jian Project 地震预警/情报',
-          subtitle: '浏览器暂不支持个人鉴权连接；Jian 测站数据可单独使用',
-          leading: Icons.lock_outline,
-          control: const Text('Web 暂不可用'),
-        )
-      else
-        _buildApiSwitch(
+      _buildApiSwitch(
         title: 'Jian Project 地震预警/情报',
         value: _jianEnabled,
         onChanged: (val) async {

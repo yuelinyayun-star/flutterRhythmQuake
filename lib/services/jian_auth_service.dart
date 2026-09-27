@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 
 enum JianAuthStatus {
@@ -173,8 +174,11 @@ class JianAuthService {
     }
     try {
       final requestedAt = _now().toUtc();
+      final uri = kIsWeb
+          ? Uri.base.resolve('/api/jian/auth/$path')
+          : Uri.https('auth.sismotide.top', '/api/$path');
       final request =
-          http.Request('POST', Uri.https('auth.sismotide.top', '/api/$path'))
+          http.Request('POST', uri)
             ..followRedirects = false
             ..headers['Authorization'] = 'Bearer $credential';
       final response = await _client

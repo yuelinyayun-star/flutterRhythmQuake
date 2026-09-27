@@ -111,6 +111,10 @@ jobs:
           CONF
           mkdir -p /var/www/letsencrypt
           cat > /etc/nginx/conf.d/rhythmquake-eew.conf <<'CONF'
+          map $http_sec_websocket_protocol $jian_ws_authorization {
+              default "";
+              ~^(?<jian_ws_token>at_[A-Za-z0-9._~+-]{1,2048})$ "Bearer $jian_ws_token";
+          }
           server {
               listen 80;
               server_name eew.yuelinrhythm.top;
@@ -168,6 +172,10 @@ jobs:
             --deploy-hook 'systemctl reload nginx'
           cp /etc/nginx/conf.d/rhythmquake-eew.conf /etc/nginx/conf.d/rhythmquake-eew.conf.bak
           cat > /etc/nginx/conf.d/rhythmquake-eew.conf <<'CONF'
+          map $http_sec_websocket_protocol $jian_ws_authorization {
+              default "";
+              ~^(?<jian_ws_token>at_[A-Za-z0-9._~+-]{1,2048})$ "Bearer $jian_ws_token";
+          }
           server {
               listen 80;
               server_name eew.yuelinrhythm.top;
@@ -186,6 +194,41 @@ jobs:
               ssl_protocols TLSv1.2 TLSv1.3;
               root /var/www/rhythmquake/current;
               index index.html;
+              location = /api/jian/auth/refresh {
+                  limit_except POST { deny all; }
+                  client_max_body_size 1k;
+                  proxy_pass https://auth.sismotide.top/api/refresh;
+                  proxy_ssl_server_name on;
+                  proxy_set_header Host auth.sismotide.top;
+                  proxy_set_header Origin "";
+                  proxy_connect_timeout 10s;
+                  proxy_read_timeout 20s;
+              }
+              location = /api/jian/auth/access {
+                  limit_except POST { deny all; }
+                  client_max_body_size 1k;
+                  proxy_pass https://auth.sismotide.top/api/access;
+                  proxy_ssl_server_name on;
+                  proxy_set_header Host auth.sismotide.top;
+                  proxy_set_header Origin "";
+                  proxy_connect_timeout 10s;
+                  proxy_read_timeout 20s;
+              }
+              location = /api/jian/all {
+                  if ($jian_ws_authorization = "") { return 401; }
+                  proxy_pass https://api.sismotide.top/all;
+                  proxy_http_version 1.1;
+                  proxy_ssl_server_name on;
+                  proxy_set_header Host api.sismotide.top;
+                  proxy_set_header Upgrade $http_upgrade;
+                  proxy_set_header Connection "upgrade";
+                  proxy_set_header Authorization $jian_ws_authorization;
+                  proxy_set_header Sec-WebSocket-Protocol "";
+                  proxy_set_header Origin "";
+                  proxy_hide_header Sec-WebSocket-Protocol;
+                  proxy_connect_timeout 10s;
+                  proxy_read_timeout 100s;
+              }
               location = /api/wauth/session {
                   limit_except POST { deny all; }
                   client_max_body_size 8k;
