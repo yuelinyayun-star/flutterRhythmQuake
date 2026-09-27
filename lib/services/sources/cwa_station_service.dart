@@ -16,6 +16,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 
 class CwaStation {
@@ -162,9 +163,106 @@ class CwaStationService {
     _isConnected = false;
     _recoveringFromStaleFrame = false;
     _lastFrameReceivedAt = null;
+    if (kIsWeb) {
+      unawaited(_startWebPolling(generation));
+      return;
+    }
     _client = HttpClient()..badCertificateCallback = (cert, host, port) => true;
     _client!.connectionTimeout = const Duration(seconds: 8);
     unawaited(_loginAndStart(generation));
+  }
+
+  Future<void> _startWebPolling(int generation) async {
+    await _fetchWebStationList(generation);
+    if (!_isCurrentRun(generation)) return;
+    _stationListTimer = Timer.periodic(
+      const Duration(minutes: 10),
+      (_) => unawaited(_fetchWebStationList(generation)),
+    );
+    _rtsTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => unawaited(_fetchWebRts(generation)),
+    );
+    unawaited(_fetchWebRts(generation));
+  }
+
+  Future<void> _fetchWebStationList(int generation) async {
+    if (!_isCurrentRun(generation) || _fetchingStationList) return;
+    _fetchingStationList = true;
+    try {
+      final uri = Uri.parse('${_apiHosts.first}$_stationPath').replace(
+        queryParameters: {'time': '${DateTime.now().millisecondsSinceEpoch}'},
+      );
+      final response = await http.get(uri).timeout(_requestTimeout);
+      if (!_isCurrentRun(generation) || response.statusCode != 200) return;
+      final data = jsonDecode(response.body);
+      if (data is! Map) return;
+      final newMap = <String, CwaStation>{};
+      for (final entry in data.entries) {
+        final id = entry.key.toString();
+        final val = entry.value;
+        if (val is! Map) continue;
+        final net = val['net']?.toString() ?? '';
+        final work = val['work'] == true;
+        final info = val['info'];
+        if (info is! List || info.isEmpty || info.last is! Map) continue;
+        final lastInfo = info.last as Map;
+        final code = int.tryParse(lastInfo['code']?.toString() ?? '') ?? 0;
+        final lat = double.tryParse(lastInfo['lat']?.toString() ?? '') ?? 0;
+        final lon = double.tryParse(lastInfo['lon']?.toString() ?? '') ?? 0;
+        if (lat == 0 && lon == 0) continue;
+        final existing = _stationMap[id];
+        newMap[id] = existing?.copyWith(
+              code: code,
+              net: net,
+              work: work,
+              coordinate: LatLng(lat, lon),
+            ) ??
+            CwaStation(
+              id: id,
+              code: code,
+              net: net,
+              coordinate: LatLng(lat, lon),
+              work: work,
+            );
+      }
+      if (!_isCurrentRun(generation)) return;
+      _stationMap = newMap;
+    } catch (error) {
+      debugPrint('TREM Web station list error: $error');
+    } finally {
+      _fetchingStationList = false;
+    }
+  }
+
+  Future<void> _fetchWebRts(int generation) async {
+    if (!_isCurrentRun(generation) || _fetchingRts) return;
+    if (_stationMap.isEmpty) {
+      unawaited(_fetchWebStationList(generation));
+      return;
+    }
+    _fetchingRts = true;
+    try {
+      final uri = Uri.parse('${_rtsHosts.first}$_rtsPath').replace(
+        queryParameters: {'time': '${DateTime.now().millisecondsSinceEpoch}'},
+      );
+      final response = await http.get(uri).timeout(_requestTimeout);
+      if (!_isCurrentRun(generation)) return;
+      if (response.statusCode != 200) {
+        throw HttpException('HTTP ${response.statusCode}');
+      }
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map || !_acceptRtsPayload(decoded, generation)) {
+        return;
+      }
+    } catch (error) {
+      if (_isCurrentRun(generation)) {
+        debugPrint('TREM Web RTS error: $error');
+        _handleFailure();
+      }
+    } finally {
+      _fetchingRts = false;
+    }
   }
 
   Future<void> _loginAndStart(int generation) async {
