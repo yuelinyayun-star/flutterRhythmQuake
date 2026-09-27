@@ -1,0 +1,94 @@
+name: Deploy web to server
+
+on:
+  push:
+    branches: [web]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/web'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Flutter
+        run: |
+          git clone --depth 1 --branch stable https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Build web
+        run: |
+          flutter pub get
+          flutter build web --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rhythmquake-deploy
+          path: build/web/
+          retention-days: 1
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: rhythmquake-deploy
+          path: site
+      - name: Install SSH client tools
+        run: sudo apt-get update && sudo apt-get install -y sshpass
+      - name: Deploy static files
+        env:
+          SSHPASS: ${{ secrets.RHYTHMQUAKE_SSH_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SSHPASS" ]; then
+            echo 'Set the RHYTHMQUAKE_SSH_PASSWORD repository secret first.' >&2
+            exit 1
+          fi
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          ssh-keyscan -T 10 -H 64.90.20.78 >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          deploy_id="${GITHUB_SHA:0:12}"
+          remote=(sshpass -e ssh -o StrictHostKeyChecking=yes -o ConnectTimeout=15 root@64.90.20.78)
+          "${remote[@]}" "mkdir -p /var/www/rhythmquake/releases/$deploy_id"
+          tar -C site -czf - . | "${remote[@]}" "tar -xz -C /var/www/rhythmquake/releases/$deploy_id"
+          "${remote[@]}" "bash -se -- '$deploy_id'" <<'REMOTE'
+          set -euo pipefail
+          deploy_id="$1"
+          if ! command -v nginx >/dev/null 2>&1; then
+            if ! command -v apt-get >/dev/null 2>&1; then
+              echo 'Nginx is missing and this server has no apt-get; install Nginx first.' >&2
+              exit 1
+            fi
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y nginx
+          fi
+          if [ ! -f /etc/nginx/conf.d/rhythmquake-web.conf ] && ss -ltn | grep -Eq '(^|[[:space:]])[^[:space:]]+:8080[[:space:]]'; then
+            echo 'Port 8080 is already occupied; no web server configuration was changed.' >&2
+            exit 1
+          fi
+          cat > /etc/nginx/conf.d/rhythmquake-web.conf <<'CONF'
+          server {
+              listen 8080;
+              server_name _;
+              root /var/www/rhythmquake/current;
+              index index.html;
+              location / {
+                  try_files $uri $uri/ /index.html;
+              }
+          }
+          CONF
+          ln -sfn "releases/$deploy_id" /var/www/rhythmquake/next
+          mv -Tf /var/www/rhythmquake/next /var/www/rhythmquake/current
+          nginx -t
+          systemctl enable --now nginx
+          systemctl reload nginx
+          if command -v ufw >/dev/null 2>&1 && ufw status | grep -q '^Status: active'; then
+            ufw allow 8080/tcp
+          fi
+          curl --fail --silent --show-error http://127.0.0.1:8080/ -o /dev/null
+          REMOTE
+          curl --fail --silent --show-error --connect-timeout 10 --max-time 30 http://64.90.20.78:8080/ -o /dev/null
