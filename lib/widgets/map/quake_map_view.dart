@@ -243,6 +243,9 @@ class QuakeMapView extends StatefulWidget {
   static const String displayShindo0PreferenceKey = 'station_display_shindo0';
   static const String kmaIntensityHoldPreferenceKey =
       'kma_intensity_hold_frames';
+  static final ValueNotifier<DateTime?> niedArrayFrameTimeNotifier =
+      ValueNotifier<DateTime?>(null);
+
   static final ValueNotifier<bool> tremStationEnabledNotifier =
       ValueNotifier<bool>(true);
   static final ValueNotifier<bool> displayShindo0Notifier = ValueNotifier<bool>(
@@ -456,9 +459,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   bool get _usesWhewsSnet => _whewsSnetEnabled && _snetSource == 'whews';
   bool get _usesWhewsKma => _whewsKmaEnabled && _kmaSource == 'whews';
   bool get _usesArrayNied => _usesWhewsNied || _niedSource == 'jian';
-  static final ValueNotifier<DateTime?> niedArrayFrameTimeNotifier =
-      ValueNotifier<DateTime?>(null);
-
   bool get _usesYahooData =>
       _useYahooSource ||
       (kIsWeb && (_niedSource == 'lmoni' || _niedSource == 'kmoni'));
