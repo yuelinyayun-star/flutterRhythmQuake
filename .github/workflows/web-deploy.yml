@@ -42,6 +42,17 @@ jobs:
           path: site
       - name: Install SSH client tools
         run: sudo apt-get update && sudo apt-get install -y sshpass
+      - name: Check domain and HTTPS ports
+        env:
+          SSHPASS: ${{ secrets.RHYTHMQUAKE_SSH_PASSWORD }}
+        run: |
+          echo 'eew.yuelinrhythm.top IPv4:'
+          getent ahostsv4 eew.yuelinrhythm.top | awk '{print $1}' | sort -u || true
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          ssh-keyscan -T 10 -H 64.90.20.78 >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          sshpass -e ssh -o StrictHostKeyChecking=yes -o ConnectTimeout=15 root@64.90.20.78 'echo "HTTP/HTTPS listeners:"; ss -ltnp | grep -E ":(80|443)[[:space:]]" || true; echo "Nginx active:"; systemctl is-active nginx || true; echo "Domain Nginx config:"; if nginx -T 2>/dev/null | grep -Fq "server_name eew.yuelinrhythm.top"; then echo present; else echo absent; fi'
       - name: Deploy static files
         env:
           SSHPASS: ${{ secrets.RHYTHMQUAKE_SSH_PASSWORD }}
