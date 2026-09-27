@@ -456,6 +456,9 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   bool get _usesWhewsSnet => _whewsSnetEnabled && _snetSource == 'whews';
   bool get _usesWhewsKma => _whewsKmaEnabled && _kmaSource == 'whews';
   bool get _usesArrayNied => _usesWhewsNied || _niedSource == 'jian';
+  static final ValueNotifier<DateTime?> niedArrayFrameTimeNotifier =
+      ValueNotifier<DateTime?>(null);
+
   bool get _usesYahooData =>
       _useYahooSource ||
       (kIsWeb && (_niedSource == 'lmoni' || _niedSource == 'kmoni'));
@@ -1725,6 +1728,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _niedStations = const [];
     _whewsNiedStations = [];
     _lastWhewsNiedDataTime = null;
+    QuakeMapView.niedArrayFrameTimeNotifier.value = null;
     _niedGridCellCenters.clear();
     _lastNiedLayerSignature = '';
     _resetNiedDetectionState(detachStations: true);
@@ -5510,6 +5514,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     }
 
     _niedSource = newSource;
+    QuakeMapView.niedArrayFrameTimeNotifier.value = null;
     _useYahooSource = useYahoo;
     _niedStations = [];
     _whewsNiedStations = [];
@@ -5551,6 +5556,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       NiedMonitorService().configureEndpoint(source);
     }
     _niedSource = source;
+    QuakeMapView.niedArrayFrameTimeNotifier.value = null;
     _useYahooSource = source == 'yahoo';
     _syncNiedMonitorService();
     _notifyLayer(_niedLayerRevision);
@@ -5702,6 +5708,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
         );
       }
     }
+    QuakeMapView.niedArrayFrameTimeNotifier.value = frame.dataTime;
     _acceptNiedStations(_whewsNiedStations);
   }
 
