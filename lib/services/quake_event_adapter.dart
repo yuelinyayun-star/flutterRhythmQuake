@@ -1354,6 +1354,10 @@ class QuakeEventAdapter {
   ) {
     final intensityRaw = _parseDouble(data['maxIntensity']);
     final isWarn = intensityRaw != null && intensityRaw >= 6.5;
+    final parsedReportNumber = _parseInt(data['updates']);
+    final reportNumber = parsedReportNumber != null && parsedReportNumber > 0
+        ? parsedReportNumber
+        : 1;
     // FAN documents /sa shockTime as UTC+8. WHEWS carries the same FAN
     // contract; this path does not contain a native UTC-8 wall-clock field.
     const timeZone = 8;
@@ -1365,7 +1369,7 @@ class QuakeEventAdapter {
       isEew: true,
       timeZone: timeZone,
       titleText: 'ShakeAlert Earthquake Early Warning',
-      reportNumText: '第${data['updates'] ?? 1}報',
+      reportNumText: '第$reportNumber報',
       useShindo: false,
       maxIntensity: intensityRaw != null
           ? intensityRaw.toStringAsFixed(1)
