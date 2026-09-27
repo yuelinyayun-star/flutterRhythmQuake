@@ -19,10 +19,12 @@ class JianStationService {
     this.observationTimeout = const Duration(seconds: 90),
   }) : _socketFactory = socketFactory ?? _connectSocket;
 
-  static WebSocketChannel _connectSocket(Uri uri) => IOWebSocketChannel.connect(
-    uri,
-    connectTimeout: const Duration(seconds: 15),
-  );
+  static WebSocketChannel _connectSocket(Uri uri) => kIsWeb
+      ? WebSocketChannel.connect(uri)
+      : IOWebSocketChannel.connect(
+          uri,
+          connectTimeout: const Duration(seconds: 15),
+        );
 
   final WhewsStationKind kind;
   final JianStationSocketFactory _socketFactory;
