@@ -31,6 +31,8 @@ import '../map/map_config.dart';
 import '../map/quake_map_view.dart';
 import 'app_page_background.dart';
 import 'ui_runtime_flags.dart';
+import 'legend_image_loader_web.dart'
+    if (dart.library.io) 'legend_image_loader_io.dart' as legend_loader;
 
 class DebugPage extends StatefulWidget {
   const DebugPage({super.key});
@@ -2455,21 +2457,7 @@ class _DebugPageState extends State<DebugPage> {
   }
 
   Future<Uint8List?> _fetchLegendBytes(String url) async {
-    final client = HttpClient()
-      ..badCertificateCallback =
-          ((X509Certificate cert, String host, int port) => true);
-    try {
-      final req = await client.getUrl(Uri.parse(url));
-      req.headers.set('Referer', 'https://www.lmoni.bosai.go.jp/monitor/');
-      req.headers.set('User-Agent', _ua);
-      final res = await req.close();
-      if (res.statusCode != 200) return null;
-      return await consolidateHttpClientResponseBytes(res);
-    } catch (_) {
-      return null;
-    } finally {
-      client.close();
-    }
+    return legend_loader.fetchLegendBytes(url, userAgent: _ua);
   }
 
   Future<_LegendDetectResult?> _detectLegendBarGeometry(Uint8List bytes) async {
