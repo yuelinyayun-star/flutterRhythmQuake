@@ -135,7 +135,12 @@ jobs:
           }
           CONF
           mkdir -p /var/www/letsencrypt
-          cat > /etc/nginx/conf.d/rhythmquake-eew.conf <<'CONF'
+          # Preserve the live HTTPS vhost during routine static deployments.
+          # Replacing it with HTTP-only here briefly serves the file site's
+          # certificate for eew until the later HTTPS step restores this vhost.
+          if [ ! -f /etc/nginx/conf.d/rhythmquake-eew.conf ] || \
+             ! grep -Fq 'listen 443 ssl;' /etc/nginx/conf.d/rhythmquake-eew.conf; then
+            cat > /etc/nginx/conf.d/rhythmquake-eew.conf <<'CONF'
           map $http_sec_websocket_protocol $jian_ws_authorization {
               default "";
               ~^(?<jian_ws_token>at_[A-Za-z0-9._~+-]+)$ "Bearer $jian_ws_token";
@@ -153,6 +158,7 @@ jobs:
               }
           }
           CONF
+          fi
           ln -sfn "releases/$deploy_id" /var/www/rhythmquake/next
           mv -Tf /var/www/rhythmquake/next /var/www/rhythmquake/current
           nginx -t
