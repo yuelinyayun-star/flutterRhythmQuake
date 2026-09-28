@@ -42,7 +42,22 @@ class JianService extends BaseSourceService {
   static WebSocketChannel _webSocket(
     Uri uri, {
     Map<String, dynamic>? headers,
-  }) => WebSocketChannel.connect(uri);
+  }) {
+    final authorization = headers?['Authorization']?.toString() ?? '';
+    final accessToken = authorization.startsWith('Bearer ')
+        ? authorization.substring('Bearer '.length)
+        : '';
+    // Browser WebSocket handshakes cannot set Authorization. The same-origin
+    // proxy translates this short-lived token into the upstream header.
+    if (!RegExp(r'^at_[A-Za-z0-9._~+\-]{1,2048}$').hasMatch(accessToken)) {
+      throw const JianAuthException('invalid_api_key');
+    }
+    final proxy = Uri.base.resolve('/api/jian/all');
+    return WebSocketChannel.connect(
+      proxy.replace(scheme: proxy.scheme == 'https' ? 'wss' : 'ws'),
+      protocols: [accessToken],
+    );
+  }
   final JianCredentialStore _credentialStore;
   final JianAuthService _authService;
   JianAuthStatus authStatus = JianAuthStatus.anonymous;
@@ -164,9 +179,6 @@ class JianService extends BaseSourceService {
       );
       await socket.ready.timeout(const Duration(seconds: 20));
       if (!_isCurrent(generation)) return;
-      // Jian accepts a plain at_ token within 15 seconds of an unauthenticated
-      // handshake. Browsers cannot set Authorization on a WebSocket handshake.
-      if (kIsWeb) socket.sink.add(access);
       _connectedAt = _now();
       _lastFrameAt ??= _connectedAt;
       authStatus = JianAuthStatus.authenticated;
