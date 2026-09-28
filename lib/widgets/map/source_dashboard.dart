@@ -35,6 +35,7 @@ String jianAuthenticationLabel(String? status, {String? errorCode}) => switch (s
     'network' => 'Jian（鉴权连接失败）',
     'server' => 'Jian（鉴权服务异常）',
     'connection' => 'Jian（连接失败）',
+    'browser_connection' => 'Jian（直连失败）',
     'conn_limit' => 'Jian（并发已满）',
     'cooldown' => 'Jian（请求限流）',
     'expired_access_token' => 'Jian（令牌待刷新）',

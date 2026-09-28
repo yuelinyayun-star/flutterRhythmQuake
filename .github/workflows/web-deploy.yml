@@ -58,8 +58,8 @@ jobs:
           match = re.search(r"cat > /etc/nginx/conf.d/rhythmquake-eew.conf <<'CONF'\n(.*?)\n          CONF", source, re.S)
           if match is None:
               raise SystemExit('HTTPS Nginx configuration not found')
-          if 'location = /api/jian/all' not in match.group(1):
-              raise SystemExit('Jian WebSocket proxy missing from HTTPS config')
+          if 'location = /api/jian/auth/access' not in match.group(1):
+              raise SystemExit('Jian auth proxy missing from HTTPS config')
           Path('/tmp/rhythmquake-eew.conf').write_text(textwrap.dedent(match.group(1)) + '\n')
           PY
           sudo cp /tmp/rhythmquake-eew.conf /etc/nginx/conf.d/rhythmquake-eew.conf
@@ -141,10 +141,6 @@ jobs:
           if [ ! -f /etc/nginx/conf.d/rhythmquake-eew.conf ] || \
              ! grep -Fq 'listen 443 ssl;' /etc/nginx/conf.d/rhythmquake-eew.conf; then
             cat > /etc/nginx/conf.d/rhythmquake-eew.conf <<'CONF'
-          map $http_sec_websocket_protocol $jian_ws_authorization {
-              default "";
-              ~^(?<jian_ws_token>at_[A-Za-z0-9._~+-]+)$ "Bearer $jian_ws_token";
-          }
           server {
               listen 80;
               server_name eew.yuelinrhythm.top;
@@ -203,10 +199,6 @@ jobs:
             --deploy-hook 'systemctl reload nginx'
           cp /etc/nginx/conf.d/rhythmquake-eew.conf /etc/nginx/conf.d/rhythmquake-eew.conf.bak
           cat > /etc/nginx/conf.d/rhythmquake-eew.conf <<'CONF'
-          map $http_sec_websocket_protocol $jian_ws_authorization {
-              default "";
-              ~^(?<jian_ws_token>at_[A-Za-z0-9._~+-]+)$ "Bearer $jian_ws_token";
-          }
           server {
               listen 80;
               server_name eew.yuelinrhythm.top;
@@ -244,21 +236,6 @@ jobs:
                   proxy_set_header Origin "";
                   proxy_connect_timeout 10s;
                   proxy_read_timeout 20s;
-              }
-              location = /api/jian/all {
-                  if ($jian_ws_authorization = "") { return 401; }
-                  proxy_pass https://api.sismotide.top/all;
-                  proxy_http_version 1.1;
-                  proxy_ssl_server_name on;
-                  proxy_set_header Host api.sismotide.top;
-                  proxy_set_header Upgrade $http_upgrade;
-                  proxy_set_header Connection "upgrade";
-                  proxy_set_header Authorization $jian_ws_authorization;
-                  proxy_set_header Sec-WebSocket-Protocol "";
-                  proxy_set_header Origin "";
-                  proxy_hide_header Sec-WebSocket-Protocol;
-                  proxy_connect_timeout 10s;
-                  proxy_read_timeout 100s;
               }
               location = /api/wauth/session {
                   limit_except POST { deny all; }

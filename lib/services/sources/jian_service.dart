@@ -42,22 +42,7 @@ class JianService extends BaseSourceService {
   static WebSocketChannel _webSocket(
     Uri uri, {
     Map<String, dynamic>? headers,
-  }) {
-    final authorization = headers?['Authorization']?.toString() ?? '';
-    final accessToken = authorization.startsWith('Bearer ')
-        ? authorization.substring('Bearer '.length)
-        : '';
-    // Browser WebSocket handshakes cannot set Authorization. The same-origin
-    // proxy translates this short-lived token into the upstream header.
-    if (!RegExp(r'^at_[A-Za-z0-9._~+\-]{1,2048}$').hasMatch(accessToken)) {
-      throw const JianAuthException('invalid_api_key');
-    }
-    final proxy = Uri.base.resolve('/api/jian/all');
-    return WebSocketChannel.connect(
-      proxy.replace(scheme: proxy.scheme == 'https' ? 'wss' : 'ws'),
-      protocols: [accessToken],
-    );
-  }
+  }) => WebSocketChannel.connect(uri);
   final JianCredentialStore _credentialStore;
   final JianAuthService _authService;
   JianAuthStatus authStatus = JianAuthStatus.anonymous;
@@ -179,6 +164,9 @@ class JianService extends BaseSourceService {
       );
       await socket.ready.timeout(const Duration(seconds: 20));
       if (!_isCurrent(generation)) return;
+      // Browser clients connect from their own IP and authenticate within the
+      // 15-second window allowed by Jian; shared server-IP relays hit IP limits.
+      if (kIsWeb) socket.sink.add(access);
       _connectedAt = _now();
       _lastFrameAt ??= _connectedAt;
       authStatus = JianAuthStatus.authenticated;
@@ -333,7 +321,9 @@ class JianService extends BaseSourceService {
       _credentialInfo = SourceCredentialInfo(
         configured: _credentialInfo.configured,
         expiresAt: _credentialInfo.expiresAt,
-        errorCode: 'connection',
+        errorCode: kIsWeb && _connectedAt == null
+            ? 'browser_connection'
+            : 'connection',
       );
     }
     debugPrint('Jian Project: $error');

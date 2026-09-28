@@ -83,9 +83,14 @@ Reference: https://api.sismotide.top/api/#auth
   secure-storage dependency). Neither preferences nor cross-isolate messages
   carry credentials. Failed secure writes retain a redeemed token in the
   dialog for retry without consuming the login key a second time.
-- Every actual handshake obtains a fresh `at_`, passed in the native
+- Every connection obtains a fresh `at_`. Native clients pass it in the
   WebSocket Authorization header, never in a URL or business frame. Token
   expiry does not restart a healthy socket. A reconnect fetches a new token.
+- On Web, the browser opens `wss://api.sismotide.top/all` directly from the
+  user's own IP, then sends the short-lived `at_` as the first text frame
+  within Jian's 15-second authentication window. The HTTP token exchange uses
+  the fixed same-origin auth proxy. WebSocket traffic is not relayed through
+  the deployment server because Jian limits concurrent connections per IP.
 - Invalid/expired credentials and account bans stop automatic retries. Network
   failures, rate/concurrency limits and rejected access tokens use cooldowns.
   A configured but rejected credential never silently becomes anonymous.
