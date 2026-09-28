@@ -346,6 +346,13 @@ jobs:
           if systemctl list-unit-files certbot.timer --no-legend 2>/dev/null | grep -q 'certbot.timer'; then
             systemctl enable --now certbot.timer
           fi
+          echo 'Configured certificate:'
+          openssl x509 -in /etc/letsencrypt/live/eew.yuelinrhythm.top/fullchain.pem \
+            -noout -subject -ext subjectAltName
+          echo 'Certificate presented by local Nginx:'
+          openssl s_client -connect 127.0.0.1:443 \
+            -servername eew.yuelinrhythm.top </dev/null 2>/dev/null | \
+            openssl x509 -noout -subject -ext subjectAltName
           curl --fail --silent --show-error --noproxy '*' \
             --resolve eew.yuelinrhythm.top:443:127.0.0.1 \
             https://eew.yuelinrhythm.top/ -o /dev/null
