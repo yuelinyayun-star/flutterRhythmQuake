@@ -54,9 +54,10 @@ class WAuthService {
     WAuthCredentialStore? credentialStore,
   }) : _client = client ?? http.Client(),
        credentialStore = credentialStore ?? WAuthCredentialStore(),
+       // Gateway paths include /wauth, so Web only prefixes /api.
        gatewayBaseUrlValue = gatewayBaseUrl ??
            (kIsWeb
-               ? Uri.base.resolve('/api/wauth').toString()
+               ? Uri.base.resolve('/api').toString()
                : WAuthService.gatewayBaseUrl);
 
   void close() {

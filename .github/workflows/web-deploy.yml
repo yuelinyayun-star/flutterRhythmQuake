@@ -305,6 +305,7 @@ jobs:
               }
               location = /api/wauth/result {
                   limit_except GET { deny all; }
+                  access_log off;
                   proxy_pass https://quake.yuelinrhythm.top/wauth/result;
                   proxy_ssl_server_name on;
                   proxy_set_header Host quake.yuelinrhythm.top;
