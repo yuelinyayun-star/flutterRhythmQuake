@@ -54,10 +54,12 @@ jobs:
           import re
           import textwrap
           source = Path('.github/workflows/web-deploy.yml').read_text()
-          source = source.split('cp /etc/nginx/conf.d/rhythmquake-eew.conf /etc/nginx/conf.d/rhythmquake-eew.conf.bak', 1)[1]
+          source = source.rsplit('cp /etc/nginx/conf.d/rhythmquake-eew.conf /etc/nginx/conf.d/rhythmquake-eew.conf.bak', 1)[1]
           match = re.search(r"cat > /etc/nginx/conf.d/rhythmquake-eew.conf <<'CONF'\n(.*?)\n          CONF", source, re.S)
           if match is None:
               raise SystemExit('HTTPS Nginx configuration not found')
+          if 'location = /api/jian/all' not in match.group(1):
+              raise SystemExit('Jian WebSocket proxy missing from HTTPS config')
           Path('/tmp/rhythmquake-eew.conf').write_text(textwrap.dedent(match.group(1)) + '\n')
           PY
           sudo cp /tmp/rhythmquake-eew.conf /etc/nginx/conf.d/rhythmquake-eew.conf
