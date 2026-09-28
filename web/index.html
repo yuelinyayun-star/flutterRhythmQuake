@@ -19,6 +19,7 @@
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta name="description" content="RhythmQuake 实时地震与多灾种监测">
+  <meta name="rhythmquake-build" content="__RQ_BUILD_VERSION__">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
@@ -31,8 +32,137 @@
 
   <title>RhythmQuake</title>
   <link rel="manifest" href="manifest.json">
+  <style>
+    #rq-version-control {
+      position: fixed;
+      top: 5px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 2147483647;
+      font: 11px/1.3 system-ui, sans-serif;
+      color: #cbd5e1;
+      text-align: center;
+    }
+    #rq-version-button {
+      border: 1px solid #64748b80;
+      border-radius: 12px;
+      padding: 3px 8px;
+      background: #0f172ac9;
+      color: inherit;
+      cursor: pointer;
+      font: inherit;
+    }
+    #rq-version-notice {
+      margin-top: 5px;
+      padding: 7px 10px;
+      border: 1px solid #38bdf87f;
+      border-radius: 8px;
+      background: #0f172af2;
+      box-shadow: 0 4px 14px #0006;
+      white-space: nowrap;
+    }
+    #rq-version-notice[hidden] { display: none; }
+    #rq-update-button, #rq-later-button {
+      margin-left: 6px;
+      border: 0;
+      border-radius: 5px;
+      padding: 4px 7px;
+      cursor: pointer;
+      font: inherit;
+    }
+    #rq-update-button { background: #38bdf8; color: #082032; }
+    #rq-later-button { background: #334155; color: #f1f5f9; }
+    @media (max-width: 650px) {
+      #rq-version-control { top: auto; bottom: 5px; }
+    }
+  </style>
 </head>
 <body>
+  <div id="rq-version-control">
+    <button id="rq-version-button" type="button" aria-label="检查 Web 版本更新"></button>
+    <div id="rq-version-notice" role="status" aria-live="polite" hidden>
+      <span id="rq-update-label"></span>
+      <button id="rq-update-button" type="button">立即更新</button>
+      <button id="rq-later-button" type="button">稍后</button>
+    </div>
+  </div>
+  <script>
+    (() => {
+      const embedded = document.querySelector('meta[name="rhythmquake-build"]').content;
+      const current = /^[0-9a-f]{12}$/.test(embedded) ? embedded : 'dev';
+      const button = document.getElementById('rq-version-button');
+      const notice = document.getElementById('rq-version-notice');
+      const label = document.getElementById('rq-update-label');
+      const updateButton = document.getElementById('rq-update-button');
+      let available = null;
+      let dismissed = null;
+
+      button.textContent = `Web ${current}`;
+      button.title = `当前 Web 构建 ${current}，点击检查更新`;
+
+      async function checkVersion() {
+        try {
+          const response = await fetch(`/version.json?t=${Date.now()}`, {
+            cache: 'no-store',
+            credentials: 'same-origin',
+          });
+          if (!response.ok) return;
+          const data = await response.json();
+          if (!/^[0-9a-f]{12}$/.test(data.version)) return;
+          if (data.version === current) return;
+          available = data.version;
+          button.textContent = `Web ${current} · 可更新`;
+          label.textContent = `发现新版本 ${available}`;
+          if (dismissed !== available) notice.hidden = false;
+        } catch (_) {
+          // A temporary network failure must not interrupt monitoring.
+        }
+      }
+
+      async function updateNow() {
+        if (!available) return;
+        const nextUrl = `/?v=${available}`;
+        updateButton.disabled = true;
+        updateButton.textContent = '正在更新';
+        const fallback = setTimeout(() => location.replace(nextUrl), 4000);
+        try {
+          if ('serviceWorker' in navigator) {
+            const registrations = await navigator.serviceWorker.getRegistrations();
+            await Promise.all(registrations
+              .filter((registration) => registration.active &&
+                new URL(registration.active.scriptURL).pathname === '/flutter_service_worker.js')
+              .map((registration) => registration.unregister()));
+          }
+          if ('caches' in window) {
+            const keys = await caches.keys();
+            await Promise.all(keys
+              .filter((key) => key.startsWith('flutter-'))
+              .map((key) => caches.delete(key)));
+          }
+        } catch (_) {
+          // A versioned navigation still updates browsers without CacheStorage.
+        }
+        clearTimeout(fallback);
+        location.replace(nextUrl);
+      }
+
+      button.addEventListener('click', () => {
+        if (available) notice.hidden = false;
+        else checkVersion();
+      });
+      updateButton.addEventListener('click', updateNow);
+      document.getElementById('rq-later-button').addEventListener('click', () => {
+        dismissed = available;
+        notice.hidden = true;
+      });
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) checkVersion();
+      });
+      window.addEventListener('online', checkVersion);
+      setInterval(checkVersion, 60000);
+      setTimeout(checkVersion, 3000);
+    })();
+  </script>
   <!--
     You can customize the "flutter_bootstrap.js" script.
     This is useful to provide a custom configuration to the Flutter loader

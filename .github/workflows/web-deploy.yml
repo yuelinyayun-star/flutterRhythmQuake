@@ -28,10 +28,21 @@ jobs:
           flutter build web --release
           python3 - <<'PY'
           from pathlib import Path
+          from datetime import datetime, timezone
+          import json
           import os
           version = os.environ['GITHUB_SHA'][:12]
           index = Path('build/web/index.html')
-          index.write_text(index.read_text().replace('src="flutter_bootstrap.js"', f'src="flutter_bootstrap.js?v={version}"'))
+          html = index.read_text()
+          if html.count('__RQ_BUILD_VERSION__') != 1:
+              raise SystemExit('Web build version placeholder missing or duplicated')
+          html = html.replace('__RQ_BUILD_VERSION__', version)
+          html = html.replace('src="flutter_bootstrap.js"', f'src="flutter_bootstrap.js?v={version}"')
+          index.write_text(html)
+          Path('build/web/version.json').write_text(json.dumps({
+              'version': version,
+              'builtAt': datetime.now(timezone.utc).isoformat(),
+          }) + '\n')
           bootstrap = Path('build/web/flutter_bootstrap.js')
           source = bootstrap.read_text()
           target = '"mainJsPath":"main.dart.js"'
@@ -129,6 +140,18 @@ jobs:
               server_name _;
               root /var/www/rhythmquake/current;
               index index.html;
+              location = / {
+                  add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+                  try_files /index.html =404;
+              }
+              location = /index.html {
+                  add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+              }
+              location = /version.json {
+                  add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+                  default_type application/json;
+                  try_files $uri =404;
+              }
               location / {
                   try_files $uri $uri/ /index.html;
               }
@@ -148,6 +171,18 @@ jobs:
               index index.html;
               location /.well-known/acme-challenge/ {
                   root /var/www/letsencrypt;
+              }
+              location = / {
+                  add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+                  try_files /index.html =404;
+              }
+              location = /index.html {
+                  add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+              }
+              location = /version.json {
+                  add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+                  default_type application/json;
+                  try_files $uri =404;
               }
               location / {
                   try_files $uri $uri/ /index.html;
@@ -217,6 +252,27 @@ jobs:
               ssl_protocols TLSv1.2 TLSv1.3;
               root /var/www/rhythmquake/current;
               index index.html;
+              location = / {
+                  add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+                  try_files /index.html =404;
+              }
+              location = /index.html {
+                  add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+              }
+              location = /version.json {
+                  add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+                  default_type application/json;
+                  try_files $uri =404;
+              }
+              location = /flutter_bootstrap.js {
+                  add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+              }
+              location = /flutter_service_worker.js {
+                  add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+              }
+              location = /main.dart.js {
+                  add_header Cache-Control "no-cache, must-revalidate" always;
+              }
               location = /api/jian/auth/refresh {
                   limit_except POST { deny all; }
                   client_max_body_size 1k;
