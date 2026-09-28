@@ -346,10 +346,10 @@ jobs:
           if systemctl list-unit-files certbot.timer --no-legend 2>/dev/null | grep -q 'certbot.timer'; then
             systemctl enable --now certbot.timer
           fi
-          curl --fail --silent --show-error \
+          curl --fail --silent --show-error --noproxy '*' \
             --resolve eew.yuelinrhythm.top:443:127.0.0.1 \
             https://eew.yuelinrhythm.top/ -o /dev/null
           REMOTE
-          curl --fail --silent --show-error --connect-timeout 10 --max-time 30 \
+          curl --fail --silent --show-error --noproxy '*' --connect-timeout 10 --max-time 30 \
             --resolve eew.yuelinrhythm.top:443:64.90.20.78 \
             https://eew.yuelinrhythm.top/ -o /dev/null
