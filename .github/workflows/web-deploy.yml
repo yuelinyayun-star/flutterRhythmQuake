@@ -39,6 +39,29 @@ jobs:
               raise SystemExit('Flutter bootstrap main script path not found')
           bootstrap.write_text(source.replace(target, f'"mainJsPath":"main.dart.js?v={version}"'))
           PY
+      - name: Validate HTTPS Nginx config
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq nginx >/dev/null
+          sudo mkdir -p /etc/letsencrypt/live/eew.yuelinrhythm.top
+          sudo openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -subj /CN=eew.yuelinrhythm.top \
+            -keyout /etc/letsencrypt/live/eew.yuelinrhythm.top/privkey.pem \
+            -out /etc/letsencrypt/live/eew.yuelinrhythm.top/fullchain.pem \
+            >/dev/null 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import textwrap
+          source = Path('.github/workflows/web-deploy.yml').read_text()
+          source = source.split('cp /etc/nginx/conf.d/rhythmquake-eew.conf /etc/nginx/conf.d/rhythmquake-eew.conf.bak', 1)[1]
+          match = re.search(r"cat > /etc/nginx/conf.d/rhythmquake-eew.conf <<'CONF'\n(.*?)\n          CONF", source, re.S)
+          if match is None:
+              raise SystemExit('HTTPS Nginx configuration not found')
+          Path('/tmp/rhythmquake-eew.conf').write_text(textwrap.dedent(match.group(1)) + '\n')
+          PY
+          sudo cp /tmp/rhythmquake-eew.conf /etc/nginx/conf.d/rhythmquake-eew.conf
+          sudo nginx -t
       - uses: actions/upload-artifact@v4
         with:
           name: rhythmquake-deploy
@@ -113,7 +136,7 @@ jobs:
           cat > /etc/nginx/conf.d/rhythmquake-eew.conf <<'CONF'
           map $http_sec_websocket_protocol $jian_ws_authorization {
               default "";
-              ~^(?<jian_ws_token>at_[A-Za-z0-9._~+-]{1,2048})$ "Bearer $jian_ws_token";
+              ~^(?<jian_ws_token>at_[A-Za-z0-9._~+-]+)$ "Bearer $jian_ws_token";
           }
           server {
               listen 80;
@@ -174,7 +197,7 @@ jobs:
           cat > /etc/nginx/conf.d/rhythmquake-eew.conf <<'CONF'
           map $http_sec_websocket_protocol $jian_ws_authorization {
               default "";
-              ~^(?<jian_ws_token>at_[A-Za-z0-9._~+-]{1,2048})$ "Bearer $jian_ws_token";
+              ~^(?<jian_ws_token>at_[A-Za-z0-9._~+-]+)$ "Bearer $jian_ws_token";
           }
           server {
               listen 80;
