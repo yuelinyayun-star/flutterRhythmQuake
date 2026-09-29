@@ -74,6 +74,8 @@ jobs:
           Path('/tmp/rhythmquake-eew.conf').write_text(textwrap.dedent(match.group(1)) + '\n')
           PY
           sudo cp /tmp/rhythmquake-eew.conf /etc/nginx/conf.d/rhythmquake-eew.conf
+          sudo mkdir -p /var/cache/nginx/rhythmquake-sources
+          sudo chown www-data:www-data /var/cache/nginx/rhythmquake-sources
           sudo nginx -t
       - uses: actions/upload-artifact@v4
         with:
@@ -233,7 +235,10 @@ jobs:
             --register-unsafely-without-email --keep-until-expiring \
             --deploy-hook 'systemctl reload nginx'
           cp /etc/nginx/conf.d/rhythmquake-eew.conf /etc/nginx/conf.d/rhythmquake-eew.conf.bak
+          mkdir -p /var/cache/nginx/rhythmquake-sources
+          chown www-data:www-data /var/cache/nginx/rhythmquake-sources
           cat > /etc/nginx/conf.d/rhythmquake-eew.conf <<'CONF'
+          proxy_cache_path /var/cache/nginx/rhythmquake-sources levels=1:2 keys_zone=rhythmquake_sources:16m inactive=30m max_size=512m;
           server {
               listen 80;
               server_name eew.yuelinrhythm.top;
@@ -352,6 +357,114 @@ jobs:
                   proxy_set_header Origin "";
                   proxy_connect_timeout 5s;
                   proxy_read_timeout 8s;
+              }
+              location /api/lpgm-image/ {
+                  limit_except GET { deny all; }
+                  proxy_pass https://www.lmoni.bosai.go.jp/monitor/data/data/map_img/;
+                  proxy_ssl_server_name on;
+                  proxy_set_header Host www.lmoni.bosai.go.jp;
+                  proxy_set_header Referer https://www.lmoni.bosai.go.jp/monitor/;
+                  proxy_set_header User-Agent 'Mozilla/5.0 RhythmQuake-Web';
+                  proxy_set_header Origin "";
+                  proxy_cache rhythmquake_sources;
+                  proxy_cache_lock on;
+                  proxy_cache_valid 200 10m;
+                  proxy_connect_timeout 5s;
+                  proxy_read_timeout 8s;
+              }
+              location /api/china-weather-media/ {
+                  limit_except GET { deny all; }
+                  proxy_pass https://d1.weather.com.cn/;
+                  proxy_ssl_server_name on;
+                  proxy_set_header Host d1.weather.com.cn;
+                  proxy_set_header Referer https://www.weather.com.cn/;
+                  proxy_set_header User-Agent 'Mozilla/5.0';
+                  proxy_set_header Origin "";
+                  proxy_connect_timeout 10s;
+                  proxy_read_timeout 20s;
+              }
+              location /api/china-weather-location/ {
+                  limit_except GET { deny all; }
+                  proxy_pass https://d4.weather.com.cn/;
+                  proxy_ssl_server_name on;
+                  proxy_set_header Host d4.weather.com.cn;
+                  proxy_set_header Referer https://m.weather.com.cn/;
+                  proxy_set_header User-Agent 'Mozilla/5.0';
+                  proxy_set_header Origin "";
+                  proxy_connect_timeout 10s;
+                  proxy_read_timeout 15s;
+              }
+              location /api/cma-weather/ {
+                  limit_except GET { deny all; }
+                  proxy_pass https://weather.cma.cn/api/;
+                  proxy_ssl_server_name on;
+                  proxy_set_header Host weather.cma.cn;
+                  proxy_set_header Referer https://weather.cma.cn/;
+                  proxy_set_header Origin "";
+                  proxy_connect_timeout 10s;
+                  proxy_read_timeout 20s;
+              }
+              location /api/jma-bosai/ {
+                  limit_except GET { deny all; }
+                  proxy_pass https://www.jma.go.jp/bosai/;
+                  proxy_ssl_server_name on;
+                  proxy_set_header Host www.jma.go.jp;
+                  proxy_set_header Referer https://www.jma.go.jp/;
+                  proxy_set_header Origin "";
+                  proxy_connect_timeout 10s;
+                  proxy_read_timeout 20s;
+              }
+              location /api/zhejiang-weather/ {
+                  limit_except GET { deny all; }
+                  proxy_pass https://typhoon.slt.zj.gov.cn/Api/;
+                  proxy_ssl_server_name on;
+                  proxy_set_header Host typhoon.slt.zj.gov.cn;
+                  proxy_set_header Referer https://typhoon.slt.zj.gov.cn/;
+                  proxy_set_header User-Agent 'Mozilla/5.0';
+                  proxy_set_header Origin "";
+                  proxy_connect_timeout 10s;
+                  proxy_read_timeout 20s;
+              }
+              location /api/china-weather-alert-list/ {
+                  limit_except GET { deny all; }
+                  proxy_pass https://forecast.weather.com.cn/api/v1/traffic/alarm/;
+                  proxy_ssl_server_name on;
+                  proxy_set_header Host forecast.weather.com.cn;
+                  proxy_set_header Referer https://www.weather.com.cn/alarm/index.shtml;
+                  proxy_set_header User-Agent 'Mozilla/5.0';
+                  proxy_set_header Origin "";
+                  proxy_connect_timeout 10s;
+                  proxy_read_timeout 20s;
+              }
+              location /api/china-weather-alert-detail/ {
+                  limit_except GET { deny all; }
+                  proxy_pass https://product.weather.com.cn/alarm/webdata/;
+                  proxy_ssl_server_name on;
+                  proxy_set_header Host product.weather.com.cn;
+                  proxy_set_header Referer https://www.weather.com.cn/alarm/index.shtml;
+                  proxy_set_header User-Agent 'Mozilla/5.0';
+                  proxy_set_header Origin "";
+                  proxy_connect_timeout 10s;
+                  proxy_read_timeout 20s;
+              }
+              location /api/jma-xml/ {
+                  limit_except GET { deny all; }
+                  proxy_pass https://www.data.jma.go.jp/developer/xml/;
+                  proxy_ssl_server_name on;
+                  proxy_set_header Host www.data.jma.go.jp;
+                  proxy_set_header Referer https://www.data.jma.go.jp/;
+                  proxy_set_header Origin "";
+                  proxy_connect_timeout 10s;
+                  proxy_read_timeout 20s;
+              }
+              location /api/nsmc/ {
+                  limit_except GET { deny all; }
+                  proxy_pass https://data.nsmc.org.cn/;
+                  proxy_ssl_server_name on;
+                  proxy_set_header Host data.nsmc.org.cn;
+                  proxy_set_header Origin "";
+                  proxy_connect_timeout 10s;
+                  proxy_read_timeout 30s;
               }
               location /api/kmoni/ {
                   proxy_pass http://www.kmoni.bosai.go.jp/;

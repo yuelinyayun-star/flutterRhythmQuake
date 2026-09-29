@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 
+import 'web_source_proxy.dart';
+
 class FanSatelliteCloudFrame {
   const FanSatelliteCloudFrame({
     required this.time,
@@ -106,7 +108,10 @@ class FanSatelliteCloudService {
   Future<bool> _fetchOnce(int session) async {
     try {
       final response = await http
-          .get(Uri.parse(_zhejiangCloudUrl), headers: _headers)
+          .get(
+            sourceUri(Uri.parse(_zhejiangCloudUrl)),
+            headers: sourceHeaders(_headers),
+          )
           .timeout(const Duration(seconds: 20));
       if (!_started || session != _session) return false;
       if (response.statusCode != 200) {

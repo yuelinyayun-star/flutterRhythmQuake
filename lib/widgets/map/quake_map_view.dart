@@ -1202,8 +1202,8 @@ class _QuakeMapViewState extends State<QuakeMapView> {
         (prefs.getBool(QuakeMapView.pAlertEnabledPreferenceKey) ?? true);
     _niedMonitorEnabled =
         prefs.getBool(QuakeMapView.niedMonitorEnabledPreferenceKey) ?? true;
-    _niedLpgmEnabled = !kIsWeb &&
-        (prefs.getBool(QuakeMapView.niedLpgmEnabledPreferenceKey) ?? true);
+    _niedLpgmEnabled =
+        prefs.getBool(QuakeMapView.niedLpgmEnabledPreferenceKey) ?? true;
     _snetEnabled = prefs.getBool(QuakeMapView.snetEnabledPreferenceKey) ?? true;
     _snetSource = switch (prefs.getString(QuakeMapView.snetDataSourcePreferenceKey)) {
       'whews' => 'whews',
@@ -1737,7 +1737,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   }
 
   void _syncLpgmMonitorService() {
-    if (kIsWeb) return;
     if (BackgroundService().isAndroidConnectionHostedByForegroundService) {
       _lpgmService.stop();
       _lpgmSnapshotSubscription?.cancel();

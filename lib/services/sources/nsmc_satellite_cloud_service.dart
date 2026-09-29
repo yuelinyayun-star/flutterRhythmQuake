@@ -8,6 +8,8 @@ import 'package:flutter/foundation.dart'
 import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
 
+import 'web_source_proxy.dart';
+
 class NsmcSatelliteCloudFrame {
   const NsmcSatelliteCloudFrame({required this.time, required this.imageBytes});
   final DateTime time;
@@ -77,7 +79,7 @@ class NsmcSatelliteCloudService {
         final session = _session;
         try {
           final response = await _client
-              .get(Uri.parse(targetTimesUrl))
+              .get(sourceUri(Uri.parse(targetTimesUrl)))
               .timeout(const Duration(seconds: 20));
           if (!_started || session != _session) continue;
           if (response.statusCode != 200) continue;
@@ -89,7 +91,7 @@ class NsmcSatelliteCloudService {
             continue;
           }
           final responseImage = await _client
-              .get(nsmcSatelliteImageUri(time))
+              .get(sourceUri(nsmcSatelliteImageUri(time)))
               .timeout(const Duration(seconds: 30));
           if (!_started || session != _session) continue;
           if (responseImage.statusCode != 200) continue;

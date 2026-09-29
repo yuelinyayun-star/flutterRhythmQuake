@@ -4,24 +4,29 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../../models/weather_alert_map_item.dart';
+import 'web_source_proxy.dart';
 
 /// 全国气象灾害预警地图数据服务
 ///
 /// 负责从中国天气网/CMA官方接口定时拉取全量突发气象灾害预警多边形与等级数据，
 /// 并在后台线程完成高性能 GeoJSON 解析。
 class ChinaWeatherAlertMapService {
-  static final ChinaWeatherAlertMapService _instance = ChinaWeatherAlertMapService._internal();
+  static final ChinaWeatherAlertMapService _instance =
+      ChinaWeatherAlertMapService._internal();
   factory ChinaWeatherAlertMapService() => _instance;
   ChinaWeatherAlertMapService._internal();
 
-  static const String endpoint = 'https://forecast.weather.com.cn/api/v1/traffic/alarm/alarmMap';
+  static const String endpoint =
+      'https://forecast.weather.com.cn/api/v1/traffic/alarm/alarmMap';
 
   /// 全局预警多边形数据通知器
   static final ValueNotifier<List<WeatherAlertMapItem>> alertItemsNotifier =
       ValueNotifier<List<WeatherAlertMapItem>>(<WeatherAlertMapItem>[]);
 
   /// 加载状态指示器
-  static final ValueNotifier<bool> isLoadingNotifier = ValueNotifier<bool>(false);
+  static final ValueNotifier<bool> isLoadingNotifier = ValueNotifier<bool>(
+    false,
+  );
 
   /// 内存快照有效期（3 分钟）
   static const Duration snapshotTtl = Duration(minutes: 3);
@@ -91,14 +96,16 @@ class ChinaWeatherAlertMapService {
     final generation = _generation;
     try {
       final uri = Uri.parse(endpoint);
-      final resp = await http.get(
-        uri,
-        headers: {
-          'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'application/json, text/plain, */*',
-        },
-      ).timeout(const Duration(seconds: 12));
+      final resp = await http
+          .get(
+            sourceUri(uri),
+            headers: sourceHeaders({
+              'User-Agent':
+                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Accept': 'application/json, text/plain, */*',
+            }),
+          )
+          .timeout(const Duration(seconds: 12));
 
       if (resp.statusCode == 200 && resp.bodyBytes.isNotEmpty) {
         if (generation != _generation) return;
@@ -179,14 +186,16 @@ class ChinaWeatherAlertMapService {
       final uri = Uri.parse(
         'https://product.weather.com.cn/alarm/webdata/$cleanFile?_=${DateTime.now().millisecondsSinceEpoch}',
       );
-      final resp = await http.get(
-        uri,
-        headers: {
-          'Referer': 'http://www.weather.com.cn/alarm/',
-          'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        },
-      ).timeout(const Duration(seconds: 8));
+      final resp = await http
+          .get(
+            sourceUri(uri),
+            headers: sourceHeaders({
+              'Referer': 'http://www.weather.com.cn/alarm/',
+              'User-Agent':
+                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            }),
+          )
+          .timeout(const Duration(seconds: 8));
 
       if (resp.statusCode == 200 && resp.bodyBytes.isNotEmpty) {
         final rawJs = utf8.decode(resp.bodyBytes, allowMalformed: true);

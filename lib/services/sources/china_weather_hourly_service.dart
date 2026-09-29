@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import 'web_source_proxy.dart';
+
 // Domestic forecast wall-clock values use Beijing time, not the device zone.
 const chinaWeatherOffset = Duration(hours: 8);
 
@@ -288,7 +290,7 @@ class ChinaWeatherHourlyService {
 
   Future<String> _get(Uri uri) async {
     final response = await _client
-        .get(uri, headers: _headers)
+        .get(sourceUri(uri), headers: sourceHeaders(_headers))
         .timeout(const Duration(seconds: 15));
     if (response.statusCode != 200) {
       throw StateError('HTTP ${response.statusCode}');

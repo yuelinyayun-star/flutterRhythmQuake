@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart'
     show ValueNotifier, debugPrint, kIsWeb, visibleForTesting;
 import 'package:http/http.dart' as http;
+
+import 'web_source_proxy.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/calculator.dart';
@@ -514,7 +516,7 @@ class CmaLocalWeatherService {
           try {
             final response = await (_sharedWorkerClient ?? http.Client())
                 .get(
-                  Uri.parse('$_observationBaseUrl$id'),
+                  sourceUri(Uri.parse('$_observationBaseUrl$id')),
                   headers: _requestHeaders,
                 )
                 .timeout(const Duration(seconds: 8));
@@ -598,7 +600,10 @@ class CmaLocalWeatherService {
     final c = client ?? http.Client();
     try {
       final response = await c
-          .get(Uri.parse(_stationDirectoryUrl), headers: _requestHeaders)
+          .get(
+            sourceUri(Uri.parse(_stationDirectoryUrl)),
+            headers: _requestHeaders,
+          )
           .timeout(const Duration(seconds: 20));
       if (response.statusCode == 200) {
         final decoded = jsonDecode(utf8.decode(response.bodyBytes));
@@ -752,7 +757,7 @@ class CmaLocalWeatherService {
     try {
       final response = await _client
           .get(
-            Uri.parse('$_observationBaseUrl${station.id}'),
+            sourceUri(Uri.parse('$_observationBaseUrl${station.id}')),
             headers: _requestHeaders,
           )
           .timeout(const Duration(seconds: 15));
@@ -834,7 +839,10 @@ class CmaLocalWeatherService {
   ) async {
     try {
       final response = await _client
-          .get(Uri.parse(_stationDirectoryUrl), headers: _requestHeaders)
+          .get(
+            sourceUri(Uri.parse(_stationDirectoryUrl)),
+            headers: _requestHeaders,
+          )
           .timeout(const Duration(seconds: 20));
       if (response.statusCode != 200) {
         throw StateError('HTTP ${response.statusCode}');

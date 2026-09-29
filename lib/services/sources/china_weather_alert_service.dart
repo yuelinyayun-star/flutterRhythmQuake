@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import '../../core/calculator.dart';
 import '../../models/weather_alarm.dart';
+import 'web_source_proxy.dart';
 
 enum ChinaWeatherAdminLevel { province, city, county }
 
@@ -117,12 +118,12 @@ class ChinaWeatherAlertService {
     try {
       final resp = await http
           .get(
-            Uri.parse(_endpoint),
-            headers: const {
+            sourceUri(Uri.parse(_endpoint)),
+            headers: sourceHeaders(const {
               'Referer': 'https://www.weather.com.cn/alarm/index.shtml',
               'User-Agent':
                   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            },
+            }),
           )
           .timeout(const Duration(seconds: 12));
       if (resp.statusCode != 200) return;
@@ -367,12 +368,12 @@ class ChinaWeatherAlertService {
     try {
       final resp = await http
           .get(
-            Uri.parse('$_detailBase$file'),
-            headers: const {
+            sourceUri(Uri.parse('$_detailBase$file')),
+            headers: sourceHeaders(const {
               'Referer': 'https://www.weather.com.cn/alarm/index.shtml',
               'User-Agent':
                   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            },
+            }),
           )
           .timeout(const Duration(seconds: 10));
       if (resp.statusCode != 200) return null;

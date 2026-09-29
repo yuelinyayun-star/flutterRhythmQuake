@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models/typhoon_data.dart';
 import 'jian_get_rate_limit.dart';
+import 'web_source_proxy.dart';
 
 class TyphoonService {
   static const String _baseUrl = 'https://typhoon.slt.zj.gov.cn/Api/';
@@ -314,8 +315,8 @@ class TyphoonService {
     };
     final response =
         await (_client == null
-                ? http.get(uri, headers: headers)
-                : _client.get(uri, headers: headers))
+                ? http.get(sourceUri(uri), headers: sourceHeaders(headers))
+                : _client.get(sourceUri(uri), headers: sourceHeaders(headers)))
             .timeout(_timeout);
     if (response.statusCode != 200) {
       throw http.ClientException('Typhoon HTTP ${response.statusCode}', uri);

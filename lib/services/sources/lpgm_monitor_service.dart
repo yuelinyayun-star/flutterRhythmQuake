@@ -6,11 +6,13 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 
 import '../../models/nied_scan_positions.dart';
 import '../../models/nied_station_db.dart';
 import 'http_response_bytes.dart';
+import 'web_source_proxy.dart';
 
 class LpgmStationReading {
   final String code;
@@ -161,7 +163,6 @@ class LpgmMonitorService {
   LpgmInputFrame? get latestInputFrame => _latestInputFrame;
 
   Future<void> start({Duration interval = const Duration(seconds: 1)}) async {
-    if (kIsWeb) return;
     if (_running && _interval == interval) return;
     if (_running) {
       stop();
@@ -651,6 +652,18 @@ class LpgmMonitorService {
   static String get latestMetadataUrlForTesting => _latestUrl;
 
   Future<String?> _fetchText(String url) async {
+    if (kIsWeb) {
+      try {
+        final response = await http
+            .get(sourceUri(Uri.parse(url)))
+            .timeout(_metadataTimeout);
+        return response.statusCode == 200
+            ? utf8.decode(response.bodyBytes)
+            : null;
+      } catch (_) {
+        return null;
+      }
+    }
     HttpClientRequest? request;
     try {
       request = await _client.getUrl(Uri.parse(url)).timeout(_metadataTimeout);
@@ -684,17 +697,33 @@ class LpgmMonitorService {
   Future<(List<int>, int, int, Uint8List)?> _fetchGifOrPng(String url) async {
     HttpClientRequest? request;
     try {
-      request = await _client.getUrl(Uri.parse(url)).timeout(_imageTimeout);
-      request.headers.set('Referer', 'https://www.lmoni.bosai.go.jp/monitor/');
-      request.headers.set('User-Agent', _ua);
-      request.headers.set('Cache-Control', 'no-cache');
-      request.headers.set('Pragma', 'no-cache');
-      final res = await request.close().timeout(_imageTimeout);
-      if (res.statusCode != 200) {
-        await readHttpResponseBytes(res, timeout: _imageTimeout, discard: true);
-        return null;
+      final Uint8List bytes;
+      if (kIsWeb) {
+        final response = await http
+            .get(sourceUri(Uri.parse(url)))
+            .timeout(_imageTimeout);
+        if (response.statusCode != 200) return null;
+        bytes = response.bodyBytes;
+      } else {
+        request = await _client.getUrl(Uri.parse(url)).timeout(_imageTimeout);
+        request.headers.set(
+          'Referer',
+          'https://www.lmoni.bosai.go.jp/monitor/',
+        );
+        request.headers.set('User-Agent', _ua);
+        request.headers.set('Cache-Control', 'no-cache');
+        request.headers.set('Pragma', 'no-cache');
+        final res = await request.close().timeout(_imageTimeout);
+        if (res.statusCode != 200) {
+          await readHttpResponseBytes(
+            res,
+            timeout: _imageTimeout,
+            discard: true,
+          );
+          return null;
+        }
+        bytes = await readHttpResponseBytes(res, timeout: _imageTimeout);
       }
-      final bytes = await readHttpResponseBytes(res, timeout: _imageTimeout);
       final codec = await ui.instantiateImageCodec(bytes);
       final frame = await codec.getNextFrame();
       final img = frame.image;

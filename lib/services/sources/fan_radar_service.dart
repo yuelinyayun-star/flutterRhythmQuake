@@ -7,6 +7,8 @@ import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 
+import 'web_source_proxy.dart';
+
 enum CmaImageProduct { radar, precipitation }
 
 class FanRadarFrame {
@@ -163,7 +165,7 @@ class FanRadarService {
         },
       );
       final response = await _client
-          .get(uri, headers: _headers)
+          .get(sourceUri(uri), headers: sourceHeaders(_headers))
           .timeout(const Duration(seconds: 20));
       if (!_started || session != _session) return false;
       if (response.statusCode != 200) {
@@ -179,7 +181,10 @@ class FanRadarService {
         return true;
       }
       final image = await _client
-          .get(Uri.parse('$_pictureBase${entry.filename}'), headers: _headers)
+          .get(
+            sourceUri(Uri.parse('$_pictureBase${entry.filename}')),
+            headers: sourceHeaders(_headers),
+          )
           .timeout(const Duration(seconds: 20));
       if (!_started || session != _session) return false;
       if (image.statusCode != 200) {

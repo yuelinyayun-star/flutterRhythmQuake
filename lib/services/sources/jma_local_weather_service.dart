@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart'
     show ValueNotifier, debugPrint, kIsWeb, visibleForTesting;
 import 'package:http/http.dart' as http;
+
+import 'web_source_proxy.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/calculator.dart';
@@ -914,7 +916,7 @@ class JmaLocalWeatherService {
 
   Future<Object?> _fetchJson(String url) async {
     final response = await _client
-        .get(Uri.parse(url), headers: _requestHeaders)
+        .get(sourceUri(Uri.parse(url)), headers: _requestHeaders)
         .timeout(const Duration(seconds: 20));
     if (response.statusCode != 200) {
       throw StateError('HTTP ${response.statusCode}');
@@ -925,7 +927,7 @@ class JmaLocalWeatherService {
 
   Future<String> _fetchText(String url) async {
     final response = await _client
-        .get(Uri.parse(url), headers: _requestHeaders)
+        .get(sourceUri(Uri.parse(url)), headers: _requestHeaders)
         .timeout(const Duration(seconds: 15));
     if (response.statusCode != 200) {
       throw StateError('HTTP ${response.statusCode}');

@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
+import 'package:flutter/foundation.dart'
+    show debugPrint, kIsWeb, visibleForTesting;
 import 'package:http/http.dart' as http;
+
+import 'web_source_proxy.dart';
 
 class JmaRadarFrame {
   const JmaRadarFrame({
@@ -106,7 +109,10 @@ class JmaRadarService {
   Future<bool> _fetchOnce(int session) async {
     try {
       final response = await _client
-          .get(Uri.parse(targetTimesUrl), headers: _headers)
+          .get(
+            sourceUri(Uri.parse(targetTimesUrl)),
+            headers: sourceHeaders(_headers),
+          )
           .timeout(const Duration(seconds: 20));
       if (!_started || session != _session) return false;
       if (response.statusCode != 200) {
@@ -139,8 +145,10 @@ class JmaRadarService {
 
 @visibleForTesting
 String jmaRadarTileUrlTemplate(String basetime, String validtime) {
-  return 'https://www.jma.go.jp/bosai/jmatile/data/nowc/'
-      '$basetime/none/$validtime/surf/hrpns/{z}/{x}/{y}.png';
+  final base = kIsWeb
+      ? '${Uri.base.origin}/api/jma-bosai/jmatile/data/nowc/'
+      : 'https://www.jma.go.jp/bosai/jmatile/data/nowc/';
+  return '$base$basetime/none/$validtime/surf/hrpns/{z}/{x}/{y}.png';
 }
 
 /// JMA `hrpns` tiles only contain real precipitation at even zooms 4/6/8/10.

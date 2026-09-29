@@ -505,8 +505,7 @@ class _SettingsPageState extends State<SettingsPage>
       _pAlertEnabled = AppEdition.hasPAlertStations &&
           (prefs.getBool(_pAlertEnabledKey) ?? true);
       _niedMonitorEnabled = prefs.getBool(_niedMonitorEnabledKey) ?? true;
-      _niedLpgmEnabled = !kIsWeb &&
-          (prefs.getBool(_niedLpgmEnabledKey) ?? true);
+      _niedLpgmEnabled = prefs.getBool(_niedLpgmEnabledKey) ?? true;
       _snetEnabled = prefs.getBool(_snetEnabledKey) ?? true;
       _fdsnSeedLinkEnabled = !kIsWeb &&
           (prefs.getBool(_fdsnSeedLinkEnabledKey) ?? false);
@@ -2489,15 +2488,7 @@ class _SettingsPageState extends State<SettingsPage>
           QuakeMapView.niedMonitorEnabledNotifier.value = val;
         },
       ),
-      if (kIsWeb)
-        _buildSettingRow(
-          title: 'NIED 長周期地震動モニタ',
-          subtitle: '长周期原生数据客户端尚未接入浏览器',
-          leading: Icons.link_off_outlined,
-          control: const Text('Web 暂不可用'),
-        )
-      else
-        _buildApiSwitch(
+      _buildApiSwitch(
         title: 'NIED 長周期地震動モニタ',
         value: _niedLpgmEnabled,
         onChanged: (val) {

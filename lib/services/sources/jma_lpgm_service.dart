@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../../models/jma_lpgm_bulletin.dart';
+import 'web_source_proxy.dart';
 
 /// Polls the JMA eqvol Atom feed for VXSE62 long-period observation bulletins.
 class JmaLpgmService {
@@ -66,7 +67,7 @@ class JmaLpgmService {
     _fetching = true;
     try {
       final response = await _client
-          .get(Uri.parse(feedUrl), headers: _headers)
+          .get(sourceUri(Uri.parse(feedUrl)), headers: sourceHeaders(_headers))
           .timeout(const Duration(seconds: 15));
       if (response.statusCode != 200) {
         debugPrint('JMA LPGM feed HTTP ${response.statusCode}');
@@ -141,7 +142,7 @@ class JmaLpgmService {
     if (url == null) return null;
     try {
       final response = await _client
-          .get(url, headers: _headers)
+          .get(sourceUri(url), headers: sourceHeaders(_headers))
           .timeout(const Duration(seconds: 15));
       if (response.statusCode != 200) return null;
       return _parseDetailXml(

@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
+import 'package:flutter/foundation.dart'
+    show debugPrint, kIsWeb, visibleForTesting;
 import 'package:http/http.dart' as http;
+
+import 'web_source_proxy.dart';
 
 class JmaSatelliteCloudFrame {
   const JmaSatelliteCloudFrame({
@@ -15,9 +18,12 @@ class JmaSatelliteCloudFrame {
   final String validtime;
   final DateTime time;
 
-  String get tileUrlTemplate =>
-      'https://www.jma.go.jp/bosai/himawari/data/satimg/'
-      '$basetime/fd/$validtime/B13/TBB/{z}/{x}/{y}.jpg';
+  String get tileUrlTemplate {
+    final base = kIsWeb
+        ? '${Uri.base.origin}/api/jma-bosai/himawari/data/satimg/'
+        : 'https://www.jma.go.jp/bosai/himawari/data/satimg/';
+    return '$base$basetime/fd/$validtime/B13/TBB/{z}/{x}/{y}.jpg';
+  }
 }
 
 class JmaSatelliteCloudService {
@@ -81,7 +87,7 @@ class JmaSatelliteCloudService {
         final session = _session;
         try {
           final response = await _client
-              .get(Uri.parse(targetTimesUrl))
+              .get(sourceUri(Uri.parse(targetTimesUrl)))
               .timeout(const Duration(seconds: 20));
           if (!_started || session != _session) continue;
           if (response.statusCode != 200) {
