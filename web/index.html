@@ -33,6 +33,31 @@
   <title>RhythmQuake</title>
   <link rel="manifest" href="manifest.json">
   <style>
+    html, body { margin: 0; min-height: 100%; background: #020208; }
+    #rq-startup {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: grid;
+      place-items: center;
+      background: #020208;
+      color: #dceaf5;
+      font: 14px/1.5 system-ui, sans-serif;
+      text-align: center;
+    }
+    #rq-startup-spinner {
+      width: 28px;
+      height: 28px;
+      margin: 0 auto 16px;
+      border: 2px solid #456072;
+      border-top-color: #66c7ed;
+      border-radius: 50%;
+      animation: rq-spin 800ms linear infinite;
+    }
+    @keyframes rq-spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      #rq-startup-spinner { animation: none; }
+    }
     #rq-version-control {
       position: fixed;
       top: 5px;
@@ -78,6 +103,17 @@
   </style>
 </head>
 <body>
+  <div id="rq-startup" role="status" aria-live="polite">
+    <div>
+      <div id="rq-startup-spinner" aria-hidden="true"></div>
+      <div>正在加载 RhythmQuake…</div>
+    </div>
+  </div>
+  <script>
+    window.addEventListener('flutter-first-frame', () => {
+      document.getElementById('rq-startup')?.remove();
+    }, { once: true });
+  </script>
   <div id="rq-version-control">
     <button id="rq-version-button" type="button" aria-label="检查 Web 版本更新"></button>
     <div id="rq-version-notice" role="status" aria-live="polite" hidden>

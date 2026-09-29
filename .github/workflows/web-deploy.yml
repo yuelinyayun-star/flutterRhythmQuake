@@ -255,6 +255,11 @@ jobs:
               ssl_certificate /etc/letsencrypt/live/eew.yuelinrhythm.top/fullchain.pem;
               ssl_certificate_key /etc/letsencrypt/live/eew.yuelinrhythm.top/privkey.pem;
               ssl_protocols TLSv1.2 TLSv1.3;
+              gzip on;
+              gzip_min_length 1024;
+              gzip_comp_level 5;
+              gzip_vary on;
+              gzip_types application/javascript text/css application/json;
               root /var/www/rhythmquake/current;
               index index.html;
               location = / {
