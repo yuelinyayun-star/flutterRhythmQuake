@@ -20,6 +20,7 @@
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta name="description" content="RhythmQuake 实时地震与多灾种监测">
   <meta name="rhythmquake-build" content="__RQ_BUILD_VERSION__">
+  <meta name="rhythmquake-main-js-bytes" content="__RQ_MAIN_JS_BYTES__">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
@@ -53,6 +54,24 @@
       border-top-color: #66c7ed;
       border-radius: 50%;
       animation: rq-spin 800ms linear infinite;
+    }
+    #rq-startup-progress {
+      display: block;
+      width: min(280px, 72vw);
+      height: 7px;
+      margin: 16px auto 6px;
+      accent-color: #66c7ed;
+    }
+    #rq-startup-progress[hidden], #rq-startup-retry[hidden] { display: none; }
+    #rq-startup-detail { color: #90a8b8; font-size: 12px; }
+    #rq-startup-retry {
+      margin-top: 16px;
+      padding: 7px 14px;
+      border: 1px solid #66c7ed;
+      border-radius: 8px;
+      background: #123044;
+      color: #dceaf5;
+      cursor: pointer;
     }
     @keyframes rq-spin { to { transform: rotate(360deg); } }
     @media (prefers-reduced-motion: reduce) {
@@ -106,10 +125,34 @@
   <div id="rq-startup" role="status" aria-live="polite">
     <div>
       <div id="rq-startup-spinner" aria-hidden="true"></div>
-      <div>正在加载 RhythmQuake…</div>
+      <div id="rq-startup-phase">正在准备 RhythmQuake…</div>
+      <progress id="rq-startup-progress" max="100" value="0" hidden></progress>
+      <div id="rq-startup-detail"></div>
+      <button id="rq-startup-retry" type="button" hidden>重新加载</button>
     </div>
   </div>
   <script>
+    (() => {
+      const phase = document.getElementById('rq-startup-phase');
+      const progress = document.getElementById('rq-startup-progress');
+      const detail = document.getElementById('rq-startup-detail');
+      const retry = document.getElementById('rq-startup-retry');
+      retry.addEventListener('click', () => location.reload());
+      window.rqStartup = {
+        stage(text) { phase.textContent = text; },
+        download(loaded, total) {
+          if (!Number.isFinite(total) || total <= 0) return;
+          progress.hidden = false;
+          progress.value = Math.min(100, Math.floor(loaded / total * 100));
+          const mib = 1024 * 1024;
+          detail.textContent = `主程序已读取 ${(loaded / mib).toFixed(1)} / ${(total / mib).toFixed(1)} MiB（解压后，${progress.value}%）`;
+        },
+        fail() {
+          phase.textContent = '加载失败，请检查网络后重试';
+          retry.hidden = false;
+        },
+      };
+    })();
     window.addEventListener('flutter-first-frame', () => {
       document.getElementById('rq-startup')?.remove();
     }, { once: true });

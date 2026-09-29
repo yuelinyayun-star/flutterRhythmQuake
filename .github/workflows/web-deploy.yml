@@ -36,7 +36,10 @@ jobs:
           html = index.read_text()
           if html.count('__RQ_BUILD_VERSION__') != 1:
               raise SystemExit('Web build version placeholder missing or duplicated')
+          if html.count('__RQ_MAIN_JS_BYTES__') != 1:
+              raise SystemExit('Web main script size placeholder missing or duplicated')
           html = html.replace('__RQ_BUILD_VERSION__', version)
+          html = html.replace('__RQ_MAIN_JS_BYTES__', str(Path('build/web/main.dart.js').stat().st_size))
           html = html.replace('src="flutter_bootstrap.js"', f'src="flutter_bootstrap.js?v={version}"')
           index.write_text(html)
           Path('build/web/version.json').write_text(json.dumps({
@@ -259,7 +262,7 @@ jobs:
               gzip_min_length 1024;
               gzip_comp_level 5;
               gzip_vary on;
-              gzip_types application/javascript text/css application/json;
+              gzip_types application/javascript application/wasm text/css application/json;
               root /var/www/rhythmquake/current;
               index index.html;
               location = / {

@@ -29,6 +29,9 @@ import 'services/background_service.dart';
 import 'services/tts_service.dart';
 import 'services/sound_effect_service.dart';
 import 'services/obs_automation_runtime_service.dart';
+import 'services/web_startup_status_stub.dart'
+    if (dart.library.html) 'services/web_startup_status_web.dart'
+    as web_startup;
 import 'services/wauth_credential_store.dart';
 import 'services/sources/source_manager.dart';
 import 'services/sources/wolfx_service.dart';
@@ -181,6 +184,7 @@ Widget _buildPlatformSemanticsWrapper(BuildContext context, Widget? child) {
 void main() async {
   RhythmFrameRateBinding.ensureInitialized();
   _configureImageCache();
+  web_startup.setWebStartupStage('正在读取本地设置…');
 
   FlutterError.onError = (details) {
     final msg = details.exceptionAsString();
@@ -204,6 +208,7 @@ void main() async {
   // 2.5 加载持久化设置
   final prefs = await SharedPreferences.getInstance();
   await _clearLegacyFanTileCacheOnce(prefs);
+  web_startup.setWebStartupStage('正在读取登录配置…');
   WAuthCredentials whewsCredentials;
   try {
     whewsCredentials = await WAuthCredentialStore().readAndMigrate(
@@ -214,6 +219,7 @@ void main() async {
     await prefs.setBool(WhewsService.apiAuthorizedPreferenceKey, false);
     debugPrint('WAuth secure credential load failed: $error');
   }
+  web_startup.setWebStartupStage('正在初始化语音设置…');
   await TtsService().init();
   final savedLat = prefs.getDouble('map_view_lat');
   final savedLng = prefs.getDouble('map_view_lng');
@@ -320,6 +326,7 @@ void main() async {
   _startDeferredServices(prefs, globalQuake, jianIcl, chinaEewIcl);
 
   // 4. 桌面端窗口初始化（Web 自动跳过）
+  web_startup.setWebStartupStage('正在初始化界面设置…');
   await initDesktopWindow();
 
   final notificationSettings = NotificationSettingsProvider();
@@ -335,8 +342,10 @@ void main() async {
   );
   // 配置 Android 前台服务；非 Android 平台自动跳过。
   await BackgroundService().configureForegroundService();
+  web_startup.setWebStartupStage('正在恢复服务配置…');
   await ObsAutomationRuntimeService().initialize(preferences: prefs);
 
+  web_startup.setWebStartupStage('正在显示主界面…');
   runApp(
     MultiProvider(
       providers: [
