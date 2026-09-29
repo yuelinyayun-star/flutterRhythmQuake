@@ -38,8 +38,17 @@ jobs:
               raise SystemExit('Web build version placeholder missing or duplicated')
           if html.count('__RQ_MAIN_JS_BYTES__') != 1:
               raise SystemExit('Web main script size placeholder missing or duplicated')
+          if html.count('__RQ_CANVASKIT_CHROMIUM_BYTES__') != 1 or html.count('__RQ_CANVASKIT_FULL_BYTES__') != 1:
+              raise SystemExit('CanvasKit size placeholders missing or duplicated')
           html = html.replace('__RQ_BUILD_VERSION__', version)
           html = html.replace('__RQ_MAIN_JS_BYTES__', str(Path('build/web/main.dart.js').stat().st_size))
+          for variant, files in {
+              'CHROMIUM': ('canvaskit/chromium/canvaskit.js', 'canvaskit/chromium/canvaskit.wasm'),
+              'FULL': ('canvaskit/canvaskit.js', 'canvaskit/canvaskit.wasm'),
+          }.items():
+              html = html.replace(f'__RQ_CANVASKIT_{variant}_BYTES__', str(sum(
+                  Path('build/web', file).stat().st_size for file in files
+              )))
           html = html.replace('src="flutter_bootstrap.js"', f'src="flutter_bootstrap.js?v={version}"')
           index.write_text(html)
           Path('build/web/version.json').write_text(json.dumps({

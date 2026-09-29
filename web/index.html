@@ -21,6 +21,8 @@
   <meta name="description" content="RhythmQuake 实时地震与多灾种监测">
   <meta name="rhythmquake-build" content="__RQ_BUILD_VERSION__">
   <meta name="rhythmquake-main-js-bytes" content="__RQ_MAIN_JS_BYTES__">
+  <meta name="rhythmquake-canvaskit-chromium-bytes" content="__RQ_CANVASKIT_CHROMIUM_BYTES__">
+  <meta name="rhythmquake-canvaskit-full-bytes" content="__RQ_CANVASKIT_FULL_BYTES__">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
@@ -140,12 +142,12 @@
       retry.addEventListener('click', () => location.reload());
       window.rqStartup = {
         stage(text) { phase.textContent = text; },
-        download(loaded, total) {
+        download(label, loaded, total) {
           if (!Number.isFinite(total) || total <= 0) return;
           progress.hidden = false;
           progress.value = Math.min(100, Math.floor(loaded / total * 100));
           const mib = 1024 * 1024;
-          detail.textContent = `主程序已读取 ${(loaded / mib).toFixed(1)} / ${(total / mib).toFixed(1)} MiB（解压后，${progress.value}%）`;
+          detail.textContent = `${label}已读取 ${(loaded / mib).toFixed(1)} / ${(total / mib).toFixed(1)} MiB（解压后，${progress.value}%）`;
         },
         fail() {
           phase.textContent = '加载失败，请检查网络后重试';
