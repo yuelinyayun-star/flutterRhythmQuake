@@ -1,4 +1,6 @@
 import 'package:flutter/widgets.dart';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 
 class UiScale {
   const UiScale._();
@@ -9,6 +11,32 @@ class UiScale {
 
   static bool isPhone(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
+    return shouldUsePhoneLayout(
+      size,
+      isWeb: kIsWeb,
+      platform: defaultTargetPlatform,
+    );
+  }
+
+  static bool shouldUsePhoneLayout(
+    Size size, {
+    required bool isWeb,
+    required TargetPlatform platform,
+  }) {
+    // A short desktop browser window should not switch the whole app to phone UI.
+    // Keep the shortest-side rule for phones, including landscape orientation.
+    if (isWeb && size.width >= phoneBreakpoint) {
+      switch (platform) {
+        case TargetPlatform.windows:
+        case TargetPlatform.macOS:
+        case TargetPlatform.linux:
+          return false;
+        case TargetPlatform.android:
+        case TargetPlatform.iOS:
+        case TargetPlatform.fuchsia:
+          break;
+      }
+    }
     return size.shortestSide < phoneBreakpoint;
   }
 

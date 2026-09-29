@@ -1,8 +1,50 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show TargetPlatform;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutterrhythmquake/widgets/ui/ui_scale.dart';
 
 void main() {
+  test('web desktop keeps desktop UI in a short browser window', () {
+    expect(
+      UiScale.shouldUsePhoneLayout(
+        const Size(1200, 500),
+        isWeb: true,
+        platform: TargetPlatform.windows,
+      ),
+      isFalse,
+    );
+  });
+
+  test('web phone keeps phone UI in landscape', () {
+    expect(
+      UiScale.shouldUsePhoneLayout(
+        const Size(844, 390),
+        isWeb: true,
+        platform: TargetPlatform.android,
+      ),
+      isTrue,
+    );
+  });
+
+  test('web narrow desktop window and tablet keep existing layout rules', () {
+    expect(
+      UiScale.shouldUsePhoneLayout(
+        const Size(500, 800),
+        isWeb: true,
+        platform: TargetPlatform.windows,
+      ),
+      isTrue,
+    );
+    expect(
+      UiScale.shouldUsePhoneLayout(
+        const Size(800, 1024),
+        isWeb: true,
+        platform: TargetPlatform.iOS,
+      ),
+      isFalse,
+    );
+  });
+
   testWidgets('sidePanelWidthScale grows on wide desktop windows', (
     tester,
   ) async {
