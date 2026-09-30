@@ -203,7 +203,7 @@ void main() {
     detector.dispose();
   });
 
-  test('CWA sound boundary updates even without a new engine snapshot', () {
+  test('CWA sound boundary follows the shared level update', () {
     final gate = PAlertDetectionGate();
     final alerts = <int>[];
     detector.onCwaIntensityChanged = (value) {
@@ -221,9 +221,9 @@ void main() {
       final next = time.add(Duration(seconds: i));
       detector.update(pgaFrame(next, 25), now: next);
     }
-    expect(snapshots, 0);
+    expect(snapshots, 1);
     expect(alerts, [3, 4]);
-    expect(detector.snapshot.maxShindo, 3);
+    expect(detector.snapshot.maxShindo, 4);
     expect(detector.confirmedCwaMaxShindo, 4);
   });
 
@@ -231,19 +231,19 @@ void main() {
     detector.update(pgaFrame(start, 0.02), now: start);
     final time = start.add(const Duration(seconds: 1));
     detector.update(pgaFrame(time, 1000, pgv: 5), now: time);
-    expect(detector.snapshot.maxShindo, 7);
+    expect(detector.snapshot.maxShindo, 4);
     expect(detector.confirmedCwaMaxShindo, 4);
     final next = time.add(const Duration(seconds: 1));
     detector.update(pgaFrame(next, 1000, pgv: 100), now: next);
     expect(detector.confirmedCwaMaxShindo, 6);
   });
 
-  test('missing PGV does not block PGA detection or invent CWA sound', () {
+  test('missing PGV uses the same level-15 floor for display and sound', () {
     detector.update(pgaFrame(start, 0.02), now: start);
     final time = start.add(const Duration(seconds: 1));
     detector.update(pgaFrame(time, 1000), now: time);
     expect(detector.snapshot.gridCells, isNotEmpty);
-    expect(detector.confirmedCwaMaxShindo, 0);
+    expect(detector.confirmedCwaMaxShindo, 4);
   });
 
   test('missing PGA cannot use a display hold or old CWA value', () {
@@ -289,7 +289,7 @@ void main() {
   });
 
   test('invalid PGA breaks history instead of becoming a quiet baseline', () {
-    for (final invalid in <double?>[null, 0, -1, double.nan, double.infinity]) {
+    for (final invalid in <double?>[null, -1, double.nan, double.infinity]) {
       detector.reset();
       detector.update(pgaFrame(start, 0.02), now: start);
       final invalidTime = start.add(const Duration(seconds: 1));

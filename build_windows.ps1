@@ -99,7 +99,7 @@ Write-Host "[4/4] Running Flutter..." -ForegroundColor Cyan
 
 if ($Release) {
     Write-Host "      Mode: Release build" -ForegroundColor Yellow
-    flutter build windows --release "--dart-define=RQ_EDITION=$Edition"
+    flutter build windows --release --no-pub "--dart-define=RQ_EDITION=$Edition"
 } else {
     flutter run -d windows "--dart-define=RQ_EDITION=$Edition"
 }

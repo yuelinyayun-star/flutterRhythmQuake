@@ -10,6 +10,7 @@ import '../../services/sources/palert_service.dart';
 import '../../models/snet_station.dart';
 import '../../core/intensity_calculator.dart';
 import '../../core/app_edition.dart';
+import '../map/ka_shindo_marker_style.dart';
 import 'ui_scale.dart';
 
 @visibleForTesting
@@ -438,10 +439,7 @@ class StationDashboard extends StatelessWidget {
   Color? _pAlertMaxColor() {
     final station = data.pAlertMaxStation;
     if (station == null || station.gridLevel < 0) return null;
-    final shindo = JpShindoScale.rawShindoFromKanameishiLevel(
-      station.gridLevel,
-    );
-    return Color(IntensityCalculator.getJmaShindoColor(shindo));
+    return KaShindoMarkerStyle.colorForLevel(station.gridLevel);
   }
 
   Color? _jmaNumberValueColor(num? value) {

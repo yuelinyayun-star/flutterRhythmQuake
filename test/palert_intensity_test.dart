@@ -29,19 +29,11 @@ void main() {
       double.negativeInfinity,
     ]) {
       expect(PAlertIntensity.estimateFromPga(pga), isNull);
-      expect(PAlertIntensity.detectionLevelFromPga(pga), -1);
     }
   });
 
-  test('only detector levels saturate at the supported range', () {
-    expect(PAlertIntensity.detectionLevelFromPga(0.001), 0);
+  test('continuous estimate remains a diagnostic value', () {
     expect(PAlertIntensity.estimateFromPga(0.001), closeTo(-5.3, 1e-12));
-    expect(PAlertIntensity.detectionLevelFromPga(0.02), 1);
-    expect(PAlertIntensity.detectionLevelFromPga(0.1), 4);
-    expect(PAlertIntensity.detectionLevelFromPga(0.5), 7);
-    expect(PAlertIntensity.detectionLevelFromPga(1), 8);
-    expect(PAlertIntensity.detectionLevelFromPga(1000), 20);
-    expect(PAlertIntensity.detectionLevelFromPga(10000), 20);
     expect(PAlertIntensity.estimateFromPga(10000), closeTo(8.7, 1e-12));
   });
 }

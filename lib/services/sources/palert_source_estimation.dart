@@ -2,7 +2,6 @@ import 'dart:math' as math;
 
 import 'package:latlong2/latlong.dart';
 
-import '../../core/source_estimation/palert_source_profile.dart';
 import '../../core/source_estimation/source_estimation_models.dart';
 import '../../core/source_estimation/source_estimator.dart';
 import 'palert_service.dart';
@@ -24,12 +23,7 @@ class PAlertSourcePick {
     if (time == null || (updatedAt != null && !time.isAfter(updatedAt!))) {
       return;
     }
-    // A null current category includes high PGA with no current PGV. The
-    // service may retain the last PGV for display, which is not a new sample.
-    final level =
-        (station.pgaGal ?? -1) >= 80 && station.cwaIntensityIndex == null
-        ? -1
-        : PAlertSourceProfile.level(station.pgaGal, station.pgvCms);
+    final level = station.currentGridLevel;
     if (level < 0) {
       clear();
       return;
@@ -155,7 +149,7 @@ class PAlertSourceEstimation {
         'latLng': [station.coordinate.latitude, station.coordinate.longitude],
         'updateStamp': station.dataTime!.millisecondsSinceEpoch,
         'triggerStamp': pick.triggerAt?.millisecondsSinceEpoch,
-        'level': PAlertSourceProfile.level(station.pgaGal, station.pgvCms),
+        'level': station.currentGridLevel,
         'maxLevel': pick.maxLevel,
         'secondMaxLevel': pick.secondMaxLevel,
         'nonQuietBoundaryStamp': pick.nonQuietBoundary?.millisecondsSinceEpoch,

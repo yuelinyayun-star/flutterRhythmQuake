@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -14,7 +12,7 @@ import 'package:provider/provider.dart';
 PAlertStation station(
   double? pga, {
   double? pgv,
-  int? held,
+  int? heldLevel,
   Duration age = Duration.zero,
 }) {
   final time = DateTime.now().toUtc().subtract(age);
@@ -30,7 +28,7 @@ PAlertStation station(
       pgaGal: pga,
       pgvCms: pgv,
     ),
-    heldCwaIntensityIndex: held,
+    heldLevel: heldLevel,
     dataTime: time,
     receivedAt: time,
   );
@@ -79,7 +77,7 @@ void main() {
         expect(tester.takeException(), isNull);
       }
 
-      final floor = math.pow(10, (-0.5 - 0.7) / 2).toDouble();
+      const floor = 0.44;
       await render([station(floor - 1e-8)]);
       expect(find.byType(MarkerLayer), findsNothing);
       await render([station(floor)]);
@@ -87,13 +85,13 @@ void main() {
       await render([station(floor + 1e-8)]);
       expect(find.text('0'), findsOneWidget);
 
-      // CWA zero must not make every low-amplitude station a numeric marker.
+      // KA level 6 is the first numeric zero marker.
       await render([
         station(0.02),
         station(0.1),
         station(0.2),
-        station(0.25),
-        station(0.3),
+        station(0.33),
+        station(0.44),
       ]);
       expect(
         tester.widget<MarkerLayer>(find.byType(MarkerLayer)).markers,
@@ -101,31 +99,30 @@ void main() {
       );
       expect(find.text('0'), findsOneWidget);
 
-      await render([station(0.3)], showZero: false);
+      await render([station(0.44)], showZero: false);
       expect(find.byType(MarkerLayer), findsNothing);
-      // The estimate reaches 0.5 before CWA reaches 1 at 0.8 Gal.
-      await render([station(0.797)], showZero: false);
+      await render([station(0.8 - 1e-8)], showZero: false);
       expect(find.byType(MarkerLayer), findsNothing);
-      await render([station(0.797)]);
+      await render([station(0.8 - 1e-8)]);
       expect(find.text('0'), findsOneWidget);
       await render([station(0.8)], showZero: false);
       expect(find.text('1'), findsOneWidget);
 
-      await render([station(0.3)], zoom: 3.99);
+      await render([station(0.44)], zoom: 3.99);
       expect(find.byType(MarkerLayer), findsNothing);
-      await render([station(0.3)], zoom: 4);
+      await render([station(0.44)], zoom: 4);
       expect(find.text('0'), findsOneWidget);
-      await render([station(0.3, age: const Duration(seconds: 13))]);
+      await render([station(0.44, age: const Duration(seconds: 13))]);
       expect(find.byType(MarkerLayer), findsNothing);
 
       for (final pga in <double?>[null, 0, -1, double.nan, double.infinity]) {
-        await render([station(pga, held: 4)]);
+        await render([station(pga)]);
         expect(find.byType(MarkerLayer), findsNothing);
       }
       await render([station(1000)]);
-      expect(find.byType(MarkerLayer), findsNothing);
+      expect(find.text('4'), findsOneWidget);
 
-      // Strong PGA changes eligibility, not the PGV-derived CWA label/color.
+      // Strong PGA uses the current PGV-derived KA label/color.
       await render([station(1000, pgv: 5)]);
       expect(find.text('4'), findsOneWidget);
       expect(find.text('7'), findsNothing);
@@ -149,10 +146,21 @@ void main() {
         isTrue,
       );
 
-      await render([station(0.3, held: 4)]);
+      for (final (pgv, label) in <(double, String)>[
+        (15, '5-'),
+        (30, '5+'),
+        (50, '6-'),
+        (80, '6+'),
+        (140, '7'),
+      ]) {
+        await render([station(80, pgv: pgv)]);
+        expect(find.text(label), findsOneWidget);
+      }
+
+      await render([station(0.44, heldLevel: 15)]);
       expect(find.text('4'), findsOneWidget);
-      await render([station(0.1, held: 4)]);
-      expect(find.byType(MarkerLayer), findsNothing);
+      await render([station(0.1, heldLevel: 15)]);
+      expect(find.text('4'), findsOneWidget);
     });
   }
 }

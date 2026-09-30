@@ -207,7 +207,7 @@ class MapStateProvider with ChangeNotifier {
     'volcanoLayer': false,
     'typhoonLayer': false,
     'weatherStationLayer': false,
-    'weatherAlertLayer': true,
+    'weatherAlertLayer': false,
     'fdsnEarthScope': false,
     'fdsnGeofon': false,
   };

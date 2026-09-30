@@ -1,6 +1,5 @@
 /// P-Alert inference levels and weights from kanameishi 8748cf7 (AGPL-3.0).
-/// These internal levels are separate from the PGA continuous estimate and
-/// from CWA display categories. Neither raw observations nor display change.
+/// One raw PGA/PGV level scale feeds display, detection and source inference.
 class PAlertSourceProfile {
   static const pgaThresholds = <double>[
     0.1,
@@ -24,9 +23,22 @@ class PAlertSourceProfile {
   static int level(double? pga, double? pgv) {
     if (pga == null || !pga.isFinite || pga < 0) return -1;
     if (pga < 80) return pgaThresholds.where((v) => pga >= v).length;
-    // Do not substitute zero for missing velocity at high acceleration.
-    if (pgv == null || !pgv.isFinite || pgv < 0) return -1;
+    // With high PGA but no matching PGV, level 15 is the known lower bound.
+    if (pgv == null || !pgv.isFinite || pgv < 0) return 15;
     return 15 + pgvThresholds.where((v) => pgv >= v).length;
+  }
+
+  static int intensityIndexFromLevel(int level) {
+    if (level < 0) return -1;
+    if (level <= 7) return 0;
+    if (level <= 15) return (level - 6) ~/ 2;
+    return (level - 11).clamp(5, 9);
+  }
+
+  static String intensityLabelFromLevel(int level) {
+    const labels = ['0', '1', '2', '3', '4', '5-', '5+', '6-', '6+', '7'];
+    final index = intensityIndexFromLevel(level);
+    return index < 0 ? '--' : labels[index];
   }
 
   static double pickWeight(int maxLevel) {

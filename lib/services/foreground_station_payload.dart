@@ -1020,6 +1020,7 @@ class ForegroundStationPayload {
     'pgvCms': station.pgvCms,
     'cwaIntensityIndex': station.cwaIntensityIndex,
     'heldCwaIntensityIndex': station.heldCwaIntensityIndex,
+    'heldLevel': station.heldLevel,
     'dataTime': station.dataTime?.toIso8601String(),
     'receivedAt': station.receivedAt?.toIso8601String(),
   };
@@ -1038,6 +1039,7 @@ class ForegroundStationPayload {
       pgvCms: _number(raw['pgvCms']),
       cwaIntensityIndex: _int(raw['cwaIntensityIndex']),
       heldCwaIntensityIndex: _int(raw['heldCwaIntensityIndex']),
+      heldLevel: _int(raw['heldLevel']),
       dataTime: _date(raw['dataTime']),
       receivedAt: _date(raw['receivedAt']),
     );

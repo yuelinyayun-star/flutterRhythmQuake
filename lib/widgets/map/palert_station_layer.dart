@@ -49,10 +49,8 @@ class PAlertStationLayer extends StatelessWidget {
       final showMarker =
           recent &&
           level >= 0 &&
-          (displayShindo0 || station.displayCwaIntensityIndex != 0) &&
           KaShindoMarkerStyle.shouldShowMarker(
-            // Eligibility uses current PGA; labels/colors keep held CWA levels.
-            level: station.detectionLevel,
+            level: level,
             zoom: zoom,
             displayShindo0: displayShindo0,
           );

@@ -22,7 +22,7 @@ PAlertStation sample(int second, double? pga, {int index = 0}) => PAlertStation(
 );
 
 void main() {
-  test('KA internal level boundaries are not CWA display categories', () {
+  test('KA level boundaries also determine intensity categories', () {
     for (var i = 0; i < PAlertSourceProfile.pgaThresholds.length; i++) {
       final threshold = PAlertSourceProfile.pgaThresholds[i];
       expect(PAlertSourceProfile.level(threshold - 1e-9, null), i);
@@ -33,10 +33,15 @@ void main() {
       expect(PAlertSourceProfile.level(80, threshold - 1e-9), 15 + i);
       expect(PAlertSourceProfile.level(80, threshold), 16 + i);
     }
-    expect(PAlertSourceProfile.level(80, null), -1);
+    expect(PAlertSourceProfile.level(80, null), 15);
     expect(PAlertSourceProfile.level(null, 30), -1);
     expect(PAlertSourceProfile.level(double.nan, 30), -1);
     expect(PAlertSourceProfile.level(-1, 30), -1);
+    expect(PAlertSourceProfile.intensityIndexFromLevel(7), 0);
+    expect(PAlertSourceProfile.intensityIndexFromLevel(8), 1);
+    expect(PAlertSourceProfile.intensityIndexFromLevel(15), 4);
+    expect(PAlertSourceProfile.intensityIndexFromLevel(16), 5);
+    expect(PAlertSourceProfile.intensityIndexFromLevel(20), 9);
     expect(PAlertSourceProfile.pickWeight(5), 0);
     expect(PAlertSourceProfile.pickWeight(6), 0.1);
     expect(PAlertSourceProfile.pickWeight(7), 0.4);
@@ -82,7 +87,7 @@ void main() {
     expect(pick.updatedAt, isNull);
   });
 
-  test('raw zero is quiet; high PGA must not reuse retained PGV', () {
+  test('raw zero is quiet; high PGA without PGV uses level 15', () {
     final pick = PAlertSourcePick();
     for (var t = 0; t < 8; t++) {
       pick.update(sample(t, 0));
@@ -98,13 +103,14 @@ void main() {
         area: 'TEST',
         coordinate: const LatLng(23.5, 121),
         pgaGal: 90,
-        pgvCms: 40,
+        pgvCms: null,
         cwaIntensityIndex: null,
         dataTime: base.add(const Duration(seconds: 9)),
         receivedAt: base.add(const Duration(seconds: 9)),
       ),
     );
-    expect(pick.triggerAt, isNull);
+    expect(pick.triggerAt, isNotNull);
+    expect(pick.maxLevel, 15);
   });
 
   test('unconfirmed or held-only observations cannot publish', () {

@@ -224,11 +224,13 @@ class _LocalEewSidebarPanelState extends State<LocalEewSidebarPanel> {
               widget.event.hypocenter.trim().isEmpty
                   ? '地震预警'
                   : widget.event.hypocenter,
+              key: const ValueKey('local-eew-place'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: Colors.white60,
-                fontSize: scale(compact ? 8 : 9),
+                color: Colors.white.withValues(alpha: 0.9),
+                fontSize: scale(compact ? 10 : 11),
+                fontWeight: FontWeight.w600,
               ),
             ),
             SizedBox(height: scale(8)),

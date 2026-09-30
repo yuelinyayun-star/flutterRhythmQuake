@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:isolate';
 
+import '../../core/source_estimation/palert_source_profile.dart';
 import '../../core/source_estimation/source_estimation_models.dart';
 import 'palert_service.dart';
 import 'palert_source_estimation.dart';
@@ -128,12 +129,12 @@ void _run(SendPort output) {
     try {
       final estimates = session.update(stations, active, now);
       final activeStations = stations.where((s) => active.contains(s.id));
-      final maxIndex = activeStations.fold<int>(
-        -1,
-        (value, station) => (station.cwaIntensityIndex ?? -1) > value
-            ? station.cwaIntensityIndex!
-            : value,
-      );
+      final maxIndex = activeStations.fold<int>(-1, (value, station) {
+        final index = PAlertSourceProfile.intensityIndexFromLevel(
+          station.currentGridLevel,
+        );
+        return index > value ? index : value;
+      });
       final events = <SeismicActiveEvent>[
         for (final estimate in estimates)
           SeismicActiveEvent(

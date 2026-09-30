@@ -124,6 +124,12 @@ void main() {
     expect(find.textContaining('本地烈度预估 · S 波倒计时'), findsOneWidget);
     expect(find.textContaining('仅供参考'), findsOneWidget);
     expect(find.textContaining('以实际感受为准'), findsNothing);
+    final place = tester.widget<Text>(
+      find.byKey(const ValueKey('local-eew-place')),
+    );
+    expect(place.style?.fontSize, 10);
+    expect(place.style?.fontWeight, FontWeight.w600);
+    expect(place.style?.color, Colors.white.withValues(alpha: 0.9));
     expect(find.text('本地预估烈度'), findsOneWidget);
     expect(find.text('距震中'), findsOneWidget);
     expect(find.byKey(const ValueKey('local-eew-countdown')), findsOneWidget);

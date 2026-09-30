@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../core/source_estimation/palert_source_profile.dart';
 
 class KaShindoMarkerStyle {
   KaShindoMarkerStyle._();
@@ -48,17 +49,6 @@ class KaShindoMarkerStyle {
     return level >= 17 ? Colors.white : Colors.black;
   }
 
-  static String labelForLevel(int level) {
-    if (level < 0) return '--';
-    if (level <= 7) return '0';
-    if (level <= 9) return '1';
-    if (level <= 11) return '2';
-    if (level <= 13) return '3';
-    if (level <= 15) return '4';
-    if (level == 16) return '5弱';
-    if (level == 17) return '5強';
-    if (level == 18) return '6弱';
-    if (level == 19) return '6強';
-    return '7';
-  }
+  static String labelForLevel(int level) =>
+      PAlertSourceProfile.intensityLabelFromLevel(level);
 }

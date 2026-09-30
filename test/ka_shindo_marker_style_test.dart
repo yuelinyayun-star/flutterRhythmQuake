@@ -44,19 +44,58 @@ void main() {
         area: 'Test',
         coordinate: LatLng(23.5, 121),
       );
-      expect(stationBase.copyWith(cwaIntensityIndex: 0).gridLevel, 7);
-      expect(stationBase.copyWith(cwaIntensityIndex: 1).gridLevel, 9);
+      expect(stationBase.copyWith(pgaGal: 0.8).gridLevel, 8);
+      expect(stationBase.copyWith(pgaGal: 2.5).gridLevel, 10);
     });
   });
 
   group('KA station marker presentation', () {
     test('keeps all strong-shaking labels', () {
       expect(KaShindoMarkerStyle.labelForLevel(15), '4');
-      expect(KaShindoMarkerStyle.labelForLevel(16), '5弱');
-      expect(KaShindoMarkerStyle.labelForLevel(17), '5強');
-      expect(KaShindoMarkerStyle.labelForLevel(18), '6弱');
-      expect(KaShindoMarkerStyle.labelForLevel(19), '6強');
+      expect(KaShindoMarkerStyle.labelForLevel(16), '5-');
+      expect(KaShindoMarkerStyle.labelForLevel(17), '5+');
+      expect(KaShindoMarkerStyle.labelForLevel(18), '6-');
+      expect(KaShindoMarkerStyle.labelForLevel(19), '6+');
       expect(KaShindoMarkerStyle.labelForLevel(20), '7');
+    });
+
+    test('map and station panel agree at every P-Alert level', () {
+      const labels = [
+        '0',
+        '0',
+        '0',
+        '0',
+        '0',
+        '0',
+        '0',
+        '0',
+        '1',
+        '1',
+        '2',
+        '2',
+        '3',
+        '3',
+        '4',
+        '4',
+        '5-',
+        '5+',
+        '6-',
+        '6+',
+        '7',
+      ];
+      for (var level = 0; level < labels.length; level++) {
+        final station = PAlertStation(
+          id: 'TEST',
+          network: 'P-Alert',
+          name: 'Test',
+          area: 'Test',
+          coordinate: const LatLng(23.5, 121),
+          heldLevel: level,
+        );
+        expect(KaShindoMarkerStyle.labelForLevel(level), labels[level]);
+        expect(station.shindoLabel, labels[level]);
+      }
+      expect(KaShindoMarkerStyle.labelForLevel(-1), '--');
     });
 
     test('uses the KA 21-level color bands', () {

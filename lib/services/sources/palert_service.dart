@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
+import '../../core/source_estimation/palert_source_profile.dart';
 import 'palert_detection.dart';
 import 'palert_intensity.dart';
 import 'shake_detection_service.dart';
@@ -18,6 +19,7 @@ class PAlertStation {
   final double? pgvCms;
   final int? cwaIntensityIndex;
   final int? heldCwaIntensityIndex;
+  final int? heldLevel;
   final DateTime? dataTime;
   final DateTime? receivedAt;
 
@@ -31,66 +33,50 @@ class PAlertStation {
     this.pgvCms,
     this.cwaIntensityIndex,
     this.heldCwaIntensityIndex,
+    this.heldLevel,
     this.dataTime,
     this.receivedAt,
   });
 
-  int? get displayCwaIntensityIndex =>
-      heldCwaIntensityIndex ?? cwaIntensityIndex;
-
-  bool get hasRealtime => displayCwaIntensityIndex != null && dataTime != null;
-
-  static const List<int> _gridLevels = [7, 9, 11, 13, 15, 16, 17, 18, 19, 20];
-
-  int get gridLevel {
-    return _gridLevel(displayCwaIntensityIndex);
+  int? get displayCwaIntensityIndex {
+    final level = gridLevel;
+    return level < 0
+        ? null
+        : PAlertSourceProfile.intensityIndexFromLevel(level);
   }
 
-  int get currentGridLevel => _gridLevel(cwaIntensityIndex);
+  bool get hasRealtime => gridLevel >= 0 && dataTime != null;
+
+  int get gridLevel => heldLevel ?? currentGridLevel;
+
+  int get currentGridLevel => PAlertSourceProfile.level(pgaGal, pgvCms);
 
   double? get estimatedContinuousShindo =>
       PAlertIntensity.estimateFromPga(pgaGal);
 
-  int get detectionLevel => PAlertIntensity.detectionLevelFromPga(pgaGal);
-
-  static int _gridLevel(int? index) {
-    if (index == null || index < 0 || index >= _gridLevels.length) return -1;
-    return _gridLevels[index];
-  }
+  int get detectionLevel => currentGridLevel;
 
   // Kept as an index-shaped compatibility getter for existing callers.
   int get jmaIndex => displayCwaIntensityIndex ?? -1;
 
   int get shindoClass {
-    final index = displayCwaIntensityIndex;
-    if (index == null) return -1;
+    final index = PAlertSourceProfile.intensityIndexFromLevel(gridLevel);
+    if (index < 0) return -1;
     if (index <= 4) return index;
     if (index <= 6) return 5;
     if (index <= 8) return 6;
     return 7;
   }
 
-  String get shindoLabel {
-    return switch (displayCwaIntensityIndex) {
-      0 => '0',
-      1 => '1',
-      2 => '2',
-      3 => '3',
-      4 => '4',
-      5 => '5-',
-      6 => '5+',
-      7 => '6-',
-      8 => '6+',
-      9 => '7',
-      _ => '--',
-    };
-  }
+  String get shindoLabel =>
+      PAlertSourceProfile.intensityLabelFromLevel(gridLevel);
 
   PAlertStation copyWith({
     double? pgaGal,
     double? pgvCms,
     int? cwaIntensityIndex,
     int? heldCwaIntensityIndex,
+    int? heldLevel,
     DateTime? dataTime,
     DateTime? receivedAt,
   }) {
@@ -105,6 +91,7 @@ class PAlertStation {
       cwaIntensityIndex: cwaIntensityIndex ?? this.cwaIntensityIndex,
       heldCwaIntensityIndex:
           heldCwaIntensityIndex ?? this.heldCwaIntensityIndex,
+      heldLevel: heldLevel ?? this.heldLevel,
       dataTime: dataTime ?? this.dataTime,
       receivedAt: receivedAt ?? this.receivedAt,
     );
@@ -172,7 +159,7 @@ class PAlertService {
   static Uri get _graphqlUri => kIsWeb
       ? Uri.base.resolve('/api/palert/graphql/')
       : Uri.parse('https://palert.earth.sinica.edu.tw/graphql/');
-  static const String _stationFilter = 'onlineDot15';
+  static const String _stationFilter = 'onlineAll';
   static const Duration intensityHoldDuration = Duration(seconds: 3);
   static const Duration realtimePollInterval = Duration(seconds: 1);
   static const Duration frameStaleAfter = Duration(seconds: 6);
@@ -214,8 +201,7 @@ query (\$recordTime: Float!, \$token: String!) {
   void setSensitivity(int value) => _detector.setSensitivity(value);
 
   final Map<String, PAlertStation> _stationMap = {};
-  final Map<String, List<({DateTime time, int intensityIndex})>>
-  _intensityHistory = {};
+  final Map<String, List<({DateTime time, int level})>> _levelHistory = {};
   final PAlertDetectionGate _detectionGate = PAlertDetectionGate();
   List<PAlertStation> _stations = const [];
   List<PAlertStation> get stations => _stations;
@@ -277,7 +263,7 @@ query (\$recordTime: Float!, \$token: String!) {
     _consecutiveFailures = 0;
     _lastRealtimeTimestamp = null;
     _lastFrameReceivedAt = null;
-    _intensityHistory.clear();
+    _levelHistory.clear();
     dataTimeNotifier.value = null;
     receivedTimeNotifier.value = null;
     _client?.close();
@@ -335,6 +321,7 @@ query (\$recordTime: Float!, \$token: String!) {
           pgvCms: existing?.pgvCms,
           cwaIntensityIndex: existing?.cwaIntensityIndex,
           heldCwaIntensityIndex: existing?.heldCwaIntensityIndex,
+          heldLevel: existing?.heldLevel,
           dataTime: existing?.dataTime,
           receivedAt: existing?.receivedAt,
         );
@@ -347,7 +334,7 @@ query (\$recordTime: Float!, \$token: String!) {
       _stationMap
         ..clear()
         ..addAll(nextStations);
-      _intensityHistory.removeWhere((id, _) => !nextStations.containsKey(id));
+      _levelHistory.removeWhere((id, _) => !nextStations.containsKey(id));
       _emitStations();
     } catch (e) {
       if (_isCurrentRun(generation)) {
@@ -401,14 +388,12 @@ query (\$recordTime: Float!, \$token: String!) {
         if (pgaGal == null && pgvCms == null) continue;
         final station = _stationMap[id]!;
         final hasCurrentPga = pgaGal != null;
-        final intensityIndex = hasCurrentPga
-            ? cwaIntensityIndexFromPgaPgv(pgaGal: pgaGal, pgvCms: pgvCms)
-            : null;
-        final heldIntensityIndex = _heldIntensityFor(
-          id,
-          pgaTimestamp,
-          intensityIndex,
-        );
+        final level = hasCurrentPga
+            ? PAlertSourceProfile.level(pgaGal, pgvCms)
+            : -1;
+        final heldLevel = hasCurrentPga
+            ? _heldLevelFor(id, pgaTimestamp, level)
+            : station.heldLevel;
         _stationMap[id] = PAlertStation(
           id: station.id,
           network: station.network,
@@ -416,9 +401,14 @@ query (\$recordTime: Float!, \$token: String!) {
           area: station.area,
           coordinate: station.coordinate,
           pgaGal: pgaGal ?? station.pgaGal,
-          pgvCms: pgvCms ?? station.pgvCms,
-          cwaIntensityIndex: intensityIndex,
-          heldCwaIntensityIndex: heldIntensityIndex,
+          pgvCms: hasCurrentPga ? pgvCms : station.pgvCms,
+          cwaIntensityIndex: level < 0
+              ? null
+              : PAlertSourceProfile.intensityIndexFromLevel(level),
+          heldCwaIntensityIndex: heldLevel == null || heldLevel < 0
+              ? null
+              : PAlertSourceProfile.intensityIndexFromLevel(heldLevel),
+          heldLevel: heldLevel,
           dataTime: hasCurrentPga ? pgaTimestamp : station.dataTime,
           receivedAt: hasCurrentPga ? receivedAt : station.receivedAt,
         );
@@ -538,42 +528,26 @@ query (\$recordTime: Float!, \$token: String!) {
   }
 
   static int? cwaIntensityIndexFromPgaPgv({double? pgaGal, double? pgvCms}) {
-    if (pgaGal == null || pgaGal <= 0 || !pgaGal.isFinite) return null;
-    if (pgaGal < 0.8) return 0;
-    if (pgaGal < 2.5) return 1;
-    if (pgaGal < 8.0) return 2;
-    if (pgaGal < 25.0) return 3;
-    if (pgaGal < 80.0) return 4;
-
-    if (pgvCms == null || pgvCms < 0 || !pgvCms.isFinite) return null;
-    if (pgvCms < 15.0) return 4;
-    if (pgvCms < 30.0) return 5;
-    if (pgvCms < 50.0) return 6;
-    if (pgvCms < 80.0) return 7;
-    if (pgvCms < 140.0) return 8;
-    return 9;
+    final level = PAlertSourceProfile.level(pgaGal, pgvCms);
+    return level < 0
+        ? null
+        : PAlertSourceProfile.intensityIndexFromLevel(level);
   }
 
-  int? _heldIntensityFor(
-    String stationId,
-    DateTime timestamp,
-    int? currentIntensityIndex,
-  ) {
-    final samples = _intensityHistory.putIfAbsent(stationId, () => []);
+  int _heldLevelFor(String stationId, DateTime timestamp, int currentLevel) {
+    final samples = _levelHistory.putIfAbsent(stationId, () => []);
     final cutoff = timestamp.subtract(intensityHoldDuration);
     samples.removeWhere(
       (sample) =>
           sample.time.isBefore(cutoff) || sample.time.isAfter(timestamp),
     );
-    if (currentIntensityIndex != null) {
-      samples.add((time: timestamp, intensityIndex: currentIntensityIndex));
-    }
+    if (currentLevel >= 0) samples.add((time: timestamp, level: currentLevel));
     if (samples.isEmpty) {
-      _intensityHistory.remove(stationId);
-      return currentIntensityIndex;
+      _levelHistory.remove(stationId);
+      return currentLevel;
     }
     return samples
-        .map((sample) => sample.intensityIndex)
+        .map((sample) => sample.level)
         .reduce((a, b) => a > b ? a : b);
   }
 

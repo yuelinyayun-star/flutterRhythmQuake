@@ -535,7 +535,7 @@ class _SettingsPageState extends State<SettingsPage>
       _overlayTyphoon = prefs.getBool(_overlayTyphoonKey) ?? false;
       _overlayWeatherStation =
           prefs.getBool(_overlayWeatherStationKey) ?? false;
-      _overlayWeatherAlert = prefs.getBool(_overlayWeatherAlertKey) ?? true;
+      _overlayWeatherAlert = prefs.getBool(_overlayWeatherAlertKey) ?? false;
       _weatherStationMode = prefs.getString(_weatherStationModeKey) ?? 'auto';
       _overlayFdsnEarthScope =
           prefs.getBool(_overlayFdsnEarthScopeKey) ?? false;

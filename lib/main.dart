@@ -451,7 +451,7 @@ MapStateProvider _createMapStateProvider(
     prefs.getBool('map_overlay_weatherStationLayer') ?? false,
   );
   final weatherAlertEnabled =
-      prefs.getBool('map_overlay_weatherAlertLayer') ?? true;
+      prefs.getBool('map_overlay_weatherAlertLayer') ?? false;
   provider.setOverlayEnabled('weatherAlertLayer', weatherAlertEnabled);
   if (weatherAlertEnabled) {
     ChinaWeatherAlertMapService().start();

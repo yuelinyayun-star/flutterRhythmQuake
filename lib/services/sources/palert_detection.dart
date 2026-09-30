@@ -1,11 +1,11 @@
 import 'dart:math' as math;
 
+import '../../core/source_estimation/palert_source_profile.dart';
 import 'nied_monitor.dart';
 import 'palert_service.dart';
 import 'shake_detection_service.dart';
 
-/// Adapts current PGA estimates to the existing detector's level domain.
-/// Raw P-Alert observations and display peak holds are never modified.
+/// Feeds the shared detector with current P-Alert levels, not held display peaks.
 class PAlertDetector {
   PAlertDetector() {
     _engine.onDetectionSnapshotChanged = (value) {
@@ -25,7 +25,7 @@ class PAlertDetector {
     allowActiveRiseShortcut: false,
   );
   final Map<String, NiedStation> _stations = {};
-  final Map<String, int?> _currentCwaIndices = {};
+  final Map<String, int> _currentLevels = {};
   String _layout = '';
   ShakeDetectionSnapshot snapshot = ShakeDetectionService.idleSnapshot;
   void Function(ShakeDetectionSnapshot)? onSnapshot;
@@ -87,10 +87,9 @@ class PAlertDetector {
       state.lastDataTime = time;
       state.lastReceivedAt = receivedAt;
       state.lastUpdate = receivedAt;
-      _currentCwaIndices[station.id] = station.cwaIntensityIndex;
+      _currentLevels[station.id] = station.currentGridLevel;
       state.update(station.detectionLevel);
-      // Keep the original level/history for rise detection and display. Only
-      // the detection vote is gated, including when an old hold is active.
+      // The noise gate affects only the vote, not the measured level.
       if (station.pgaGal! < minimumDetectionPgaGal) state.activity = 0;
       changed = true;
     }
@@ -117,11 +116,14 @@ class PAlertDetector {
     var maxShindo = -1;
     for (final station in _stations.values) {
       if (!station.isActive || station.level < 0) continue;
-      // Keep the detection session open during weak/unknown CWA frames,
-      // without inventing an audible intensity or resetting its sound tiers.
+      // Keep the detection session open during weak frames without resetting
+      // its sound tiers.
       maxShindo = math.max(maxShindo, 0);
-      final index = _currentCwaIndices[station.code];
-      if (index == null || index < 0 || index > 9) continue;
+      final level = _currentLevels[station.code];
+      final index = level == null
+          ? -1
+          : PAlertSourceProfile.intensityIndexFromLevel(level);
+      if (index < 0 || index > 9) continue;
       final shindo = index <= 4
           ? index
           : (index <= 6 ? 5 : (index <= 8 ? 6 : 7));
@@ -133,7 +135,7 @@ class PAlertDetector {
   }
 
   bool _invalidate(NiedStation state) {
-    _currentCwaIndices.remove(state.code);
+    _currentLevels.remove(state.code);
     final changed = state.level >= 0 || state.isActive;
     state.activeTimer?.cancel();
     state.isActive = false;
@@ -153,7 +155,7 @@ class PAlertDetector {
   void reset() {
     _engine.reset(detachStations: true);
     _stations.clear();
-    _currentCwaIndices.clear();
+    _currentLevels.clear();
     _layout = '';
     snapshot = ShakeDetectionService.idleSnapshot;
     _publishCwaIntensity();
