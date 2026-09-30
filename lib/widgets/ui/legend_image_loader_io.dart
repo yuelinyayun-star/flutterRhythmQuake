@@ -16,7 +16,7 @@ Future<Uint8List?> fetchLegendBytes(
     request.headers.set('User-Agent', userAgent);
     final response = await request.close();
     if (response.statusCode != 200) return null;
-    return consolidateHttpClientResponseBytes(response);
+    return await consolidateHttpClientResponseBytes(response);
   } catch (_) {
     return null;
   } finally {

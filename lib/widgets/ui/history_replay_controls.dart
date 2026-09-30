@@ -63,21 +63,21 @@ class _HistoryReplayControlsState extends State<HistoryReplayControls> {
       if (selected.size > HistoryReplayPackage.maxBytes) {
         throw const FormatException('回放包超过 16 MiB');
       }
-      final bytes = BytesBuilder(copy: false);
-      if (selected.bytes != null) {
-        bytes.add(selected.bytes!);
-      } else if (selected.path != null) {
-        final fileBytes = await replay_file.readBytes(selected.path!);
-        if (fileBytes.length > HistoryReplayPackage.maxBytes) {
+      final Uint8List bytes;
+      if (!kIsWeb && selected.path != null) {
+        bytes = await replay_file.readBytes(
+          selected.path!,
+          maxBytes: HistoryReplayPackage.maxBytes,
+        );
+      } else if (selected.bytes != null) {
+        bytes = selected.bytes!;
+        if (bytes.length > HistoryReplayPackage.maxBytes) {
           throw const FormatException('回放包超过 16 MiB');
         }
-        bytes.add(fileBytes);
       } else {
         throw const FormatException('无法读取选中的回放包');
       }
-      final package = HistoryReplayPackage.decode(
-        utf8.decode(bytes.takeBytes()),
-      );
+      final package = HistoryReplayPackage.decode(utf8.decode(bytes));
       if (mounted) widget.controller.load(package);
     } catch (error) {
       if (mounted) setState(() => _error = '导入失败：$error');

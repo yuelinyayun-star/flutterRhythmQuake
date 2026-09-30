@@ -4,6 +4,23 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutterrhythmquake/widgets/ui/ui_scale.dart';
 
 void main() {
+  test('native platforms retain the shortest-side layout rule', () {
+    for (final platform in TargetPlatform.values) {
+      for (final size in [
+        const Size(1200, 500),
+        const Size(844, 390),
+        const Size(390, 844),
+        const Size(1200, 800),
+      ]) {
+        expect(
+          UiScale.shouldUsePhoneLayout(size, isWeb: false, platform: platform),
+          size.shortestSide < UiScale.phoneBreakpoint,
+          reason: '$platform at $size',
+        );
+      }
+    }
+  });
+
   test('web desktop keeps desktop UI in a short browser window', () {
     expect(
       UiScale.shouldUsePhoneLayout(
