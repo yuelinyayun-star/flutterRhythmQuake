@@ -240,4 +240,41 @@ void main() {
     expect(station.ascend, 5);
     expect(station.triggerStamp, greaterThan(0));
   });
+
+  test('short missing runs never rewrite the original station history', () {
+    final station =
+        NiedStation(
+            id: 1,
+            code: 'TEST001',
+            name: 'TEST001',
+            coordinate: const LatLng(35, 140),
+            network: 'K-NET',
+            prefecture: 'Test',
+            expireSeconds: 10,
+          )
+          ..recentLevel = [4, -1, -1, 3, 4]
+          ..lastDataTime = DateTime(2026, 7, 17, 12);
+    station.update(5);
+    expect(station.recentLevel, [5, 4, -1, -1, 3, 4]);
+    expect(station.ascend, 2);
+    expect(station.triggerStamp, 0);
+  });
+
+  test('missing display hold reads only the original four-frame window', () {
+    final station = NiedStation(
+      id: 1,
+      code: 'TEST001',
+      name: 'TEST001',
+      coordinate: const LatLng(35, 140),
+      network: 'K-NET',
+      prefecture: 'Test',
+      expireSeconds: 10,
+    )..recentLevel = [-1, -1, -1, 8];
+    station.update(-1);
+    expect(station.level, 8);
+    expect(station.recentLevel, [-1, -1, -1, -1, 8]);
+    station.update(-1);
+    expect(station.level, -1);
+    expect(station.recentLevel, [-1, -1, -1, -1, -1, 8]);
+  });
 }

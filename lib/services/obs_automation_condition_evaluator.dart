@@ -506,6 +506,7 @@ class ObsAutomationConditionEvaluator {
       'scEew' => 'sichuan',
       'fjEew' => 'fujian',
       'cqEew' => 'chongqing',
+      'iclEew' => 'icl',
       'kmaEew' => 'kma',
       'sa' => 'shakeAlert',
       'globalQuakeEew' || 'gqEew' => 'globalQuake',

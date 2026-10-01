@@ -8,7 +8,7 @@ import 'package:http/retry.dart';
 import 'shared_cancellable_tile_provider.dart';
 
 class AllowAnyCertTileProvider extends SharedCancellableTileProvider {
-  AllowAnyCertTileProvider()
+  AllowAnyCertTileProvider({super.cachingProvider})
     : super(
         httpClient: _client,
         headers: {'User-Agent': 'FlutterRhythmQuake/1.0'},

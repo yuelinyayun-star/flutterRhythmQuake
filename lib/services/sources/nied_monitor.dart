@@ -109,6 +109,41 @@ class NiedStation {
        _detectReason = '',
        recentLevel = [];
 
+  /// Capture mutable observations without copying timers or allocating defaults
+  /// that would immediately be replaced by the captured values.
+  NiedStation.detachedSnapshot(NiedStation source)
+    : id = source.id,
+      code = source.code,
+      name = source.name,
+      coordinate = source.coordinate,
+      network = source.network,
+      prefecture = source.prefecture,
+      expireSeconds = source.expireSeconds,
+      defaultExpireSeconds = source.defaultExpireSeconds,
+      pixelX = source.pixelX,
+      pixelY = source.pixelY,
+      scanReliable = source.scanReliable,
+      pixelClusterId = source.pixelClusterId,
+      level = source.level,
+      calibrationFactor = source.calibrationFactor,
+      thresholdCode = source.thresholdCode,
+      ascend = source.ascend,
+      triggerStamp = source.triggerStamp,
+      activity = source.activity,
+      isActive = source.isActive,
+      abnormalUpdateCount = source.abnormalUpdateCount,
+      _detectState = source.detectState,
+      _detectReason = source.detectReason,
+      recentLevel = List.of(source.recentLevel),
+      lastUpdate = source.lastUpdate,
+      lastDataTime = source.lastDataTime,
+      lastReceivedAt = source.lastReceivedAt,
+      gifObservations = Map.of(source.gifObservations),
+      gifLayerQualityFlags = {
+        for (final entry in source.gifLayerQualityFlags.entries)
+          entry.key: Set.of(entry.value),
+      };
+
   double get continuousShindo => gifObservation?.shindo ?? 0.0;
   int get kaLevel => level;
   List<int> get recentKaLevel => recentLevel;
@@ -183,12 +218,11 @@ class NiedStation {
 
   int _effectiveLevel(int originLevel, List<int> recentLevels) {
     if (originLevel != -1) return originLevel;
-    if (recentLevels.isEmpty) return -1;
-    final sublist = recentLevels.sublist(
-      0,
-      recentLevels.length < 4 ? recentLevels.length : 4,
-    );
-    return sublist.firstWhere((v) => v != -1, orElse: () => -1);
+    final count = recentLevels.length < 4 ? recentLevels.length : 4;
+    for (var index = 0; index < count; index++) {
+      if (recentLevels[index] != -1) return recentLevels[index];
+    }
+    return -1;
   }
 
   /// Matches KA calcAscend: fills short -1 gaps, then scans backwards until
@@ -202,7 +236,9 @@ class NiedStation {
 
     // Fill short missing runs with the next valid value. Long or trailing
     // missing runs end the usable history, exactly as in KA.
-    final arr = List<int>.from(recentLevels);
+    final arr = recentLevels.contains(-1)
+        ? List<int>.from(recentLevels)
+        : recentLevels;
     var index = 0;
     while (index < arr.length) {
       if (arr[index] != -1) {
@@ -263,7 +299,9 @@ class NiedStation {
   /// Equivalent to reference isAbnormalStation: detects 3+ peaks with
   /// amplitude >= 3 in KA level history.
   bool _isAbnormalStation(List<int> recentLevels) {
-    final recentFilter = recentLevels.where((v) => v != -1).toList();
+    final recentFilter = recentLevels.contains(-1)
+        ? recentLevels.where((v) => v != -1).toList()
+        : recentLevels;
     if (recentFilter.length < 3) return false;
 
     var peakCount = 0;
@@ -331,7 +369,8 @@ class NiedStation {
   /// Keep the original deadline so incoming frames cannot extend a detection.
   void adoptDetectionHold(NiedStation previous, void Function() onExpired) {
     final deadline = previous._activeUntil;
-    final wasHeld = previous.isActive && (previous.activeTimer?.isActive ?? false);
+    final wasHeld =
+        previous.isActive && (previous.activeTimer?.isActive ?? false);
     previous.activeTimer?.cancel();
     if (!wasHeld || deadline == null) return;
     final remaining = deadline.difference(DateTime.now());

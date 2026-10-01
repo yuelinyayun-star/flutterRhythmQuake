@@ -25,7 +25,7 @@ USERINFO_URL = f"{ISSUER}/oauth2/userinfo"
 VERIFY_API_TOKEN_URL = f"{ISSUER}/api/token/verify"
 DEFAULT_CLIENT_ID = "wauth_49ad8dff5251645797672e5d"
 DEFAULT_REDIRECT_URI = "https://quake.yuelinrhythm.top/wauth/callback"
-DEFAULT_SCOPE = "openid profile email"
+DEFAULT_SCOPE = "openid profile email api_token"
 BACKGROUND_IMAGE_PATH = Path(__file__).with_name("wauth_background.jpg")
 
 

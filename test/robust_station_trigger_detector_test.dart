@@ -104,4 +104,39 @@ void main() {
     expect(ended.state, StationTriggerState.ended);
     expect(ended.reasonCodes, contains('missing_observation_end'));
   });
+
+  for (final utc in [false, true]) {
+    test('history cutoff retains the exact boundary, utc=$utc', () {
+      final detector = RobustStationTriggerDetector(
+        config: const RobustStationTriggerConfig(
+          historySeconds: 2,
+          minimumBaselineSamples: 1,
+          risingFrames: 100,
+          triggeredFrames: 100,
+        ),
+      );
+      final start = utc
+          ? DateTime.utc(2026, 6, 20, 12)
+          : DateTime(2026, 6, 20, 12);
+      detector.update(observation(start, 0));
+      final boundary = start.add(const Duration(seconds: 2));
+      expect(detector.update(observation(boundary, 10)).activity, 10);
+      expect(
+        detector
+            .update(
+              observation(boundary.add(const Duration(microseconds: 1)), 10),
+            )
+            .activity,
+        5,
+      );
+      expect(
+        detector
+            .update(
+              observation(boundary.add(const Duration(microseconds: 2)), 10),
+            )
+            .activity,
+        0,
+      );
+    });
+  }
 }

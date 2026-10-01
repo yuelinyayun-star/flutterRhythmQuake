@@ -6,6 +6,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutterrhythmquake/widgets/map/shared_cancellable_tile_provider.dart';
+import 'package:flutterrhythmquake/widgets/map/basemap_tile_cache.dart';
 
 class _DelayedAbortClient extends http.BaseClient {
   final started = Completer<void>();
@@ -57,6 +58,60 @@ Future<ImageInfo> _loadedImage(ImageStream stream) {
 }
 
 void main() {
+  testWidgets('basemap bytes survive decoded image cache eviction', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      final client = _DelayedAbortClient();
+      client.firstResponse.complete(_tileResponse());
+      final cache = BasemapTileCache(
+        diskCache: const DisabledMapCachingProvider(),
+      );
+      final provider = SharedCancellableTileProvider(
+        httpClient: client,
+        cachingProvider: cache,
+      );
+      final options = TileLayer(
+        urlTemplate: 'https://tiles.test/basemap/{z}/{x}/{y}',
+      );
+      const coords = TileCoordinates(26, 13, 5);
+      final firstCancel = Completer<void>();
+      final first = provider.getImageWithCancelLoadingSupport(
+        coords,
+        options,
+        firstCancel.future,
+      );
+      final firstImage = await _loadedImage(
+        first.resolve(ImageConfiguration.empty),
+      );
+      firstImage.dispose();
+      firstCancel.complete();
+      await Future<void>.delayed(Duration.zero);
+      PaintingBinding.instance.imageCache.clear();
+      PaintingBinding.instance.imageCache.clearLiveImages();
+
+      final secondCancel = Completer<void>();
+      final second = provider.getImageWithCancelLoadingSupport(
+        coords,
+        options,
+        secondCancel.future,
+      );
+      final secondImage = await _loadedImage(
+        second.resolve(ImageConfiguration.empty),
+      );
+      expect(secondImage.image.width, greaterThan(1));
+      expect(client.requests, 1);
+      secondImage.dispose();
+      secondCancel.complete();
+      client.releaseAbort.complete();
+      await Future<void>.delayed(Duration.zero);
+      PaintingBinding.instance.imageCache.clear();
+      PaintingBinding.instance.imageCache.clearLiveImages();
+      await provider.dispose();
+      client.close();
+    });
+  });
+
   testWidgets(
     'returning to a cancelled tile loads a real image without a gesture',
     (tester) async {

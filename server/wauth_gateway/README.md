@@ -36,7 +36,7 @@ Content-Type: application/json
 }
 ```
 
-3. 客户端打开响应里的 `authorizationUrl`。
+3. 客户端打开响应里的 `authorizationUrl`。网关固定请求 `scope=openid profile email api_token`，由用户在 WAuth 同意页确认 API Token 的有效期与备注；应用不代替用户选择或确认。
 4. 浏览器授权后回到固定回调地址，服务器使用 AppSecret 交换官方 token，并请求官方 `userinfo`。
 5. 客户端轮询一次性授权结果：
 
@@ -53,7 +53,8 @@ GET /wauth/result?state=...
     "access_token": "...",
     "token_type": "Bearer",
     "expires_in": 3600,
-    "scope": "openid profile"
+    "scope": "openid profile email api_token",
+    "api_token": "..."
   },
   "userinfo": {
     "sub": "..."
@@ -61,12 +62,12 @@ GET /wauth/result?state=...
 }
 ```
 
-6. 客户端保存官方 access token。启动、恢复应用或开启受保护 API 前，必须使用该 token 请求网关 `GET /wauth/userinfo`，由网关调用 WAuth 官方 `/oauth2/userinfo`。验证失败、超时或没有 token 时，API 保持关闭。
+6. 客户端将官方 `access_token` 与 `api_token` 分别保存到平台安全存储；`access_token` 用于查询账号资料，业务连接使用 `api_token`。新授权没有返回非空 `api_token` 时，不覆盖已有凭据、不以 `access_token` 代替，也不因此开启受保护数据源。
 7. 退出登录只清理客户端保存的官方 token 和用户资料。本地网关不签发自己的会话，也没有 `/wauth/status` 或 `/wauth/logout` 路由。
 
 ## API token 校验
 
-真实授权结果中可能同时包含 `access_token` 与 `api_token`，两者用途不同：
+根据 [WAuth 官方文档](https://auth.beecld.com/docs#apitoken)，长期 API Token 需要在授权请求中显式声明 `api_token` scope，并由用户确认。不要依赖过渡期的自动下发行为。真实授权结果中可能同时包含 `access_token` 与 `api_token`，两者用途不同：
 
 - `access_token` 只用于请求 WAuth 官方 `/oauth2/userinfo`。
 - `api_token` 通过网关 `POST /wauth/api/token/verify` 调用官方校验端点 `POST /api/token/verify`。
@@ -74,6 +75,8 @@ GET /wauth/result?state=...
 - 未登录、缺少 api_token、校验返回 `valid: false`、令牌过期或校验超时时，都必须保持关闭。
 
 网关不自行生成或替换令牌，也不把令牌写入日志。官方 `401/403` 会保持为授权拒绝，其他上游错误会转换为临时的 `502`，避免客户端把网络故障误判成登录失效。
+
+实际登录地址由已部署的网关生成，因此本地源码更新或客户端重新打包不等于线上网关已更新。需要按部署流程发布本目录中的网关代码，新的授权会话才能请求上述 scope；仅更新客户端授权 URL 工具不足以完成线上改造。
 ## 本地测试
 
 ```powershell

@@ -155,6 +155,7 @@ void main() {
       'scEew': 'sichuan',
       'fjEew': 'fujian',
       'cqEew': 'chongqing',
+      'iclEew': 'icl',
       'kmaEew': 'kma',
       'sa': 'shakeAlert',
       'globalQuakeEew': 'globalQuake',

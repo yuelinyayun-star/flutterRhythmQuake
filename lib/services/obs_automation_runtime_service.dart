@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/obs_automation_builtin_presets.dart';
 import '../models/obs_automation_preset.dart';
 import 'obs_automation_input_service.dart';
 import 'obs_automation_runner.dart';
@@ -67,7 +68,15 @@ class ObsAutomationRuntimeService {
       final document = ObsAutomationPresetDocument.fromJson(
         Map<String, dynamic>.from(decoded),
       );
-      runner.configure(document.presets);
+      final presets = upgradeBuiltInEewRecordingPresets(document.presets);
+      if (!identical(presets, document.presets)) {
+        final saved = await prefs.setString(
+          obsAutomationPresetsPreferenceKey,
+          jsonEncode(ObsAutomationPresetDocument(presets: presets).toJson()),
+        );
+        if (!saved) throw StateError('OBS preset upgrade could not be saved');
+      }
+      runner.configure(presets);
       presetErrorNotifier.value = null;
     } catch (error) {
       runner.configure(const []);

@@ -77,6 +77,7 @@ class ObsAutomationRunner {
   static const triggerEventVariable = '触发事件';
   static const currentEventVariable = '当前事件';
   static const _maxActiveWaiters = 64;
+  static const _maxRememberedEventTriggers = 512;
 
   final ObsAutomationInputService _inputService;
   final ObsAutomationActionExecutor _actionExecutor;
@@ -86,12 +87,14 @@ class ObsAutomationRunner {
   final List<_WaitingExecution> _waiters = [];
   final Set<String> _recordingOwners = {};
   final Set<String> _replayBufferOwners = {};
+  final Map<(String, String, String, String), String> _eventTriggerKeys = {};
 
   StreamSubscription<ObsAutomationInputEvent>? _subscription;
   Timer? _waiterExpiryTimer;
   List<ObsAutomationPreset> _presets = const [];
   Future<void> _inputQueue = Future.value();
   int _executionSequence = 0;
+  int _generation = 0;
   bool _disposed = false;
   String? _lastError;
 
@@ -153,9 +156,43 @@ class ObsAutomationRunner {
             !_evaluator.matchesBlocks(parsed.triggerBlocks, event)) {
           continue;
         }
+        final executionId = '${preset.id}:${stack.id}:${_executionSequence++}';
+        (String, String, String, String)? eventTriggerKey;
+        if (parsed.triggerBlocks.first.parameters['oncePerEvent'] == 'true') {
+          final unified = event.unifiedEvent;
+          if (unified == null ||
+              unified.eventId.isEmpty ||
+              (event.unifiedPhase != ObsUnifiedEventPhase.added &&
+                  event.unifiedPhase != ObsUnifiedEventPhase.updated)) {
+            continue;
+          }
+          eventTriggerKey = (
+            preset.id,
+            stack.id,
+            _evaluator.readInputField(event, 'agency')?.toString() ??
+                unified.source,
+            unified.eventId,
+          );
+          if (_eventTriggerKeys.containsKey(eventTriggerKey)) continue;
+          _eventTriggerKeys[eventTriggerKey] = executionId;
+          while (_eventTriggerKeys.length > _maxRememberedEventTriggers) {
+            (String, String, String, String)? completedKey;
+            for (final entry in _eventTriggerKeys.entries) {
+              if (entry.key != eventTriggerKey &&
+                  !_recordingOwners.contains(entry.value)) {
+                completedKey = entry.key;
+                break;
+              }
+            }
+            if (completedKey == null) break;
+            _eventTriggerKeys.remove(completedKey);
+          }
+        }
         final execution = _Execution(
-          id: '${preset.id}:${stack.id}:${_executionSequence++}',
+          id: executionId,
           presetId: preset.id,
+          generation: _generation,
+          eventTriggerKey: eventTriggerKey,
           blocks: stack.blocks,
           currentEvent: event,
           variables: {triggerEventVariable: event, currentEventVariable: event},
@@ -169,7 +206,7 @@ class ObsAutomationRunner {
   Future<void> _advance(_Execution execution, int startIndex) async {
     var index = startIndex;
     try {
-      while (!_disposed && index < execution.blocks.length) {
+      while (_executionIsActive(execution) && index < execution.blocks.length) {
         final block = execution.blocks[index];
         if (_isCondition(block.type)) {
           final conditionStart = index;
@@ -298,9 +335,16 @@ class ObsAutomationRunner {
         }
       }
     } catch (error) {
+      if (execution.eventTriggerKey != null &&
+          _eventTriggerKeys[execution.eventTriggerKey] == execution.id) {
+        _eventTriggerKeys.remove(execution.eventTriggerKey);
+      }
       _lastError = '${execution.presetId}: $error';
     }
   }
+
+  bool _executionIsActive(_Execution execution) =>
+      !_disposed && execution.generation == _generation;
 
   _ParsedStack? _parseStack(ObsAutomationStack stack) {
     final blocks = stack.blocks;
@@ -629,14 +673,16 @@ class ObsAutomationRunner {
   }
 
   Future<void> _stopListening() async {
+    _generation++;
+    _eventTriggerKeys.clear();
     final subscription = _subscription;
     _subscription = null;
-    await subscription?.cancel();
     _waiterExpiryTimer?.cancel();
     _waiterExpiryTimer = null;
     _waiters.clear();
     _recordingOwners.clear();
     _replayBufferOwners.clear();
+    await subscription?.cancel();
   }
 
   Future<void> dispose() async {
@@ -657,6 +703,8 @@ class _Execution {
   _Execution({
     required this.id,
     required this.presetId,
+    required this.generation,
+    this.eventTriggerKey,
     required this.blocks,
     required this.currentEvent,
     required this.variables,
@@ -665,6 +713,8 @@ class _Execution {
 
   final String id;
   final String presetId;
+  final int generation;
+  final (String, String, String, String)? eventTriggerKey;
   final List<ObsAutomationBlock> blocks;
   ObsAutomationInputEvent currentEvent;
   final Map<String, ObsAutomationInputEvent> variables;

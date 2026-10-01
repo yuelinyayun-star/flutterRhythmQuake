@@ -1038,7 +1038,7 @@ class _SettingsPageState extends State<SettingsPage>
       if (apiToken == null || apiToken.isEmpty) {
         throw const WAuthApiException(
           statusCode: 401,
-          message: 'WAuth 登录未返回 API token，受保护数据源保持关闭。',
+          message: '未取得 WAuth API Token。请重新登录并在授权页确认有效期与备注，现有 Token 不会被覆盖。',
         );
       }
       await _wauthService.credentialStore.write(

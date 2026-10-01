@@ -263,17 +263,19 @@ class _ObsAutomationPresetsPageState extends State<ObsAutomationPresetsPage> {
         error = 'OBS 自动化预设读取失败，原配置未被覆盖';
       }
     }
-    var builtInAdded = false;
+    final upgraded = upgradeBuiltInEewRecordingPresets(loaded);
+    var builtInAdded = !identical(upgraded, loaded);
+    loaded = upgraded;
     ObsAutomationPreset? builtInPreset;
     if (error == null) {
       for (final preset in loaded) {
-        if (preset.name == obsEewM5RecordingPresetName) {
+        if (isBuiltInEewRecordingPreset(preset)) {
           builtInPreset = preset;
           break;
         }
       }
       if (builtInPreset == null) {
-        builtInPreset = buildEewM5RecordingPreset(nextId: _newId);
+        builtInPreset = buildEewRecordingPreset(nextId: _newId);
         loaded = [...loaded, builtInPreset];
         builtInAdded = true;
       }
@@ -317,14 +319,14 @@ class _ObsAutomationPresetsPageState extends State<ObsAutomationPresetsPage> {
     });
   }
 
-  void _createEewM5RecordingPreset() {
+  void _createEewRecordingPreset() {
     for (final preset in _presets) {
-      if (preset.name == obsEewM5RecordingPresetName) {
+      if (isBuiltInEewRecordingPreset(preset)) {
         setState(() => _selectedId = preset.id);
         return;
       }
     }
-    final preset = buildEewM5RecordingPreset(nextId: _newId);
+    final preset = buildEewRecordingPreset(nextId: _newId);
     setState(() {
       _presets = [..._presets, preset];
       _selectedId = preset.id;
@@ -804,8 +806,8 @@ class _ObsAutomationPresetsPageState extends State<ObsAutomationPresetsPage> {
           icon: const Icon(Icons.add),
         ),
         IconButton(
-          tooltip: '添加 EEW M5 分机构自动录制预设',
-          onPressed: _createEewM5RecordingPreset,
+          tooltip: '添加 EEW 分机构自动录制预设',
+          onPressed: _createEewRecordingPreset,
           icon: const Icon(Icons.playlist_add, size: 20),
         ),
         IconButton(
@@ -1561,7 +1563,19 @@ class _ObsAutomationPresetsPageState extends State<ObsAutomationPresetsPage> {
   Widget _blockEditor(ObsAutomationBlock block) {
     switch (block.type) {
       case ObsAutomationBlockType.unifiedEvent:
-        return const Text('当统一 UI 事件输入');
+        return _inlineRow([
+          const Text('当统一 UI 事件输入'),
+          Checkbox(
+            value: block.parameters['oncePerEvent'] == 'true',
+            onChanged: (value) => _setBlockParameter(
+              block.id,
+              'oncePerEvent',
+              (value ?? false).toString(),
+            ),
+            visualDensity: VisualDensity.compact,
+          ),
+          const Text('同事件仅触发一次'),
+        ]);
       case ObsAutomationBlockType.networkDetection:
         return _inlineRow([
           const Text('当台网'),
@@ -1631,6 +1645,7 @@ class _ObsAutomationPresetsPageState extends State<ObsAutomationPresetsPage> {
             'sichuan': '四川省地震局',
             'fujian': '福建省地震局',
             'chongqing': '重庆市地震局',
+            if (AppEdition.hasIcl) 'icl': 'ICL',
             'kma': 'KMA',
             'shakeAlert': 'ShakeAlert',
             if (AppEdition.hasGlobalQuake) 'globalQuake': 'GlobalQuake',

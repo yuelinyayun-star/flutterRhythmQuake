@@ -230,10 +230,10 @@ class RobustStationTriggerDetector implements StationTriggerDetector {
   }
 
   void _trimHistory(_StationTriggerHistory history, DateTime observedAt) {
-    final oldest = observedAt.subtract(
-      Duration(seconds: config.historySeconds),
-    );
-    history.removeBefore(oldest);
+    final cutoffMicros =
+        observedAt.microsecondsSinceEpoch -
+        config.historySeconds * Duration.microsecondsPerSecond;
+    history.removeBefore(cutoffMicros);
   }
 
   double? _median(_StationTriggerHistory history) {
@@ -311,10 +311,10 @@ class _StationTriggerHistory {
     _boundedIntegerCounts[index]++;
   }
 
-  void removeBefore(DateTime cutoff) {
+  void removeBefore(int cutoffMicros) {
     var writeIndex = 0;
     for (final sample in samples) {
-      if (sample.observedAt.isBefore(cutoff)) {
+      if (sample.observedAt.microsecondsSinceEpoch < cutoffMicros) {
         final index = _histogramIndex(sample.value);
         if (index != null) {
           _boundedIntegerCounts[index]--;

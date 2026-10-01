@@ -405,6 +405,7 @@ void main() {
       '四川省地震局',
       '福建省地震局',
       '重庆市地震局',
+      'ICL',
       'KMA',
       'ShakeAlert',
       'GlobalQuake',
@@ -836,25 +837,25 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('built-in EEW M5 recording preset is added disabled and saved', (
+  testWidgets('built-in EEW recording preset is added disabled and saved', (
     tester,
   ) async {
     await pumpPage(tester, const Size(1280, 800), seedBlankPreset: false);
 
-    expect(find.text('EEW M5 分机构自动录制'), findsOneWidget);
+    expect(find.text('EEW 分机构自动录制'), findsOneWidget);
     final enabledSwitch = tester.widget<Switch>(find.byType(Switch));
     expect(enabledSwitch.value, isFalse);
     expect(
       find.byKey(const ValueKey('canvas-block-startRecord')),
-      findsNWidgets(7),
+      findsNWidgets(9),
     );
     expect(
       find.byKey(const ValueKey('canvas-block-stopRecord')),
-      findsNWidgets(7),
+      findsNWidgets(9),
     );
     expect(tester.takeException(), isNull);
 
-    await tester.tap(find.byTooltip('添加 EEW M5 分机构自动录制预设'));
+    await tester.tap(find.byTooltip('添加 EEW 分机构自动录制预设'));
     await tester.pumpAndSettle();
 
     await tester.tap(find.widgetWithText(FilledButton, '保存'));
@@ -866,15 +867,32 @@ void main() {
     final presets = root['presets'] as List<dynamic>;
     expect(
       presets.cast<Map<String, dynamic>>().where(
-        (item) => item['name'] == 'EEW M5 分机构自动录制',
+        (item) => item['name'] == 'EEW 分机构自动录制',
       ),
       hasLength(1),
     );
     final preset = presets.cast<Map<String, dynamic>>().singleWhere(
-      (item) => item['name'] == 'EEW M5 分机构自动录制',
+      (item) => item['name'] == 'EEW 分机构自动录制',
     );
     expect(preset['enabled'], isFalse);
-    expect(preset['stacks'], hasLength(7));
+    expect(preset['stacks'], hasLength(9));
+    final gqStack = (preset['stacks'] as List)
+        .cast<Map<String, dynamic>>()
+        .singleWhere(
+          (stack) => (stack['blocks'] as List).cast<Map<String, dynamic>>().any(
+            (block) =>
+                block['type'] == 'eewAgency' &&
+                block['parameters']['value'] == 'globalQuake',
+          ),
+        );
+    final blocks = (gqStack['blocks'] as List).cast<Map<String, dynamic>>();
+    expect(blocks.first['parameters']['oncePerEvent'], 'true');
+    expect(
+      blocks.singleWhere(
+        (block) => block['type'] == 'wait',
+      )['parameters']['seconds'],
+      '3600',
+    );
   });
 
   testWidgets(

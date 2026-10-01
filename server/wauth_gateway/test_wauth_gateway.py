@@ -75,13 +75,14 @@ class AuthorizeUrlContractTest(unittest.TestCase):
         uri = urlparse(
             "https://auth.beecld.com/oauth2/authorize?"
             "response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fexample.com%2Fcallback"
-            "&scope=openid+profile+email&state=state&code_challenge=challenge"
+            "&scope=openid+profile+email+api_token&state=state&code_challenge=challenge"
             "&code_challenge_method=S256"
         )
         query = parse_qs(uri.query)
 
         self.assertEqual(uri.path, "/oauth2/authorize")
         self.assertEqual(query["response_type"], ["code"])
+        self.assertEqual(query["scope"], ["openid profile email api_token"])
         self.assertEqual(query["code_challenge_method"], ["S256"])
 
 
@@ -256,6 +257,7 @@ class GatewayHttpTest(AioHTTPTestCase):
 
         self.assertEqual(response.status, 200)
         self.assertEqual(redirect.netloc, "auth.beecld.com")
+        self.assertEqual(query["scope"], ["openid profile email api_token"])
         self.assertEqual(
             query["redirect_uri"],
             ["https://quake.yuelinrhythm.top/wauth/callback"],
@@ -286,7 +288,7 @@ class GatewayHttpTest(AioHTTPTestCase):
                 "api_token": "official-api-token",
                 "token_type": "Bearer",
                 "expires_in": 3600,
-                "scope": "openid profile",
+                "scope": "openid profile email api_token",
                 "id_token": "id-token",
             }
 
@@ -315,9 +317,43 @@ class GatewayHttpTest(AioHTTPTestCase):
         self.assertEqual(payload["status"], "complete")
         self.assertEqual(payload["token"]["access_token"], "official-access-token")
         self.assertEqual(payload["token"]["api_token"], "official-api-token")
+        self.assertEqual(payload["token"]["scope"], "openid profile email api_token")
         self.assertEqual(payload["userinfo"]["sub"], "72")
         self.assertNotIn("sessionToken", payload)
 
+        consumed = await self.client.get("/wauth/result", params={"state": state})
+        self.assertEqual(consumed.status, 410)
+
+    async def test_callback_without_api_token_preserves_account_only_response(self) -> None:
+        state = "s" * 32
+        await self._create_authorization(state)
+        token = {
+            "access_token": "test-account-only-access",
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "scope": "openid profile email",
+        }
+
+        async def exchange_code(_request, *, code, code_verifier):
+            return token
+
+        async def fetch_userinfo(_request, access_token):
+            self.assertEqual(access_token, token["access_token"])
+            return {"sub": "test-user"}
+
+        self.app["userinfo_fetcher"] = fetch_userinfo
+        with patch("wauth_gateway._exchange_code", new=exchange_code):
+            callback = await self.client.get(
+                "/wauth/callback",
+                params={"state": state, "code": "test-code"},
+            )
+
+        self.assertEqual(callback.status, 200)
+        response = await self.client.get("/wauth/result", params={"state": state})
+        payload = await response.json()
+        self.assertEqual(response.status, 200)
+        self.assertEqual(payload["token"], token)
+        self.assertNotIn("api_token", payload["token"])
         consumed = await self.client.get("/wauth/result", params={"state": state})
         self.assertEqual(consumed.status, 410)
 

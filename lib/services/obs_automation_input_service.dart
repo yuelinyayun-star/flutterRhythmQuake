@@ -103,6 +103,7 @@ const obsAutomationInputFields = <ObsAutomationInputFieldDefinition>[
       'sichuan': '四川省地震局',
       'fujian': '福建省地震局',
       'chongqing': '重庆市地震局',
+      if (AppEdition.hasIcl) 'icl': 'ICL',
       'kma': 'KMA',
       'shakeAlert': 'ShakeAlert',
       if (AppEdition.hasGlobalQuake) 'globalQuake': 'GlobalQuake',

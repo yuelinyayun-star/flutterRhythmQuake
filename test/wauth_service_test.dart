@@ -28,7 +28,7 @@ void main() {
     expect(uri.queryParameters['response_type'], 'code');
     expect(uri.queryParameters['client_id'], WAuthService.defaultClientId);
     expect(uri.queryParameters['redirect_uri'], 'https://example.com/callback');
-    expect(uri.queryParameters['scope'], 'openid profile email');
+    expect(uri.queryParameters['scope'], 'openid profile email api_token');
     expect(uri.queryParameters['state'], 'state-1');
     expect(uri.queryParameters['nonce'], 'nonce-1');
     expect(uri.queryParameters['code_challenge'], pkce.challenge);
@@ -51,6 +51,52 @@ void main() {
     expect(failure.isSuccess, isFalse);
     expect(failure.error, 'access_denied');
   });
+
+  test('keeps explicitly requested account-only scopes unchanged', () {
+    final service = WAuthService();
+    addTearDown(service.close);
+    final uri = service.buildAuthorizationUri(
+      redirectUri: 'https://example.com/callback',
+      state: 'test-state',
+      codeChallenge: 'test-challenge',
+      scope: 'openid profile',
+    );
+
+    expect(uri.queryParameters['scope'], 'openid profile');
+  });
+
+  test('parses the explicitly consented API token separately', () {
+    final token = WAuthTokenResponse.fromJson({
+      'access_token': 'test-oauth-access',
+      'api_token': 'wat_test-consented-api',
+      'token_type': 'Bearer',
+      'expires_in': 3600,
+      'scope': 'openid profile email api_token',
+    });
+
+    expect(token.accessToken, 'test-oauth-access');
+    expect(token.apiToken, 'wat_test-consented-api');
+    expect(token.scope, 'openid profile email api_token');
+  });
+
+  for (final apiToken in [null, '', '   ']) {
+    test(
+      'does not substitute access token for absent API token: $apiToken',
+      () {
+        final result = WAuthGatewayResult.fromJson({
+          'token': {
+            'access_token': 'test-oauth-access',
+            'scope': 'openid profile email',
+            'api_token': ?apiToken,
+          },
+          'userinfo': {'sub': 'test-user'},
+        });
+
+        expect(result.token.accessToken, 'test-oauth-access');
+        expect(result.token.apiToken, isNull);
+      },
+    );
+  }
 
   test(
     'exchanges an authorization code without persisting the secret',

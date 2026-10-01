@@ -20,6 +20,7 @@ class WAuthService {
   static const String gatewayBaseUrl = 'https://quake.yuelinrhythm.top';
   static const String defaultRedirectUri =
       'https://quake.yuelinrhythm.top/wauth/callback';
+  static const String defaultScope = 'openid profile email api_token';
 
   static const String authorizePath = '/oauth2/authorize';
   static const String tokenPath = '/oauth2/token';
@@ -70,7 +71,7 @@ class WAuthService {
     required String state,
     required String codeChallenge,
     String? nonce,
-    String scope = 'openid profile email',
+    String scope = defaultScope,
   }) {
     final trimmedRedirectUri = redirectUri.trim();
     if (trimmedRedirectUri.isEmpty) {

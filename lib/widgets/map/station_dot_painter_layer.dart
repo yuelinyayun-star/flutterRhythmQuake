@@ -161,8 +161,24 @@ class _StationDotPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _StationDotPainter oldDelegate) {
-    return oldDelegate.camera != camera ||
-        oldDelegate.dots != dots ||
-        oldDelegate.sizeWithCameraZoom != sizeWithCameraZoom;
+    if (oldDelegate.camera != camera ||
+        oldDelegate.sizeWithCameraZoom != sizeWithCameraZoom ||
+        oldDelegate.dots.length != dots.length) {
+      return true;
+    }
+    if (identical(oldDelegate.dots, dots)) return false;
+    for (var index = 0; index < dots.length; index++) {
+      final previous = oldDelegate.dots[index];
+      final current = dots[index];
+      if (previous.coordinate != current.coordinate ||
+          previous.color != current.color ||
+          previous.radius != current.radius ||
+          previous.fillOpacity != current.fillOpacity ||
+          previous.borderOpacity != current.borderOpacity ||
+          previous.borderWidth != current.borderWidth) {
+        return true;
+      }
+    }
+    return false;
   }
 }

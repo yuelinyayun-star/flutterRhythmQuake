@@ -55,6 +55,26 @@ void main() {
   });
 
   test(
+    'missing newly authorized API token leaves both saved tokens intact',
+    () async {
+      final store = WAuthCredentialStore();
+      await store.write(
+        accessToken: 'test-old-access',
+        apiToken: 'test-old-api',
+      );
+
+      await expectLater(
+        store.write(accessToken: 'test-new-access', apiToken: ''),
+        throwsArgumentError,
+      );
+
+      final saved = await store.readAndMigrate();
+      expect(saved.accessToken, 'test-old-access');
+      expect(saved.apiToken, 'test-old-api');
+    },
+  );
+
+  test(
     'legacy API-only credentials migrate and clearing removes all copies',
     () async {
       SharedPreferences.setMockInitialValues({

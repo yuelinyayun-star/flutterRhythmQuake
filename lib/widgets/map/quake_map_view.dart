@@ -67,6 +67,7 @@ import '../ui/ui_scale.dart';
 import 'jma_info_focus.dart';
 import 'finite_camera_constraint.dart';
 import 'allow_any_cert_tile_provider.dart';
+import 'basemap_tile_cache.dart';
 import 'map_config.dart';
 import 'package:provider/provider.dart';
 import '../../providers/quake_provider.dart';
@@ -639,6 +640,9 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   bool _initialCameraPolicyApplied = false;
   bool _lastCanAutoFollow = true;
   final AllowAnyCertTileProvider _tileProvider = AllowAnyCertTileProvider();
+  final AllowAnyCertTileProvider _basemapTileProvider = AllowAnyCertTileProvider(
+    cachingProvider: BasemapTileCache.shared,
+  );
   final StreamController<void> _tileResetController =
       StreamController<void>.broadcast();
   final TileErrorRetryController _fanBaseTileRetry =
@@ -2921,8 +2925,8 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     if (provider?.incoisTsunami?.isActive == true) return true;
     if (_latestDetectSnapshot.stage != ShakeDetectStage.idle) return true;
     if (_pAlertDetectionGrid.cells.isNotEmpty) return true;
-    if (_kmaStations.any((s) => s.isActive || s.intensity >= 0)) return true;
-    if (_cwaStations.any((s) => s.hasAlert || s.currentIntensity >= 0)) {
+    if (_kmaStations.any((s) => s.isActive)) return true;
+    if (_cwaStations.any((s) => s.hasAlert)) {
       return true;
     }
     return false;
@@ -6142,7 +6146,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                               tileState.tileKey,
                             ),
                             userAgentPackageName: 'flutterrhythmquake/1.0',
-                            tileProvider: _tileProvider,
+                            tileProvider: _basemapTileProvider,
                             tileDimension: mapboxBase ? 512 : 256,
                             maxNativeZoom: MapConfig.maxNativeZoomByKey(
                               tileState.tileKey,
@@ -6165,7 +6169,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                             key: const ValueKey('jianTransportation'),
                             urlTemplate: MapConfig.jianTransportation,
                             userAgentPackageName: 'flutterrhythmquake/1.0',
-                            tileProvider: _tileProvider,
+                            tileProvider: _basemapTileProvider,
                             maxNativeZoom:
                                 MapConfig.jianTransportationMaxNativeZoom,
                             panBuffer: 0,

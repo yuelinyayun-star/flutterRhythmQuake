@@ -148,9 +148,10 @@ class NiedSourceEstimationDriver {
       stations: stations,
       observedAt: resolvedObservedAt,
     );
-    final activeSnapshots =
-        dartHypocenterInput['activeStations']! as List<Map<String, Object?>>;
-    final hasKaActiveStations = activeSnapshots.isNotEmpty;
+    final hasKaActiveStations =
+        dartHypocenterInput != null &&
+        (dartHypocenterInput['activeStations']! as List<Map<String, Object?>>)
+            .isNotEmpty;
     final currentEvent = stationEventTracker.currentNiedEvent.value;
     // Keep the NIED HYP entry condition identical to Kanameishi: only the
     // KA active-station chain may create or advance an inference event.  The
@@ -173,6 +174,7 @@ class NiedSourceEstimationDriver {
       effectiveStageName: trackerStageName,
     );
     if (shouldIngestFrame) {
+      final trackerInput = dartHypocenterInput!;
       final replayLogger = NiedReplayLogger.instance;
       if (trackerStageName != 'idle') {
         _startForSourceTrigger(
@@ -228,21 +230,21 @@ class NiedSourceEstimationDriver {
               .toUtc()
               .toIso8601String(),
           'nied_hypocenter_new_active_stations':
-              dartHypocenterInput['newActiveStations'],
+              trackerInput['newActiveStations'],
           'nied_hypocenter_active_stations':
-              dartHypocenterInput['activeStations'],
+              trackerInput['activeStations'],
           'nied_hypocenter_inactive_stations':
-              dartHypocenterInput['inactiveStations'],
+              trackerInput['inactiveStations'],
           'nied_hypocenter_inactive_scope':
-              dartHypocenterInput['inactiveScope'],
+              trackerInput['inactiveScope'],
           'nied_hypocenter_detection_grid':
-              dartHypocenterInput['detectionGrid'],
+              trackerInput['detectionGrid'],
           'nied_hypocenter_adj_station_ids':
-              dartHypocenterInput['adjStationIds'],
+              trackerInput['adjStationIds'],
           'nied_detection_adj_station_codes':
-              dartHypocenterInput['detectionAdjStationCodes'],
+              trackerInput['detectionAdjStationCodes'],
           'nied_hypocenter_input_diagnostics':
-              dartHypocenterInput['diagnostics'],
+              trackerInput['diagnostics'],
           'station_trigger_detector_id': stationTriggerDetector.detectorId,
           'station_trigger_active_count': stationTriggers
               .where((trigger) => trigger.isActiveLike)
@@ -532,7 +534,7 @@ class NiedSourceEstimationDriver {
     return maxDetectLevel;
   }
 
-  Map<String, Object?> _dartHypocenterInput({
+  Map<String, Object?>? _dartHypocenterInput({
     required List<NiedStation> stations,
     required DateTime observedAt,
   }) {
@@ -742,10 +744,6 @@ class NiedSourceEstimationDriver {
     final surroundingGridKeys = niedDetectionSurroundingGridKeys(
       activeGridLevels.keys,
     );
-    final inactiveStations = <Map<String, Object?>>[
-      for (final station in inactiveCandidates)
-        snapshot(station, active: false),
-    ];
     final activeGridCells =
         [
           for (final entry in activeGridLevels.entries)
@@ -779,6 +777,17 @@ class NiedSourceEstimationDriver {
     _dartHypActiveStationCodes = activeStations
         .map((snapshot) => snapshot['code']!.toString())
         .toSet();
+
+    // Detection and hold state above still run for every frame. Only omit the
+    // tracker payload when processStations would immediately discard it.
+    if (activeStations.isEmpty &&
+        stationEventTracker.currentNiedEvent.value == null) {
+      return null;
+    }
+    final inactiveStations = <Map<String, Object?>>[
+      for (final station in inactiveCandidates)
+        snapshot(station, active: false),
+    ];
 
     return {
       'newActiveStations': List<Map<String, Object?>>.unmodifiable(

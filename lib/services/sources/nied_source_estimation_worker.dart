@@ -73,7 +73,9 @@ class NiedSourceEstimationWorker {
     if (_disposed) return null;
     // Capture before the first await: live station objects contain timers and
     // are mutated in place by subsequent network frames.
-    final snapshot = stations.map(_snapshotStation).toList(growable: false);
+    final snapshot = stations
+        .map(NiedStation.detachedSnapshot)
+        .toList(growable: false);
     final generation = _generation;
     final sensitivity = _sensitivity;
     final port = await _ensureStarted();
@@ -179,41 +181,6 @@ class NiedSourceEstimationWorker {
     reset();
   }
 }
-
-NiedStation _snapshotStation(NiedStation station) =>
-    NiedStation(
-        id: station.id,
-        code: station.code,
-        name: station.name,
-        coordinate: station.coordinate,
-        network: station.network,
-        prefecture: station.prefecture,
-        expireSeconds: station.expireSeconds,
-        pixelX: station.pixelX,
-        pixelY: station.pixelY,
-        scanReliable: station.scanReliable,
-        pixelClusterId: station.pixelClusterId,
-        level: station.level,
-      )
-      ..defaultExpireSeconds = station.defaultExpireSeconds
-      ..calibrationFactor = station.calibrationFactor
-      ..thresholdCode = station.thresholdCode
-      ..ascend = station.ascend
-      ..triggerStamp = station.triggerStamp
-      ..activity = station.activity
-      ..isActive = station.isActive
-      ..abnormalUpdateCount = station.abnormalUpdateCount
-      ..detectState = station.detectState
-      ..detectReason = station.detectReason
-      ..recentLevel = List.of(station.recentLevel)
-      ..lastUpdate = station.lastUpdate
-      ..lastDataTime = station.lastDataTime
-      ..lastReceivedAt = station.lastReceivedAt
-      ..gifObservations.addAll(station.gifObservations)
-      ..gifLayerQualityFlags.addAll({
-        for (final entry in station.gifLayerQualityFlags.entries)
-          entry.key: Set.of(entry.value),
-      });
 
 void _sourceWorkerMain(SendPort output) {
   final input = ReceivePort();
