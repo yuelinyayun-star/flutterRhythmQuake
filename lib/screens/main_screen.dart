@@ -19,6 +19,7 @@ import '../widgets/map/source_dashboard.dart';
 import '../widgets/ui/alert_module.dart';
 import '../widgets/ui/eqlist_panel.dart';
 import '../widgets/ui/history_drawer.dart';
+import '../widgets/ui/development_edition_label.dart';
 import '../widgets/ui/top_status_bar.dart';
 import '../widgets/ui/weather_marquee.dart';
 import '../widgets/ui/settings_page.dart';
@@ -415,7 +416,12 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
               Positioned(
                 top: UiScale.belowTopBar(context, 12),
                 left: _s(20, context),
-                bottom: _s(20, context),
+                bottom: AppEdition.isPublic
+                    ? _s(20, context)
+                    : math.max(
+                        _s(20, context),
+                        MediaQuery.textScalerOf(context).scale(11) + 6,
+                      ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -505,6 +511,12 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                   offstage: _mobileSection != MobileSection.seismic,
                   child: Stack(children: _buildPhoneOverlays(context)),
                 ),
+              ),
+            if (!isPhone && !AppEdition.isPublic)
+              Positioned(
+                left: _s(20, context),
+                bottom: 2,
+                child: const DevelopmentEditionLabel(),
               ),
           ],
         ),
