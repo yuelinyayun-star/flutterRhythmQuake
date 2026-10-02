@@ -1,0 +1,56 @@
+name: Flutter Linux build
+
+on:
+  workflow_dispatch:
+    inputs:
+      edition:
+        description: Build edition
+        required: true
+        default: public
+        type: choice
+        options:
+          - public
+          - personal
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    env:
+      EDITION: ${{ inputs.edition }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang cmake ninja-build pkg-config libgtk-3-dev libstdc++-12-dev \
+            libsecret-1-dev libnotify-dev libayatana-appindicator3-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            libsqlite3-dev openjdk-17-jdk shellcheck
+      - name: Install Flutter 3.41.1
+        run: |
+          git clone --depth 1 --branch 3.41.1 \
+            https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Resolve dependencies
+        run: flutter pub get
+      - name: Validate packaging script and edition
+        run: |
+          shellcheck build_linux_edition.sh
+          flutter test --no-pub "--dart-define=RQ_EDITION=$EDITION" \
+            test/app_edition_test.dart
+      - name: Build and package Linux x64
+        run: bash build_linux_edition.sh "$EDITION"
+      - name: Save Linux package
+        uses: actions/upload-artifact@v4
+        with:
+          name: rhythmquake-linux-x64-${{ inputs.edition }}
+          path: |
+            build/installer/*_${{ inputs.edition }}_linux_x64.tar.gz
+            build/installer/*_${{ inputs.edition }}_linux_x64.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 14
