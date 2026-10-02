@@ -38,6 +38,8 @@ Extract the entire archive, including `lib` and `data`, before running the
 `flutterrhythmquake` executable. Runtime validation requires a Linux graphical
 session; WSL 2 with WSLg can be used for local smoke tests. Compilation alone
 does not validate text-to-speech, authentication, notifications, or OBS capture.
+See [Linux runtime](linux_runtime.md) for dependencies, launch instructions,
+and the current WSL validation limits.
 
 The edition is part of the output filename. The two Windows builds currently
 share one installer app ID, and the two Android builds share one application ID.
