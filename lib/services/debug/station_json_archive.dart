@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../../models/source_payload.dart';
 import '../../models/station_history_frame.dart';
 
 /// Lossless JSON table: repeated keys, coordinates, metadata and values are
@@ -72,7 +73,8 @@ class StationJsonArchive {
           }
           value[key] = reference(node[i + 1]);
         }
-        values.add(Map.unmodifiable(value));
+        // Preserve immutable table references when frames capture their payloads.
+        values.add(snapshotSourcePayload(value));
       } else {
         throw const FormatException('测站 JSON 节点无效');
       }

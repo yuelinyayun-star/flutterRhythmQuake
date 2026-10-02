@@ -8,6 +8,9 @@ import '../models/eew_event_group.dart';
 import '../models/station_history_frame.dart';
 import 'debug/station_json_archive.dart';
 
+String _encodeStationHistoryArchive(List<StationHistoryFrame> frames) =>
+    jsonEncode(StationJsonArchive.encode(frames));
+
 /// Incremental event storage; the old single JSON list is read-only migration.
 class EewHistoryStore {
   final String preferenceKey;
@@ -159,7 +162,11 @@ class EewHistoryStore {
       }
       if (!await prefs.setString(
         entry.key,
-        jsonEncode(StationJsonArchive.encode(entry.value)),
+        await compute(
+          _encodeStationHistoryArchive,
+          entry.value,
+          debugLabel: 'eew-station-history-encode',
+        ),
       )) {
         throw StateError('Could not persist station history archive');
       }

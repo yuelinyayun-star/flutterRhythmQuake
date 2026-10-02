@@ -655,7 +655,7 @@ class _EqCardState extends State<_EqCard> {
         ? '極浅'
         : '';
     final timeStr = DateFormat(
-      'yyyy-MM-dd HH:mm',
+      'yyyy-MM-dd HH:mm:ss',
     ).format(QuakeTime.displayClock(eq));
     final zoneStr = QuakeTime.zoneLabel(eq);
     final source = _sourceLabelStatic(eq.source);
@@ -671,15 +671,14 @@ class _EqCardState extends State<_EqCard> {
     return '[RhythmQuake] ${parts.join(' ')}';
   }
 
-  void _copyInfo() {
-    Clipboard.setData(ClipboardData(text: _buildCopyText()));
+  Future<void> _copyInfo() async {
+    final text = _buildCopyText();
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-          '已复制: ${_buildCopyText()}',
-          style: const TextStyle(fontSize: 12),
-        ),
+        content: const Text('已复制地震信息', style: TextStyle(fontSize: 12)),
         duration: const Duration(seconds: 2),
         behavior: SnackBarBehavior.floating,
         margin: const EdgeInsets.only(bottom: 60, left: 20, right: 20),
@@ -715,6 +714,7 @@ class _EqCardState extends State<_EqCard> {
         onEnter: (_) => setState(() => _hovered = true),
         onExit: (_) => setState(() => _hovered = false),
         child: GestureDetector(
+          onLongPress: _copyInfo,
           onTap: () {
             final mapState = context.read<MapStateProvider>();
             if (mapState.isSelectedHistoryEvent(eq)) {
@@ -764,7 +764,7 @@ class _EqCardState extends State<_EqCard> {
                             ),
                             SizedBox(height: _s(2)),
                             Text(
-                              '${DateFormat('yyyy-MM-dd HH:mm').format(QuakeTime.displayClock(eq))} (${QuakeTime.zoneLabel(eq)})',
+                              '${DateFormat('yyyy-MM-dd HH:mm:ss').format(QuakeTime.displayClock(eq))} (${QuakeTime.zoneLabel(eq)})',
                               style: TextStyle(
                                 fontSize: _s(11),
                                 color: Colors.white.withValues(alpha: 0.4),

@@ -2,4 +2,6 @@
 
 void initDesktopDatabase() {}
 
+Future<void> initDesktopPreferences() async {}
+
 Future<void> initDesktopWindow() async {}

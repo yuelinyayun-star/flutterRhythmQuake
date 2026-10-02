@@ -1,4 +1,7 @@
+import 'dart:ui' show PointerDeviceKind;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutterrhythmquake/models/quake_message.dart';
 import 'package:flutterrhythmquake/services/quake_event_adapter.dart';
@@ -18,6 +21,118 @@ void main() {
   tearDown(() {
     _clear(manager);
   });
+
+  for (final size in [
+    const Size(390, 844),
+    const Size(844, 390),
+    const Size(800, 1024),
+    const Size(1600, 900),
+  ]) {
+    testWidgets('long press copies consistently at $size', (tester) async {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final clipboardWrites = <String>[];
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method == 'Clipboard.setData') {
+          clipboardWrites.add((call.arguments as Map)['text'] as String);
+        }
+        return null;
+      });
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+      );
+      final cached = QuakeMessage(
+        source: QuakeSourceType.kma_eq,
+        eventId: 'kma_20260723034704',
+        location: '경상북도',
+        magnitude: 4.2,
+        latitude: 36.1,
+        longitude: 128.2,
+        depth: 12,
+        originTime: DateTime(2026, 7, 23, 2, 47, 4),
+        timeZone: 8,
+        maxIntensity: 4,
+        isHistory: true,
+        isInfoEvent: true,
+      );
+      manager.updateKmaList([cached]);
+      final mapState = MapStateProvider();
+      final provider = QuakeProvider();
+      final isPhone = size.shortestSide < 600;
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: provider),
+            ChangeNotifierProvider.value(value: mapState),
+          ],
+          child: MaterialApp(
+            home: Scaffold(body: EqlistPanel(embedded: isPhone)),
+          ),
+        ),
+      );
+      await tester.pump();
+      final card = find.text('韩国附近');
+      expect(find.text('2026-07-23 02:47:04 (UTC+8)'), findsOneWidget);
+
+      await tester.longPress(card);
+      await tester.pump();
+      const expectedCopy =
+          '[RhythmQuake] 烈度IV M4.2 韩国附近 '
+          '2026-07-23 02:47:04 (UTC+8) 深度12km KMA';
+      expect(mapState.selectedHistoryEvent, isNull);
+      expect(clipboardWrites, [expectedCopy]);
+      expect(find.text('已复制地震信息'), findsOneWidget);
+      expect(find.text('复制信息'), findsNothing);
+      expect(cached.location, '경상북도');
+
+      await tester.tap(card);
+      await tester.pump();
+      expect(mapState.isSelectedHistoryEvent(cached), isTrue);
+      await tester.longPress(card);
+      await tester.pump();
+      expect(clipboardWrites, [expectedCopy, expectedCopy]);
+      expect(mapState.isSelectedHistoryEvent(cached), isTrue);
+      await tester.tap(card);
+      await tester.pump();
+      expect(mapState.selectedHistoryEvent, isNull);
+      expect(clipboardWrites, hasLength(2));
+
+      final scrollGesture = await tester.startGesture(tester.getCenter(card));
+      await scrollGesture.moveBy(const Offset(0, -40));
+      await tester.pump(const Duration(milliseconds: 600));
+      await scrollGesture.up();
+      await tester.pump();
+      expect(clipboardWrites, hasLength(2));
+      if (!isPhone) {
+        final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+        final cardPosition = tester.getCenter(card);
+        await mouse.addPointer(location: Offset.zero);
+        await mouse.moveTo(cardPosition);
+        await tester.pump();
+        expect(find.text('复制信息'), findsOneWidget);
+        await mouse.down(cardPosition);
+        await tester.pump(const Duration(milliseconds: 600));
+        await mouse.up();
+        await tester.pump();
+        expect(clipboardWrites, [expectedCopy, expectedCopy, expectedCopy]);
+        expect(mapState.selectedHistoryEvent, isNull);
+        await tester.tap(find.text('复制信息'));
+        await tester.pump();
+        expect(clipboardWrites, List.filled(4, expectedCopy));
+        expect(find.text('已复制地震信息'), findsOneWidget);
+        expect(mapState.selectedHistoryEvent, isNull);
+        await mouse.removePointer();
+      }
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      provider.dispose();
+      mapState.dispose();
+    });
+  }
 
   for (final size in [const Size(390, 844), const Size(1600, 900)]) {
     testWidgets('WHEWS catalog chip and mapped card fit $size', (tester) async {
@@ -92,7 +207,7 @@ void main() {
       await tester.pump();
       expect(find.text('韩国附近'), findsOneWidget);
       expect(find.text('경상북도'), findsNothing);
-      expect(find.text('2026-07-23 02:47 (UTC+8)'), findsOneWidget);
+      expect(find.text('2026-07-23 02:47:04 (UTC+8)'), findsOneWidget);
       expect(cached.location, '경상북도');
       expect(manager.kmaList.single.location, '경상북도');
     },

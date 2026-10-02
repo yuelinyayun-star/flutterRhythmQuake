@@ -125,6 +125,22 @@ void main() {
       );
       final restored = StationJsonArchive.decode(jsonDecode(encoded) as Map);
       expect(restored.map((f) => f.toMap()), repeated.map((f) => f.toMap()));
+      expect(
+        identical(
+          restored.first.originalJson!['metadata'],
+          restored.last.originalJson!['metadata'],
+        ),
+        isTrue,
+        reason: 'Immutable table metadata stays shared across restored frames',
+      );
+      expect(
+        () => (restored.first.originalJson!['metadata'] as Map)['data'] = null,
+        throwsUnsupportedError,
+      );
+      expect(
+        () => (restored.first.originalJson!['data'] as Map).clear(),
+        throwsUnsupportedError,
+      );
     },
   );
 

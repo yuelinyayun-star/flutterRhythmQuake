@@ -206,6 +206,7 @@ void main() async {
   if (!kIsWeb) {}
 
   // 2.5 加载持久化设置
+  await initDesktopPreferences();
   final prefs = await SharedPreferences.getInstance();
   await _clearLegacyFanTileCacheOnce(prefs);
   web_startup.setWebStartupStage('正在读取登录配置…');
