@@ -6,6 +6,7 @@ import 'package:flutterrhythmquake/models/eew_event_group.dart';
 import 'package:flutterrhythmquake/models/unified_quake_data.dart';
 import 'package:flutterrhythmquake/providers/quake_provider.dart';
 import 'package:flutterrhythmquake/services/quake_event_adapter.dart';
+import 'package:flutterrhythmquake/services/eew_history_store.dart';
 import 'package:flutterrhythmquake/services/sources/fan_service.dart';
 import 'package:flutterrhythmquake/services/sources/global_quake_service_io.dart';
 import 'package:flutterrhythmquake/services/sources/p2pquake_service.dart';
@@ -202,8 +203,10 @@ void main() {
       await prefs.remove('unified_eew_history');
       provider.dispose();
       await Future<void>.delayed(const Duration(milliseconds: 50));
-      final saved = jsonDecode(prefs.getString('unified_eew_history')!) as List;
-      expect(saved.single['reports'].single['sourcePayload'], frame['Data']);
+      final saved = EewHistoryStore(
+        preferenceKey: 'unified_eew_history',
+      ).restore(prefs);
+      expect(saved.single.latest.sourcePayload, frame['Data']);
     },
   );
 

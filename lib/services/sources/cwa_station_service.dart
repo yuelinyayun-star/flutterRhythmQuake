@@ -14,6 +14,8 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import '../station_history_capture.dart';
+import '../foreground_station_payload.dart';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -736,12 +738,16 @@ class CwaStationService {
       return false;
     }
 
+    StationHistoryCapture.instance.retainOriginal('cwa', 'data', data);
+
     updated.sort((a, b) => b.currentIntensity.compareTo(a.currentIntensity));
     _lastRtsDataTime = dataTime;
     _lastFrameReceivedAt = now;
     _recoveringFromStaleFrame = false;
     dataTimeNotifier.value = dataTime;
     _stations = updated;
+    StationHistoryCapture.instance.publish('cwa', () =>
+        ForegroundStationPayload.cwa(_stations, dataTime: dataTime), source: 'cwa', receivedAt: now);
     _stationController.add(updated);
     _checkShakeNotification();
     _handleSuccess();

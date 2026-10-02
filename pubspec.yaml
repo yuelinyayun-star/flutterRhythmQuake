@@ -101,6 +101,7 @@ flutter:
   uses-material-design: true
 
   assets:
+    - assets/certificates/TWCA_Global_Root_CA.der
     - assets/icon/
     - assets/maps/中华人民共和国.geojson
     - assets/maps/japan_prefectures.geojson

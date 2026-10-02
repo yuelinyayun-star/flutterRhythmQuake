@@ -82,6 +82,8 @@ import '../../services/sources/nied_gif_observation.dart';
 import '../../services/sources/nied_background_worker.dart';
 import '../../services/sources/nied_source_estimation_worker.dart';
 import '../../services/foreground_station_payload.dart';
+import '../../services/station_history_capture.dart';
+import '../../services/debug/replay_station_display.dart';
 import '../../services/sources/nied_yahoo_service.dart';
 import '../../services/sources/jp_shindo_scale.dart';
 import '../../services/sources/shindo_color_util.dart';
@@ -631,6 +633,72 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   bool _pendingTremStationFocus = false;
   bool _pendingPAlertStationFocus = false;
   QuakeProvider? _quakeProvider;
+  final _replayStations = ReplayStationDisplay();
+  bool _lastStationReplayActive = false;
+  bool get _stationReplayActive => _quakeProvider?.historyReplay.active == true &&
+      !_quakeProvider!.unifiedEvents.any((e) => e.isEew && !e.isReplay);
+  List<NiedStation> get _displayNied => _stationReplayActive ? _replayStations.nied : _niedStations;
+  List<KmaStation> get _displayKma => _stationReplayActive ? _replayStations.kma : _kmaStations;
+  List<CwaStation> get _displayCwa => _stationReplayActive ? _replayStations.cwa : _cwaStations;
+  List<PAlertStation> get _displayPalert => _stationReplayActive ? _replayStations.palert : _pAlertStations;
+  List<SeisJsStation> get _displaySeisjs => _stationReplayActive ? _replayStations.seisjs : _seisjsStations;
+  List<SnetStation> get _displaySnet => _stationReplayActive ? _replayStations.snet :
+      (_usesArraySnet ? _whewsSnetStations : _snetService.stations);
+
+  void _onStationReplayChanged() {
+    if (!mounted) return;
+    _lastStationReplayActive = _stationReplayActive;
+    _replayStations.update(_quakeProvider!.historyReplay.stationSnapshots.value);
+    for (final revision in [_niedLayerRevision, _kmaLayerRevision, _cwaLayerRevision,
+        _pAlertLayerRevision, _seisJsLayerRevision, _snetLayerRevision]) {
+      _notifyLayer(revision);
+    }
+    _emitStationSummary();
+  }
+
+  void _captureStationFrame(String kind) {
+    final hosted = BackgroundService().isAndroidConnectionHostedByForegroundService;
+    if (!hosted && const {'cwa', 'seisjs', 'palert'}.contains(kind)) return;
+    final lpgmSnapshot = _latestLpgmSnapshot;
+    if (kind == 'lpgm' && lpgmSnapshot == null) return;
+    Map<String, dynamic> snapshot() => switch (kind) {
+      'nied' => {
+        ...ForegroundStationPayload.nied(_niedStations, source: _niedSource, includeTrackingHistory: false),
+        'detection': {
+          'stage': _latestDetectSnapshot.stage.name,
+          'weakCount': _latestDetectSnapshot.weakCount,
+          'detectedCount': _latestDetectSnapshot.detectedCount,
+          'strongCount': _latestDetectSnapshot.strongCount,
+          'maxShindo': _latestDetectSnapshot.maxShindo,
+          'gridCells': {for (final entry in _latestDetectSnapshot.gridCells.entries)
+            entry.key: {'lat': entry.value.center.latitude, 'lng': entry.value.center.longitude,
+              'level': entry.value.level, 'shindo': entry.value.shindo}},
+          'detectedStations': [for (final station in _latestDetectSnapshot.detectedStations)
+            {'code': station.code, 'prefecture': station.prefecture, 'level': station.level,
+              'jmaShindo': station.jmaShindo, 'detectState': station.detectState,
+              'detectReason': station.detectReason}],
+        },
+      },
+      'kma' => ForegroundStationPayload.kma(_kmaStations, dataTime: _kmaService.dataTimeNotifier.value),
+      'cwa' => ForegroundStationPayload.cwa(_cwaStations, dataTime: _cwaService.dataTimeNotifier.value),
+      'snet' => ForegroundStationPayload.snet(_usesArraySnet ? _whewsSnetStations : _snetService.stations),
+      'seisjs' => ForegroundStationPayload.seisjs(_seisjsStations, dataTime: _seisjsService.dataTimeNotifier.value),
+      'palert' => ForegroundStationPayload.palert(_pAlertStations,
+          dataTime: _pAlertService.dataTimeNotifier.value,
+          receivedTime: _pAlertService.receivedTimeNotifier.value,
+          detection: _pAlertService.detectionSnapshot),
+      'lpgm' => ForegroundStationPayload.lpgm(lpgmSnapshot!),
+      _ => throw StateError('Unsupported station kind'),
+    };
+    final source = switch (kind) {
+      'nied' => _usesArrayNied ? '$_niedSource.nied' : null,
+      'snet' => _usesArraySnet ? '$_snetSource.snet' : null,
+      'kma' => _usesArrayKma ? '$_kmaSource.kma' : null,
+      'cwa' || 'seisjs' || 'palert' => kind,
+      _ => null,
+    };
+    StationHistoryCapture.instance.publish(kind, snapshot, source: source);
+  }
   MapStateProvider? _mapStateProvider;
   bool _providerCallbacksBound = false;
   bool _mapDataServicesStarted = false;
@@ -790,6 +858,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
         _requestKmaStationFocus(force: true);
       }
       _syncActivityTimers();
+      if (!_usesArrayKma) _captureStationFrame('kma');
       _emitStationSummary();
     });
     _whewsNiedSubscription = _whewsNiedService.frameStream.listen(
@@ -828,6 +897,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
         _requestTremStationFocus(force: true);
       }
       _syncActivityTimers();
+      _captureStationFrame('cwa');
       _emitStationSummary();
     });
     _pAlertStationSubscription = _pAlertService.stationStream.listen((
@@ -847,6 +917,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       } else {
         _pAlertStations = stations;
       }
+      _captureStationFrame('palert');
       _emitStationSummary();
     });
     _seisjsSubscription = _seisjsService.stationStream.listen((stations) {
@@ -860,6 +931,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       } else {
         _seisjsStations = stations;
       }
+      _captureStationFrame('seisjs');
       _emitStationSummary();
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -888,6 +960,16 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       return;
     }
     final kind = payload['kind']?.toString();
+    final original = payload['originalJson'];
+    if (original is Map) {
+      final source = switch (kind) {
+        'whewsNied' => '${payload['source'] ?? 'whews'}.nied',
+        'whewsSnet' => '${payload['source'] ?? 'whews'}.snet',
+        'whewsKma' => '${payload['source'] ?? 'whews'}.kma',
+        _ => kind,
+      };
+      if (source != null) StationHistoryCapture.instance.restoreOriginal(source, original);
+    }
     if (kind == 'signal') {
       _handleForegroundStationSignal(payload);
       return;
@@ -930,6 +1012,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
         }
         _requestKmaStationFocus(force: true);
         _syncActivityTimers();
+        _captureStationFrame('kma');
         _emitStationSummary();
       case 'cwa':
         if (!_tremStationEnabled) return;
@@ -946,6 +1029,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
         }
         _requestTremStationFocus(force: true);
         _syncActivityTimers();
+        _captureStationFrame('cwa');
         _emitStationSummary();
       case 'snet':
         if (_usesArraySnet || !_snetEnabled) return;
@@ -953,6 +1037,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
         _snetService.ingestExternalStations(stations);
         _lastSnetLayerSignature = _snetLayerSignature(stations);
         _notifyLayer(_snetLayerRevision);
+        _captureStationFrame('snet');
         _emitStationSummary();
       case 'seisjs':
         if (!_wolfxSeisJsEnabled) return;
@@ -967,6 +1052,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
           _notifyLayer(_seisJsLayerRevision);
         }
         _emitStationSummary();
+        _captureStationFrame('seisjs');
       case 'palert':
         if (!_pAlertEnabled) return;
         _pAlertService.dataTimeNotifier.value =
@@ -992,11 +1078,13 @@ class _QuakeMapViewState extends State<QuakeMapView> {
           _notifyLayer(_pAlertLayerRevision);
         }
         _emitStationSummary();
+        _captureStationFrame('palert');
       case 'lpgm':
         if (!_niedLpgmEnabled) return;
         final snapshot = ForegroundStationPayload.decodeLpgm(payload);
         if (snapshot == null) return;
         _latestLpgmSnapshot = snapshot;
+        _captureStationFrame('lpgm');
         _emitStationSummary();
       case 'fdsnStations':
         final source = payload['source']?.toString();
@@ -1109,6 +1197,8 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       stationTypes: (payload['stationTypes'] as List?)?.map((v) => v.toString()).toList() ?? const [],
       pga: pga,
       pgv: pgv,
+      originalJson: payload['originalJson'] is Map
+          ? Map<String, dynamic>.from(payload['originalJson'] as Map) : null,
     );
   }
 
@@ -1862,6 +1952,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       }
     }
     _refreshNiedLayerIfNeeded(stations);
+    _captureStationFrame('nied');
     _emitStationSummary();
   }
 
@@ -2485,11 +2576,11 @@ class _QuakeMapViewState extends State<QuakeMapView> {
               builder: (context, blinkOn, child) {
                 if (!_niedLayerVisible) return const SizedBox.shrink();
                 return NiedIntensityLayer(
-                  stations: _niedStations,
+                  stations: _displayNied,
                   hideGrid: hideGrid,
                   blinkOn: blinkOn,
                   displayShindo0: _displayShindo0,
-                  detectionGridCells: _latestDetectSnapshot.gridCells,
+                  detectionGridCells: _stationReplayActive ? _replayStations.niedDetection.gridCells : _latestDetectSnapshot.gridCells,
                   onGridCellsChanged: (centers) {
                     _niedGridCellCenters
                       ..clear()
@@ -2521,11 +2612,11 @@ class _QuakeMapViewState extends State<QuakeMapView> {
             return ValueListenableBuilder<bool>(
               valueListenable: _blinkNotifier,
               builder: (context, blinkOn, child) {
-                if (!_kmaVisible || _kmaStations.isEmpty) {
+                if (!_kmaVisible || _displayKma.isEmpty) {
                   return const SizedBox.shrink();
                 }
                 return KmaIntensityLayer(
-                  stations: _kmaStations,
+                  stations: _displayKma,
                   hideGrid: hideGrid,
                   blinkOn: blinkOn,
                   displayShindo0: _displayShindo0,
@@ -2560,11 +2651,11 @@ class _QuakeMapViewState extends State<QuakeMapView> {
             return ValueListenableBuilder<bool>(
               valueListenable: _blinkNotifier,
               builder: (context, blinkOn, child) {
-                if (!_cwaVisible || _cwaStations.isEmpty) {
+                if (!_cwaVisible || _displayCwa.isEmpty) {
                   return const SizedBox.shrink();
                 }
                 return CwaStationLayer(
-                  stations: _cwaStations,
+                  stations: _displayCwa,
                   hideGrid: hideGrid,
                   blinkOn: blinkOn,
                   displayShindo0: _displayShindo0,
@@ -2590,7 +2681,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     return ValueListenableBuilder<int>(
       valueListenable: _pAlertLayerRevision,
       builder: (context, revision, child) {
-        if (!_pAlertEnabled || _pAlertStations.isEmpty) {
+        if (!_pAlertEnabled || _displayPalert.isEmpty) {
           return const SizedBox.shrink();
         }
         return Selector<QuakeProvider, bool>(
@@ -2598,9 +2689,10 @@ class _QuakeMapViewState extends State<QuakeMapView> {
           builder: (context, hideGrid, child) => ValueListenableBuilder<bool>(
             valueListenable: _blinkNotifier,
             builder: (context, blinkOn, child) => PAlertStationLayer(
-              stations: _pAlertStations,
+              stations: _displayPalert,
+              observationTime: _stationReplayActive ? _quakeProvider!.historyReplay.position : null,
               displayShindo0: _displayShindo0,
-              detectionGridCells: _pAlertDetectionGrid.cells,
+              detectionGridCells: _stationReplayActive ? _replayStations.palertGrid : _pAlertDetectionGrid.cells,
               hideGrid: hideGrid,
               blinkOn: blinkOn,
             ),
@@ -2752,10 +2844,10 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     return ValueListenableBuilder<int>(
       valueListenable: _seisJsLayerRevision,
       builder: (context, revision, child) {
-        if (!_seisjsVisible || _seisjsStations.isEmpty) {
+        if (!_seisjsVisible || _displaySeisjs.isEmpty) {
           return const SizedBox.shrink();
         }
-        return SeisJsLayer(stations: _seisjsStations);
+        return SeisJsLayer(stations: _displaySeisjs);
       },
     );
   }
@@ -2765,9 +2857,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       valueListenable: _snetLayerRevision,
       builder: (context, revision, child) {
         if (!_snetVisible) return const SizedBox.shrink();
-        final stations = _usesArraySnet
-            ? _whewsSnetStations
-            : _snetService.stations;
+        final stations = _displaySnet;
         return SnetLayer(stations: stations);
       },
     );
@@ -2893,6 +2983,9 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   }
 
   void _onQuakeProviderChanged() {
+    if (_stationReplayActive != _lastStationReplayActive) {
+      _onStationReplayChanged();
+    }
     _syncActivityTimers();
     _syncVolcanoMapServiceWithOverlay();
     if (PAlertSourceState.events.value.isNotEmpty) {
@@ -2943,6 +3036,8 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       mapState.addListener(_onMapStateChanged);
     }
     if (!_providerCallbacksBound) {
+      _quakeProvider!.historyReplay.addListener(_onStationReplayChanged);
+      _quakeProvider!.historyReplay.stationSnapshots.addListener(_onStationReplayChanged);
       _quakeProvider?.addListener(_onQuakeProviderChanged);
       _quakeProvider?.typhoonListenable.addListener(
         _onTyphoonListenableChanged,
@@ -5170,16 +5265,16 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     if (widget.onStationDataChanged == null || !mounted) return;
     final summary = StationSummaryData();
 
-    for (final s in _seisjsStations) {
+    for (final s in _displaySeisjs) {
       if (s.region.contains('六分街') || s.region.contains('新艾利都')) {
         summary.seisJsStation = s;
         break;
       }
     }
-    summary.seisJsMaxStation = selectSeisJsCurrentMaxStation(_seisjsStations);
+    summary.seisJsMaxStation = selectSeisJsCurrentMaxStation(_displaySeisjs);
 
     double niedMax = -1;
-    for (final s in _niedStations) {
+    for (final s in _displayNied) {
       if (s.level >= 0 && s.level > niedMax) {
         niedMax = s.level.toDouble();
         summary.niedMaxStation = s;
@@ -5187,7 +5282,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     }
 
     double treaMax = -1;
-    for (final s in _cwaStations) {
+    for (final s in _displayCwa) {
       final intensity = s.currentIntensity;
       if (intensity > treaMax) {
         treaMax = intensity;
@@ -5196,7 +5291,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     }
 
     int kmaMaxLevel = -1;
-    for (final s in _kmaStations) {
+    for (final s in _displayKma) {
       if (s.holdLevel > kmaMaxLevel) {
         kmaMaxLevel = s.holdLevel;
         summary.kmaMaxStation = s;
@@ -5204,7 +5299,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     }
 
     var pAlertMax = -1;
-    for (final station in _pAlertStations) {
+    for (final station in _displayPalert) {
       final level = station.gridLevel;
       if (level > pAlertMax) {
         pAlertMax = level;
@@ -5212,12 +5307,10 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       }
     }
 
-    final snetStations = _usesArraySnet
-        ? _whewsSnetStations
-        : _snetService.stations;
+    final snetStations = _displaySnet;
     final snetTopStations = selectSnetSidebarTopStations(snetStations);
     if (snetTopStations.isNotEmpty) {
-      summary.snetWindowEnd = DateTime.now();
+      summary.snetWindowEnd = _stationReplayActive ? _quakeProvider!.historyReplay.position : DateTime.now();
       summary.snetWindowStart = summary.snetWindowEnd!.subtract(
         const Duration(minutes: 10),
       );
@@ -5228,18 +5321,19 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       summary.snetWindowEnd = null;
     }
 
+    final niedDetection = _stationReplayActive ? _replayStations.niedDetection : _latestDetectSnapshot;
     summary.niedDetect = NiedDetectSummary(
-      stage: _latestDetectSnapshot.stage.name,
-      weakCount: _latestDetectSnapshot.weakCount,
-      detectedCount: _latestDetectSnapshot.detectedCount,
-      strongCount: _latestDetectSnapshot.strongCount,
-      maxShindo: _latestDetectSnapshot.maxShindo,
-      visualGridCount: _latestDetectSnapshot.gridCells.length,
-      detectedStations: _latestDetectSnapshot.detectedStations,
+      stage: niedDetection.stage.name,
+      weakCount: niedDetection.weakCount,
+      detectedCount: niedDetection.detectedCount,
+      strongCount: niedDetection.strongCount,
+      maxShindo: niedDetection.maxShindo,
+      visualGridCount: niedDetection.gridCells.length,
+      detectedStations: niedDetection.detectedStations,
       visualAreas: _niedDetectVisualAreas(),
     );
 
-    final lpgm = _latestLpgmSnapshot;
+    final lpgm = _stationReplayActive ? _replayStations.lpgm : _latestLpgmSnapshot;
     if (lpgm != null) {
       summary.lpgmTime = lpgm.dataTime;
       summary.lpgmMaxSva = lpgm.maxSva;
@@ -5264,11 +5358,12 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   }
 
   List<NiedDetectVisualArea> _niedDetectVisualAreas() {
-    final cells = _latestDetectSnapshot.gridCells;
+    final cells = _stationReplayActive
+        ? _replayStations.niedDetection.gridCells : _latestDetectSnapshot.gridCells;
     if (cells.isEmpty) return const [];
 
     final prefMax = <String, int>{};
-    final activeStations = _niedStations
+    final activeStations = _displayNied
         .where((s) => s.isActive && s.level >= 0)
         .toList(growable: false);
 
@@ -5409,6 +5504,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _shakeDetection.onDetectionSnapshotChanged = (snapshot) {
       final oldStage = _latestDetectSnapshot.stage;
       _latestDetectSnapshot = snapshot;
+      _captureStationFrame('nied');
       _syncActivityTimers();
       _emitStationSummary();
       _refreshNiedLayerIfNeeded(_niedStations);
@@ -5470,6 +5566,11 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       _updatePAlertDetectionGrid(
         snapshot.gridCells.values.map(PAlertDetectionGridCell.fromDetection),
       );
+      StationHistoryCapture.instance.publish('palert', () =>
+          ForegroundStationPayload.palert(_pAlertService.stations,
+            dataTime: _pAlertService.dataTimeNotifier.value,
+            receivedTime: _pAlertService.receivedTimeNotifier.value,
+            detection: snapshot), source: 'palert');
       _processPAlertSourceEstimation(_pAlertService.stations, {
         for (final entry in snapshot.detectedStations) entry.code,
       });
@@ -5710,6 +5811,9 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       }
     }
     QuakeMapView.niedArrayFrameTimeNotifier.value = frame.dataTime;
+    if (frame.originalJson != null) {
+      StationHistoryCapture.instance.restoreOriginal('${frame.source}.nied', frame.originalJson!);
+    }
     _acceptNiedStations(_whewsNiedStations);
   }
 
@@ -5771,6 +5875,10 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     }
     _ingestSnetAutomationStations(_whewsSnetStations);
     final signature = _snetLayerSignature(_whewsSnetStations);
+    if (frame.originalJson != null) {
+      StationHistoryCapture.instance.restoreOriginal('${frame.source}.snet', frame.originalJson!);
+    }
+    _captureStationFrame('snet');
     if (signature != _lastSnetLayerSignature) {
       _lastSnetLayerSignature = signature;
       _notifyLayer(_snetLayerRevision);
@@ -5784,6 +5892,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     if (frame.coordinates.isEmpty) {
       _kmaService.resetRealtimeState();
       _clearKmaDisplayState();
+      _captureStationFrame('kma');
       return;
     }
     _kmaService.ingestExternalFrame(
@@ -5791,6 +5900,12 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       coordinates: frame.coordinates,
       values: frame.values,
     );
+    if (_kmaService.dataTimeNotifier.value != frame.dataTime) return;
+    if (frame.originalJson != null) {
+      StationHistoryCapture.instance.restoreOriginal('${frame.source}.kma', frame.originalJson!);
+    }
+    _kmaStations = _kmaService.stations;
+    _captureStationFrame('kma');
   }
 
   bool _matchesNiedCoordinates(
@@ -5820,6 +5935,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _snetService.onDataUpdated = (stations) {
       if (!mounted || !_snetEnabled || _usesArraySnet) return;
       _ingestSnetAutomationStations(stations);
+      _captureStationFrame('snet');
       final signature = _snetLayerSignature(stations);
       if (signature == _lastSnetLayerSignature) return;
       _lastSnetLayerSignature = signature;
@@ -5851,6 +5967,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     }
     _lpgmSnapshotSubscription = _lpgmService.snapshotStream.listen((snapshot) {
       _latestLpgmSnapshot = snapshot;
+      _captureStationFrame('lpgm');
       _emitStationSummary();
       if (snapshot.maxClass >= 1) {
         debugPrint(
@@ -5881,6 +5998,8 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   /// 鍙栨秷璁㈤槄骞跺仠姝㈡墍鏈夌洃娴嬫湇鍔°€?  @override
   @override
   void dispose() {
+    _quakeProvider?.historyReplay.removeListener(_onStationReplayChanged);
+    _quakeProvider?.historyReplay.stationSnapshots.removeListener(_onStationReplayChanged);
     EventAnimationClock.instance.blink2Fps.removeListener(_tickBlinkState);
     _blinkClockLease?.dispose();
     EventAnimationClock.instance.second1Fps.removeListener(_syncWaveAutoZoom);

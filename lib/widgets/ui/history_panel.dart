@@ -10,6 +10,7 @@ import '../../models/unified_quake_data.dart';
 import 'unified_intensity_format.dart';
 import '../../services/debug/history_replay.dart';
 import 'history_replay_controls.dart';
+import 'settings_controls.dart';
 
 class HistoryPanel extends StatelessWidget {
   const HistoryPanel({super.key});
@@ -22,33 +23,39 @@ class HistoryPanel extends StatelessWidget {
       builder: (context, _, child) {
         final groups = provider.eewHistory;
 
-        if (groups.isEmpty) {
-          return const Center(
-            child: Text("暂无历史记录", style: TextStyle(color: Colors.white54)),
-          );
-        }
-
         return Column(
           children: [
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
               child: HistoryReplayControls(
                 controller: provider.historyReplay,
                 allowImport: false,
-                onPlaybackStarted: () => Scaffold.maybeOf(context)?.closeDrawer(),
+                onPlaybackStarted: () =>
+                    Scaffold.maybeOf(context)?.closeDrawer(),
               ),
             ),
             Expanded(
-              child: ListView.builder(
-                padding: const EdgeInsets.all(12),
-                itemCount: groups.length,
-                itemBuilder: (context, index) {
-                  return _EewEventGroupCard(
-                    key: ValueKey(groups[index].eventId),
-                    group: groups[index],
-                  );
-                },
-              ),
+              child: groups.isEmpty
+                  ? const Center(
+                      child: Text(
+                        '暂无历史记录',
+                        style: TextStyle(color: SettingsControlStyle.muted),
+                      ),
+                    )
+                  : ListView.separated(
+                      padding: const EdgeInsets.all(12),
+                      itemCount: groups.length,
+                      separatorBuilder: (context, index) =>
+                          const SizedBox(height: 8),
+                      itemBuilder: (context, index) {
+                        return _EewEventGroupCard(
+                          key: ValueKey(
+                            '${groups[index].latest.source}:${groups[index].eventId}',
+                          ),
+                          group: groups[index],
+                        );
+                      },
+                    ),
             ),
           ],
         );
@@ -73,7 +80,14 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
 
   Future<void> _replayAction({required bool export}) async {
     try {
-      final package = HistoryReplayPackage.fromGroup(widget.group);
+      final provider = context.read<QuakeProvider>();
+      final current = provider.eewHistory.firstWhere(
+        (group) =>
+            group.eventId == widget.group.eventId &&
+            group.latest.source == widget.group.latest.source,
+        orElse: () => widget.group,
+      );
+      final package = HistoryReplayPackage.fromGroup(current);
       if (export) {
         setState(() => _exporting = true);
         final saved = await exportHistoryReplay(package);
@@ -84,7 +98,11 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
         }
       } else {
         final controller = context.read<QuakeProvider>().historyReplay;
-        controller.load(package);
+        controller.load(
+          package,
+          remember: false,
+          relatedHistory: provider.eewHistory,
+        );
         controller.play();
         if (controller.active && mounted) {
           Scaffold.maybeOf(context)?.closeDrawer();
@@ -138,7 +156,7 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
     final savedReports = reports.where(HistoryReplayPackage.hasPayload).length;
 
     return Material(
-      color: Colors.grey[900]?.withOpacity(0.8),
+      color: SettingsControlStyle.field,
       borderRadius: BorderRadius.circular(8),
       child: InkWell(
         onTap: () {
@@ -156,7 +174,7 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
         child: Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: color.withOpacity(0.3), width: 1),
+            border: Border.all(color: color.withValues(alpha: 0.3), width: 1),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -352,7 +370,7 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
-            color: api ? Colors.white38 : Colors.white54,
+            color: api ? Colors.white54 : SettingsControlStyle.muted,
             fontSize: api ? 9 : 11,
             height: 1.4,
             fontWeight: api ? FontWeight.w600 : FontWeight.normal,
@@ -485,13 +503,13 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
   Widget _buildReportList(List<UnifiedQuakeData> reports, Color color) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.3),
+        color: Colors.black.withValues(alpha: 0.12),
         borderRadius: const BorderRadius.vertical(bottom: Radius.circular(8)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Divider(height: 1, color: Colors.white10),
+          const Divider(height: 1, color: SettingsControlStyle.divider),
           ...reports.map((report) => _buildReportRow(report, color)),
         ],
       ),

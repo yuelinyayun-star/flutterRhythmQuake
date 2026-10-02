@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:latlong2/latlong.dart';
 
 import 'sources/cwa_station_service.dart';
+import 'station_history_capture.dart';
 import 'sources/kma_monitor.dart';
 import 'sources/nied_monitor.dart';
 import 'sources/nied_gif_observation.dart';
@@ -32,10 +33,12 @@ class ForegroundStationPayload {
   static Map<String, dynamic> nied(
     List<NiedStation> stations, {
     String? source,
+    bool includeTrackingHistory = true,
   }) => {
     'kind': 'nied',
     if (source != null) 'source': source,
-    'stations': stations.map(_niedStation).toList(growable: false),
+    'stations': stations.map((station) => _niedStation(station,
+        includeTrackingHistory: includeTrackingHistory)).toList(growable: false),
   };
 
   static Map<String, dynamic> kma(
@@ -50,8 +53,11 @@ class ForegroundStationPayload {
   static Map<String, dynamic> cwa(
     List<CwaStation> stations, {
     DateTime? dataTime,
+    bool includeOriginalJson = false,
   }) => {
     'kind': 'cwa',
+    if (includeOriginalJson && StationHistoryCapture.instance.original('cwa') != null)
+      'originalJson': StationHistoryCapture.instance.original('cwa'),
     'dataTime': dataTime?.toIso8601String(),
     'stations': stations.map(_cwaStation).toList(growable: false),
   };
@@ -64,8 +70,11 @@ class ForegroundStationPayload {
   static Map<String, dynamic> seisjs(
     List<SeisJsStation> stations, {
     DateTime? dataTime,
+    bool includeOriginalJson = false,
   }) => {
     'kind': 'seisjs',
+    if (includeOriginalJson && StationHistoryCapture.instance.original('seisjs') != null)
+      'originalJson': StationHistoryCapture.instance.original('seisjs'),
     'dataTime': dataTime?.toIso8601String(),
     'stations': stations.map(_seisJsStation).toList(growable: false),
   };
@@ -75,8 +84,11 @@ class ForegroundStationPayload {
     DateTime? dataTime,
     DateTime? receivedTime,
     ShakeDetectionSnapshot? detection,
+    bool includeOriginalJson = false,
   }) => {
     'kind': 'palert',
+    if (includeOriginalJson && StationHistoryCapture.instance.original('palert') != null)
+      'originalJson': StationHistoryCapture.instance.original('palert'),
     'detectedStationIds': [
       for (final station in detection?.detectedStations ?? <DetectedStationEntry>[])
         station.code,
@@ -744,7 +756,9 @@ class ForegroundStationPayload {
     return LatLng(lat, lng);
   }
 
-  static Map<String, dynamic> _niedStation(NiedStation station) => {
+  static Map<String, dynamic> _niedStation(NiedStation station, {
+    bool includeTrackingHistory = true,
+  }) => {
     'id': station.id,
     'code': station.code,
     'name': station.name,
@@ -761,7 +775,7 @@ class ForegroundStationPayload {
     'abnormalUpdateCount': station.abnormalUpdateCount,
     'detectState': station.detectState,
     'detectReason': station.detectReason,
-    'recentLevel': station.recentLevel,
+    if (includeTrackingHistory) 'recentLevel': station.recentLevel,
     'expireSeconds': station.expireSeconds,
     'defaultExpireSeconds': station.defaultExpireSeconds,
     'lastUpdate': station.lastUpdate?.toIso8601String(),

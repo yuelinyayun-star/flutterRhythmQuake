@@ -11,6 +11,7 @@ import 'package:flutterrhythmquake/providers/notification_settings_provider.dart
 import 'package:flutterrhythmquake/services/notification_service.dart';
 import 'package:flutterrhythmquake/services/debug/history_replay.dart';
 import 'package:flutterrhythmquake/services/quake_event_adapter.dart';
+import 'package:flutterrhythmquake/services/eew_history_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 UnifiedQuakeData recordedEew() {
@@ -335,7 +336,13 @@ void main() {
       provider.dispose();
       await Future<void>.delayed(const Duration(milliseconds: 50));
       final prefs = await SharedPreferences.getInstance();
-      expect(prefs.getString('unified_eew_history'), before);
+      final persisted = EewHistoryStore(
+        preferenceKey: 'unified_eew_history',
+      ).restore(prefs);
+      expect(
+        jsonEncode(persisted.map((event) => event.toMap()).toList()),
+        before,
+      );
     },
   );
 }

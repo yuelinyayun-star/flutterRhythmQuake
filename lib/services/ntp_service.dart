@@ -53,7 +53,7 @@ class NtpService {
   /// 是否已同步
   bool _isSynced = false;
   DateTime? _lastSyncedAt;
-  bool _syncInProgress = false;
+  Future<void>? _syncTask;
   Timer? _periodicTimer;
   Timer? _retryTimer;
 
@@ -92,9 +92,13 @@ class NtpService {
   /// - pool.ntp.org: NTP池，全球分布
   /// - time.apple.com: 苹果时间服务器
   /// - ntp.aliyun.com: 阿里云NTP服务器
-  Future<void> syncTime({String lookUpAddress = 'pool.ntp.org'}) async {
-    if (_syncInProgress) return;
-    _syncInProgress = true;
+  Future<void> syncTime({String lookUpAddress = 'pool.ntp.org'}) {
+    return _syncTask ??= _performSync(lookUpAddress).whenComplete(() {
+      _syncTask = null;
+    });
+  }
+
+  Future<void> _performSync(String lookUpAddress) async {
     _retryTimer?.cancel();
     _retryTimer = null;
     Object? lastError;
@@ -146,8 +150,6 @@ class NtpService {
       debugPrint('--- 时间同步失败: $e ---');
       _isSynced = false;
       _scheduleRetry();
-    } finally {
-      _syncInProgress = false;
     }
   }
 

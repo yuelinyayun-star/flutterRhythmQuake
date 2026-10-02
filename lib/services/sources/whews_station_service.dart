@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../station_history_capture.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:latlong2/latlong.dart';
@@ -21,6 +22,7 @@ class WhewsStationFrame {
     this.stationTypes = const [],
     this.pga = const [],
     this.pgv = const [],
+    this.originalJson,
   });
 
   final WhewsStationKind kind;
@@ -34,6 +36,7 @@ class WhewsStationFrame {
   final List<String> stationTypes;
   final List<double> pga;
   final List<double> pgv;
+  final Map<String, dynamic>? originalJson;
 }
 
 class WhewsStationService {
@@ -175,6 +178,7 @@ class WhewsStationService {
     if (message is! Map) return;
     final frame = Map<String, dynamic>.from(message);
     if (frame['type'] == _stationFrameType) {
+      StationHistoryCapture.instance.retainOriginal('whews.${kind.name}', 'metadata', frame);
       _readCoordinates(frame['stations']);
       return;
     }
@@ -196,6 +200,7 @@ class WhewsStationService {
     final pgv = _readOptionalMotionValues(data['pgv'], _coordinates.length);
 
     _lastDataTime = timestamp;
+    StationHistoryCapture.instance.retainOriginal('whews.${kind.name}', 'data', frame);
     _hasPublishedStations = true;
     if (_startRequested && kind == WhewsStationKind.nied) {
       _observationTimer?.cancel();
@@ -210,6 +215,7 @@ class WhewsStationService {
         values: values,
         pga: pga ?? const [],
         pgv: pgv ?? const [],
+        originalJson: StationHistoryCapture.instance.original('whews.${kind.name}'),
       ),
     );
   }

@@ -209,4 +209,34 @@ void main() {
     expect(candidates, isNot(contains(previous)));
     expect(candidates.any((time) => time.isBefore(previous)), isFalse);
   });
+
+  test(
+    'a long live outage resumes at source latest rather than old GIF backlog',
+    () {
+      final previous = DateTime(2026, 6, 10, 18, 1, 20);
+      final latest = DateTime(2026, 6, 10, 18, 1, 50);
+      expect(
+        NiedMonitorService.buildLiveCandidateTimesForTest(
+          latestTime: latest,
+          previousFrameTime: previous,
+        ),
+        [latest],
+      );
+    },
+  );
+
+  test('ten-second short gaps still keep the actual ordered frames', () {
+    final previous = DateTime(2026, 6, 10, 18, 1, 20);
+    final latest = previous.add(const Duration(seconds: 10));
+    expect(
+      NiedMonitorService.buildLiveCandidateTimesForTest(
+        latestTime: latest,
+        previousFrameTime: previous,
+      ),
+      [
+        for (var second = 1; second <= 10; second++)
+          previous.add(Duration(seconds: second)),
+      ],
+    );
+  });
 }

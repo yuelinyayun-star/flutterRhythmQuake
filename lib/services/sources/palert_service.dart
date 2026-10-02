@@ -1,11 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
+import '../station_history_capture.dart';
+import '../foreground_station_payload.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import '../../core/source_estimation/palert_source_profile.dart';
 import 'palert_detection.dart';
+import 'palert_http_client.dart';
 import 'palert_intensity.dart';
 import 'shake_detection_service.dart';
 
@@ -142,7 +145,8 @@ class PAlertDetectionGate {
 class PAlertService {
   static final PAlertService _instance = PAlertService._();
   factory PAlertService() => _instance;
-  PAlertService._() {
+  PAlertService._({Future<http.Client> Function()? clientFactory})
+    : _clientFactory = clientFactory ?? createPAlertHttpClient {
     _detector.onSnapshot = (snapshot) {
       onDetectionChanged?.call(snapshot);
     };
@@ -155,6 +159,13 @@ class PAlertService {
       }
     };
   }
+
+  @visibleForTesting
+  PAlertService.forTesting({
+    required Future<http.Client> Function() clientFactory,
+  }) : this._(clientFactory: clientFactory);
+
+  final Future<http.Client> Function() _clientFactory;
 
   static Uri get _graphqlUri => kIsWeb
       ? Uri.base.resolve('/api/palert/graphql/')
@@ -230,7 +241,6 @@ query (\$recordTime: Float!, \$token: String!) {
     _isConnected = false;
     _failureReported = false;
     _lastFrameReceivedAt = null;
-    _client = http.Client();
     unawaited(_bootstrap(generation));
     _stationTimer = Timer.periodic(
       const Duration(minutes: 10),
@@ -280,12 +290,28 @@ query (\$recordTime: Float!, \$token: String!) {
       _running && generation == _runGeneration;
 
   Future<void> _bootstrap(int generation) async {
+    try {
+      final client = await _clientFactory();
+      if (!_isCurrentRun(generation)) {
+        client.close();
+        return;
+      }
+      _client = client;
+    } catch (e) {
+      if (_isCurrentRun(generation)) {
+        debugPrint('[P-Alert] HTTP client initialization failed: $e');
+        _markDisconnected();
+      }
+      return;
+    }
     await _fetchStationList(generation);
     if (_isCurrentRun(generation)) await _fetchRealtime(generation);
   }
 
   Future<void> _fetchStationList(int generation) async {
-    if (!_isCurrentRun(generation) || _fetchingStations) return;
+    if (!_isCurrentRun(generation) || _client == null || _fetchingStations) {
+      return;
+    }
     _fetchingStations = true;
     try {
       final json = await _postGraphql(
@@ -294,6 +320,7 @@ query (\$recordTime: Float!, \$token: String!) {
       );
       final data = json['data'] as Map<String, dynamic>?;
       final stationList = data?['stationList'] as Map<String, dynamic>?;
+      StationHistoryCapture.instance.retainOriginal('palert', 'metadata', json);
       final infos = stationList?['staInfos'];
       if (infos is! List || infos.isEmpty) {
         if (_stationMap.isEmpty) _handleFailure();
@@ -349,7 +376,9 @@ query (\$recordTime: Float!, \$token: String!) {
   }
 
   Future<void> _fetchRealtime(int generation) async {
-    if (!_isCurrentRun(generation) || _fetchingRealtime) return;
+    if (!_isCurrentRun(generation) || _client == null || _fetchingRealtime) {
+      return;
+    }
     if (_stationMap.isEmpty) {
       unawaited(_fetchStationList(generation));
       return;
@@ -362,6 +391,7 @@ query (\$recordTime: Float!, \$token: String!) {
       );
       final data = json['data'] as Map<String, dynamic>?;
       final pga = data?['pga'] as Map<String, dynamic>?;
+      StationHistoryCapture.instance.retainOriginal('palert', 'data', json);
       final pgv = data?['pgv'] as Map<String, dynamic>?;
       final pgaTimestamp = parseTimestamp(pga?['timestamp'] as String?);
       final pgvTimestamp = parseTimestamp(pgv?['timestamp'] as String?);
@@ -516,6 +546,10 @@ query (\$recordTime: Float!, \$token: String!) {
     final next = _stationMap.values.toList(growable: false)
       ..sort((a, b) => a.id.compareTo(b.id));
     _stations = next;
+    StationHistoryCapture.instance.publish('palert', () =>
+        ForegroundStationPayload.palert(_stations,
+          dataTime: dataTimeNotifier.value, receivedTime: receivedTimeNotifier.value,
+          detection: detectionSnapshot), source: 'palert');
     _stationController.add(next);
   }
 

@@ -11,6 +11,8 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import '../station_history_capture.dart';
+import '../foreground_station_payload.dart';
 import 'package:flutter/foundation.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -197,11 +199,14 @@ class SeisJsService {
         );
       }
       dataTimeNotifier.value = dataTime ?? _stations[id]?.lastUpdate;
+      StationHistoryCapture.instance.retainOriginal('seisjs', 'data', json);
       if (!_hasRealtimeData) {
         _hasRealtimeData = true;
         onStatusChanged?.call(true);
       }
 
+      StationHistoryCapture.instance.publish('seisjs', () =>
+          ForegroundStationPayload.seisjs(stations, dataTime: dataTimeNotifier.value), source: 'seisjs');
       _controller.add(List.of(_stations.values));
     } catch (e) {
       // skip malformed messages
@@ -221,6 +226,8 @@ class SeisJsService {
       _stations.remove(id);
     }
     if (stale.isNotEmpty) {
+      StationHistoryCapture.instance.publish('seisjs', () =>
+          ForegroundStationPayload.seisjs(stations, dataTime: dataTimeNotifier.value));
       _controller.add(List.of(_stations.values));
     }
   }

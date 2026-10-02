@@ -1,14 +1,19 @@
 import 'unified_quake_data.dart';
+import 'station_history_frame.dart';
 
 class EewEventGroup {
   final String eventId;
   final List<UnifiedQuakeData> reports;
   final DateTime firstArrivedAt;
+  final List<StationHistoryFrame> stationFrames;
+  final DateTime? captureEndedAt;
 
   EewEventGroup({
     required this.eventId,
     required this.reports,
     required this.firstArrivedAt,
+    this.stationFrames = const [],
+    this.captureEndedAt,
   });
 
   UnifiedQuakeData get latest => reports.first;
@@ -23,10 +28,14 @@ class EewEventGroup {
 
   bool get isCanceled => latest.isCanceled;
 
-  Map<String, dynamic> toMap() => {
+  Map<String, dynamic> toMap({bool includeStationFrames = true}) => {
     'eventId': eventId,
     'firstArrivedAt': firstArrivedAt.toIso8601String(),
     'reports': reports.map((report) => report.toMap()).toList(),
+    if (includeStationFrames && stationFrames.isNotEmpty)
+      'stationFrames': stationFrames.map((frame) => frame.toMap()).toList(),
+    if (captureEndedAt != null)
+      'captureEndedAt': captureEndedAt!.toUtc().toIso8601String(),
   };
 
   factory EewEventGroup.fromMap(Map<dynamic, dynamic> map) {
@@ -55,6 +64,10 @@ class EewEventGroup {
       eventId: map['eventId']?.toString() ?? reports.last.eventId,
       reports: reports,
       firstArrivedAt: firstArrivedAt,
+      stationFrames: (map['stationFrames'] as List? ?? const [])
+          .map((frame) => StationHistoryFrame.fromMap(frame as Map))
+          .toList(),
+      captureEndedAt: parseTime(map['captureEndedAt']),
     );
   }
 
@@ -81,6 +94,8 @@ class EewEventGroup {
       eventId: eventId,
       reports: updated,
       firstArrivedAt: firstArrivedAt,
+      stationFrames: stationFrames,
+      captureEndedAt: captureEndedAt,
     );
   }
 
@@ -95,11 +110,15 @@ class EewEventGroup {
     String? eventId,
     List<UnifiedQuakeData>? reports,
     DateTime? firstArrivedAt,
+    List<StationHistoryFrame>? stationFrames,
+    DateTime? captureEndedAt,
   }) {
     return EewEventGroup(
       eventId: eventId ?? this.eventId,
       reports: reports ?? this.reports,
       firstArrivedAt: firstArrivedAt ?? this.firstArrivedAt,
+      stationFrames: stationFrames ?? this.stationFrames,
+      captureEndedAt: captureEndedAt ?? this.captureEndedAt,
     );
   }
 }

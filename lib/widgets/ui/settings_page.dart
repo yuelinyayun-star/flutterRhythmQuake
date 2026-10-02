@@ -24,6 +24,7 @@ import '../../services/sources/whews_service.dart';
 import '../../services/sources/jian_service.dart';
 import 'jian_auth_settings.dart';
 import 'settings_controls.dart';
+import 'eew_history_settings.dart';
 import 'wauth_token_field.dart';
 import '../../services/sources/nowquake_cenc_intensity_service.dart';
 import '../../services/sources/fdsn_motion_service.dart';
@@ -400,6 +401,9 @@ class _SettingsPageState extends State<SettingsPage>
       accent: Color(0xFFAEB8CC),
       keywords: [
         '高级',
+        '历史',
+        '保存上限',
+        '永久保存',
         '网格',
         '侧边',
         '本地预估',
@@ -2224,6 +2228,15 @@ class _SettingsPageState extends State<SettingsPage>
         ];
       case _SettingsCategory.advanced:
         return [
+          _buildSectionPanel(
+            icon: Icons.history,
+            title: '预警历史记录',
+            children: [const EewHistorySettings()],
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 6),
+            child: Divider(height: 1, thickness: 1, color: _dividerColor),
+          ),
           _buildSectionPanel(
             icon: Icons.visibility_outlined,
             title: '界面行为',

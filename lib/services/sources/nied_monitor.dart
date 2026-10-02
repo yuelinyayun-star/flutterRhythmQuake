@@ -402,12 +402,32 @@ class NiedStation {
 class NiedMonitorService extends ChangeNotifier {
   static final NiedMonitorService _instance = NiedMonitorService._internal();
   factory NiedMonitorService() => _instance;
-  NiedMonitorService._internal();
+  NiedMonitorService._internal()
+    : _textFetcher = null,
+      _bytesFetcher = null,
+      _clockSynchronizer = null,
+      _elapsedOverride = null;
+
+  @visibleForTesting
+  NiedMonitorService.forTest({
+    required Future<String?> Function(String) fetchText,
+    required Future<Uint8List?> Function(String) fetchBytes,
+    required Future<void> Function() syncClock,
+    required Duration Function() elapsed,
+  }) : _textFetcher = fetchText,
+       _bytesFetcher = fetchBytes,
+       _clockSynchronizer = syncClock,
+       _elapsedOverride = elapsed;
 
   static const String _lmoniBaseUrl = 'https://www.lmoni.bosai.go.jp/img_svr';
   static const String _kmoniBaseUrl = 'http://www.kmoni.bosai.go.jp';
   static const Duration _metadataTimeout = Duration(seconds: 3);
-  static const Duration _metadataRefreshInterval = Duration(seconds: 60);
+  static const Duration _metadataRefreshInterval = Duration(seconds: 15);
+  static const Duration _liveStallTimeout = Duration(seconds: 3);
+  static const Duration _recoveryRetryInterval = Duration(seconds: 3);
+  static const Duration _clockSyncInterval = Duration(minutes: 5);
+  static const Duration _clockSyncRecoveryCooldown = Duration(seconds: 30);
+  static const Duration _maxOrderedCatchUp = Duration(seconds: 10);
   static const Duration _surfaceTimeout = Duration(seconds: 3);
   static const Duration _optionalLayerTimeout = Duration(milliseconds: 900);
   static const int _defaultRealtimeDelayMs = 0;
@@ -421,12 +441,21 @@ class NiedMonitorService extends ChangeNotifier {
   int _runGeneration = 0;
   int? _tickingGeneration;
   int? _physicalLayerGeneration;
-  int? _timeSyncGeneration;
+  final Future<String?> Function(String)? _textFetcher;
+  final Future<Uint8List?> Function(String)? _bytesFetcher;
+  final Future<void> Function()? _clockSynchronizer;
+  final Duration Function()? _elapsedOverride;
+  final Stopwatch _runClock = Stopwatch()..start();
+  Duration get _elapsed => _elapsedOverride?.call() ?? _runClock.elapsed;
+  Future<void>? _clockSyncTask;
+  Duration? _lastClockSyncAt;
+  Duration? _lastFrameProgressAt;
   String? _lastFetchedStampKey;
   DateTime? _lastFetchedFrameTime;
   DateTime? _liveFrameAnchorJst;
-  final Stopwatch _liveFrameAnchorClock = Stopwatch();
-  final Stopwatch _metadataRefreshClock = Stopwatch();
+  Duration? _liveFrameAnchorAt;
+  Duration? _metadataRefreshedAt;
+  int _metadataRequestSequence = 0;
   bool _liveRecoveryPending = false;
   int _realtimeDelayMs = _defaultRealtimeDelayMs;
   String _baseUrl = _lmoniBaseUrl;
@@ -446,6 +475,8 @@ class NiedMonitorService extends ChangeNotifier {
     _lastFetchedStampKey = null;
     _lastFetchedFrameTime = null;
     _liveRecoveryPending = false;
+    _lastFrameProgressAt = _elapsed;
+    _lastClockSyncAt = null;
     _realtimeDelayMs = _defaultRealtimeDelayMs;
     _resetLiveFrameAnchor();
     _runGeneration++;
@@ -509,6 +540,12 @@ class NiedMonitorService extends ChangeNotifier {
     if (_tickingGeneration == generation) return;
     _tickingGeneration = generation;
     try {
+      if (!_replayConfig.enabled &&
+          !_liveRecoveryPending &&
+          _lastFrameProgressAt != null &&
+          _elapsed - _lastFrameProgressAt! >= _liveStallTimeout) {
+        _beginLiveRecovery(generation);
+      }
       final candidates = await _calculateCandidateTimes(generation);
       if (!_isCurrentRun(generation)) return;
       final attemptCount = _replayConfig.enabled
@@ -638,11 +675,8 @@ class NiedMonitorService extends ChangeNotifier {
         _lastFetchedStampKey = stampKey;
         _lastFetchedFrameTime = stamp;
         _liveRecoveryPending = false;
+        _lastFrameProgressAt = _elapsed;
         dataFrameTime.value = stamp;
-        if (!_replayConfig.enabled && _timeSyncGeneration != generation) {
-          _timeSyncGeneration = generation;
-          unawaited(_resyncClockAfterConnection(generation));
-        }
         if (!forwardCatchUp) return;
         // Broadcast streams are asynchronous and station objects are reused.
         // Let the detection/HYP listener consume this exact frame before the
@@ -705,17 +739,33 @@ class NiedMonitorService extends ChangeNotifier {
     }
   }
 
-  Future<void> _resyncClockAfterConnection(int generation) async {
-    final connectedAt = DateTime.now();
-    for (var attempt = 0; attempt < 3; attempt++) {
-      if (!_isCurrentRun(generation)) return;
-      await NtpService().syncTime();
-      if (!_isCurrentRun(generation)) return;
-      final syncedAt = NtpService().lastSyncedAt;
-      if (syncedAt != null && !syncedAt.isBefore(connectedAt)) return;
-      await Future<void>.delayed(const Duration(seconds: 1));
+  Future<void> _requestClockSync(int generation, {bool force = false}) {
+    if (!_isCurrentRun(generation)) return Future<void>.value();
+    final pending = _clockSyncTask;
+    if (pending != null) return pending;
+    final interval = force ? _clockSyncRecoveryCooldown : _clockSyncInterval;
+    final previous = _lastClockSyncAt;
+    if (previous != null && _elapsed - previous < interval) {
+      return Future<void>.value();
     }
+    _lastClockSyncAt = _elapsed;
+    final Future<void> task =
+        Future<void>.sync(
+          _clockSynchronizer ?? NtpService().syncTime,
+        ).catchError((Object error) {
+          debugPrint('NIED clock synchronization failed: $error');
+        });
+    _clockSyncTask = task;
+    unawaited(
+      task.whenComplete(() {
+        if (identical(_clockSyncTask, task)) _clockSyncTask = null;
+      }),
+    );
+    return task;
   }
+
+  @visibleForTesting
+  Future<void> tickForTest() => _tick();
 
   Future<Uint8List?> _fetchBytes(
     String url, {
@@ -723,6 +773,10 @@ class NiedMonitorService extends ChangeNotifier {
     required int generation,
   }) async {
     if (!_isCurrentRun(generation)) return null;
+    if (_bytesFetcher != null) {
+      final bytes = await _bytesFetcher(url);
+      return _isCurrentRun(generation) ? bytes : null;
+    }
     if (kIsWeb) {
       try {
         final response = await http.get(Uri.parse(url)).timeout(timeout);
@@ -861,6 +915,8 @@ class NiedMonitorService extends ChangeNotifier {
     }
 
     final recovering = _liveRecoveryPending;
+    final clockSync = _requestClockSync(generation, force: recovering);
+    unawaited(clockSync);
     final latest = await _latestFrameTimeForTick(generation);
     if (recovering) {
       if (latest == null) return const [];
@@ -876,6 +932,8 @@ class NiedMonitorService extends ChangeNotifier {
 
     final anchor = _liveFrameAnchorJst;
     if (anchor == null) {
+      await clockSync.timeout(_metadataTimeout, onTimeout: () {});
+      if (!_isCurrentRun(generation)) return const [];
       // Lmoni metadata is authoritative once reachable. Before the first
       // latest_time arrives, keep trying the real-time GIF path from the
       // locally corrected clock so a metadata outage cannot suppress all GIF
@@ -895,12 +953,13 @@ class NiedMonitorService extends ChangeNotifier {
 
   Future<DateTime?> _latestFrameTimeForTick(int generation) async {
     if (_liveRecoveryPending) {
-      _metadataRefreshClock
-        ..reset()
-        ..start();
+      final previous = _metadataRefreshedAt;
+      if (previous != null && _elapsed - previous < _recoveryRetryInterval) {
+        return null;
+      }
+      _metadataRefreshedAt = _elapsed;
       final latest = await _refreshLiveFrameAnchor(generation, force: true);
       if (latest == null) return null;
-      _liveRecoveryPending = false;
       _realtimeDelayMs = _defaultRealtimeDelayMs;
       return latest;
     }
@@ -908,13 +967,11 @@ class NiedMonitorService extends ChangeNotifier {
     final anchor = _liveFrameAnchorJst;
     final refreshDue =
         anchor == null ||
-        !_metadataRefreshClock.isRunning ||
-        _metadataRefreshClock.elapsed >= _metadataRefreshInterval;
+        _metadataRefreshedAt == null ||
+        _elapsed - _metadataRefreshedAt! >= _metadataRefreshInterval;
     if (!refreshDue) return anchor;
 
-    _metadataRefreshClock
-      ..reset()
-      ..start();
+    _metadataRefreshedAt = _elapsed;
     if (anchor == null) {
       await _refreshLiveFrameAnchor(generation);
       return _liveFrameAnchorJst;
@@ -923,7 +980,7 @@ class NiedMonitorService extends ChangeNotifier {
     // The official viewers keep the one-second image clock running while
     // their periodic server-time refresh is in flight. Do the same so a slow
     // metadata response cannot pause GIF updates.
-    unawaited(_refreshLiveFrameAnchor(generation));
+    unawaited(_refreshLiveFrameAnchor(generation, force: true));
     return anchor;
   }
 
@@ -931,8 +988,13 @@ class NiedMonitorService extends ChangeNotifier {
     int generation, {
     bool force = false,
   }) async {
+    final sequence = ++_metadataRequestSequence;
     final latest = await _fetchLatestFrameTime(generation);
-    if (!_isCurrentRun(generation) || latest == null) return null;
+    if (!_isCurrentRun(generation) ||
+        sequence != _metadataRequestSequence ||
+        latest == null) {
+      return null;
+    }
     _updateLiveFrameAnchor(latest, force: force);
     return latest;
   }
@@ -1123,6 +1185,9 @@ class NiedMonitorService extends ChangeNotifier {
       final catchUpTarget = latestTime.isAfter(previousFrameTime)
           ? latestTime
           : targetTime;
+      if (latestTime.difference(previousFrameTime) > _maxOrderedCatchUp) {
+        return _buildRecoveryCandidateTimes(latestTime);
+      }
       if (catchUpTarget.isAfter(previousFrameTime)) {
         // Preserve the one-second station history used by triggerStamp and
         // HYP clustering. Metadata is only a periodic time anchor; projected
@@ -1168,15 +1233,13 @@ class NiedMonitorService extends ChangeNotifier {
     final current = _liveFrameAnchorJst;
     if (!force && current != null && !latest.isAfter(current)) return;
     _liveFrameAnchorJst = latest;
-    _liveFrameAnchorClock
-      ..reset()
-      ..start();
+    _liveFrameAnchorAt = _elapsed;
   }
 
   DateTime? _projectLiveFrameTime() {
     final anchor = _liveFrameAnchorJst;
     if (anchor == null) return null;
-    final elapsedMs = _liveFrameAnchorClock.elapsedMilliseconds;
+    final elapsedMs = (_elapsed - _liveFrameAnchorAt!).inMilliseconds;
     final projectedMs = (elapsedMs - _realtimeDelayMs).clamp(0, elapsedMs);
     final projected = anchor.add(Duration(milliseconds: projectedMs));
     return DateTime(
@@ -1211,10 +1274,8 @@ class NiedMonitorService extends ChangeNotifier {
   void _beginLiveRecovery(int generation) {
     if (!_isCurrentRun(generation) || _liveRecoveryPending) return;
     _liveRecoveryPending = true;
-    _timeSyncGeneration = null;
-    _metadataRefreshClock
-      ..stop()
-      ..reset();
+    _metadataRefreshedAt = null;
+    _metadataRequestSequence++;
 
     // A network handover can leave a pooled socket bound to the old route.
     // Recreate the client before the mandatory upstream-time refresh.
@@ -1225,16 +1286,17 @@ class NiedMonitorService extends ChangeNotifier {
 
   void _resetLiveFrameAnchor() {
     _liveFrameAnchorJst = null;
-    _liveFrameAnchorClock
-      ..stop()
-      ..reset();
-    _metadataRefreshClock
-      ..stop()
-      ..reset();
+    _liveFrameAnchorAt = null;
+    _metadataRefreshedAt = null;
+    _lastFrameProgressAt = _elapsed;
   }
 
   Future<String?> _fetchText(String url, int generation) async {
     if (!_isCurrentRun(generation)) return null;
+    if (_textFetcher != null) {
+      final text = await _textFetcher(url);
+      return _isCurrentRun(generation) ? text : null;
+    }
     if (kIsWeb) {
       try {
         final response = await http

@@ -760,6 +760,7 @@ Future<void> startBackgroundSources({
         ForegroundStationPayload.cwa(
           stations,
           dataTime: cwa.dataTimeNotifier.value,
+          includeOriginalJson: true,
         ),
       );
     }),
@@ -775,6 +776,7 @@ Future<void> startBackgroundSources({
         ForegroundStationPayload.seisjs(
           stations,
           dataTime: seisJs.dataTimeNotifier.value,
+          includeOriginalJson: true,
         ),
       );
     }),
@@ -787,6 +789,7 @@ Future<void> startBackgroundSources({
           dataTime: pAlert.dataTimeNotifier.value,
           receivedTime: pAlert.receivedTimeNotifier.value,
           detection: pAlert.detectionSnapshot,
+          includeOriginalJson: true,
         ),
       );
     }),
@@ -797,6 +800,7 @@ Future<void> startBackgroundSources({
       dataTime: pAlert.dataTimeNotifier.value,
       receivedTime: pAlert.receivedTimeNotifier.value,
       detection: snapshot,
+      includeOriginalJson: true,
     ),
   );
   _backgroundStationSubscriptions.add(
@@ -1208,6 +1212,7 @@ SourceStatus _stationSocketState(WhewsSocketState state) {
 }
 
 Map<String, dynamic> _whewsNiedPayload(WhewsStationFrame frame) => {
+  if (frame.originalJson != null) 'originalJson': frame.originalJson,
   'kind': 'whewsNied',
   'source': frame.source,
   'codes': frame.codes,
@@ -1224,6 +1229,7 @@ Map<String, dynamic> _whewsNiedPayload(WhewsStationFrame frame) => {
 };
 
 Map<String, dynamic> _whewsSnetPayload(WhewsStationFrame frame) => {
+  if (frame.originalJson != null) 'originalJson': frame.originalJson,
   'kind': 'whewsSnet',
   'source': frame.source,
   'codes': frame.codes,
@@ -1235,6 +1241,7 @@ Map<String, dynamic> _whewsSnetPayload(WhewsStationFrame frame) => {
 };
 
 Map<String, dynamic> _whewsKmaPayload(WhewsStationFrame frame) => {
+  if (frame.originalJson != null) 'originalJson': frame.originalJson,
   'kind': 'whewsKma',
   'source': frame.source,
   'dataTime': frame.dataTime.toIso8601String(),

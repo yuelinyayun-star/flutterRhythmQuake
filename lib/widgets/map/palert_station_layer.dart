@@ -14,6 +14,7 @@ class PAlertStationLayer extends StatelessWidget {
   final List<PAlertDetectionGridCell> detectionGridCells;
   final bool hideGrid;
   final bool blinkOn;
+  final DateTime? observationTime;
 
   const PAlertStationLayer({
     super.key,
@@ -22,6 +23,7 @@ class PAlertStationLayer extends StatelessWidget {
     this.detectionGridCells = const [],
     this.hideGrid = false,
     this.blinkOn = true,
+    this.observationTime,
   });
 
   static const Color _idleColor = Color(0x804466AA);
@@ -36,7 +38,7 @@ class PAlertStationLayer extends StatelessWidget {
     final overview = _overviewFactor(zoom);
     final idleDotSize = (0.9 + (zoom - 3) * 0.95).clamp(0.9, 7.5);
     final idleBorderWidth = (0.35 + overview * 0.55).clamp(0.35, 0.9);
-    final nowUtc = DateTime.now().toUtc();
+    final nowUtc = (observationTime ?? DateTime.now()).toUtc();
 
     final dots = <StationDot>[];
     final markers = <Marker>[];

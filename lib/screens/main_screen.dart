@@ -18,7 +18,7 @@ import '../widgets/ui/in_app_notification_overlay.dart';
 import '../widgets/map/source_dashboard.dart';
 import '../widgets/ui/alert_module.dart';
 import '../widgets/ui/eqlist_panel.dart';
-import '../widgets/ui/history_panel.dart';
+import '../widgets/ui/history_drawer.dart';
 import '../widgets/ui/top_status_bar.dart';
 import '../widgets/ui/weather_marquee.dart';
 import '../widgets/ui/settings_page.dart';
@@ -327,38 +327,8 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     final isPhone = UiScale.isPhone(context);
     return Scaffold(
       key: _scaffoldKey,
-      drawer: Drawer(
-        width: 350,
-        backgroundColor: const Color(0xFF0A0A0A),
-        child: Column(
-          children: [
-            Container(
-              padding: const EdgeInsets.fromLTRB(16, 48, 16, 16),
-              decoration: BoxDecoration(
-                color: Colors.blueAccent.withValues(alpha: 0.1),
-                border: const Border(
-                  bottom: BorderSide(color: Colors.blueAccent, width: 0.5),
-                ),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.history, color: Colors.blueAccent),
-                  SizedBox(width: 12),
-                  Text(
-                    '历史记录',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.blueAccent,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Expanded(child: HistoryPanel()),
-          ],
-        ),
-      ),
+      drawerScrimColor: Colors.black.withValues(alpha: 0.22),
+      drawer: const HistoryDrawer(),
       body: _buildSectionBody(
         context,
         isPhone,

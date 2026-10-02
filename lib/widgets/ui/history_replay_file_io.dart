@@ -7,7 +7,7 @@ Future<Uint8List> readBytes(String path, {required int maxBytes}) async {
   final bytes = BytesBuilder(copy: false);
   await for (final chunk in File(path).openRead()) {
     if (bytes.length + chunk.length > maxBytes) {
-      throw const FormatException('回放包超过 16 MiB');
+      throw FormatException('回放包超过 ${maxBytes ~/ (1024 * 1024)} MiB');
     }
     bytes.add(chunk);
   }

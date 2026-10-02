@@ -69,6 +69,11 @@ import '../models/quake_message.dart';
 import '../models/whews_catalog.dart';
 import '../models/unified_quake_data.dart';
 import '../models/eew_event_group.dart';
+import '../models/eew_history_retention.dart';
+import '../models/eew_display_duration.dart';
+import '../models/station_history_frame.dart';
+import '../services/station_history_capture.dart';
+import '../services/eew_history_store.dart';
 import '../models/source_status.dart';
 import '../models/source_credential_info.dart';
 import '../models/cenc_ir_data.dart';
@@ -287,7 +292,28 @@ class QuakeProvider with ChangeNotifier {
   late final HistoryReplayController historyReplay = HistoryReplayController(
     onReport: _presentReplayReport,
     onClear: _clearReplaySession,
+    onEventExpired: _expireReplayEvent,
+    historyGroups: () => eewHistory,
   );
+
+  void _expireReplayEvent(String session, UnifiedQuakeData original) {
+    if (_disposed) return;
+    final replay = original.copyWith(
+      eventId: '$session:${original.eventId}',
+      replaySessionId: session,
+    );
+    final expired = _unifiedEvents.where((event) =>
+      event.replaySessionId == session &&
+      event.source == replay.source &&
+      (event.eventId == replay.eventId || _isSameUnifiedEewEvent(event, replay)),
+    ).toList();
+    if (expired.isEmpty) return;
+    for (final event in expired) {
+      if (event.isEew) _clearEewVoice(event);
+    }
+    _unifiedEvents.removeWhere(expired.contains);
+    _refreshReplayPresentation();
+  }
 
   void _presentReplayReport(UnifiedQuakeData event) {
     if (_disposed) return;
@@ -349,7 +375,66 @@ class QuakeProvider with ChangeNotifier {
   static String get _editionEewHistoryPreferenceKey => AppEdition.isPublic
       ? '${_eewHistoryPreferenceKey}_public'
       : _eewHistoryPreferenceKey;
-  static const int _maxPersistedEewHistoryGroups = 15;
+  EewHistoryRetention _eewHistoryRetention = const EewHistoryRetention();
+  EewHistoryRetention get eewHistoryRetention => _eewHistoryRetention;
+  late final EewHistoryStore _eewHistoryStore = EewHistoryStore(
+    preferenceKey: _editionEewHistoryPreferenceKey,
+  );
+  late final Future<void> _eewHistoryRestore = _loadEewHistory();
+  bool _eewHistoryLoaded = false;
+  bool _stationHistoryRecording = false;
+
+  void _syncStationHistoryRecording() {
+    final active = _unifiedEvents.any((e) => e.isEew && !e.isReplay);
+    if (active && _stationHistoryRecording) {
+      if (_eewHistory.any((g) => g.stationFrames.isEmpty && _unifiedEvents.any(
+          (e) => !e.isReplay && e.isEew && e.source == g.latest.source &&
+          (e.eventId == g.eventId || _isSameUnifiedEewEvent(e, g.latest))))) {
+        for (final frame in StationHistoryCapture.instance.latest) {
+          _recordStationHistoryFrame(frame);
+        }
+      }
+      return;
+    }
+    if (active == _stationHistoryRecording) return;
+    _stationHistoryRecording = active;
+    final capture = StationHistoryCapture.instance;
+    if (active) {
+      capture.addListener(_recordStationHistoryFrame);
+      for (final frame in capture.latest) {
+        _recordStationHistoryFrame(frame);
+      }
+    } else {
+      capture.removeListener(_recordStationHistoryFrame);
+    }
+  }
+
+  void _recordStationHistoryFrame(StationHistoryFrame frame) {
+    if (_disposed) return;
+    var changed = false;
+    for (var i = 0; i < _eewHistory.length; i++) {
+      final group = _eewHistory[i];
+      if (!_unifiedEvents.any((e) => e.isEew && !e.isReplay &&
+          e.source == group.latest.source &&
+          (e.eventId == group.eventId || _isSameUnifiedEewEvent(e, group.latest)))) {
+        continue;
+      }
+      if (frame.receivedAt.isBefore(group.firstArrivedAt.toUtc().subtract(const Duration(minutes: 3))) ||
+          group.stationFrames.any((saved) => saved.kind == frame.kind && saved.receivedAt == frame.receivedAt)) {
+        continue;
+      }
+      _eewHistory[i] = group.copyWith(stationFrames: List.unmodifiable([
+        ...group.stationFrames, frame,
+      ]));
+      changed = true;
+    }
+    if (changed && _eewHistoryPersistTimer == null) {
+      _eewHistoryPersistTimer = Timer(const Duration(seconds: 2), () {
+        _eewHistoryPersistTimer = null;
+        _queuePersistEewHistory();
+      });
+    }
+  }
   Timer? _eewHistoryPersistTimer;
   Future<void> _eewHistoryPersistChain = Future<void>.value();
 
@@ -672,6 +757,7 @@ class QuakeProvider with ChangeNotifier {
 
   Future<void> _loadSourceInfoMagFilters() async {
     final prefs = await SharedPreferences.getInstance();
+    if (_disposed) return;
     if (!_disposed && !_jmaVolcanoPushChanged) {
       _applyJmaVolcanoPushEnabled(
         prefs.getBool(
@@ -1545,7 +1631,7 @@ class QuakeProvider with ChangeNotifier {
       _loadSeenEmscInfoBodyKeys(),
       _loadSeenCwaInfoBodyKeys(),
       _loadBackgroundSeenState(),
-      _loadEewHistory(),
+      _eewHistoryRestore,
       _loadInitialDatabaseHistory(),
     ]).whenComplete(_subscribeUnifiedEvents);
   }
@@ -1575,44 +1661,78 @@ class QuakeProvider with ChangeNotifier {
 
   Future<void> _loadEewHistory() async {
     final prefs = await SharedPreferences.getInstance();
-    final encoded =
-        (prefs.getString(_editionEewHistoryPreferenceKey) ??
-                (AppEdition.isPublic
-                    ? prefs.getString(_eewHistoryPreferenceKey)
-                    : null))
-            ?.trim() ??
-        '';
-    if (encoded.isEmpty) return;
-
-    try {
-      final decoded = jsonDecode(encoded);
-      if (decoded is! List) return;
-      final restored = <EewEventGroup>[];
-      for (final value in decoded) {
-        if (value is! Map) continue;
-        try {
-          final group = EewEventGroup.fromMap(value);
-          if (group.reports.every(
+    if (_disposed) return;
+    historyReplay.restoreTimelineLinked(
+      prefs.getBool(HistoryReplayController.timelinePreferenceKey) ?? false,
+    );
+    final maxPerSource = prefs.getInt(EewHistoryRetention.maxPerSourceKey);
+    _eewHistoryRetention = EewHistoryRetention(
+      maxPerSource: maxPerSource != null && maxPerSource > 0
+          ? maxPerSource
+          : EewHistoryRetention.defaultMaxPerSource,
+      keepForever: prefs.getBool(EewHistoryRetention.keepForeverKey) ?? false,
+    );
+    final restored = _eewHistoryStore
+        .restore(
+          prefs,
+          legacyFallbackKey: AppEdition.isPublic
+              ? _eewHistoryPreferenceKey
+              : null,
+        )
+        .where(
+          (group) => group.reports.every(
             (report) => AppEdition.allowsUnifiedSource(report.source),
-          )) {
-            restored.add(group);
-          }
-        } on Object {
-          // Ignore one malformed group without discarding the other records.
+          ),
+        );
+    final merged = {
+      for (final group in restored) _eewHistoryStore.recordKey(group): group,
+    };
+    for (final group in _eewHistory) {
+      final key = _eewHistoryStore.recordKey(group);
+      var combined = merged[key];
+      if (combined == null) {
+        merged[key] = group;
+      } else {
+        for (final report in group.reports.reversed) {
+          combined = combined!.addReport(report);
         }
+        merged[key] = combined!;
       }
-      _eewHistory
-        ..clear()
-        ..addAll(restored.take(_maxPersistedEewHistoryGroups));
-      if (_eewHistory.isNotEmpty) {
-        _eewHistoryRevision++;
-        _notifyHistorySlice();
-      }
-    } on FormatException catch (error) {
-      debugPrint('QuakeProvider: EEW history restore skipped: $error');
-    } on Object catch (error) {
-      debugPrint('QuakeProvider: EEW history restore failed: $error');
     }
+    _eewHistory
+      ..clear()
+      ..addAll(_eewHistoryRetention.apply(merged.values));
+    _eewHistoryLoaded = true;
+    _eewHistoryRevision++;
+    _notifyHistorySlice();
+    _schedulePersistEewHistory();
+  }
+
+  Future<void> setEewHistoryRetention(EewHistoryRetention value) async {
+    await _eewHistoryRestore;
+    if (_disposed) return;
+    final prefs = await SharedPreferences.getInstance();
+    if (!await prefs.setInt(
+          EewHistoryRetention.maxPerSourceKey,
+          value.maxPerSource,
+        ) ||
+        !await prefs.setBool(
+          EewHistoryRetention.keepForeverKey,
+          value.keepForever,
+        )) {
+      throw StateError('Could not save EEW history settings');
+    }
+    if (_disposed) return;
+    _eewHistoryRetention = value;
+    final retained = value.apply(_eewHistory);
+    _eewHistory
+      ..clear()
+      ..addAll(retained);
+    _eewHistoryRevision++;
+    _notifyHistorySlice();
+    _eewHistoryPersistTimer?.cancel();
+    _eewHistoryPersistTimer = null;
+    await _queuePersistEewHistory();
   }
 
   void _schedulePersistEewHistory() {
@@ -1623,19 +1743,20 @@ class QuakeProvider with ChangeNotifier {
     });
   }
 
-  void _queuePersistEewHistory() {
-    final snapshot = _eewHistory
-        .take(_maxPersistedEewHistoryGroups)
-        .map((group) => group.toMap())
-        .toList(growable: false);
-    _eewHistoryPersistChain = _eewHistoryPersistChain.then((_) async {
+  Future<void> _queuePersistEewHistory() {
+    final write = _eewHistoryPersistChain.then((_) async {
+      await _eewHistoryRestore;
+      if (!_eewHistoryLoaded) return;
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(
-        _editionEewHistoryPreferenceKey,
-        jsonEncode(snapshot),
-      );
+      await _eewHistoryStore.save(prefs, List.of(_eewHistory));
     });
-    unawaited(_eewHistoryPersistChain);
+    _eewHistoryPersistChain = write.catchError((
+      Object error,
+      StackTrace stack,
+    ) {
+      debugPrint('QuakeProvider: EEW history save failed: $error');
+    });
+    return write;
   }
 
   void _scheduleEqlistStart() {
@@ -3725,6 +3846,7 @@ class QuakeProvider with ChangeNotifier {
           : event;
       final acceptedEvent = nextEvent.copyWith(arrivedAt: arrivedAt);
       _unifiedEvents[existingIndex] = acceptedEvent;
+      _syncStationHistoryRecording();
       _domesticEewEffects.observe(acceptedEvent);
       _unifiedMapRevision++;
       _rememberBackgroundAcceptedUnifiedEvent(acceptedEvent);
@@ -3797,6 +3919,7 @@ class QuakeProvider with ChangeNotifier {
       arrivedAt: event.arrivedAt ?? DateTime.now(),
     );
     _unifiedEvents.insert(0, acceptedEvent);
+    _syncStationHistoryRecording();
     _domesticEewEffects.observe(acceptedEvent);
     if (_mobileEewCarousel && acceptedEvent.isEew) _mobileCameraInfoKey = null;
     _unifiedMapRevision++;
@@ -4453,7 +4576,7 @@ class QuakeProvider with ChangeNotifier {
   void _addToEewHistory(UnifiedQuakeData event) {
     final groupIndex = _eewHistory.indexWhere(
       (g) =>
-          g.eventId == event.eventId ||
+          (g.latest.source == event.source && g.eventId == event.eventId) ||
           (g.reports.isNotEmpty && _isSameUnifiedEewEvent(g.latest, event)),
     );
     if (groupIndex >= 0) {
@@ -4468,11 +4591,11 @@ class QuakeProvider with ChangeNotifier {
         ),
       );
     }
-    if (_eewHistory.length > _maxPersistedEewHistoryGroups) {
-      _eewHistory.removeRange(
-        _maxPersistedEewHistoryGroups,
-        _eewHistory.length,
-      );
+    if (_eewHistoryLoaded) {
+      final retained = _eewHistoryRetention.apply(_eewHistory);
+      _eewHistory
+        ..clear()
+        ..addAll(retained);
     }
     _schedulePersistEewHistory();
     _eewHistoryRevision++;
@@ -4496,9 +4619,7 @@ class QuakeProvider with ChangeNotifier {
     if (event.isJmaLpgm) return const Duration(minutes: 1).inSeconds;
     final mag = event.magnitude;
     if (event.isEew) {
-      if (event.isCanceled) return 20;
-      if (event.isWarn) return (mag > 6 ? mag : 6).ceil() * 60;
-      return (mag > 3 ? mag : 3).ceil() * 60;
+      return eewDisplayDuration(event).inSeconds;
     } else {
       int seconds = 300;
       if (event.className.contains('orange') || mag >= 6.0) seconds = 600;
@@ -4601,6 +4722,16 @@ class QuakeProvider with ChangeNotifier {
       return;
     }
     final key = _unifiedEventKey(event);
+    if (event.isEew) {
+      for (var i = 0; i < _eewHistory.length; i++) {
+        final group = _eewHistory[i];
+        if (group.latest.source == event.source &&
+            (group.eventId == event.eventId || _isSameUnifiedEewEvent(group.latest, event))) {
+          _eewHistory[i] = group.copyWith(captureEndedAt: DateTime.now().toUtc());
+          _schedulePersistEewHistory();
+        }
+      }
+    }
     ObsAutomationInputService().emitUnifiedEvent(
       event,
       ObsUnifiedEventPhase.removed,
@@ -4620,6 +4751,7 @@ class QuakeProvider with ChangeNotifier {
     _cancelPendingUnifiedUpdateEffects(key);
     _unifiedCountdownLastSpokenSeconds.remove(key);
     _unifiedEvents.removeAt(index);
+    _syncStationHistoryRecording();
     _domesticEewEffects.retainActive(_unifiedEvents);
     _unifiedMapRevision++;
 
@@ -6028,6 +6160,7 @@ class QuakeProvider with ChangeNotifier {
   void dispose() {
     _disposed = true;
     historyReplay.dispose();
+    StationHistoryCapture.instance.removeListener(_recordStationHistoryFrame);
     _domesticEewEffects.clear();
     _eewHistoryPersistTimer?.cancel();
     _eewHistoryPersistTimer = null;

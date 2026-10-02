@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import '../station_history_capture.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:latlong2/latlong.dart';
@@ -121,6 +122,7 @@ class JianStationService {
       final frame = Map<String, dynamic>.from(decoded);
       if (frame['type'] != _path) return;
       if (frame['stations'] is List) {
+        StationHistoryCapture.instance.retainOriginal('jian.${kind.name}', 'metadata', frame);
         _readStations(frame['stations'] as List);
         return;
       }
@@ -155,6 +157,7 @@ class JianStationService {
         values.add(value);
       }
       _lastDataTime = dataTime;
+      StationHistoryCapture.instance.retainOriginal('jian.${kind.name}', 'data', frame);
       _hasPublishedFrame = true;
       _observationTimer?.cancel();
       _observationTimer = Timer(observationTimeout, () => _failed(_generation));
@@ -170,6 +173,7 @@ class JianStationService {
           names: _names,
           regions: _regions,
           stationTypes: _stationTypes,
+          originalJson: StationHistoryCapture.instance.original('jian.${kind.name}'),
         ),
       );
     } catch (_) {
