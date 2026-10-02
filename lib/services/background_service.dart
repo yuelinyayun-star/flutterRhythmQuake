@@ -28,6 +28,9 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart'
         FlutterLocalNotificationsPlugin,
         Importance,
         InitializationSettings,
+        LinuxInitializationSettings,
+        LinuxNotificationDetails,
+        LinuxNotificationUrgency,
         NotificationDetails,
         Priority;
 
@@ -267,8 +270,8 @@ class BackgroundService {
 
   /// 初始化通知渠道与生命周期监听
   ///
-  /// Web 平台不初始化。Windows 使用 local_notifier；Android / iOS / macOS 使用
-  /// flutter_local_notifications。
+  /// Web 平台不初始化。Windows 使用 local_notifier；Android / iOS / macOS /
+  /// Linux 使用 flutter_local_notifications。
   Future<void> initialize(
     WidgetsBinding binding, {
     BackgroundSettingsProvider? settings,
@@ -324,6 +327,7 @@ class BackgroundService {
       android: androidInit,
       iOS: darwinInit,
       macOS: darwinInit,
+      linux: LinuxInitializationSettings(defaultActionName: '打开'),
     );
     await _notificationsPlugin.initialize(initSettings);
 
@@ -440,6 +444,11 @@ class BackgroundService {
       android: androidDetails,
       iOS: darwinDetails,
       macOS: darwinDetails,
+      linux: LinuxNotificationDetails(
+        urgency: isCritical
+            ? LinuxNotificationUrgency.critical
+            : LinuxNotificationUrgency.normal,
+      ),
     );
     await _notificationsPlugin.show(_notificationId, title, body, details);
   }
