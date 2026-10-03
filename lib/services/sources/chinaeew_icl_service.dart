@@ -13,7 +13,7 @@ class ChinaEewIclService extends BaseSourceService {
   factory ChinaEewIclService() => _instance;
   ChinaEewIclService._internal();
 
-  static const sourceName = 'China EEW ICL';
+  static const sourceName = 'China_EEW_ICL';
   static const enabledPreferenceKey = 'chinaeew_icl_debug_enabled';
   static final listEndpoint = Uri.parse(
     'https://mobile-new.chinaeew.cn/v1/earlywarnings?start_at=&updates=',

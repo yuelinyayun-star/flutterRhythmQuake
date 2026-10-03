@@ -294,6 +294,7 @@ class QuakeProvider with ChangeNotifier {
     onClear: _clearReplaySession,
     onEventExpired: _expireReplayEvent,
     historyGroups: () => eewHistory,
+    loadHistoryGroup: (group) => _eewHistoryStore.loadStationFrames(group),
   );
 
   void _expireReplayEvent(String session, UnifiedQuakeData original) {
@@ -387,7 +388,7 @@ class QuakeProvider with ChangeNotifier {
   void _syncStationHistoryRecording() {
     final active = _unifiedEvents.any((e) => e.isEew && !e.isReplay);
     if (active && _stationHistoryRecording) {
-      if (_eewHistory.any((g) => g.stationFrames.isEmpty && _unifiedEvents.any(
+      if (_eewHistory.any((g) => !g.hasStationHistory && _unifiedEvents.any(
           (e) => !e.isReplay && e.isEew && e.source == g.latest.source &&
           (e.eventId == g.eventId || _isSameUnifiedEewEvent(e, g.latest))))) {
         for (final frame in StationHistoryCapture.instance.latest) {
@@ -410,7 +411,9 @@ class QuakeProvider with ChangeNotifier {
   }
 
   void _recordStationHistoryFrame(StationHistoryFrame frame) {
-    if (_disposed) return;
+    if (_disposed || !StationHistoryCapture.instance.isEnabled(frame.kind)) {
+      return;
+    }
     var changed = false;
     for (var i = 0; i < _eewHistory.length; i++) {
       final group = _eewHistory[i];
@@ -420,6 +423,7 @@ class QuakeProvider with ChangeNotifier {
         continue;
       }
       if (frame.receivedAt.isBefore(group.firstArrivedAt.toUtc().subtract(const Duration(minutes: 3))) ||
+          (group.storedStations?.frameKeys.contains('${_editionEewHistoryPreferenceKey}_station_${frame.kind}_${frame.receivedAt.microsecondsSinceEpoch}') ?? false) ||
           group.stationFrames.any((saved) => saved.kind == frame.kind && saved.receivedAt == frame.receivedAt)) {
         continue;
       }
@@ -1672,13 +1676,13 @@ class QuakeProvider with ChangeNotifier {
           : EewHistoryRetention.defaultMaxPerSource,
       keepForever: prefs.getBool(EewHistoryRetention.keepForeverKey) ?? false,
     );
-    final restored = _eewHistoryStore
-        .restore(
+    final restored = (await _eewHistoryStore
+        .restoreForStartup(
           prefs,
           legacyFallbackKey: AppEdition.isPublic
               ? _eewHistoryPreferenceKey
               : null,
-        )
+        ))
         .where(
           (group) => group.reports.every(
             (report) => AppEdition.allowsUnifiedSource(report.source),
@@ -1749,6 +1753,10 @@ class QuakeProvider with ChangeNotifier {
       if (!_eewHistoryLoaded) return;
       final prefs = await SharedPreferences.getInstance();
       await _eewHistoryStore.save(prefs, List.of(_eewHistory));
+      if (_disposed) return;
+      for (var i = 0; i < _eewHistory.length; i++) {
+        _eewHistory[i] = _eewHistoryStore.releaseSavedFrames(_eewHistory[i]);
+      }
     });
     _eewHistoryPersistChain = write.catchError((
       Object error,
@@ -1758,6 +1766,9 @@ class QuakeProvider with ChangeNotifier {
     });
     return write;
   }
+
+  Future<EewEventGroup> loadHistoryStationFrames(EewEventGroup group) =>
+      _eewHistoryStore.loadStationFrames(group);
 
   void _scheduleEqlistStart() {
     _eqlistStartTimer?.cancel();
@@ -2502,6 +2513,8 @@ class QuakeProvider with ChangeNotifier {
   }
 
   String _unifiedInfoSlotSource(UnifiedQuakeData event) {
+    final agency = internationalCatalogSource(event.source);
+    if (agency != null) return agency;
     if (event.isEew) return event.source;
     final noUpdateSourceKey = _noUpdateTimeFanInfoSourceKey(event.source);
     if (noUpdateSourceKey != null) return noUpdateSourceKey;
@@ -3127,7 +3140,8 @@ class QuakeProvider with ChangeNotifier {
     UnifiedQuakeData oldEvent,
     UnifiedQuakeData event,
   ) {
-    if (oldEvent.origin != WhewsService.adapterOrigin &&
+    if (internationalCatalogSource(event.source) == null &&
+        oldEvent.origin != WhewsService.adapterOrigin &&
         event.origin != WhewsService.adapterOrigin) {
       return false;
     }
@@ -3629,7 +3643,7 @@ class QuakeProvider with ChangeNotifier {
       }
       // Reconnects/restarts must not grant an already shown catalog a new
       // arrival window. Reuse the accepted-event state shared with Android.
-      if (unifiedCatalogSources.containsKey(event.source) &&
+      if (internationalCatalogSource(event.source) != null &&
           _backgroundSeenUnifiedInfoEvents.containsKey(
             _unifiedEventKey(event),
           ) &&
@@ -3832,6 +3846,11 @@ class QuakeProvider with ChangeNotifier {
       final isNewInfoEvent =
           !event.isEew &&
           _unifiedCanonicalEventId(oldEvent) != _unifiedCanonicalEventId(event);
+      if (!event.isEew && !isNewInfoEvent &&
+          internationalCatalogSource(event.source) != null) {
+        // Parameter revisions update the card, not the alert or its lifetime.
+        suppressInfoActions = true;
+      }
       if (!event.isEew &&
           !isNewInfoEvent &&
           event.origin != WhewsService.adapterOrigin &&
@@ -3877,8 +3896,7 @@ class QuakeProvider with ChangeNotifier {
       if (event.isEew) {
         _setupUnifiedDismissTimer(event);
       } else if (event.source == 'jmaEqlist' ||
-          event.source == 'p2pJmaEqlist' ||
-          event.source == 'usgsEqlist') {
+          event.source == 'p2pJmaEqlist') {
         _setupUnifiedDismissTimer(event);
       } else if (isNewInfoEvent) {
         _unifiedDismissTimers[oldKey]?.cancel();
@@ -4075,7 +4093,7 @@ class QuakeProvider with ChangeNotifier {
   ) {
     if (!_isSameUnifiedInfoEvent(oldEvent, event)) return event;
 
-    var merged = unifiedCatalogSources.containsKey(event.source)
+    var merged = internationalCatalogSource(event.source) != null
         ? event
         : event.copyWith(eventId: oldEvent.eventId);
 

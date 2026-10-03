@@ -494,7 +494,7 @@ class EqlistManager {
           ? _whewsCatalogLists.putIfAbsent(bucket, () => []) : null,
     };
     if (list == null) return;
-    final aliases = unifiedCatalogSources.containsKey(bucket)
+    final aliases = internationalCatalogSource(bucket) != null
         ? _catalogIdAliases.putIfAbsent(bucket, () => {}) : null;
     String identity(QuakeMessage item) {
       final id = catalogEventId(bucket, item.eventId);

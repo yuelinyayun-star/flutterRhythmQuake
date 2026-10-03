@@ -3119,7 +3119,7 @@ class _DebugPageState extends State<DebugPage> {
             children: [
               const Expanded(
                 child: Text(
-                  'Jian ICL 地震预警',
+                  'Jian_ICL 地震预警',
                   style: TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w700,
@@ -3237,7 +3237,7 @@ class _DebugPageState extends State<DebugPage> {
             children: [
               const Expanded(
                 child: Text(
-                  'China EEW ICL 地震预警',
+                  'China_EEW_ICL 地震预警',
                   style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700,
                       fontSize: 14),
                 ),

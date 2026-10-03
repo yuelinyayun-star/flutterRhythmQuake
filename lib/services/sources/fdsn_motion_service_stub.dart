@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'fdsn_source_catalog.dart';
+import 'fdsn_source_status.dart';
 
 class FdsnMotionSample {
   final String source;
@@ -64,6 +66,13 @@ class FdsnMotionService {
     defaultStationLimit,
   );
   final ValueNotifier<DateTime?> dataTimeNotifier = ValueNotifier(null);
+  final sourceStatusesNotifier = ValueNotifier<List<FdsnSourceStatus>>(const []);
+
+  void acceptSourceStatuses(List<FdsnSourceStatus> statuses) {
+    if (!listEquals(sourceStatusesNotifier.value, statuses)) {
+      sourceStatusesNotifier.value = List.unmodifiable(statuses);
+    }
+  }
 
   void Function(bool connected)? onStatusChanged;
 
@@ -77,7 +86,7 @@ class FdsnMotionService {
 
   void connect({
     int stationLimit = defaultStationLimit,
-    Set<String> enabledSources = const {'EarthScope', 'GEOFON'},
+    Set<String> enabledSources = FdsnSourceCatalog.names,
   }) {
     final normalizedLimit = normalizeStationLimit(stationLimit);
     if (targetStationLimitNotifier.value != normalizedLimit) {
@@ -88,7 +97,8 @@ class FdsnMotionService {
     onStatusChanged?.call(false);
   }
 
-  void disconnect() {
+  void disconnect({bool clearSourceStatuses = true}) {
+    if (clearSourceStatuses) acceptSourceStatuses(const []);
     linkedStationCountNotifier.value = 0;
     dataTimeNotifier.value = null;
     onStatusChanged?.call(false);
@@ -98,6 +108,7 @@ class FdsnMotionService {
     linkedStationCountNotifier.dispose();
     targetStationLimitNotifier.dispose();
     dataTimeNotifier.dispose();
+    sourceStatusesNotifier.dispose();
     _controller.close();
   }
 }

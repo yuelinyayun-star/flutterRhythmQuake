@@ -68,6 +68,7 @@ class BackgroundEventProcessor {
   static const Duration _bodyKeyTtl = Duration(hours: 24);
   static const Duration _noUpdateInfoTtl = Duration(hours: 48);
   static const int _maxSeenNoUpdateInfoEvents = 500;
+  static const int _maxSeenUnifiedInfoEvents = 1000;
 
   final Map<String, double> _sourceInfoMagFilters;
   final String _infoActionWhitelist;
@@ -295,6 +296,8 @@ class BackgroundEventProcessor {
   }
 
   String _infoSlotSource(UnifiedQuakeData event) {
+    final agency = internationalCatalogSource(event.source);
+    if (agency != null) return agency;
     final noUpdateKey = _noUpdateTimeFanInfoSourceKey(event.source);
     if (noUpdateKey != null) return noUpdateKey;
     return event.source == 'p2pJmaEqlist' ? 'jmaEqlist' : event.source;
@@ -530,7 +533,8 @@ class BackgroundEventProcessor {
     UnifiedQuakeData oldEvent,
     UnifiedQuakeData event,
   ) {
-    if (oldEvent.origin != WhewsService.adapterOrigin &&
+    if (internationalCatalogSource(event.source) == null &&
+        oldEvent.origin != WhewsService.adapterOrigin &&
         event.origin != WhewsService.adapterOrigin) {
       return false;
     }
@@ -601,7 +605,7 @@ class BackgroundEventProcessor {
     UnifiedQuakeData event,
   ) {
     if (!_isSameInfoEvent(oldEvent, event)) return event;
-    var merged = unifiedCatalogSources.containsKey(event.source)
+    var merged = internationalCatalogSource(event.source) != null
         ? event : event.copyWith(eventId: oldEvent.eventId);
     if (_jmaInfoTitleRank(event.titleText) <
         _jmaInfoTitleRank(oldEvent.titleText)) {
@@ -871,6 +875,15 @@ class BackgroundEventProcessor {
     changed =
         _removeExpired(_seenUnifiedInfoEvents, now, _noUpdateInfoTtl) ||
         changed;
+    if (_seenUnifiedInfoEvents.length > _maxSeenUnifiedInfoEvents) {
+      final sorted = _seenUnifiedInfoEvents.entries.toList()
+        ..sort((a, b) => a.value.compareTo(b.value));
+      final excess = sorted.length - _maxSeenUnifiedInfoEvents;
+      for (var i = 0; i < excess; i++) {
+        _seenUnifiedInfoEvents.remove(sorted[i].key);
+      }
+      changed = true;
+    }
     if (_seenNoUpdateInfoEvents.length > _maxSeenNoUpdateInfoEvents) {
       final sorted = _seenNoUpdateInfoEvents.entries.toList()
         ..sort((a, b) => a.value.compareTo(b.value));

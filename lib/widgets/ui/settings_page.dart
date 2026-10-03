@@ -28,6 +28,7 @@ import 'eew_history_settings.dart';
 import 'wauth_token_field.dart';
 import '../../services/sources/nowquake_cenc_intensity_service.dart';
 import '../../services/sources/fdsn_motion_service.dart';
+import '../../services/sources/fdsn_source_catalog.dart';
 import '../../core/fdsn_intensity.dart';
 import '../../services/sources/nied_monitor.dart';
 import '../../services/sources/source_manager.dart';
@@ -119,8 +120,7 @@ class _SettingsPageState extends State<SettingsPage>
   bool _overlayWeatherStation = false;
   bool _overlayWeatherAlert = false;
   String _weatherStationMode = 'auto';
-  bool _overlayFdsnEarthScope = false;
-  bool _overlayFdsnGeofon = false;
+  final _overlayFdsnSources = <String, bool>{};
   int _fdsnStationLimit = FdsnMotionService.defaultStationLimit;
   final Map<String, double> _sourceMagFilters = {};
   String _niedDataSource = 'lmoni';
@@ -189,8 +189,6 @@ class _SettingsPageState extends State<SettingsPage>
       'map_overlay_weatherStationLayer';
   static const String _overlayWeatherAlertKey = 'map_overlay_weatherAlertLayer';
   static const String _weatherStationModeKey = 'map_overlay_weatherStationMode';
-  static const String _overlayFdsnEarthScopeKey = 'map_overlay_fdsnEarthScope';
-  static const String _overlayFdsnGeofonKey = 'map_overlay_fdsnGeofon';
   static const String _fdsnStationLimitKey =
       FdsnMotionService.stationLimitPreferenceKey;
   static const String _magFilterPrefix = 'source_mag_filter_';
@@ -473,6 +471,7 @@ class _SettingsPageState extends State<SettingsPage>
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
+    await FdsnSourceCatalog.initializePreferences(prefs.getBool, prefs.setBool);
     final tts = TtsService();
     await tts.init();
     final ttsVoices = await tts.loadVoices();
@@ -541,9 +540,9 @@ class _SettingsPageState extends State<SettingsPage>
           prefs.getBool(_overlayWeatherStationKey) ?? false;
       _overlayWeatherAlert = prefs.getBool(_overlayWeatherAlertKey) ?? false;
       _weatherStationMode = prefs.getString(_weatherStationModeKey) ?? 'auto';
-      _overlayFdsnEarthScope =
-          prefs.getBool(_overlayFdsnEarthScopeKey) ?? false;
-      _overlayFdsnGeofon = prefs.getBool(_overlayFdsnGeofonKey) ?? false;
+      for (final source in FdsnSourceCatalog.sources) {
+        _overlayFdsnSources[source.name] = source.readEnabled(prefs.getBool);
+      }
       _fdsnStationLimit = FdsnMotionService.normalizeStationLimit(
         prefs.getInt(_fdsnStationLimitKey) ??
             FdsnMotionService.defaultStationLimit,
@@ -681,8 +680,12 @@ class _SettingsPageState extends State<SettingsPage>
     mapState.setOverlayEnabled('weatherStationLayer', _overlayWeatherStation);
     mapState.setOverlayEnabled('weatherAlertLayer', _overlayWeatherAlert);
     mapState.setWeatherStationMode(_weatherStationMode);
-    mapState.setOverlayEnabled('fdsnEarthScope', _overlayFdsnEarthScope);
-    mapState.setOverlayEnabled('fdsnGeofon', _overlayFdsnGeofon);
+    for (final source in FdsnSourceCatalog.sources) {
+      mapState.setOverlayEnabled(
+        source.overlayKey,
+        _overlayFdsnSources[source.name] ?? false,
+      );
+    }
     mapState.setShowEstimatedEpicenter(_showEpicenter);
     context.read<QuakeProvider>().setWeatherLocalOnly(
       _weatherLocalOnly,
@@ -2563,14 +2566,14 @@ class _SettingsPageState extends State<SettingsPage>
       ),
       if (kIsWeb)
         _buildSettingRow(
-          title: 'FDSN / SeedLink 实时测站',
+          title: 'SeedLink全球测站连接',
           subtitle: '浏览器无法直连 SeedLink TCP 测站流',
           leading: Icons.link_off_outlined,
           control: const Text('Web 暂不可用'),
         )
       else
         _buildApiSwitch(
-        title: 'FDSN / SeedLink 实时测站',
+        title: 'SeedLink全球测站连接',
         value: _fdsnSeedLinkEnabled,
         onChanged: (val) {
           setState(() => _fdsnSeedLinkEnabled = val);
@@ -3648,36 +3651,28 @@ class _SettingsPageState extends State<SettingsPage>
   Widget _buildFdsnStationSelector() {
     return _buildSettingRow(
       title: 'FDSN 测站',
-      subtitle: '显示 EarthScope / GEOFON 测站点位；实时包由应用内 SeedLink 连接接收',
+      subtitle: 'SeedLink 实时测站',
       leading: Icons.public_outlined,
       control: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _buildOverlayToggle(
-            label: 'EarthScope',
-            selected: _overlayFdsnEarthScope,
-            onTap: (val) {
-              setState(() => _overlayFdsnEarthScope = val);
-              _saveOverlayState(_overlayFdsnEarthScopeKey, val);
-              context.read<MapStateProvider>().setOverlayEnabled(
-                'fdsnEarthScope',
-                val,
-              );
-            },
-          ),
-          const SizedBox(height: 8),
-          _buildOverlayToggle(
-            label: 'GEOFON',
-            selected: _overlayFdsnGeofon,
-            onTap: (val) {
-              setState(() => _overlayFdsnGeofon = val);
-              _saveOverlayState(_overlayFdsnGeofonKey, val);
-              context.read<MapStateProvider>().setOverlayEnabled(
-                'fdsnGeofon',
-                val,
-              );
-            },
-          ),
+          for (final source in FdsnSourceCatalog.sources)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: _buildOverlayToggle(
+                label: source.name,
+                selected: _overlayFdsnSources[source.name] ?? false,
+                onTap: (val) async {
+                  setState(() => _overlayFdsnSources[source.name] = val);
+                  await _saveOverlayState(source.preferenceKey, val);
+                  if (!mounted) return;
+                  context.read<MapStateProvider>().setOverlayEnabled(
+                    source.overlayKey,
+                    val,
+                  );
+                },
+              ),
+            ),
         ],
       ),
     );

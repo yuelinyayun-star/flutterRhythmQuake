@@ -1,11 +1,38 @@
 import 'unified_quake_data.dart';
 import 'station_history_frame.dart';
 
+/// Disk references, not decoded observations. New captures may coexist with
+/// these references until the next save; replay materializes their union.
+class StoredStationHistory {
+  const StoredStationHistory({
+    required this.frameKeys,
+    required this.archiveKeys,
+    this.standaloneFrameKeys = const [],
+  });
+  final List<String> frameKeys;
+  final List<String> archiveKeys;
+  final List<String> standaloneFrameKeys;
+  DateTime? get lastReceivedAt {
+    int? latest;
+    for (final key in frameKeys) {
+      final time = int.tryParse(key.substring(key.lastIndexOf('_') + 1));
+      if (time != null && (latest == null || time > latest)) latest = time;
+    }
+    return latest == null
+        ? null
+        : DateTime.fromMicrosecondsSinceEpoch(latest, isUtc: true);
+  }
+}
+
 class EewEventGroup {
   final String eventId;
   final List<UnifiedQuakeData> reports;
   final DateTime firstArrivedAt;
   final List<StationHistoryFrame> stationFrames;
+  final StoredStationHistory? storedStations;
+  bool get hasStationHistory =>
+      stationFrames.isNotEmpty ||
+      (storedStations?.frameKeys.isNotEmpty ?? false);
   final DateTime? captureEndedAt;
 
   EewEventGroup({
@@ -13,6 +40,7 @@ class EewEventGroup {
     required this.reports,
     required this.firstArrivedAt,
     this.stationFrames = const [],
+    this.storedStations,
     this.captureEndedAt,
   });
 
@@ -95,6 +123,7 @@ class EewEventGroup {
       reports: updated,
       firstArrivedAt: firstArrivedAt,
       stationFrames: stationFrames,
+      storedStations: storedStations,
       captureEndedAt: captureEndedAt,
     );
   }
@@ -111,6 +140,8 @@ class EewEventGroup {
     List<UnifiedQuakeData>? reports,
     DateTime? firstArrivedAt,
     List<StationHistoryFrame>? stationFrames,
+    StoredStationHistory? storedStations,
+    bool clearStoredStations = false,
     DateTime? captureEndedAt,
   }) {
     return EewEventGroup(
@@ -118,6 +149,9 @@ class EewEventGroup {
       reports: reports ?? this.reports,
       firstArrivedAt: firstArrivedAt ?? this.firstArrivedAt,
       stationFrames: stationFrames ?? this.stationFrames,
+      storedStations: clearStoredStations
+          ? null
+          : storedStations ?? this.storedStations,
       captureEndedAt: captureEndedAt ?? this.captureEndedAt,
     );
   }

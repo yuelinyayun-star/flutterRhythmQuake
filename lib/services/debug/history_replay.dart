@@ -30,6 +30,7 @@ class HistoryReplayPackage {
   final List<DateTime?> _arrivalInstants;
   final bool usesDeviceArrivalTimeZone;
   final List<StationHistoryFrame> stationFrames;
+  final StoredStationHistory? storedStations;
   final DateTime? captureEndedAt;
   bool get manualTiming => timing == HistoryReplayTiming.manual;
   bool get usesArrivalTiming => timing == HistoryReplayTiming.arrival;
@@ -44,6 +45,7 @@ class HistoryReplayPackage {
     this.usesDeviceArrivalTimeZone,
     this.stationFrames,
     this.captureEndedAt,
+    this.storedStations,
   );
 
   static bool hasPayload(UnifiedQuakeData event) =>
@@ -56,6 +58,7 @@ class HistoryReplayPackage {
       saved,
       group.reports.length - saved.length,
       stationFrames: group.stationFrames,
+      storedStations: group.storedStations,
       captureEndedAt: group.captureEndedAt,
     );
   }
@@ -118,6 +121,7 @@ class HistoryReplayPackage {
     List<DateTime?>? arrivalInstants,
     bool importedLegacy = false,
     List<StationHistoryFrame> stationFrames = const [],
+    StoredStationHistory? storedStations,
     DateTime? captureEndedAt,
     HistoryReplayTiming? forcedTiming,
   }) {
@@ -144,9 +148,12 @@ class HistoryReplayPackage {
     final arrivalTimes =
         arrivalInstants ??
         reports.map((event) => event.arrivedAt?.toUtc()).toList();
+    final hasStations =
+        stationFrames.isNotEmpty ||
+        (storedStations?.frameKeys.isNotEmpty ?? false);
     final hasArrivalTimeline =
-        stationFrames.isNotEmpty && _consistentTimes(reports, arrivalTimes);
-    if (stationFrames.isNotEmpty && !hasArrivalTimeline) {
+        hasStations && _consistentTimes(reports, arrivalTimes);
+    if (hasStations && !hasArrivalTimeline) {
       throw const FormatException('测站回放需要有效的报文接收时间');
     }
     if (forcedTiming != null &&
@@ -157,8 +164,7 @@ class HistoryReplayPackage {
                   ? arrivalTimes
                   : sourceTimes,
             ) ||
-            (stationFrames.isNotEmpty &&
-                forcedTiming != HistoryReplayTiming.arrival))) {
+            (hasStations && forcedTiming != HistoryReplayTiming.arrival))) {
       throw const FormatException('回放缺少可联动的时间信息');
     }
     final timing =
@@ -216,6 +222,7 @@ class HistoryReplayPackage {
           ..sort((a, b) => a.receivedAt.compareTo(b.receivedAt)),
       ),
       captureEndedAt?.toUtc(),
+      storedStations,
     );
   }
 
@@ -235,6 +242,7 @@ class HistoryReplayPackage {
         omittedReports,
         arrivalInstants: _arrivalInstants,
         stationFrames: stationFrames,
+        storedStations: storedStations,
         captureEndedAt: captureEndedAt,
         forcedTiming: timing,
       );
@@ -257,10 +265,17 @@ class HistoryReplayPackage {
       );
       if (stationEnd.isAfter(end)) end = stationEnd;
     }
+    final storedEnd = storedStations?.lastReceivedAt?.add(
+      const Duration(seconds: 30),
+    );
+    if (storedEnd != null && storedEnd.isAfter(end)) end = storedEnd;
     return end.difference(times.first);
   }
 
   String encode() {
+    if (storedStations?.frameKeys.isNotEmpty ?? false) {
+      throw StateError('Load saved station data before exporting');
+    }
     final text = jsonEncode({
       'format': format,
       'version': version,
@@ -478,16 +493,19 @@ class HistoryReplayController extends ChangeNotifier {
   final void Function(String) onClear;
   final DateTime Function() now;
   final Iterable<EewEventGroup> Function()? historyGroups;
+  final Future<EewEventGroup> Function(EewEventGroup)? loadHistoryGroup;
   final void Function(String, UnifiedQuakeData)? onEventExpired;
   HistoryReplayController({
     required this.onReport,
     required this.onClear,
     DateTime Function()? now,
     this.historyGroups,
+    this.loadHistoryGroup,
     this.onEventExpired,
   }) : now = now ?? (() => NtpService().now.toUtc());
 
   HistoryReplayPackage? _package;
+  EewEventGroup? _storedAnchor;
   HistoryReplayPackage? get package => _package;
   String? _session;
   Timer? _timer;
@@ -502,7 +520,9 @@ class HistoryReplayController extends ChangeNotifier {
   bool get timelineLinked => _timelineLinked;
   int get totalReports => _plan?.reports.length ?? package?.reports.length ?? 0;
   int get totalStationFrames =>
-      _plan?.stationFrames.length ?? package?.stationFrames.length ?? 0;
+      _plan?.stationFrames.length ??
+      ((package?.stationFrames.length ?? 0) +
+          (package?.storedStations?.frameKeys.length ?? 0));
   int get linkedEventCount => _plan?.eventCount ?? 1;
   int get skippedLinkedEvents => _plan?.skipped ?? 0;
   bool get missingTimelineTime => _plan?.missingAnchorTime ?? false;
@@ -559,23 +579,91 @@ class HistoryReplayController extends ChangeNotifier {
     HistoryReplayPackage value, {
     bool remember = true,
     List<EewEventGroup>? relatedHistory,
+    EewEventGroup? storedGroup,
   }) {
     stop();
     if (remember) _imports[value.identity] = value;
     if (relatedHistory != null) _relatedHistory = relatedHistory;
     _package = value;
+    _storedAnchor = storedGroup;
     _plan = null;
     played = 0;
     notifyListeners();
   }
 
-  void play() {
+  int _preparation = 0;
+  bool preparing = false;
+
+  Future<void> playPrepared() async {
+    final loader = loadHistoryGroup;
+    var value = package;
+    if (loader == null || value == null) {
+      play();
+      return;
+    }
+    final generation = ++_preparation;
+    preparing = true;
+    notifyListeners();
+    try {
+      if (value.storedStations?.frameKeys.isNotEmpty ?? false) {
+        final anchor = _storedAnchor;
+        if (anchor == null) throw StateError('Missing saved replay selection');
+        final loaded = await loader(anchor);
+        if (_preparation != generation) return;
+        value = HistoryReplayPackage.fromGroup(loaded);
+        _package = value;
+      }
+      if (!timelineLinked) {
+        play();
+        return;
+      }
+      final groups = (historyGroups?.call() ?? _relatedHistory).toList();
+      final candidates = <HistoryReplayPackage>[];
+      final identities = <String, EewEventGroup>{};
+      var skipped = 0;
+      for (final group in groups) {
+        try {
+          final candidate = HistoryReplayPackage.fromGroup(group);
+          candidates.add(candidate);
+          identities[candidate.identity] = group;
+        } on FormatException {
+          skipped++;
+        }
+      }
+      final preview = _ReplayPlan.linked(value, [
+        ...candidates,
+        ..._imports.values,
+      ], skipped: skipped);
+      final selected = preview.expiries
+          .map((entry) => entry.$1.identity)
+          .toSet();
+      final prepared = <EewEventGroup>[];
+      for (final entry in identities.entries) {
+        if (!selected.contains(entry.key) || entry.key == value.identity) {
+          continue;
+        }
+        prepared.add(await loader(entry.value));
+        if (_preparation != generation) return;
+      }
+      if (_preparation == generation) {
+        play(preparedHistory: prepared, preparedSkipped: preview.skipped);
+      }
+    } finally {
+      if (_preparation == generation) {
+        preparing = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  void play({List<EewEventGroup>? preparedHistory, int preparedSkipped = 0}) {
     final value = package;
     if (value == null) return;
-    var skipped = 0;
+    var skipped = preparedSkipped;
     final candidates = <HistoryReplayPackage>[];
     if (timelineLinked) {
-      for (final group in historyGroups?.call() ?? _relatedHistory) {
+      for (final group
+          in preparedHistory ?? historyGroups?.call() ?? _relatedHistory) {
         try {
           candidates.add(HistoryReplayPackage.fromGroup(group));
         } on FormatException {
@@ -587,6 +675,12 @@ class HistoryReplayController extends ChangeNotifier {
     final plan = timelineLinked
         ? _ReplayPlan.linked(value, candidates, skipped: skipped)
         : _ReplayPlan.single(value);
+    if ((value.storedStations?.frameKeys.isNotEmpty ?? false) ||
+        plan.expiries.any(
+          (entry) => entry.$1.storedStations?.frameKeys.isNotEmpty ?? false,
+        )) {
+      throw StateError('Load saved station data before playback');
+    }
     stop();
     _plan = plan;
     final started = now();
@@ -679,6 +773,8 @@ class HistoryReplayController extends ChangeNotifier {
   }
 
   void stop() {
+    _preparation++;
+    preparing = false;
     _timer?.cancel();
     _timer = null;
     _stationTimer?.cancel();
@@ -688,6 +784,9 @@ class HistoryReplayController extends ChangeNotifier {
     }
     _expiryTimers.clear();
     _advance = null;
+    _plan = null;
+    final anchor = _storedAnchor;
+    if (anchor != null) _package = HistoryReplayPackage.fromGroup(anchor);
     final session = _session;
     _session = null;
     stationSnapshots.value = const {};
@@ -699,6 +798,7 @@ class HistoryReplayController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _preparation++;
     _timer?.cancel();
     _stationTimer?.cancel();
     for (final timer in _expiryTimers) {
@@ -708,6 +808,11 @@ class HistoryReplayController extends ChangeNotifier {
     stationSnapshots.dispose();
     _advance = null;
     _session = null;
+    _plan = null;
+    _package = null;
+    _storedAnchor = null;
+    _relatedHistory = const [];
+    _imports.clear();
     super.dispose();
   }
 }

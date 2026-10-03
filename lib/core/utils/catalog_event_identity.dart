@@ -5,6 +5,142 @@ import '../../models/unified_quake_data.dart';
 import '../../models/whews_catalog.dart';
 import 'quake_time.dart';
 
+/// Agency identity only; transports and unrelated agencies never share a slot.
+String? internationalCatalogSource(String source) {
+  if (unifiedCatalogSources.containsKey(source)) return source;
+  return switch (source) {
+    'usgsEqlist' => 'usgsEqlist',
+    'kmaEqlist' => 'kmaEqlist',
+    'emsc' || 'emscEqlist' => 'emsc',
+    'hko' || 'hkoEqlist' => 'hko',
+    'bcsf' || 'bcsfEqlist' => 'bcsf',
+    'gfz' || 'gfzEqlist' => 'gfz',
+    'usp' || 'uspEqlist' => 'usp',
+    'geonet' => 'whews_geonet',
+    _ => null,
+  };
+}
+
+const _internationalIdentityPrefix = 'catalog|agency-identity-v1|';
+
+String? _internationalObservation({
+  required String source,
+  required DateTime? instant,
+  required double? lat,
+  required double? lng,
+  required double depth,
+}) {
+  final agency = internationalCatalogSource(source);
+  if (agency == null ||
+      instant == null ||
+      lat == null ||
+      lng == null ||
+      !lat.isFinite ||
+      !lng.isFinite ||
+      lat.abs() > 90 ||
+      lng.abs() > 180 ||
+      (lat == 0 && lng == 0) ||
+      !depth.isFinite ||
+      depth < 0) {
+    return null;
+  }
+  // Comparison precision, not edits to the data: GeoNet transports differ in
+  // milliseconds/decimal km; captured Jian GA uses integer km and 3 decimals.
+  final depthKey = agency == 'whews_ga'
+      ? depth.round().toString()
+      : depth.toStringAsFixed(1);
+  return '$agency|${instant.millisecondsSinceEpoch ~/ 1000}|'
+      '${lat.toStringAsFixed(3)}|${lng.toStringAsFixed(3)}|$depthKey';
+}
+
+Map<String, dynamic>? _internationalIdentity(UnifiedQuakeData event) {
+  if (event.isEew || event.isReplay || event.isVolcanoEvent) return null;
+  final observation = _internationalObservation(
+    source: event.source,
+    instant: event.originTime == null
+        ? null
+        : QuakeTime.unifiedInstantUtc(event),
+    lat: event.lat,
+    lng: event.lng,
+    depth: event.depth,
+  );
+  if (observation == null) return null;
+  return {
+    'source': internationalCatalogSource(event.source),
+    'id': catalogEventId(event.source, event.eventId),
+    'api': '${event.origin}|${event.apiTypeLabel}',
+    'observation': observation,
+  };
+}
+
+Map<String, dynamic>? _internationalIdentityFromKey(String key, String source) {
+  final prefix = '$_internationalIdentityPrefix$source|';
+  if (!key.startsWith(prefix)) return null;
+  try {
+    final value = jsonDecode(key.substring(prefix.length));
+    return value is Map ? Map<String, dynamic>.from(value) : null;
+  } on FormatException {
+    return null;
+  }
+}
+
+String _internationalCanonicalEventId(
+  UnifiedQuakeData event,
+  Map<String, DateTime> seen,
+) {
+  final incoming = _internationalIdentity(event);
+  if (incoming != null) {
+    String? observationMatch;
+    for (final key in seen.keys) {
+      final known = _internationalIdentityFromKey(
+        key,
+        incoming['source'] as String,
+      );
+      if (known == null ||
+          known['source'] != incoming['source'] ||
+          known['identity'] is! String) {
+        continue;
+      }
+      if (incoming['id'] != '' &&
+          known['id'] == incoming['id'] &&
+          known['api'] == incoming['api']) {
+        return known['identity'] as String;
+      }
+      if (known['observation'] == incoming['observation']) {
+        observationMatch ??= known['identity'] as String;
+      }
+    }
+    if (observationMatch != null) return observationMatch;
+    if (incoming['id'] == '') return incoming['observation'] as String;
+  }
+  return catalogEventId(event.source, event.eventId);
+}
+
+String? _internationalReportKey(
+  UnifiedQuakeData event,
+  Map<String, DateTime> seen,
+) {
+  if (_internationalIdentity(event) == null || !event.magnitude.isFinite) {
+    return null;
+  }
+  final state = [
+    internationalCatalogSource(event.source),
+    catalogCanonicalEventId(event, seen),
+    QuakeTime.unifiedInstantUtc(event).microsecondsSinceEpoch,
+    event.lat,
+    event.lng,
+    event.depth,
+    event.magnitude,
+    double.tryParse(event.maxIntensity)?.toString() ?? event.maxIntensity,
+    _catalogReview(event),
+    event.isCanceled,
+    event.isWarn,
+    event.isFinal,
+    event.warnArea,
+  ];
+  return 'catalog|agency-report-v1|${jsonEncode(state)}';
+}
+
 /// Comparison keys only. Original IDs, timestamps and payloads stay untouched.
 String catalogEventId(String source, String id) {
   if (source == 'whews_gsras' && RegExp(r'^gsras_\d{8}$').hasMatch(id)) {
@@ -240,7 +376,11 @@ String catalogCanonicalEventId(
     }
   }
   final incoming = _gaReport(event);
-  if (incoming == null) return catalogEventId(event.source, event.eventId);
+  if (incoming == null) return _internationalCanonicalEventId(event, seen);
+  final agencyIdentity = _internationalCanonicalEventId(event, seen);
+  if (agencyIdentity != catalogEventId(event.source, event.eventId)) {
+    return agencyIdentity;
+  }
   Map<String, dynamic>? first;
   DateTime? firstSeen;
   for (final entry in seen.entries) {
@@ -273,6 +413,13 @@ Iterable<String> catalogReportKeys(
   UnifiedQuakeData event, [
   Map<String, DateTime> seen = const {},
 ]) sync* {
+  final identity = _internationalIdentity(event);
+  if (identity != null) {
+    identity['identity'] = catalogCanonicalEventId(event, seen);
+    yield '$_internationalIdentityPrefix${identity['source']}|${jsonEncode(identity)}';
+    final report = _internationalReportKey(event, seen);
+    if (report != null) yield report;
+  }
   final exact = catalogReportKey(event);
   if (exact != null) yield exact;
   if (event.source == 'cencEqlist' && !event.isEew) {
@@ -283,15 +430,17 @@ Iterable<String> catalogReportKeys(
   }
   final ga = _gaReport(event);
   if (ga != null) {
-    ga['identity'] = catalogCanonicalEventId(
-      event,
-      seen,
-    ).substring('ga-cross-api|'.length);
+    final identity = catalogCanonicalEventId(event, seen);
+    ga['identity'] = identity.startsWith('ga-cross-api|')
+        ? identity.substring('ga-cross-api|'.length)
+        : identity;
     yield '$_gaReportPrefix${jsonEncode(ga)}';
   }
 }
 
 bool hasSeenCatalogReport(UnifiedQuakeData event, Map<String, DateTime> seen) {
+  final international = _internationalReportKey(event, seen);
+  if (international != null && seen.containsKey(international)) return true;
   final exact = catalogReportKey(event);
   if (exact != null && seen.containsKey(exact)) return true;
   final incoming = _gaReport(event);
@@ -338,10 +487,28 @@ bool sameCatalogHistoryEvent(String bucket, QuakeMessage a, QuakeMessage b) {
     final first = key(a);
     return first != null && first == key(b);
   }
-  final agency = unifiedCatalogSources[bucket];
+  final agency =
+      unifiedCatalogSources[bucket] ??
+      switch (bucket) {
+        'usgsEqlist' => QuakeSourceType.usgs,
+        'emscEqlist' => QuakeSourceType.emsc,
+        'kmaEqlist' => QuakeSourceType.kma_eq,
+        _ => null,
+      };
   if (agency == null || a.source != agency || b.source != agency) return false;
   final id = catalogEventId(bucket, a.eventId);
   if (id.isNotEmpty && id == catalogEventId(bucket, b.eventId)) return true;
+  String? observation(QuakeMessage event) => _internationalObservation(
+    source: bucket,
+    instant: QuakeTime.eventInstantUtc(event),
+    lat: event.latitude,
+    lng: event.longitude,
+    depth: event.depth,
+  );
+  final firstObservation = observation(a);
+  if (firstObservation != null && firstObservation == observation(b)) {
+    return true;
+  }
   String? key(QuakeMessage event) => _observationKey(
     source: bucket,
     instant: QuakeTime.eventInstantUtc(event),

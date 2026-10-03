@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, compute;
 import 'package:flutter/material.dart';
 
 import '../../services/debug/history_replay.dart';
@@ -11,8 +11,11 @@ import 'history_replay_file_web.dart'
     if (dart.library.io) 'history_replay_file_io.dart'
     as replay_file;
 
+Uint8List _encodeReplay(HistoryReplayPackage package) =>
+    Uint8List.fromList(utf8.encode(package.encode()));
+
 Future<bool> exportHistoryReplay(HistoryReplayPackage package) async {
-  final bytes = Uint8List.fromList(utf8.encode(package.encode()));
+  final bytes = await compute(_encodeReplay, package);
   final path = await FilePicker.platform.saveFile(
     dialogTitle: '导出回放包',
     fileName:
@@ -89,13 +92,17 @@ class _HistoryReplayControlsState extends State<HistoryReplayControls> {
     }
   }
 
-  void _play() {
+  Future<void> _play() async {
+    setState(() => _busy = true);
     try {
-      widget.controller.play();
+      await widget.controller.playPrepared();
+      if (!mounted) return;
       setState(() => _error = null);
       if (widget.controller.active) widget.onPlaybackStarted?.call();
     } catch (error) {
-      setState(() => _error = '回放失败：$error');
+      if (mounted) setState(() => _error = '回放失败：$error');
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -152,7 +159,7 @@ class _HistoryReplayControlsState extends State<HistoryReplayControls> {
         ),
         IconButton(
           tooltip: '停止回放',
-          onPressed: controller.active ? controller.stop : null,
+          onPressed: controller.active || controller.preparing ? controller.stop : null,
           icon: const Icon(Icons.stop),
         ),
         if (package?.manualTiming == true)

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:provider/provider.dart';
 import '../../providers/quake_provider.dart';
 import '../../core/app_edition.dart';
@@ -21,29 +22,32 @@ import '../../services/sources/palert_service.dart';
 import '../../services/sources/seisjs_service.dart';
 import '../../services/sources/source_manager.dart';
 import 'quake_map_view.dart';
+import 'global_station_status_row.dart';
+import '../../services/sources/fdsn_source_status.dart';
 import '../../services/debug/local_inject_server.dart';
 import '../../services/debug/local_inject_decoder.dart';
 import '../ui/ui_scale.dart';
 
-String jianAuthenticationLabel(String? status, {String? errorCode}) => switch (status) {
-  'anonymous' => 'Jian（未认证）',
-  'unconfigured' => 'Jian（未配置凭证）',
-  'authenticating' => 'Jian（认证中）',
-  'authenticated' => 'Jian（已认证）',
-  'invalid' => errorCode == 'storage' ? 'Jian（凭证读取失败）' : 'Jian（凭证失效）',
-  'unavailable' => switch (errorCode) {
-    'network' => 'Jian（鉴权连接失败）',
-    'server' => 'Jian（鉴权服务异常）',
-    'connection' => 'Jian（连接失败）',
-    'browser_connection' => 'Jian（直连失败）',
-    'conn_limit' => 'Jian（并发已满）',
-    'cooldown' => 'Jian（请求限流）',
-    'expired_access_token' => 'Jian（令牌待刷新）',
-    'invalid_api_key' => 'Jian（访问令牌被拒）',
-    _ => 'Jian（连接暂不可用）',
-  },
-  _ => 'Jian（待确认）',
-};
+String jianAuthenticationLabel(String? status, {String? errorCode}) =>
+    switch (status) {
+      'anonymous' => 'Jian（未认证）',
+      'unconfigured' => 'Jian（未配置凭证）',
+      'authenticating' => 'Jian（认证中）',
+      'authenticated' => 'Jian（已认证）',
+      'invalid' => errorCode == 'storage' ? 'Jian（凭证读取失败）' : 'Jian（凭证失效）',
+      'unavailable' => switch (errorCode) {
+        'network' => 'Jian（鉴权连接失败）',
+        'server' => 'Jian（鉴权服务异常）',
+        'connection' => 'Jian（连接失败）',
+        'browser_connection' => 'Jian（直连失败）',
+        'conn_limit' => 'Jian（并发已满）',
+        'cooldown' => 'Jian（请求限流）',
+        'expired_access_token' => 'Jian（令牌待刷新）',
+        'invalid_api_key' => 'Jian（访问令牌被拒）',
+        _ => 'Jian（连接暂不可用）',
+      },
+      _ => 'Jian（待确认）',
+    };
 
 String jianCredentialValidityText(SourceCredentialInfo? info, DateTime now) {
   if (info?.errorCode == 'expired_refresh_token') return '长期凭证已过期';
@@ -162,44 +166,43 @@ class _SourceDashboardState extends State<SourceDashboard> {
                   final provider = context.read<QuakeProvider>();
                   return ValueListenableBuilder<int>(
                     valueListenable: provider.sourceStatusListenable,
+                    child: _buildGlobalStationStatuses(context),
                     builder: (context, _, child) {
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          _buildSocketStatusRow(context, provider),
-                          AnimatedBuilder(
-                            animation: Listenable.merge([
-                              NiedMonitorService().dataFrameTime,
-                              NiedYahooService().dataFrameTime,
-                              QuakeMapView.niedArrayFrameTimeNotifier,
-                              QuakeMapView.niedSourceNotifier,
-                              CwaStationService().dataTimeNotifier,
-                              KmaMonitorService().dataTimeNotifier,
-                              SeisJsService().dataTimeNotifier,
-                              PAlertService().dataTimeNotifier,
-                              FdsnMotionService().linkedStationCountNotifier,
-                              FdsnMotionService().dataTimeNotifier,
-                              QuakeMapView.niedReplayNotifier,
-                              QuakeMapView.niedMonitorEnabledNotifier,
-                              QuakeMapView.tremStationEnabledNotifier,
-                              QuakeMapView.kmaPewsEnabledNotifier,
-                              QuakeMapView.wolfxSeisJsEnabledNotifier,
-                              QuakeMapView.pAlertEnabledNotifier,
-                              QuakeMapView.fdsnSeedLinkEnabledNotifier,
-                              _clockTick,
-                            ]),
-                            builder: (context, child) {
-                              return _buildStationStatusLines(
-                                context,
-                                provider,
-                                FdsnMotionService()
-                                    .linkedStationCountNotifier
-                                    .value,
-                              );
-                            },
-                          ),
-                        ],
+                      return _SourceStatusLayout(
+                        standaloneWidth: _s(234, context),
+                        footer: child!,
+                        body: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _buildSocketStatusRow(context, provider),
+                            AnimatedBuilder(
+                              animation: Listenable.merge([
+                                NiedMonitorService().dataFrameTime,
+                                NiedYahooService().dataFrameTime,
+                                QuakeMapView.niedArrayFrameTimeNotifier,
+                                QuakeMapView.niedSourceNotifier,
+                                CwaStationService().dataTimeNotifier,
+                                KmaMonitorService().dataTimeNotifier,
+                                SeisJsService().dataTimeNotifier,
+                                PAlertService().dataTimeNotifier,
+                                QuakeMapView.niedReplayNotifier,
+                                QuakeMapView.niedMonitorEnabledNotifier,
+                                QuakeMapView.tremStationEnabledNotifier,
+                                QuakeMapView.kmaPewsEnabledNotifier,
+                                QuakeMapView.wolfxSeisJsEnabledNotifier,
+                                QuakeMapView.pAlertEnabledNotifier,
+                                _clockTick,
+                              ]),
+                              builder: (context, child) {
+                                return _buildStationStatusLines(
+                                  context,
+                                  provider,
+                                );
+                              },
+                            ),
+                          ],
+                        ),
                       );
                     },
                   );
@@ -252,17 +255,23 @@ class _SourceDashboardState extends State<SourceDashboard> {
         (_fanLabel(fanAuthStatus, fanConnectionStatus), 'FAN'),
       if (SourceManager().isSourceEnabled('WHEWS')) ('WHEWS', 'WHEWS'),
       if (jianEnabled && !separateJian)
-        (jianAuthenticationLabel(jianAuth, errorCode: jianCredential?.errorCode), 'Jian Project'),
+        (
+          jianAuthenticationLabel(
+            jianAuth,
+            errorCode: jianCredential?.errorCode,
+          ),
+          'Jian Project',
+        ),
       if (SourceManager().isSourceEnabled('NowQuake')) ('NowQuake', 'NowQuake'),
       if (SourceManager().isSourceEnabled('P2P')) ('P2PQ', 'P2P'),
       if (AppEdition.hasGlobalQuake && GlobalQuakeService().isEnabled)
         ('GQ', 'GlobalQuake'),
       if (AppEdition.hasIcl &&
           _showIclStatus(JianIclService().isEnabled, jianIclStatus))
-        ('Jian ICL', JianIclService.sourceName),
+        (JianIclService.sourceName, JianIclService.sourceName),
       if (AppEdition.hasIcl &&
           _showIclStatus(ChinaEewIclService().isEnabled, chinaEewIclStatus))
-        ('China EEW ICL', ChinaEewIclService.sourceName),
+        (ChinaEewIclService.sourceName, ChinaEewIclService.sourceName),
       if (LocalInjectServer.isRunning) (localInjectApiName, localInjectApiName),
     ];
     return Column(
@@ -318,7 +327,9 @@ class _SourceDashboardState extends State<SourceDashboard> {
       children: [
         _buildStatusName(
           context,
-          auth == 'anonymous' ? 'Jian（未连接）' : jianAuthenticationLabel(auth, errorCode: info?.errorCode),
+          auth == 'anonymous'
+              ? 'Jian（未连接）'
+              : jianAuthenticationLabel(auth, errorCode: info?.errorCode),
           status,
         ),
         Tooltip(
@@ -354,7 +365,6 @@ class _SourceDashboardState extends State<SourceDashboard> {
   Widget _buildStationStatusLines(
     BuildContext context,
     QuakeProvider provider,
-    int fdsnCount,
   ) {
     final now = DateTime.now();
     final niedFrameTime = _niedFrameTime;
@@ -368,7 +378,6 @@ class _SourceDashboardState extends State<SourceDashboard> {
     final kmaTime = KmaMonitorService().dataTimeNotifier.value;
     final seisJsTime = SeisJsService().dataTimeNotifier.value;
     final pAlertTime = PAlertService().dataTimeNotifier.value;
-    final fdsnTime = FdsnMotionService().dataTimeNotifier.value;
     final lines = <Widget>[
       if (QuakeMapView.niedMonitorEnabledNotifier.value)
         _buildStationLine(
@@ -438,24 +447,6 @@ class _SourceDashboardState extends State<SourceDashboard> {
             now: now,
           ),
         ),
-      if (QuakeMapView.fdsnSeedLinkEnabledNotifier.value)
-        _buildStationLine(
-          context,
-          'FDSN ($fdsnCount):',
-          fdsnTime != null
-              ? SourceStatus.connected
-              : (fdsnCount > 0
-                    ? SourceStatus.connecting
-                    : SourceStatus.disconnected),
-          time: fdsnTime,
-          utcOffsetHours: 0,
-          verifyFresh: true,
-          freshnessOverride: _isDataProgressFresh(
-            key: 'fdsn',
-            frameTime: fdsnTime,
-            now: now,
-          ),
-        ),
     ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -463,6 +454,30 @@ class _SourceDashboardState extends State<SourceDashboard> {
       children: lines,
     );
   }
+
+  Widget _buildGlobalStationStatuses(BuildContext context) =>
+      ValueListenableBuilder<bool>(
+        valueListenable: QuakeMapView.fdsnSeedLinkEnabledNotifier,
+        builder: (context, enabled, child) =>
+            enabled ? child! : const SizedBox.shrink(),
+        child: RepaintBoundary(
+          child: ValueListenableBuilder<List<FdsnSourceStatus>>(
+            valueListenable: FdsnMotionService().sourceStatusesNotifier,
+            builder: (context, statuses, _) => GlobalStationStatusRow(
+              statuses: statuses,
+              spacing: _s(10, context),
+              runSpacing: _s(2, context),
+              style: TextStyle(
+                fontFamily: 'JetBrainsMono',
+                fontSize: _s(10, context),
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0,
+                shadows: _textStrokeShadows(context),
+              ),
+            ),
+          ),
+        ),
+      );
 
   DateTime? get _niedFrameTime {
     final source = QuakeMapView.niedSourceNotifier.value;
@@ -609,4 +624,108 @@ class _SourceDashboardState extends State<SourceDashboard> {
       Shadow(offset: Offset(0, offset), color: color),
     ];
   }
+}
+
+// The existing status lines determine the width. The international list is
+// laid out afterwards, so it cannot move or reflow those lines. No intrinsic
+// measurement or post-frame setState is needed on the per-second update path.
+class _SourceStatusLayout extends MultiChildRenderObjectWidget {
+  _SourceStatusLayout({
+    required Widget body,
+    required Widget footer,
+    required this.standaloneWidth,
+  }) : super(children: [body, footer]);
+
+  final double standaloneWidth;
+
+  @override
+  _RenderSourceStatusLayout createRenderObject(BuildContext context) =>
+      _RenderSourceStatusLayout(standaloneWidth);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderSourceStatusLayout renderObject,
+  ) {
+    renderObject.standaloneWidth = standaloneWidth;
+  }
+}
+
+class _SourceStatusParentData extends ContainerBoxParentData<RenderBox> {}
+
+class _RenderSourceStatusLayout extends RenderBox
+    with
+        ContainerRenderObjectMixin<
+          RenderBox,
+          ContainerBoxParentData<RenderBox>
+        >,
+        RenderBoxContainerDefaultsMixin<
+          RenderBox,
+          ContainerBoxParentData<RenderBox>
+        > {
+  _RenderSourceStatusLayout(this._standaloneWidth);
+
+  double _standaloneWidth;
+
+  set standaloneWidth(double value) {
+    if (_standaloneWidth == value) return;
+    _standaloneWidth = value;
+    markNeedsLayout();
+  }
+
+  @override
+  void setupParentData(RenderBox child) {
+    if (child.parentData is! ContainerBoxParentData<RenderBox>) {
+      child.parentData = _SourceStatusParentData();
+    }
+  }
+
+  BoxConstraints _footerConstraints(BoxConstraints constraints, Size body) =>
+      BoxConstraints(
+        maxWidth: body.width > 0
+            ? body.width
+            : math.min(_standaloneWidth, constraints.maxWidth),
+      );
+
+  @override
+  Size computeDryLayout(BoxConstraints constraints) {
+    final body = firstChild!.getDryLayout(constraints.loosen());
+    final footer = lastChild!.getDryLayout(
+      _footerConstraints(constraints, body),
+    );
+    return constraints.constrain(
+      Size(math.max(body.width, footer.width), body.height + footer.height),
+    );
+  }
+
+  @override
+  void performLayout() {
+    final body = firstChild!;
+    final footer = lastChild!;
+    body.layout(constraints.loosen(), parentUsesSize: true);
+    footer.layout(
+      _footerConstraints(constraints, body.size),
+      parentUsesSize: true,
+    );
+    (body.parentData! as ContainerBoxParentData<RenderBox>).offset =
+        Offset.zero;
+    (footer.parentData! as ContainerBoxParentData<RenderBox>).offset = Offset(
+      0,
+      body.size.height,
+    );
+    size = constraints.constrain(
+      Size(
+        math.max(body.size.width, footer.size.width),
+        body.size.height + footer.size.height,
+      ),
+    );
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) =>
+      defaultPaint(context, offset);
+
+  @override
+  bool hitTestChildren(BoxHitTestResult result, {required Offset position}) =>
+      defaultHitTestChildren(result, position: position);
 }

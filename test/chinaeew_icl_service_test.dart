@@ -34,6 +34,8 @@ void main() {
     expect(summary.isSnapshot, isTrue);
     expect(summary.maxIntensity, '-');
     expect(report.source, 'iclEew');
+    expect(ChinaEewIclService.sourceName, 'China_EEW_ICL');
+    expect(report.apiTypeLabel, ChinaEewIclService.sourceName);
     expect(report.origin, QuakeEventAdapter.chinaEewIclOrigin);
     expect(report.eventId, rawReport['eventId'].toString());
     expect(report.reportNumText, '第${rawReport['updates']}报');

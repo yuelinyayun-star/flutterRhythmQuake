@@ -11,8 +11,13 @@ void main() {
     'opt-in real FDSN catalogue, subscriptions, metadata and clock probe',
     () async {
       final motion = FdsnMotionService();
-      final earth = FdsnStationService.earthScope;
-      final geo = FdsnStationService.geofon;
+      const selectedSources = String.fromEnvironment('FDSN_SOURCES');
+      final services = {
+        for (final entry in FdsnStationService.sources.entries)
+          if (selectedSources.isEmpty ||
+              selectedSources.split(',').contains(entry.key))
+            entry.key: entry.value,
+      };
       final seen = <String>{};
       final measured = <String>{};
       final latest = <String, DateTime>{};
@@ -52,10 +57,13 @@ void main() {
         }
         previous = sample.timestamp;
       });
-      final loading = [earth.start(), geo.start()];
+      final loading = [for (final service in services.values) service.start()];
       const limit = int.fromEnvironment('FDSN_LIMIT', defaultValue: 300);
       const ticks = int.fromEnvironment('FDSN_TICKS', defaultValue: 12);
-      motion.connect(stationLimit: limit);
+      motion.connect(
+        stationLimit: limit,
+        enabledSources: services.keys.toSet(),
+      );
       try {
         for (var i = 0; i < ticks; i++) {
           await Future<void>.delayed(const Duration(seconds: 15));
@@ -83,17 +91,31 @@ void main() {
             ),
           });
           debugPrint(
-            'FDSN LIVE ${15 * (i + 1)}s: seen=${seen.length}, measured=${measured.length}, linked=${motion.linkedStationCountNotifier.value}, metadata=${earth.stations.length}/${geo.stations.length}, connections=${motion.connectionDiagnostics}',
+            'FDSN LIVE ${15 * (i + 1)}s: seen=${seen.length}, measured=${measured.length}, linked=${motion.linkedStationCountNotifier.value}, metadata=${services.map((name, service) => MapEntry(name, service.stations.length))}, connections=${motion.connectionDiagnostics}',
           );
         }
         final known = {
-          for (final s in [...earth.stations, ...geo.stations])
+          for (final s in services.values.expand((service) => service.stations))
             '${s.source}:${s.code}',
         };
         final result = {
           'startedAt': startedAt.toIso8601String(),
           'finishedAt': DateTime.now().toUtc().toIso8601String(),
           'target': limit,
+          'selectedBySource': {
+            for (final source in services.keys)
+              source: motion.selectedStreams
+                  .where((stream) => stream.source == source)
+                  .length,
+          },
+          'earthScopeOverlap': [
+            for (final stream in motion.selectedStreams)
+              if (stream.source == 'EarthScope' &&
+                  motion.regionalStationCodes.contains(
+                    '${stream.network}.${stream.station}',
+                  ))
+                '${stream.network}.${stream.station}',
+          ],
           'seen': seen.length,
           'measured': measured.length,
           'bySource': {for (final e in bySource.entries) e.key: e.value.length},
@@ -140,12 +162,30 @@ void main() {
           '${dir.path}/live_result_$limit${tag.isEmpty ? '' : '_$tag'}.json',
         ).writeAsStringSync(const JsonEncoder.withIndent('  ').convert(result));
         expect(seen, isNotEmpty);
+        const expectedMeasured = String.fromEnvironment('FDSN_EXPECT_MEASURED');
+        for (final source
+            in expectedMeasured.split(',').where((s) => s.isNotEmpty)) {
+          expect(
+            measured.any((key) => key.startsWith('$source:')),
+            isTrue,
+            reason: '$source must deliver real decoded and calibrated motion',
+          );
+        }
         expect(clockBackwards, 0);
+        expect(result['earthScopeOverlap'], isEmpty);
+        expect(
+          motion.selectedStreams
+              .map((s) => '${s.network}.${s.station}')
+              .toSet()
+              .length,
+          motion.selectedStreams.length,
+        );
       } finally {
         motion.dataTimeNotifier.removeListener(clockChanged);
         motion.disconnect();
-        earth.stop();
-        geo.stop();
+        for (final service in services.values) {
+          service.stop();
+        }
         await subscription.cancel();
         await Future.wait(loading);
       }

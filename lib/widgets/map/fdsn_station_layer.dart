@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -27,6 +28,10 @@ class FdsnLayerDiagnostics {
   int atlasBuilds = 0;
   int atlasDraws = 0;
   int preparationMicros = 0;
+  int glyphCreations = 0;
+  int selectionVisits = 0;
+  int spatialIndexBuilds = 0;
+  int bufferAllocations = 0;
 }
 
 class _FdsnStationLayerState extends State<FdsnStationLayer> {
@@ -67,6 +72,7 @@ class _FdsnStationLayerState extends State<FdsnStationLayer> {
     final scale = FdsnIntensity.scale.value;
     final glyphs = <_StationGlyph>[];
     final prepared = List<_StationGlyph?>.filled(widget.stations.length, null);
+    Map<(String, String), (FdsnStation, _StationGlyph)>? previousByCode;
     for (var i = 0; i < widget.stations.length; i++) {
       final station = widget.stations[i];
       final updated = station.lastMotionUpdate;
@@ -76,18 +82,30 @@ class _FdsnStationLayerState extends State<FdsnStationLayer> {
           FdsnStation.motionRetention.inMicroseconds;
       if (end <= now) continue;
       if (expires == null || end < expires) expires = end;
-      final previous = i < _preparedStations.length
-          ? _preparedStations[i]
-          : null;
-      final oldGlyph = i < _preparedGlyphs.length ? _preparedGlyphs[i] : null;
+      var previous = i < _preparedStations.length ? _preparedStations[i] : null;
+      var oldGlyph = i < _preparedGlyphs.length ? _preparedGlyphs[i] : null;
+      if (previous?.network != station.network ||
+          previous?.station != station.station) {
+        previousByCode ??= {
+          for (var n = 0; n < _preparedStations.length; n++)
+            if (_preparedGlyphs[n] != null)
+              (_preparedStations[n].network, _preparedStations[n].station): (
+                _preparedStations[n],
+                _preparedGlyphs[n]!,
+              ),
+        };
+        final match = previousByCode[(station.network, station.station)];
+        previous = match?.$1;
+        oldGlyph = match?.$2;
+      }
       final sameCoordinate =
           sameCrs && previous?.coordinate == station.coordinate;
       if (oldGlyph != null &&
           sameCoordinate &&
           _preparedScale == scale &&
-          previous!.intensity == station.intensity &&
-          previous.pga == station.pga &&
-          previous.pgv == station.pgv) {
+          (scale == FdsnIntensityScale.mmi
+              ? previous!.intensity == station.intensity
+              : previous!.pga == station.pga && previous.pgv == station.pgv)) {
         // Receipt-time changes only affect expiry, not a glyph's appearance.
         prepared[i] = oldGlyph;
         glyphs.add(oldGlyph);
@@ -99,6 +117,14 @@ class _FdsnStationLayerState extends State<FdsnStationLayer> {
         pgaGal: station.pga,
         pgvCms: station.pgv,
       );
+      if (oldGlyph != null &&
+          sameCoordinate &&
+          _preparedScale == scale &&
+          oldGlyph.level == (level ?? 0)) {
+        prepared[i] = oldGlyph;
+        glyphs.add(oldGlyph);
+        continue;
+      }
       final (color, label) = _styles.putIfAbsent((scale, level), () {
         final color = level == null
             ? const Color(0xFF2F80ED)
@@ -129,6 +155,14 @@ class _FdsnStationLayerState extends State<FdsnStationLayer> {
         }
         return (color, label);
       });
+      if (oldGlyph != null &&
+          sameCoordinate &&
+          oldGlyph.color == color &&
+          oldGlyph.label == label) {
+        prepared[i] = oldGlyph;
+        glyphs.add(oldGlyph);
+        continue;
+      }
       final Offset point;
       if (oldGlyph != null && sameCoordinate) {
         point = oldGlyph.point;
@@ -137,6 +171,7 @@ class _FdsnStationLayerState extends State<FdsnStationLayer> {
         point = camera.projectAtZoom(station.coordinate, 0);
       }
       final glyph = _StationGlyph(point, color, label, level ?? 0);
+      widget.diagnostics?.glyphCreations++;
       prepared[i] = glyph;
       glyphs.add(glyph);
     }
@@ -144,14 +179,17 @@ class _FdsnStationLayerState extends State<FdsnStationLayer> {
     _preparedGlyphs = prepared;
     _preparedScale = scale;
     // New sample timestamps must refresh expiry without invalidating unchanged pixels.
-    final sameVisuals =
-        glyphs.length == _inputGlyphs.length &&
-        Iterable<int>.generate(glyphs.length).every(
-          (i) =>
-              glyphs[i].point == _inputGlyphs[i].point &&
-              glyphs[i].color == _inputGlyphs[i].color &&
-              glyphs[i].label == _inputGlyphs[i].label,
-        );
+    var sameVisuals = glyphs.length == _inputGlyphs.length;
+    if (sameVisuals) {
+      for (var i = 0; i < glyphs.length; i++) {
+        final a = glyphs[i], b = _inputGlyphs[i];
+        if (!identical(a, b) &&
+            (a.point != b.point || a.color != b.color || a.label != b.label)) {
+          sameVisuals = false;
+          break;
+        }
+      }
+    }
     if (!sameVisuals) {
       _inputGlyphs = glyphs;
       // Stable level buckets prevent equal-level overlap order changing on updates.
@@ -258,6 +296,10 @@ class _FdsnPainter extends CustomPainter {
 // is outside that boundary, so panning does not repaint its display list.
 class _FdsnScene {
   final _atlas = _StationAtlas();
+  final _index = _GlyphSpatialIndex();
+  Float32List _transforms = Float32List(0);
+  Float32List _rectangles = Float32List(0);
+  final _paint = Paint()..filterQuality = FilterQuality.low;
   ui.Picture? _picture;
   Rect _bounds = Rect.zero;
   double? _zoom;
@@ -273,6 +315,9 @@ class _FdsnScene {
     _sourceGlyphs = null;
     _visibleGlyphs = const [];
     _atlas.dispose();
+    _index.clear();
+    _transforms = Float32List(0);
+    _rectangles = Float32List(0);
   }
 
   void prepare(
@@ -299,7 +344,8 @@ class _FdsnScene {
     if (!viewChanged && !densityChanged && identical(_sourceGlyphs, glyphs)) {
       return;
     }
-    final visible = _select(camera, glyphs);
+    if (!identical(_sourceGlyphs, glyphs)) _index.prepare(glyphs, diagnostics);
+    final visible = _select(camera, glyphs, diagnostics);
     _sourceGlyphs = glyphs;
     final samePixels =
         visible.length == _visibleGlyphs.length &&
@@ -323,12 +369,17 @@ class _FdsnScene {
   List<(_StationGlyph, Offset)> _select(
     MapCamera camera,
     List<_StationGlyph> glyphs,
+    FdsnLayerDiagnostics? diagnostics,
   ) {
     final factor = camera.getZoomScale(camera.zoom, 0);
     final world = camera.getWorldWidthAtZoom();
     final selected = <(_StationGlyph, Offset)>[];
     // Preserve the original order, with the strongest stations painted last.
-    for (final glyph in glyphs) {
+    final candidates = _index.query(_bounds, factor, world);
+    final count = candidates?.length ?? glyphs.length;
+    diagnostics?.selectionVisits += count;
+    for (var i = 0; i < count; i++) {
+      final glyph = glyphs[candidates == null ? i : candidates[i]];
       final p = glyph.point * factor;
       if (p.dy < _bounds.top || p.dy > _bounds.bottom) continue;
       // Draw every visible world copy instead of switching one copy at its midpoint.
@@ -346,8 +397,15 @@ class _FdsnScene {
 
   void _record(Canvas canvas, FdsnLayerDiagnostics? diagnostics) {
     if (_visibleGlyphs.isEmpty) return;
-    final transforms = Float32List(_visibleGlyphs.length * 4);
-    final rectangles = Float32List(transforms.length);
+    final length = _visibleGlyphs.length * 4;
+    if (_transforms.length < length) {
+      final capacity = math.max(length, _transforms.length * 2);
+      _transforms = Float32List(capacity);
+      _rectangles = Float32List(capacity);
+      diagnostics?.bufferAllocations++;
+    }
+    final transforms = Float32List.sublistView(_transforms, 0, length);
+    final rectangles = Float32List.sublistView(_rectangles, 0, length);
     final inverseRatio = 1 / _atlas.pixelRatio;
     final cell = _atlas.cellPixels;
     final half = cell * inverseRatio / 2;
@@ -370,10 +428,81 @@ class _FdsnScene {
       null,
       null,
       null,
-      Paint()..filterQuality = FilterQuality.low,
+      _paint,
     );
     diagnostics?.recordedStations += _visibleGlyphs.length;
     diagnostics?.atlasDraws++;
+  }
+}
+
+/// Zoom-zero grid. Queries only prune candidates: the original exact bounds,
+/// wrapping and stable paint order are still applied by the scene.
+class _GlyphSpatialIndex {
+  static const cell = 4.0;
+  final _cells = <(int, int), List<int>>{};
+  Rect _extent = Rect.zero;
+  int _length = 0;
+
+  void clear() {
+    _cells.clear();
+    _length = 0;
+  }
+
+  void prepare(List<_StationGlyph> glyphs, FdsnLayerDiagnostics? diagnostics) {
+    clear();
+    _length = glyphs.length;
+    if (glyphs.length < 128) return;
+    var left = double.infinity, top = double.infinity;
+    var right = double.negativeInfinity, bottom = double.negativeInfinity;
+    for (var i = 0; i < glyphs.length; i++) {
+      final p = glyphs[i].point;
+      left = math.min(left, p.dx);
+      right = math.max(right, p.dx);
+      top = math.min(top, p.dy);
+      bottom = math.max(bottom, p.dy);
+      _cells
+          .putIfAbsent(((p.dx / cell).floor(), (p.dy / cell).floor()), () => [])
+          .add(i);
+    }
+    _extent = Rect.fromLTRB(left, top, right, bottom);
+    diagnostics?.spatialIndexBuilds++;
+  }
+
+  List<int>? query(Rect pixels, double factor, double world) {
+    if (_length < 128 || !factor.isFinite || factor <= 0) return null;
+    final bounds = Rect.fromLTRB(
+      pixels.left / factor,
+      pixels.top / factor,
+      pixels.right / factor,
+      pixels.bottom / factor,
+    ).inflate(1e-9);
+    // Dense/full-world views are cheaper as one linear scan, without a set/sort.
+    if (bounds.width >= _extent.width * .5 &&
+        bounds.height >= _extent.height * .5) {
+      return null;
+    }
+    final top = math.max(bounds.top, _extent.top),
+        bottom = math.min(bounds.bottom, _extent.bottom);
+    if (bottom < top) return const [];
+    final width = world / factor;
+    final first = width > 0
+        ? ((bounds.left - _extent.right) / width).ceil()
+        : 0;
+    final last = width > 0
+        ? ((bounds.right - _extent.left) / width).floor()
+        : 0;
+    final found = <int>{};
+    for (var copy = first; copy <= last; copy++) {
+      final left = math.max(bounds.left - copy * width, _extent.left);
+      final right = math.min(bounds.right - copy * width, _extent.right);
+      for (var x = (left / cell).floor(); x <= (right / cell).floor(); x++) {
+        for (var y = (top / cell).floor(); y <= (bottom / cell).floor(); y++) {
+          final entries = _cells[(x, y)];
+          if (entries != null) found.addAll(entries);
+        }
+      }
+    }
+    return found.toList()..sort();
   }
 }
 

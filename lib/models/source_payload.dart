@@ -9,8 +9,20 @@ Map<String, dynamic> snapshotSourcePayload(Map<String, dynamic> payload) {
   );
 }
 
+/// Only snapshots created here can be reused without copying mutable arrays.
+List<dynamic> snapshotSourcePayloadList(List<dynamic> payload) {
+  if (payload is _SourcePayloadListSnapshot) return payload;
+  return _SourcePayloadListSnapshot(
+    payload.map(_snapshotValue).toList(growable: false),
+  );
+}
+
 class _SourcePayloadSnapshot extends UnmodifiableMapView<String, dynamic> {
   _SourcePayloadSnapshot(super.map);
+}
+
+class _SourcePayloadListSnapshot extends UnmodifiableListView<dynamic> {
+  _SourcePayloadListSnapshot(super.list);
 }
 
 dynamic _snapshotValue(dynamic value) {
@@ -19,7 +31,7 @@ dynamic _snapshotValue(dynamic value) {
     return snapshotSourcePayload(Map<String, dynamic>.from(value));
   }
   if (value is List) {
-    return List<dynamic>.unmodifiable(value.map(_snapshotValue));
+    return snapshotSourcePayloadList(value);
   }
   return value;
 }

@@ -89,36 +89,36 @@ void main() {
           ),
         ),
       );
-      expect(find.text('Jian ICL'), findsNothing);
-      expect(find.text('China EEW ICL'), findsNothing);
+      expect(find.text('Jian_ICL'), findsNothing);
+      expect(find.text('China_EEW_ICL'), findsNothing);
 
       provider.statuses[JianIclService.sourceName] = SourceStatus.connected;
       provider.statuses[ChinaEewIclService.sourceName] = SourceStatus.connecting;
       provider.sourceStatusListenable.value++;
       await tester.pump();
       if (AppEdition.hasIcl) {
-        expect(find.text('Jian ICL'), findsOneWidget);
-        expect(find.text('China EEW ICL'), findsOneWidget);
-        expect(tester.widget<Text>(find.text('Jian ICL')).style?.color,
+        expect(find.text('Jian_ICL'), findsOneWidget);
+        expect(find.text('China_EEW_ICL'), findsOneWidget);
+        expect(tester.widget<Text>(find.text('Jian_ICL')).style?.color,
             const Color(0xFF008000));
-        expect(tester.widget<Text>(find.text('China EEW ICL')).style?.color,
+        expect(tester.widget<Text>(find.text('China_EEW_ICL')).style?.color,
             const Color(0xFFFFFF00));
-        for (final label in ['Jian ICL', 'China EEW ICL']) {
+        for (final label in ['Jian_ICL', 'China_EEW_ICL']) {
           final rect = tester.getRect(find.text(label));
           expect(rect.left, greaterThanOrEqualTo(0));
           expect(rect.right, lessThanOrEqualTo(size.width));
         }
       } else {
-        expect(find.text('Jian ICL'), findsNothing);
-        expect(find.text('China EEW ICL'), findsNothing);
+        expect(find.text('Jian_ICL'), findsNothing);
+        expect(find.text('China_EEW_ICL'), findsNothing);
       }
 
       provider.statuses[JianIclService.sourceName] = SourceStatus.disconnected;
       provider.statuses[ChinaEewIclService.sourceName] = SourceStatus.disconnected;
       provider.sourceStatusListenable.value++;
       await tester.pump();
-      expect(find.text('Jian ICL'), findsNothing);
-      expect(find.text('China EEW ICL'), findsNothing);
+      expect(find.text('Jian_ICL'), findsNothing);
+      expect(find.text('China_EEW_ICL'), findsNothing);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
       provider.dispose();
@@ -271,6 +271,7 @@ void main() {
           final rect = tester.getRect(find.text(labels[i]));
           final rowStart = tester.getRect(find.text(labels[(i ~/ 5) * 5]));
           expect(rect.top, closeTo(rowStart.top, 0.01));
+          expect(rect.right, lessThanOrEqualTo(width));
           if (i >= 5) {
             expect(
               rect.top,

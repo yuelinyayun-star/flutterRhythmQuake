@@ -52,10 +52,12 @@ class WAuthCredentialStore {
       apiToken = legacyApi;
     }
 
-    if (accessToken?.isNotEmpty == true) {
+    if (accessToken?.isNotEmpty == true &&
+        prefs.containsKey(legacyAccessTokenPreferenceKey)) {
       await prefs.remove(legacyAccessTokenPreferenceKey);
     }
-    if (apiToken?.isNotEmpty == true) {
+    if (apiToken?.isNotEmpty == true &&
+        prefs.containsKey(legacyApiTokenPreferenceKey)) {
       await prefs.remove(legacyApiTokenPreferenceKey);
     }
 

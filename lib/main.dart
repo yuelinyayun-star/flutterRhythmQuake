@@ -45,6 +45,7 @@ import 'services/sources/global_quake_service.dart';
 import 'services/sources/jian_icl_service.dart';
 import 'services/sources/chinaeew_icl_service.dart';
 import 'services/sources/fdsn_motion_service.dart';
+import 'services/sources/fdsn_source_catalog.dart';
 import 'services/debug/local_inject_server.dart';
 import 'services/sources/china_weather_alert_map_service.dart';
 import 'widgets/map/quake_map_view.dart';
@@ -208,6 +209,7 @@ void main() async {
   // 2.5 加载持久化设置
   await initDesktopPreferences();
   final prefs = await SharedPreferences.getInstance();
+  await FdsnSourceCatalog.initializePreferences(prefs.getBool, prefs.setBool);
   await _clearLegacyFanTileCacheOnce(prefs);
   web_startup.setWebStartupStage('正在读取登录配置…');
   WAuthCredentials whewsCredentials;
@@ -460,14 +462,12 @@ MapStateProvider _createMapStateProvider(
   provider.setWeatherStationMode(
     prefs.getString('map_overlay_weatherStationMode') ?? 'auto',
   );
-  provider.setOverlayEnabled(
-    'fdsnEarthScope',
-    prefs.getBool('map_overlay_fdsnEarthScope') ?? false,
-  );
-  provider.setOverlayEnabled(
-    'fdsnGeofon',
-    prefs.getBool('map_overlay_fdsnGeofon') ?? false,
-  );
+  for (final source in FdsnSourceCatalog.sources) {
+    provider.setOverlayEnabled(
+      source.overlayKey,
+      source.readEnabled(prefs.getBool),
+    );
+  }
   provider.setShowEstimatedEpicenter(
     prefs.getBool('show_estimated_epicenter') ?? false,
   );

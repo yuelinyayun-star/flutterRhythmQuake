@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:convert';
 import '../../models/source_payload.dart';
 import '../../models/station_history_frame.dart';
@@ -10,7 +11,16 @@ class StationJsonArchive {
   static Map<String, dynamic> encode(Iterable<StationHistoryFrame> frames) {
     final nodes = <dynamic>[];
     final indices = <String, int>{};
+    final references = HashMap<Object, int>.identity();
+    final strings = <String, int>{};
     int intern(dynamic value) {
+      final Map<dynamic, int>? cache = value is String
+          ? strings
+          : value is Map || value is List
+          ? references
+          : null;
+      final cached = cache?[value];
+      if (cached != null) return cached;
       dynamic node;
       if (value is Map) {
         node = [
@@ -27,10 +37,14 @@ class StationJsonArchive {
       }
       final key = jsonEncode(node);
       final previous = indices[key];
-      if (previous != null) return previous;
+      if (previous != null) {
+        if (cache != null) cache[value] = previous;
+        return previous;
+      }
       final index = nodes.length;
       nodes.add(node);
       indices[key] = index;
+      if (cache != null) cache[value] = index;
       return index;
     }
 
@@ -63,7 +77,9 @@ class StationJsonArchive {
         if (node is Map) throw const FormatException('测站 JSON 节点无效');
         values.add(node);
       } else if (node.isNotEmpty && node.first == 'l') {
-        values.add(List.unmodifiable(node.skip(1).map(reference)));
+        values.add(
+          snapshotSourcePayloadList(node.skip(1).map(reference).toList()),
+        );
       } else if (node.isNotEmpty && node.first == 'm' && node.length.isOdd) {
         final value = <String, dynamic>{};
         for (var i = 1; i < node.length; i += 2) {

@@ -53,6 +53,8 @@ void main() {
     expect(raw, copy);
     expect(event, isNotNull);
     expect(event!.source, 'iclEew');
+    expect(JianIclService.sourceName, 'Jian_ICL');
+    expect(event.apiTypeLabel, JianIclService.sourceName);
     expect(event.eventId, '42');
     expect(event.reportNumText, '第2报');
     expect(event.hypocenter, '测试地区');

@@ -37,7 +37,7 @@ class JianIclService extends BaseSourceService {
   factory JianIclService() => _instance;
   JianIclService._internal();
 
-  static const sourceName = 'Jian ICL';
+  static const sourceName = 'Jian_ICL';
   static const enabledPreferenceKey = 'jian_icl_debug_enabled';
   static final endpoint = Uri.parse('wss://api.sismotide.top/icl');
 

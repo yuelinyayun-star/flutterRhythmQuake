@@ -566,7 +566,7 @@ void main() {
     },
   );
   test(
-    'late overlapping provider preserves existing station subscriptions',
+    'late regional catalogue owns overlap and EarthScope only fills gaps',
     () async {
       final first = await ServerSocket.bind('127.0.0.1', 0);
       final second = await ServerSocket.bind('127.0.0.2', 0);
@@ -606,6 +606,7 @@ void main() {
                       '<seedlink>${names.map((s) => stationXml(s, DateTime.now().toUtc())).join()}</seedlink>',
                     ),
                   );
+                  if (isFirst && !firstReady.isCompleted) firstReady.complete();
                 } else if (line == 'END') {
                   for (final s in selected) {
                     socket.add(
@@ -617,7 +618,7 @@ void main() {
                       ),
                     );
                   }
-                  if (isFirst && selected.length == 20) {
+                  if (isFirst && selected.length == 15) {
                     firstFullSubscriptions++;
                     if (!firstReady.isCompleted) firstReady.complete();
                   }
@@ -667,11 +668,11 @@ void main() {
         final diagnostics = service.connectionDiagnostics;
         expect(
           diagnostics.firstWhere((c) => c['host'] == '127.0.0.1')['selected'],
-          20,
+          15,
         );
         expect(
           diagnostics.firstWhere((c) => c['host'] == '127.0.0.2')['selected'],
-          3,
+          8,
         );
         expect(service.linkedStationCountNotifier.value, 23);
         expect(firstFullSubscriptions, 1);

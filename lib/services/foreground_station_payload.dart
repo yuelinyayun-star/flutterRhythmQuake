@@ -14,6 +14,7 @@ import 'sources/seisjs_service.dart';
 import 'sources/lpgm_monitor_service.dart';
 import 'sources/fdsn_station_service.dart';
 import 'sources/fdsn_motion_service.dart';
+import 'sources/fdsn_source_status.dart';
 import 'sources/fan_radar_service.dart';
 import 'sources/fan_satellite_cloud_service.dart';
 import 'sources/jma_radar_service.dart';
@@ -209,6 +210,20 @@ class ForegroundStationPayload {
     'active': sample.active,
     'timestamp': sample.timestamp.toIso8601String(),
   };
+
+  static Map<String, dynamic> fdsnStatus(List<FdsnSourceStatus> statuses) => {
+    'kind': 'fdsnStatus',
+    'sources': [for (final status in statuses) status.toJson()],
+  };
+
+  static List<FdsnSourceStatus> decodeFdsnStatus(Map<String, dynamic> raw) {
+    final sources = raw['sources'];
+    if (sources is! List) return const [];
+    return [
+      for (final source in sources.whereType<Map>())
+        ?FdsnSourceStatus.fromJson(source),
+    ];
+  }
 
   static Map<String, dynamic> volcanoSites(List<JmaVolcanoSite> sites) => {
     'kind': 'volcanoSites',

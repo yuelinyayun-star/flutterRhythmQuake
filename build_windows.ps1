@@ -6,6 +6,7 @@
 param(
     [switch]$Clean,
     [switch]$Release,
+    [switch]$SkipProcessCleanup,
     [ValidateSet('personal', 'public')]
     [string]$Edition = 'personal'
 )
@@ -32,7 +33,9 @@ $expectedHash = "15b1e7bee3fede1c90eab94c7eb9bb36ae29c33aa2d61bdc0de546326ae6c08
 # ============================================================
 Write-Host "[1/4] Killing dart processes..." -ForegroundColor Cyan
 $dartProcs = Get-Process -Name "dart" -ErrorAction SilentlyContinue
-if ($dartProcs) {
+if ($SkipProcessCleanup) {
+    Write-Host "      Preserving existing Dart processes" -ForegroundColor DarkGray
+} elseif ($dartProcs) {
     Stop-Process -Name "dart" -Force -ErrorAction SilentlyContinue
     Stop-Process -Name "dartvm" -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 3

@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
+import 'fdsn_source_catalog.dart';
+import 'fdsn_http_client.dart';
 
 class FdsnStation {
   static const motionRetention = Duration(minutes: 3);
@@ -73,6 +75,26 @@ class FdsnStation {
   }
 }
 
+/// During provider handover cached observations can coexist briefly. Draw a
+/// station once, preferring a fresh regional observation over the global relay.
+List<FdsnStation> deduplicateFdsnStations(Iterable<FdsnStation> stations) {
+  final selected = <String, FdsnStation>{};
+  final now = DateTime.now();
+  for (final station in stations) {
+    if (station.lastMotionUpdate == null ||
+        now.difference(station.lastMotionUpdate!) > FdsnStation.motionRetention) {
+      continue;
+    }
+    final previous = selected[station.code];
+    if (previous == null ||
+        (FdsnSourceCatalog.find(station.source)?.priority ?? 0) <
+            (FdsnSourceCatalog.find(previous.source)?.priority ?? 0)) {
+      selected[station.code] = station;
+    }
+  }
+  return selected.values.toList(growable: false);
+}
+
 class FdsnStationEndpoint {
   final String name;
   final String stationUrl;
@@ -91,19 +113,18 @@ class FdsnStationService {
     this.retryInterval = const Duration(seconds: 30),
   });
 
-  static final earthScope = FdsnStationService(
-    endpoint: const FdsnStationEndpoint(
-      name: 'EarthScope',
-      stationUrl: 'https://service.earthscope.org/fdsnws/station/1/query',
-    ),
-  );
-
-  static final geofon = FdsnStationService(
-    endpoint: const FdsnStationEndpoint(
-      name: 'GEOFON',
-      stationUrl: 'https://geofon.gfz-potsdam.de/fdsnws/station/1/query',
-    ),
-  );
+  static final Map<String, FdsnStationService> sources = {
+    for (final source in FdsnSourceCatalog.sources)
+      source.name: FdsnStationService(
+        endpoint: FdsnStationEndpoint(
+          name: source.name,
+          stationUrl: source.stationUrl,
+        ),
+      ),
+  };
+  static FdsnStationService get earthScope => sources['EarthScope']!;
+  static FdsnStationService get geofon => sources['GEOFON']!;
+  static FdsnStationService? forSource(String source) => sources[source];
 
   final FdsnStationEndpoint endpoint;
   final Duration retryInterval;
@@ -161,7 +182,7 @@ class FdsnStationService {
     if (_running) return;
     _running = true;
     final generation = ++_runGeneration;
-    _client = http.Client();
+    _client = createFdsnHttpClient();
     await _refresh(generation);
     if (!_isCurrentRun(generation)) return;
     _refreshTimer = Timer.periodic(

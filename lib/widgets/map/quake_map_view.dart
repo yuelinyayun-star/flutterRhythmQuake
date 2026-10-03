@@ -39,6 +39,7 @@ import 'volcano_info_focus.dart';
 import '../../core/utils/volcano_icon_assets.dart';
 import 'seisjs_layer.dart';
 import 'fdsn_station_layer.dart';
+import 'fdsn_map_station_store.dart';
 import '../../core/fdsn_intensity.dart';
 import '../../core/app_edition.dart';
 import 'fssn_cmt_layer.dart';
@@ -105,6 +106,7 @@ import '../ui/ui_runtime_flags.dart';
 import '../../services/sources/seisjs_service.dart';
 import '../../services/sources/fdsn_station_service.dart';
 import '../../services/sources/fdsn_motion_service.dart';
+import '../../services/sources/fdsn_source_catalog.dart';
 import '../../services/sources/snet_service.dart';
 import '../../services/sources/whews_socket_client.dart';
 import '../../services/sources/whews_station_service.dart';
@@ -487,27 +489,19 @@ class _QuakeMapViewState extends State<QuakeMapView> {
 
   final bool _seisjsVisible = true;
 
-  final FdsnStationService _earthScopeStationService =
-      FdsnStationService.earthScope;
-  final FdsnStationService _geofonStationService = FdsnStationService.geofon;
-  StreamSubscription? _earthScopeStationSubscription;
-  StreamSubscription? _geofonStationSubscription;
+  final Map<String, StreamSubscription> _fdsnStationSubscriptions = {};
   final FdsnMotionService _fdsnMotionService = FdsnMotionService();
   StreamSubscription? _fdsnMotionSubscription;
-  List<FdsnStation> _earthScopeStations = [];
-  List<FdsnStation> _geofonStations = [];
+  final _fdsnStationStore = FdsnMapStationStore();
   final ValueNotifier<int> _niedLayerRevision = ValueNotifier<int>(0);
   final ValueNotifier<int> _kmaLayerRevision = ValueNotifier<int>(0);
   final ValueNotifier<int> _cwaLayerRevision = ValueNotifier<int>(0);
   final ValueNotifier<int> _pAlertLayerRevision = ValueNotifier<int>(0);
   final ValueNotifier<int> _seisJsLayerRevision = ValueNotifier<int>(0);
   final ValueNotifier<int> _snetLayerRevision = ValueNotifier<int>(0);
-  final ValueNotifier<int> _earthScopeLayerRevision = ValueNotifier<int>(0);
-  final ValueNotifier<int> _geofonLayerRevision = ValueNotifier<int>(0);
+  final ValueNotifier<int> _fdsnLayerRevision = ValueNotifier<int>(0);
   final ValueNotifier<int> _liveWeatherTileRevision = ValueNotifier<int>(0);
   final ValueNotifier<bool> _blinkNotifier = ValueNotifier<bool>(true);
-  Map<String, int> _earthScopeStationIndex = const {};
-  Map<String, int> _geofonStationIndex = const {};
   bool _fdsnServicesActive = false;
   String _lastForegroundFdsnConfig = '';
   final Map<String, FdsnMotionSample> _pendingFdsnMotionSamples = {};
@@ -654,6 +648,17 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       _notifyLayer(revision);
     }
     _emitStationSummary();
+  }
+
+  void _syncStationHistoryCaptureSettings() {
+    final capture = StationHistoryCapture.instance;
+    capture.setEnabled('nied', _niedMonitorEnabled);
+    capture.setEnabled('snet', _snetEnabled);
+    capture.setEnabled('kma', _kmaPewsEnabled);
+    capture.setEnabled('cwa', _tremStationEnabled);
+    capture.setEnabled('seisjs', _wolfxSeisJsEnabled);
+    capture.setEnabled('palert', _pAlertEnabled && AppEdition.hasPAlertStations);
+    capture.setEnabled('lpgm', _niedLpgmEnabled);
   }
 
   void _captureStationFrame(String kind) {
@@ -1091,18 +1096,26 @@ class _QuakeMapViewState extends State<QuakeMapView> {
         final stations = ForegroundStationPayload.decodeFdsnStations(
           rawStations,
         );
-        if (source == 'EarthScope') {
-          _earthScopeStations = _applyLatestFdsnMotionToStations(stations);
-          _earthScopeStationIndex = _buildFdsnStationIndex(_earthScopeStations);
-          _notifyLayer(_earthScopeLayerRevision);
-        } else if (source == 'GEOFON') {
-          _geofonStations = _applyLatestFdsnMotionToStations(stations);
-          _geofonStationIndex = _buildFdsnStationIndex(_geofonStations);
-          _notifyLayer(_geofonLayerRevision);
+        final config = source == null ? null : FdsnSourceCatalog.find(source);
+        if (_fdsnSeedLinkEnabled &&
+            config != null &&
+            _mapStateProvider?.isOverlayEnabled(config.overlayKey) == true) {
+          final updated = _applyLatestFdsnMotionToStations(stations);
+          _fdsnStationStore.setSource(source!, updated);
+          _notifyLayer(_fdsnLayerRevision);
         }
       case 'fdsnMotion':
         final sample = ForegroundStationPayload.decodeFdsnMotion(payload);
         if (sample != null) _handleFdsnMotionSample(sample);
+      case 'fdsnStatus':
+        if (!_fdsnSeedLinkEnabled) return;
+        _fdsnMotionService.acceptSourceStatuses(
+          ForegroundStationPayload.decodeFdsnStatus(payload).where((status) {
+            final config = FdsnSourceCatalog.find(status.source);
+            return config != null &&
+                _mapStateProvider?.isOverlayEnabled(config.overlayKey) == true;
+          }).toList(growable: false),
+        );
       case 'volcanoSites':
         _volcanoMapService.acceptSitesSnapshot(
           ForegroundStationPayload.decodeVolcanoSites(payload['sites']),
@@ -1336,6 +1349,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _whewsSnetService.setApiToken(whewsToken);
     _whewsKmaService.setApiToken(whewsToken);
     QuakeMapView.whewsApiTokenNotifier.value = whewsToken;
+    _syncStationHistoryCaptureSettings();
     QuakeMapView.tremStationEnabledNotifier.value = _tremStationEnabled;
     QuakeMapView.displayShindo0Notifier.value = _displayShindo0;
     QuakeMapView.kmaIntensityHoldNotifier.value = _kmaIntensityHoldFrames;
@@ -1638,6 +1652,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   }
 
   void _syncKmaPewsService() {
+    StationHistoryCapture.instance.setEnabled('kma', _kmaPewsEnabled);
     if (!_kmaPewsEnabled) {
       _kmaService.disconnect();
       _whewsKmaService.stop();
@@ -1696,6 +1711,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   }
 
   void _syncWolfxSeisJsService() {
+    StationHistoryCapture.instance.setEnabled('seisjs', _wolfxSeisJsEnabled);
     if (BackgroundService().isAndroidConnectionHostedByForegroundService) {
       _seisjsService.disconnect();
       if (_wolfxSeisJsEnabled) {
@@ -1722,6 +1738,10 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   }
 
   void _syncPAlertService() {
+    StationHistoryCapture.instance.setEnabled(
+      'palert',
+      _pAlertEnabled && AppEdition.hasPAlertStations,
+    );
     if (BackgroundService().isAndroidConnectionHostedByForegroundService) {
       _pAlertService.stop();
       if (_pAlertEnabled && AppEdition.hasPAlertStations) {
@@ -1751,6 +1771,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   }
 
   void _syncNiedMonitorService() {
+    StationHistoryCapture.instance.setEnabled('nied', _niedMonitorEnabled);
     _whewsNiedFrameSerial++;
     if (!_niedMonitorEnabled) {
       NiedMonitorService().setPhysicalLayersEnabled(false);
@@ -1831,6 +1852,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   }
 
   void _syncLpgmMonitorService() {
+    StationHistoryCapture.instance.setEnabled('lpgm', _niedLpgmEnabled);
     if (BackgroundService().isAndroidConnectionHostedByForegroundService) {
       _lpgmService.stop();
       _lpgmSnapshotSubscription?.cancel();
@@ -1854,6 +1876,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   }
 
   void _syncSnetService() {
+    StationHistoryCapture.instance.setEnabled('snet', _snetEnabled);
     if (!_snetEnabled) {
       _obsAutomationInputs.clearStationNetwork('snet');
       _snetService.stopMonitoring();
@@ -1902,6 +1925,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
 
   void _syncTremStationService() {
     if (!mounted) return;
+    StationHistoryCapture.instance.setEnabled('cwa', _tremStationEnabled);
     final provider = context.read<QuakeProvider>();
     if (!_tremStationEnabled) {
       _cwaService.stop();
@@ -2863,19 +2887,16 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     );
   }
 
-  Widget _buildFdsnStationLayer({
-    required String overlayKey,
-    required ValueNotifier<int> revision,
-    required List<FdsnStation> Function() stations,
-  }) {
-    return Selector<MapStateProvider, bool>(
-      selector: (context, mapState) => mapState.isOverlayEnabled(overlayKey),
-      builder: (context, enabled, child) {
-        if (!enabled) return const SizedBox.shrink();
+  Widget _buildFdsnStationLayer() {
+    return Selector<MapStateProvider, Set<String>>(
+      selector: (context, mapState) =>
+          FdsnSourceCatalog.enabledSources(mapState.isOverlayEnabled),
+      builder: (context, sources, child) {
+        if (sources.isEmpty) return const SizedBox.shrink();
         return ValueListenableBuilder<int>(
-          valueListenable: revision,
+          valueListenable: _fdsnLayerRevision,
           builder: (context, revision, child) {
-            final currentStations = stations();
+            final currentStations = _fdsnStationStore.displayStations(sources);
             if (currentStations.isEmpty) return const SizedBox.shrink();
             return FdsnStationLayer(stations: currentStations);
           },
@@ -3062,6 +3083,12 @@ class _QuakeMapViewState extends State<QuakeMapView> {
 
   void _handleFdsnMotionSample(FdsnMotionSample sample) {
     if (!mounted) return;
+    final config = FdsnSourceCatalog.find(sample.source);
+    if (!_fdsnSeedLinkEnabled ||
+        config == null ||
+        _mapStateProvider?.isOverlayEnabled(config.overlayKey) != true) {
+      return;
+    }
     if (!sample.hasMeasurement && !sample.active) return;
     _fdsnMotionService.recordDataTime(sample.timestamp);
     final key = '${sample.source}:${sample.code}';
@@ -3103,69 +3130,35 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       }
     }
 
-    List<FdsnStation> updateStations(
-      List<FdsnStation> stations,
-      Map<String, int> index,
-    ) {
-      List<FdsnStation>? updated;
-      for (final entry in samples.entries) {
-        final stationIndex = index[entry.key];
-        if (stationIndex == null || stationIndex >= stations.length) continue;
-        final station = stations[stationIndex];
-        final sample = entry.value;
-        final now = receivedAt[entry.key]!;
-        final sameValues =
-            station.pga == sample.pga &&
-            station.pgv == sample.pgv &&
-            station.intensity == sample.intensity;
-        final lastUiUpdate = _lastFdsnUiUpdateAt[entry.key];
-        if (sameValues &&
-            station.lastMotionUpdate != null &&
-            lastUiUpdate != null &&
-            now.difference(lastUiUpdate) < const Duration(seconds: 10)) {
-          continue;
-        }
-        updated ??= List<FdsnStation>.of(stations, growable: false);
-        _lastFdsnUiUpdateAt[entry.key] = now;
-        updated[stationIndex] = station.copyWith(
+    var changed = false;
+    for (final entry in samples.entries) {
+      final sample = entry.value;
+      final station = _fdsnStationStore.find(sample.source, sample.code);
+      if (station == null) continue;
+      final now = receivedAt[entry.key]!;
+      final sameValues =
+          station.pga == sample.pga &&
+          station.pgv == sample.pgv &&
+          station.intensity == sample.intensity;
+      final lastUiUpdate = _lastFdsnUiUpdateAt[entry.key];
+      if (sameValues &&
+          station.lastMotionUpdate != null &&
+          lastUiUpdate != null &&
+          now.difference(lastUiUpdate) < const Duration(seconds: 10)) {
+        continue;
+      }
+      _lastFdsnUiUpdateAt[entry.key] = now;
+      _fdsnStationStore.update(
+        station.copyWith(
           pga: sample.pga,
           pgv: sample.pgv,
           intensity: sample.intensity,
           lastMotionUpdate: sample.timestamp,
-        );
-      }
-      return updated ?? stations;
+        ),
+      );
+      changed = true;
     }
-
-    final nextEarthScopeStations = updateStations(
-      _earthScopeStations,
-      _earthScopeStationIndex,
-    );
-    final nextGeofonStations = updateStations(
-      _geofonStations,
-      _geofonStationIndex,
-    );
-    if (identical(nextEarthScopeStations, _earthScopeStations) &&
-        identical(nextGeofonStations, _geofonStations)) {
-      return;
-    }
-
-    if (!identical(nextEarthScopeStations, _earthScopeStations)) {
-      _earthScopeStations = nextEarthScopeStations;
-      _notifyLayer(_earthScopeLayerRevision);
-    }
-    if (!identical(nextGeofonStations, _geofonStations)) {
-      _geofonStations = nextGeofonStations;
-      _notifyLayer(_geofonLayerRevision);
-    }
-  }
-
-  Map<String, int> _buildFdsnStationIndex(List<FdsnStation> stations) {
-    final index = <String, int>{};
-    for (var i = 0; i < stations.length; i++) {
-      index['${stations[i].source}:${stations[i].code}'] = i;
-    }
-    return index;
+    if (changed) _notifyLayer(_fdsnLayerRevision);
   }
 
   List<FdsnStation> _applyLatestFdsnMotionToStations(
@@ -3268,10 +3261,9 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       return;
     }
     final mapState = _mapStateProvider;
-    final enabledSources = <String>{
-      if (mapState?.isOverlayEnabled('fdsnEarthScope') == true) 'EarthScope',
-      if (mapState?.isOverlayEnabled('fdsnGeofon') == true) 'GEOFON',
-    };
+    final enabledSources = FdsnSourceCatalog.enabledSources(
+      (key) => mapState?.isOverlayEnabled(key) == true,
+    );
     if (enabledSources.isNotEmpty) {
       if (BackgroundService().isAndroidConnectionHostedByForegroundService) {
         _stopFdsnServices(clearStations: false);
@@ -3611,52 +3603,27 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   }
 
   void _syncFdsnStationSources(Set<String> enabledSources) {
-    if (enabledSources.contains('EarthScope')) {
-      if (_earthScopeStationSubscription == null) {
-        unawaited(_earthScopeStationService.start());
-        _earthScopeStationSubscription = _earthScopeStationService.stationStream
-            .listen((stations) {
-              if (mounted) {
-                final updated = _applyLatestFdsnMotionToStations(stations);
-                _earthScopeStations = updated;
-                _earthScopeStationIndex = _buildFdsnStationIndex(updated);
-                _notifyLayer(_earthScopeLayerRevision);
-              }
-            });
-      }
-    } else {
-      _earthScopeStationSubscription?.cancel();
-      _earthScopeStationSubscription = null;
-      _earthScopeStationService.stop();
-      _earthScopeStationIndex = const {};
-      if (_earthScopeStations.isNotEmpty) {
-        _earthScopeStations = [];
-        _notifyLayer(_earthScopeLayerRevision);
-      }
-    }
-
-    if (enabledSources.contains('GEOFON')) {
-      if (_geofonStationSubscription == null) {
-        unawaited(_geofonStationService.start());
-        _geofonStationSubscription = _geofonStationService.stationStream.listen(
-          (stations) {
-            if (mounted) {
+    for (final entry in FdsnStationService.sources.entries) {
+      final source = entry.key;
+      final service = entry.value;
+      if (enabledSources.contains(source)) {
+        if (!_fdsnStationSubscriptions.containsKey(source)) {
+          _fdsnStationSubscriptions[source] = service.stationStream.listen(
+            (stations) {
+              if (!mounted) return;
               final updated = _applyLatestFdsnMotionToStations(stations);
-              _geofonStations = updated;
-              _geofonStationIndex = _buildFdsnStationIndex(updated);
-              _notifyLayer(_geofonLayerRevision);
-            }
-          },
-        );
-      }
-    } else {
-      _geofonStationSubscription?.cancel();
-      _geofonStationSubscription = null;
-      _geofonStationService.stop();
-      _geofonStationIndex = const {};
-      if (_geofonStations.isNotEmpty) {
-        _geofonStations = [];
-        _notifyLayer(_geofonLayerRevision);
+              _fdsnStationStore.setSource(source, updated);
+              _notifyLayer(_fdsnLayerRevision);
+            },
+          );
+          unawaited(service.start());
+        }
+      } else {
+        _fdsnStationSubscriptions.remove(source)?.cancel();
+        service.stop();
+        if (_fdsnStationStore.removeSource(source)) {
+          _notifyLayer(_fdsnLayerRevision);
+        }
       }
     }
   }
@@ -3664,11 +3631,9 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   void _restartFdsnMotionService() {
     _fdsnMotionRestartTimer = null;
     if (!_fdsnServicesActive || !_fdsnSeedLinkEnabled) return;
-    final enabledSources = <String>{
-      if (_mapStateProvider?.isOverlayEnabled('fdsnEarthScope') == true)
-        'EarthScope',
-      if (_mapStateProvider?.isOverlayEnabled('fdsnGeofon') == true) 'GEOFON',
-    };
+    final enabledSources = FdsnSourceCatalog.enabledSources(
+      (key) => _mapStateProvider?.isOverlayEnabled(key) == true,
+    );
     if (enabledSources.isEmpty) {
       _stopFdsnServices(clearStations: true);
       return;
@@ -3691,10 +3656,10 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   void _stopFdsnServices({bool clearStations = false}) {
     _fdsnServicesActive = false;
     _obsAutomationInputs.clearStationNetwork('fdsn');
-    _earthScopeStationSubscription?.cancel();
-    _earthScopeStationSubscription = null;
-    _geofonStationSubscription?.cancel();
-    _geofonStationSubscription = null;
+    for (final subscription in _fdsnStationSubscriptions.values) {
+      subscription.cancel();
+    }
+    _fdsnStationSubscriptions.clear();
     _fdsnMotionSubscription?.cancel();
     _fdsnMotionSubscription = null;
     _fdsnMotionRestartTimer?.cancel();
@@ -3707,23 +3672,17 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       _latestFdsnMotionReceivedAt.clear();
       _lastFdsnUiUpdateAt.clear();
     }
-    _fdsnMotionService.disconnect();
-    _earthScopeStationService.stop();
-    _geofonStationService.stop();
+    _fdsnMotionService.disconnect(
+      clearSourceStatuses: clearStations ||
+          !BackgroundService().isAndroidConnectionHostedByForegroundService,
+    );
+    for (final service in FdsnStationService.sources.values) {
+      service.stop();
+    }
 
-    if (clearStations &&
-        mounted &&
-        (_earthScopeStations.isNotEmpty || _geofonStations.isNotEmpty)) {
-      if (_earthScopeStations.isNotEmpty) {
-        _earthScopeStations = [];
-        _notifyLayer(_earthScopeLayerRevision);
-      }
-      if (_geofonStations.isNotEmpty) {
-        _geofonStations = [];
-        _notifyLayer(_geofonLayerRevision);
-      }
-      _earthScopeStationIndex = const {};
-      _geofonStationIndex = const {};
+    if (clearStations && mounted && _fdsnStationStore.isNotEmpty) {
+      _fdsnStationStore.clear();
+      _notifyLayer(_fdsnLayerRevision);
     }
   }
 
@@ -6138,8 +6097,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _pAlertLayerRevision.dispose();
     _seisJsLayerRevision.dispose();
     _snetLayerRevision.dispose();
-    _earthScopeLayerRevision.dispose();
-    _geofonLayerRevision.dispose();
+    _fdsnLayerRevision.dispose();
     _liveWeatherTileRevision.dispose();
     _fanRadarLayerRevision.dispose();
     _precipitationLayerRevision.dispose();
@@ -6470,16 +6428,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                           _buildPAlertStationLayer(),
                           _buildSeisJsStationLayer(),
                           _buildSnetStationLayer(),
-                          _buildFdsnStationLayer(
-                            overlayKey: 'fdsnEarthScope',
-                            revision: _earthScopeLayerRevision,
-                            stations: () => _earthScopeStations,
-                          ),
-                          _buildFdsnStationLayer(
-                            overlayKey: 'fdsnGeofon',
-                            revision: _geofonLayerRevision,
-                            stations: () => _geofonStations,
-                          ),
+                          _buildFdsnStationLayer(),
                           Selector<QuakeProvider, CencIrData?>(
                             selector: (context, provider) =>
                                 provider.cencIrData,

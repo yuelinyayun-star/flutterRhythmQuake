@@ -79,6 +79,8 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
   bool _exporting = false;
 
   Future<void> _replayAction({required bool export}) async {
+    if (_exporting) return;
+    setState(() => _exporting = true);
     try {
       final provider = context.read<QuakeProvider>();
       final current = provider.eewHistory.firstWhere(
@@ -87,8 +89,11 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
             group.latest.source == widget.group.latest.source,
         orElse: () => widget.group,
       );
-      final package = HistoryReplayPackage.fromGroup(current);
       if (export) {
+        final loaded = current.storedStations == null
+            ? current : await provider.loadHistoryStationFrames(current);
+        if (!mounted) return;
+        final package = HistoryReplayPackage.fromGroup(loaded);
         setState(() => _exporting = true);
         final saved = await exportHistoryReplay(package);
         if (mounted && saved) {
@@ -99,11 +104,12 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
       } else {
         final controller = context.read<QuakeProvider>().historyReplay;
         controller.load(
-          package,
+          HistoryReplayPackage.fromGroup(current),
           remember: false,
           relatedHistory: provider.eewHistory,
+          storedGroup: current.storedStations == null ? null : current,
         );
-        controller.play();
+        await controller.playPrepared();
         if (controller.active && mounted) {
           Scaffold.maybeOf(context)?.closeDrawer();
         }
@@ -222,7 +228,7 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
                     ),
                     IconButton(
                       tooltip: savedReports > 0 ? '回放已保存报文' : '未保存原始报文',
-                      onPressed: savedReports > 0
+                      onPressed: savedReports > 0 && !_exporting
                           ? () => _replayAction(export: false)
                           : null,
                       icon: const Icon(Icons.play_arrow, size: 20),

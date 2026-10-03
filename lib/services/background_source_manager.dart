@@ -55,6 +55,7 @@ import 'sources/hinet_aqua_cmt_service.dart';
 import 'sources/lpgm_monitor_service.dart';
 import 'sources/fdsn_station_service.dart';
 import 'sources/fdsn_motion_service.dart';
+import 'sources/fdsn_source_catalog.dart';
 import 'sources/fan_radar_service.dart';
 import 'sources/fan_satellite_cloud_service.dart';
 import 'sources/jma_radar_service.dart';
@@ -121,8 +122,7 @@ JmaCmtService? _backgroundJmaCmt;
 FnetCmtService? _backgroundFnetCmt;
 HinetAquaCmtService? _backgroundHinetAquaCmt;
 LpgmMonitorService? _backgroundLpgm;
-FdsnStationService? _backgroundEarthScopeStations;
-FdsnStationService? _backgroundGeofonStations;
+final Map<String, FdsnStationService> _backgroundFdsnStations = {};
 FdsnMotionService? _backgroundFdsnMotion;
 FanRadarService? _backgroundFanRadar;
 FanRadarService? _backgroundCmaPrecipitation;
@@ -316,6 +316,7 @@ Future<void> startBackgroundSources({
 
   final prefs = await SharedPreferences.getInstance();
   await prefs.reload();
+  await FdsnSourceCatalog.initializePreferences(prefs.getBool, prefs.setBool);
   await EpicenterRegionService.instance.load();
   final initialSettings = _settingsSnapshot(prefs);
 
@@ -416,8 +417,7 @@ Future<void> startBackgroundSources({
   final fnetCmt = FnetCmtService();
   final hinetAquaCmt = HinetAquaCmtService();
   final lpgm = LpgmMonitorService();
-  final earthScopeStations = FdsnStationService.earthScope;
-  final geofonStations = FdsnStationService.geofon;
+  final fdsnStations = FdsnStationService.sources;
   final fdsnMotion = FdsnMotionService();
   final fanRadar = FanRadarService();
   final precipitation = FanRadarService.precipitation();
@@ -445,8 +445,7 @@ Future<void> startBackgroundSources({
   _backgroundJmaWeather = jmaWeather;
   _backgroundJmaLpgm = jmaLpgm;
   _backgroundJmaMegaquake = jmaMegaquake;
-  _backgroundEarthScopeStations = earthScopeStations;
-  _backgroundGeofonStations = geofonStations;
+  _backgroundFdsnStations.addAll(fdsnStations);
   _backgroundFdsnMotion = fdsnMotion;
   _backgroundLpgm = lpgm;
   _backgroundCencCmt = cencCmt;
@@ -879,18 +878,13 @@ Future<void> startBackgroundSources({
     await lpgm.start(interval: const Duration(seconds: 15));
   }
 
-  _backgroundAuxSubscriptions.add(
-    earthScopeStations.stationStream.listen((stations) {
-      onStationData(
-        ForegroundStationPayload.fdsnStations('EarthScope', stations),
-      );
-    }),
-  );
-  _backgroundAuxSubscriptions.add(
-    geofonStations.stationStream.listen((stations) {
-      onStationData(ForegroundStationPayload.fdsnStations('GEOFON', stations));
-    }),
-  );
+  for (final entry in fdsnStations.entries) {
+    _backgroundAuxSubscriptions.add(
+      entry.value.stationStream.listen((stations) {
+        onStationData(ForegroundStationPayload.fdsnStations(entry.key, stations));
+      }),
+    );
+  }
   _backgroundAuxSubscriptions.add(
     fdsnMotion.sampleStream.listen((sample) {
       onStationData(ForegroundStationPayload.fdsnMotion(sample));
@@ -972,20 +966,28 @@ Future<void> startBackgroundSources({
   final fdsnEnabled =
       prefs.getBool('api_source_fdsn_seedlink_enabled') ?? false;
   final fdsnSources = <String>{
-    if (prefs.getBool('map_overlay_fdsnEarthScope') ?? false) 'EarthScope',
-    if (prefs.getBool('map_overlay_fdsnGeofon') ?? false) 'GEOFON',
+    for (final source in FdsnSourceCatalog.sources)
+      if (source.readEnabled(prefs.getBool)) source.name,
   };
   if (fdsnEnabled && fdsnSources.isNotEmpty) {
     final limit =
         prefs.getInt(FdsnMotionService.stationLimitPreferenceKey) ??
         FdsnMotionService.defaultStationLimit;
-    if (fdsnSources.contains('EarthScope')) {
-      unawaited(earthScopeStations.start());
-    }
-    if (fdsnSources.contains('GEOFON')) {
-      unawaited(geofonStations.start());
+    for (final source in fdsnSources) {
+      unawaited(fdsnStations[source]!.start());
     }
     fdsnMotion.connect(stationLimit: limit, enabledSources: fdsnSources);
+    // Send small summaries, not station histories. Repeating the current snapshot
+    // also restores the dashboard when the UI isolate attaches after startup.
+    _backgroundTimers.add(
+      Timer.periodic(const Duration(seconds: 5), (_) {
+        onStationData(
+          ForegroundStationPayload.fdsnStatus(
+            fdsnMotion.sourceStatusesNotifier.value,
+          ),
+        );
+      }),
+    );
   }
   if (prefs.getBool('map_overlay_radarChinaLayer') ?? false) {
     fanRadar.start(interval: FanRadarService.refreshInterval);
@@ -1119,8 +1121,9 @@ Future<void> stopBackgroundSources() async {
   _backgroundFnetCmt?.stop();
   _backgroundHinetAquaCmt?.stop();
   _backgroundLpgm?.stop();
-  _backgroundEarthScopeStations?.stop();
-  _backgroundGeofonStations?.stop();
+  for (final service in _backgroundFdsnStations.values) {
+    service.stop();
+  }
   _backgroundFdsnMotion?.disconnect();
   _backgroundFanRadar?.stop();
   _backgroundCmaPrecipitation?.stop();
@@ -1155,8 +1158,7 @@ Future<void> stopBackgroundSources() async {
   _backgroundFnetCmt = null;
   _backgroundHinetAquaCmt = null;
   _backgroundLpgm = null;
-  _backgroundEarthScopeStations = null;
-  _backgroundGeofonStations = null;
+  _backgroundFdsnStations.clear();
   _backgroundFdsnMotion = null;
   _backgroundFanRadar = null;
   _backgroundCmaPrecipitation = null;

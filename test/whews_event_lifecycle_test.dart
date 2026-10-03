@@ -337,7 +337,7 @@ void main() {
   );
 
   test(
-    'changed WHEWS revision updates once and exact replay is dropped',
+    'changed WHEWS revision updates silently and exact replay is dropped',
     () async {
       final provider = QuakeProvider();
       addTearDown(() async {
@@ -355,12 +355,15 @@ void main() {
       );
 
       provider.handleUnifiedEventForTest(first);
+      final arrivedAt = provider.unifiedEvents.single.arrivedAt;
       provider.handleUnifiedEventForTest(update);
       provider.handleUnifiedEventForTest(update);
 
       expect(provider.unifiedEvents, hasLength(1));
       expect(provider.unifiedEvents.single.magnitude, 4.6);
-      expect(effects, hasLength(2));
+      expect(provider.unifiedEvents.single.arrivedAt, arrivedAt);
+      expect(provider.unifiedEvents.single.reportTime, update.reportTime);
+      expect(effects, hasLength(1));
       await Future<void>.delayed(Duration.zero);
     },
   );

@@ -7,7 +7,8 @@
 
 param(
     [ValidateSet('personal', 'public')]
-    [string]$Edition = 'personal'
+    [string]$Edition = 'personal',
+    [switch]$SkipProcessCleanup
 )
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -50,7 +51,7 @@ foreach ($path in $isccPaths) {
 
 # 步骤 1: 构建 Release
 Write-Host "[1/4] Building Windows Release $appVersion+$appBuild..." -ForegroundColor Cyan
-& ".\build_windows.ps1" -Release -Edition $Edition
+& ".\build_windows.ps1" -Release -Edition $Edition -SkipProcessCleanup:$SkipProcessCleanup
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  Build failed! Exit code: $LASTEXITCODE" -ForegroundColor Red

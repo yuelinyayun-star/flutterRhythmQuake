@@ -210,6 +210,11 @@ class MapStateProvider with ChangeNotifier {
     'weatherAlertLayer': false,
     'fdsnEarthScope': false,
     'fdsnGeofon': false,
+    'fdsnGeoNet': false,
+    'fdsnResif': false,
+    'fdsnIpgp': false,
+    'fdsnOrfeus': false,
+    'fdsnBgr': false,
   };
 
   String _weatherStationMode = 'auto';

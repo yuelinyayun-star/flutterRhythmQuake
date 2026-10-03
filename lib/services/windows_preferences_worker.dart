@@ -1,10 +1,9 @@
 import 'dart:async';
 import 'dart:isolate';
 
-import 'package:path_provider_windows/path_provider_windows.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 import 'package:shared_preferences_platform_interface/types.dart';
-import 'package:shared_preferences_windows/shared_preferences_windows.dart';
+import 'windows_preference_files.dart';
 
 /// Runs the existing Windows preference backend serially outside the UI isolate.
 class WindowsPreferencesWorker extends SharedPreferencesStorePlatform {
@@ -86,6 +85,14 @@ class WindowsPreferencesWorker extends SharedPreferencesStorePlatform {
   Future<bool> remove(String key) async =>
       await _request('remove', [key]) as bool;
 
+  Future<Object?> readHistory(String key) =>
+      _request('history', ['flutter.$key']);
+
+  Future<bool> writeHistory(String key, Object value) =>
+      setValue(value is List ? 'StringList' : 'String', 'flutter.$key', value);
+
+  Future<bool> removeHistory(String key) => remove('flutter.$key');
+
   @override
   Future<bool> clear() => clearWithPrefix('flutter.');
 
@@ -131,21 +138,10 @@ class WindowsPreferencesWorker extends SharedPreferencesStorePlatform {
   }
 }
 
-class _FixedPreferencePaths extends PathProviderWindows {
-  _FixedPreferencePaths(this.supportPath);
-  final String supportPath;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => supportPath;
-}
-
 Future<void> _preferencesMain((SendPort, String) bootstrap) async {
   final (responses, supportPath) = bootstrap;
   final requests = ReceivePort();
-  // The backend's path override keeps its original IO logic on the same file.
-  final backend = SharedPreferencesWindows()
-    // ignore: invalid_use_of_visible_for_testing_member
-    ..pathProvider = _FixedPreferencePaths(supportPath);
+  final backend = WindowsPreferenceFiles(supportPath);
   responses.send(['ready', requests.sendPort]);
   await for (final message in requests) {
     final operation = message[0] as String;
@@ -153,28 +149,17 @@ Future<void> _preferencesMain((SendPort, String) bootstrap) async {
     final args = message[2] as List;
     try {
       final result = switch (operation) {
-        'set' => await backend.setValue(
-          args[0] as String,
-          args[1] as String,
-          args[2] as Object,
-        ),
+        'set' => await backend.setValue(args[1] as String, args[2] as Object),
         'remove' => await backend.remove(args[0] as String),
-        'clear' => await backend.clearWithParameters(
-          ClearParameters(
-            filter: PreferencesFilter(
-              prefix: args[0] as String,
-              allowList: args[1] as Set<String>?,
-            ),
-          ),
+        'clear' => await backend.clear(
+          args[0] as String,
+          args[1] as Set<String>?,
         ),
-        'get' => await backend.getAllWithParameters(
-          GetAllParameters(
-            filter: PreferencesFilter(
-              prefix: args[0] as String,
-              allowList: args[1] as Set<String>?,
-            ),
-          ),
+        'get' => await backend.getAll(
+          args[0] as String,
+          args[1] as Set<String>?,
         ),
+        'history' => await backend.readHistory(args[0] as String),
         'close' => true,
         _ => throw StateError('Unknown preference operation: $operation'),
       };

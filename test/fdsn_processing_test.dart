@@ -22,6 +22,7 @@ void main() {
           'test/fixtures/fdsn_codec/${record['file']}',
         ).readAsBytesSync();
         final offset = record['offset'] as int;
+        final original = Uint8List.fromList(bytes);
         expect(
           decodeFdsnRecordForTest(
             Uint8List.sublistView(bytes, offset, offset + 512),
@@ -29,6 +30,7 @@ void main() {
           record['samples'],
           reason: '${record['file']} @ $offset',
         );
+        expect(bytes, orderedEquals(original), reason: 'Do not mutate raw input');
       }
     },
   );

@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import 'fdsn_channel_sensitivity.dart';
 import 'fdsn_metadata_routing.dart';
+import 'fdsn_source_catalog.dart';
 
 /// GQ's channel-database approach: load metadata by network, not by packet.
 /// The dictionary is indexed by exact NSLC and retains every returned epoch.
@@ -16,15 +17,33 @@ class FdsnChannelCatalog {
   final _networks =
       <String, Future<Map<String, List<FdsnChannelSensitivity>>>>{};
   final _retryAfter = <String, DateTime>{};
+  Map<String, Set<String>>? _selectedStations;
   bool _closed = false;
   int _active = 0;
   final _waiting = <Completer<void>>[];
+
+  void selectStations(Iterable<(String, String, String)> stations) {
+    final next = <String, Set<String>>{};
+    for (final (source, network, station) in stations) {
+      (next['$source:$network'] ??= {}).add(station);
+    }
+    for (final key in _networks.keys.toList()) {
+      if (!setEquals(_selectedStations?[key], next[key])) {
+        _networks.remove(key);
+        _retryAfter.remove(key);
+      }
+    }
+    _selectedStations = next;
+  }
 
   Future<Map<String, List<FdsnChannelSensitivity>>> load(
     String source,
     String network,
   ) {
     final key = '$source:$network';
+    if (_selectedStations != null && !_selectedStations!.containsKey(key)) {
+      return Future.value(const {});
+    }
     final retry = _retryAfter[key];
     if (retry != null && !DateTime.now().isBefore(retry)) {
       _networks.remove(key);
@@ -67,6 +86,7 @@ class FdsnChannelCatalog {
     String network,
   ) async {
     if (_closed) return {};
+    final selected = _selectedStations?['$source:$network'];
     if (_active >= 4) {
       final ready = Completer<void>();
       _waiting.add(ready);
@@ -76,11 +96,9 @@ class FdsnChannelCatalog {
     }
     if (_closed) return {};
     try {
-      final base = Uri.parse(
-        source == 'GEOFON'
-            ? 'https://geofon.gfz-potsdam.de/fdsnws/station/1/query'
-            : 'https://service.earthscope.org/fdsnws/station/1/query',
-      );
+      final config = FdsnSourceCatalog.find(source);
+      if (config == null) return {};
+      final base = Uri.parse(config.stationUrl);
       final result = <String, List<FdsnChannelSensitivity>>{};
       Future<void> fetch(Uri endpoint) async {
         try {
@@ -106,9 +124,10 @@ class FdsnChannelCatalog {
               )
               .timeout(const Duration(seconds: 60));
           if (_closed || response.statusCode != 200) return;
-          final parsed = await compute(parseFdsnChannelCatalog, (
+          final parsed = await compute(_parseSelectedChannels, (
             utf8.decode(response.bodyBytes),
             network,
+            selected,
           ));
           if (_closed) return;
           for (final entry in parsed.entries) {
@@ -122,7 +141,7 @@ class FdsnChannelCatalog {
       }
 
       await fetch(base);
-      if (!_closed && source == 'GEOFON') {
+      if (!_closed && config.routeMetadata) {
         for (final route in await _routing.resolve(client, network)) {
           if (_closed) return {};
           if (route.host == base.host ||
@@ -161,13 +180,15 @@ class FdsnChannelCatalog {
 }
 
 Map<String, List<FdsnChannelSensitivity>> parseFdsnChannelCatalog(
-  (String, String) input,
-) {
+  (String, String) input, {
+  Set<String>? stations,
+}) {
   final result = <String, List<FdsnChannelSensitivity>>{};
   for (final line in const LineSplitter().convert(input.$1)) {
     if (line.startsWith('#') || line.isEmpty) continue;
     final c = line.split('|').map((v) => v.trim()).toList(growable: false);
     if (c.length < 17 || c[0] != input.$2) continue;
+    if (stations != null && !stations.contains(c[1])) continue;
     final start = DateTime.tryParse(c[15].endsWith('Z') ? c[15] : '${c[15]}Z');
     if (start == null) continue;
     final response = FdsnChannelSensitivity.parse(
@@ -186,3 +207,7 @@ Map<String, List<FdsnChannelSensitivity>> parseFdsnChannelCatalog(
   }
   return result;
 }
+
+Map<String, List<FdsnChannelSensitivity>> _parseSelectedChannels(
+  (String, String, Set<String>?) input,
+) => parseFdsnChannelCatalog((input.$1, input.$2), stations: input.$3);

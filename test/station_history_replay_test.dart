@@ -407,6 +407,47 @@ void main() {
   );
 
   test(
+    'multiple encoding batches keep all frames and skip unchanged archives',
+    () async {
+      final start = cwa().times.first;
+      final frames = [
+        for (final offset in [Duration.zero, const Duration(seconds: 30)])
+          for (final kind in StationHistoryFrame.kinds)
+            emptyFrame(kind, start.add(offset)),
+      ];
+      final prefs = await SharedPreferences.getInstance();
+      final store = EewHistoryStore(preferenceKey: 'batch-history');
+      final group = groupWith(frames);
+      await store.save(prefs, [group]);
+      final archives = prefs
+          .getKeys()
+          .where((key) => key.contains('_station_archive_'))
+          .toList();
+      expect(archives, hasLength(14));
+      for (final key in archives) {
+        await prefs.setString(key, '${prefs.getString(key)} ');
+      }
+      await store.save(prefs, [group]);
+      for (final key in archives) {
+        expect(
+          prefs.getString(key),
+          endsWith(' '),
+          reason: 'Unchanged archive is not re-encoded or rewritten',
+        );
+      }
+      final restored = EewHistoryStore(
+        preferenceKey: 'batch-history',
+      ).restore(prefs);
+      expect(
+        restored.single.stationFrames.map((f) => f.toMap()),
+        frames.map((f) => f.toMap()),
+      );
+      await store.save(prefs, []);
+      expect(archives.any(prefs.containsKey), isFalse);
+    },
+  );
+
+  test(
     'incremental store restores frames and keeps shared frames until last owner is removed',
     () async {
       final frames = [
@@ -435,6 +476,94 @@ void main() {
       expect(stationKeys.every(prefs.containsKey), isTrue);
       await store.save(prefs, []);
       expect(stationKeys.any(prefs.containsKey), isFalse);
+    },
+  );
+
+  test(
+    'disabled cached stations stay out of live history and re-enable waits for a frame',
+    () async {
+      final capture = StationHistoryCapture.instance;
+      final enabledBefore = {
+        for (final kind in StationHistoryFrame.kinds)
+          kind: capture.isEnabled(kind),
+      };
+      addTearDown(() {
+        for (final entry in enabledBefore.entries) {
+          capture.setEnabled(entry.key, entry.value);
+        }
+      });
+      for (final kind in StationHistoryFrame.kinds) {
+        capture.setEnabled(kind, false);
+      }
+      final provider = QuakeProvider();
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      addTearDown(provider.dispose);
+      capture.setEnabled('nied', true);
+      capture.publish(
+        'nied',
+        () => emptyFrame('nied', DateTime.now()).snapshot,
+      );
+      capture.setEnabled('nied', false);
+      capture.setEnabled('lpgm', true);
+      capture.publish(
+        'lpgm',
+        () => emptyFrame('lpgm', DateTime.now()).snapshot,
+      );
+      provider.historyReplay.load(cwa());
+      provider.historyReplay.play();
+      final recorded = cwa().reports.first;
+      final live = recorded.copyWith(
+        originTime: recorded.originTime!.add(
+          provider.unifiedEvents.first.replayClockOffset,
+        ),
+        arrivedAt: DateTime.now().toUtc(),
+      );
+      provider.handleUnifiedEventForTest(
+        live,
+        alreadyAccepted: true,
+        suppressEffects: true,
+      );
+      expect(provider.eewHistory.single.stationFrames.map((f) => f.kind), [
+        'lpgm',
+      ]);
+      capture.publish(
+        'nied',
+        () => emptyFrame('nied', DateTime.now()).snapshot,
+      );
+      expect(provider.eewHistory.single.stationFrames.map((f) => f.kind), [
+        'lpgm',
+      ]);
+      capture.setEnabled('nied', true);
+      expect(provider.eewHistory.single.stationFrames.map((f) => f.kind), [
+        'lpgm',
+      ]);
+      capture.publish(
+        'nied',
+        () => emptyFrame('nied', DateTime.now()).snapshot,
+      );
+      final group = provider.eewHistory.single;
+      expect(group.stationFrames.map((f) => f.kind), ['lpgm', 'nied']);
+      capture.setEnabled('nied', false);
+      capture.publish(
+        'nied',
+        () => emptyFrame('nied', DateTime.now()).snapshot,
+      );
+      expect(provider.eewHistory.single.stationFrames, group.stationFrames);
+      provider.dismissUnifiedEventForTest(live);
+      final prefs = await SharedPreferences.getInstance();
+      final store = EewHistoryStore(preferenceKey: 'enabled-station-history');
+      await store.save(prefs, provider.eewHistory);
+      final restored = EewHistoryStore(
+        preferenceKey: 'enabled-station-history',
+      ).restore(prefs);
+      expect(
+        restored.single.stationFrames.map((f) => f.toMap()),
+        group.stationFrames.map((f) => f.toMap()),
+      );
+      expect(
+        HistoryReplayPackage.fromGroup(restored.single).stationFrames,
+        hasLength(2),
+      );
     },
   );
 
