@@ -4,7 +4,7 @@ RhythmQuake 是一款基于 Flutter 开发的跨平台地震与多灾种监测�
 
 当前公开版本：`1.0.5+21`。
 
-[下载最新版本](https://github.com/yuelinyayun-star/flutterRhythmQuake/releases/latest) · [打开 Web 版](https://eew.yuelinrhythm.top/) · [查看文档](docs/README.md)
+[下载最新版本](https://github.com/yuelinyayun-star/flutterRhythmQuake/releases/latest) · [打开 Web 版](https://eew.yuelinrhythm.top/) · [回放文件夹](https://file.yuelinrhythm.top/public/share/2me6CJMrNsVOv_-aFfNePQ) · [查看文档](docs/README.md)
 
 > 开发状态：项目仍在持续完善，功能和文档会随代码更新。
 
@@ -35,6 +35,8 @@ RhythmQuake 是一款基于 Flutter 开发的跨平台地震与多灾种监测�
 按预警来源保存历史事件及收到的各报，默认每源保留最近 15 个事件，可在高级设置中调整保存上限或开启永久保存。
 
 记录预警时可同步保存已启用测站的数据，包括 S-net 和 LPGM，用于回放当时的测站状态。回放包支持 `.rqreplay` 文件导入、导出、播放、重新回放、停止和进度显示；报时缺失或冲突时，可逐报播放。
+
+可从 [RhythmQuake 回放文件夹](https://file.yuelinrhythm.top/public/share/2me6CJMrNsVOv_-aFfNePQ) 下载回放文件，再通过应用中的回放导入入口打开 `.rqreplay` 文件。
 
 开启“时间轴联动回放”后，时间重叠的其他有效事件会沿共同时间轴一起播放，便于查看同一时段多个来源的预警与测站变化。测站记录使用 JSON 分块压缩和按需读取，减少重复存储，以及启动和回放时一次性加载的数据量。
 
