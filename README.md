@@ -1,8 +1,10 @@
-# FlutterRhythmQuake
+# RhythmQuake
 
-FlutterRhythmQuake 是一个使用 Flutter 构建的跨平台实时地震与多灾种监测客户端。项目将多个公开或经用户授权的数据源汇入统一事件生命周期，在地图、侧栏、通知和语音播报中保持一致的接纳、更新、去重与过期行为。
+RhythmQuake 是一个使用 Flutter 构建的跨平台实时地震与多灾种监测客户端，支持地震预警、地震信息、实时测站、历史回放，以及海啸、火山、台风和气象信息展示。
 
-当前版本：`1.0.5+19`
+当前公开版本：`1.0.5+21`。
+
+[下载最新版本](https://github.com/yuelinyayun-star/flutterRhythmQuake/releases/latest) · [打开 Web 版](https://eew.yuelinrhythm.top/) · [查看文档](docs/README.md)
 
 > 开发状态：项目仍在持续完善，功能和文档会随代码更新。
 
@@ -11,25 +13,58 @@ FlutterRhythmQuake 是一个使用 Flutter 构建的跨平台实时地震与多�
 ## 主要能力
 
 - 地震预警与地震信息：多来源 EEW、地震目录、正式测定和历史事件。
-- 实时测站：NIED、S-net、KMA、FDSN、P-Alert、SeisJS 等测站或网格数据。
+- 实时测站：NIED、S-net、KMA、SeisJS、TREM，以及通过 SeedLink 接入的全球测站。
 - 烈度与震度：JMA 震度、中国烈度、MMI、LPGM 以及 CENC 烈度速报。
+- 历史与回放：保存预警各报和已启用测站的数据，支持回放包导入、导出和时间轴联动回放。
 - CMT：多来源矩张量、震源球、节线和断层类型参考判断。
 - 多灾种信息：JMA 火山与降灰预报、海啸、台风、气象预警和本地气象站实况。
-- 统一交互：地图图层、侧栏、自动视角、系统通知、轻通知和 TTS 播报。
-- 桌面能力：Windows 托盘、窗口管理、本地缓存和安装包构建。
+- 地图与交互：图层开关、自动视角、侧栏信息和地震信息复制；移动端可长按地震条目复制，列表时间与复制内容均显示到秒。
+- 通知与播报：系统通知、轻通知和语音播报，具体能力取决于平台。
+- 桌面能力：Windows 托盘、窗口管理和本地缓存。
+
+### SeedLink 全球测站
+
+可分别开启 EarthScope、GEOFON、GeoNet、RESIF、IPGP、ORFEUS 和 BGR。多来源测站按标识去重，优先订阅区域来源，EarthScope 补充其他来源没有的测站。
+
+地图支持三角形、圆形和按类别三种测站样式，以及信号比值、MMI 和中国烈度估算显示。默认使用圆形与信号比值；标记大小随地图视野变化。来源状态区分别显示连接站数，并用颜色区分正常、延迟和连接失败。
+
+### 历史记录与回放
+
+- 默认每个预警源保留最近 15 个事件，每个事件包含收到的各报；高级设置可调整每源保存上限或开启永久保存。
+- 预警记录可同时保存已启用测站的数据，用于回放当时的测站状态，包括 S-net 和 LPGM。
+- 回放包使用 `.rqreplay` 格式，支持导入、导出、播放、重新回放、停止和进度显示；报时缺失或冲突时可逐报播放。
+- 开启“时间轴联动回放”后，播放一个事件时会按共同时间轴播放时间重叠的其他有效事件。
+- 测站记录使用 JSON 分块压缩和按需读取，减少重复存储，以及启动和回放时一次性加载的数据量。
+
+### 本次更新
+
+`1.0.5+21` 重点优化历史回放存储、测站记录加载和全球测站地图绘制，完善测站样式、信号比值与数值显示，并调整 NIED、LPGM、S-net 数据更新处理。完整说明见 [版本发布页](https://github.com/yuelinyayun-star/flutterRhythmQuake/releases/tag/v1.0.5.21-public)。
 
 数据源是否可用取决于网络、平台限制、用户设置和来源授权。FAN Studio API Key 由用户自行申请并在应用设置中保存；WAuth 数据源必须完成官方登录与 API 授权后才能开启。
 
-## 平台状态
+## 下载与平台
+
+当前公开版提供以下文件，发布页同时附有对应的 SHA-256 校验文件：
+
+| 平台 | 下载 / 使用入口 | 文件形式 |
+| --- | --- | --- |
+| Windows x64 | [下载安装包](https://github.com/yuelinyayun-star/flutterRhythmQuake/releases/download/v1.0.5.21-public/RhythmQuake_Setup_1.0.5.21_public_x64.exe) | Inno Setup 安装包 |
+| Android | [下载 APK](https://github.com/yuelinyayun-star/flutterRhythmQuake/releases/download/v1.0.5.21-public/RhythmQuake_1.0.5.21_public.apk) | APK |
+| Linux x64 | [下载完整包](https://github.com/yuelinyayun-star/flutterRhythmQuake/releases/download/v1.0.5.21-public/RhythmQuake_1.0.5.21_public_linux_x64.tar.gz) | `.tar.gz` 便携包 |
+| Web | [在线使用](https://eew.yuelinrhythm.top/) / [下载静态包](https://github.com/yuelinyayun-star/flutterRhythmQuake/releases/download/v1.0.5.21-public/RhythmQuake_1.0.5.21_public_web.zip) | 浏览器 / 静态站点文件 |
+
+Linux 请解压完整目录并保留其中的 `lib` 和 `data`。依赖安装、启动方法和 WSLg 验证范围见 [Linux 运行说明](docs/linux_runtime.md)。
 
 | 平台 | 工程支持 | 当前仓库验证 |
 | --- | --- | --- |
-| Windows | 是 | Release 构建和 Inno Setup 安装包已验证 |
-| Android | 是 | APK 构建链已配置 |
+| Windows | 是 | 已发布 `1.0.5+21` x64 安装包 |
+| Android | 是 | 已发布 `1.0.5+21` APK |
+| Linux | 是 | 已发布 `1.0.5+21` x64 完整包；另有 Ubuntu 24.04 WSLg 基础运行验证记录 |
+| Web | 是 | 已上线，并提供 `1.0.5+21` 静态包 |
 | macOS | 是 | 平台工程已配置，发布前需在 macOS 主机验证 |
-| Linux | 是 | 平台工程已配置，发布前需在 Linux 主机验证 |
 | iOS | 是 | 平台工程已配置，发布前需在 macOS/Xcode 验证 |
-| Web | 是 | 部分原生能力使用平台适配层，发布前需单独验证 |
+
+Web 的数据连接受浏览器跨域与协议限制，原生桌面能力不适用于浏览器。Linux 系统 TTS 尚不受当前依赖支持；各平台的运行与验证范围请结合对应文档确认。
 
 ## 开发环境
 
@@ -46,29 +81,44 @@ flutter doctor
 flutter pub get
 ```
 
-运行 Windows 调试版：
+运行 Windows 公开版调试构建：
 
 ```powershell
-flutter run -d windows
+flutter run -d windows --dart-define=RQ_EDITION=public
 ```
 
-构建 Windows Release：
+构建 Windows 公开版 Release：
 
 ```powershell
-.\build_windows.ps1 -Release
+.\build_windows.ps1 -Release -Edition public
 ```
 
 生成 Windows 安装包：
 
 ```powershell
-.\package_windows.ps1
+.\package_windows.ps1 -Edition public
 ```
 
-安装包输出到 `build\installer\`。Android Release 可使用：
+安装包输出到 `build\installer\`。构建并归档 Android 公开版：
 
 ```powershell
-flutter build apk --release
+.\build_android_edition.ps1 -Edition public
 ```
+
+在 Linux 环境中构建并打包 Linux 公开版：
+
+```bash
+flutter pub get
+bash build_linux_edition.sh public
+```
+
+构建 Web 公开版：
+
+```powershell
+flutter build web --release --dart-define=RQ_EDITION=public
+```
+
+Web 输出到 `build/web/`，需要由 HTTP 服务提供访问。
 
 ## 配置与凭据
 
@@ -128,7 +178,7 @@ python -X utf8 -m unittest discover -s server/kma_pews_relay -p "test_*.py" -v
 - [架构与数据流](docs/ARCHITECTURE.md)
 - [设置页面结构](docs/settings_page_structure.md)
 - [数据字段与注册映射](docs/字段获取与注册映射.md)
-- [震源推算路线图](docs/source_estimation_roadmap.md)
+- [Linux 运行说明](docs/linux_runtime.md)
 - [FAN API 字段说明](FAN_API字段说明.md)
 - [Wolfx 字段说明](Wolfx字段说明.md)
 
