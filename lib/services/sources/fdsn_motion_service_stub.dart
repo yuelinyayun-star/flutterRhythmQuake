@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import '../../core/seedlink_station_style.dart';
+import '../../core/seedlink_activity.dart';
 import 'fdsn_source_catalog.dart';
 import 'fdsn_source_status.dart';
 
@@ -13,6 +15,8 @@ class FdsnMotionSample {
   final double? pgv;
   final double? intensity;
   final bool active;
+  final SeedLinkSensorType sensorType;
+  final SeedLinkActivity? activity;
   final DateTime timestamp;
 
   const FdsnMotionSample({
@@ -25,6 +29,8 @@ class FdsnMotionSample {
     this.pgv,
     this.intensity,
     this.active = false,
+    this.sensorType = SeedLinkSensorType.unknown,
+    this.activity,
   });
 
   String get code => '$network.$station';

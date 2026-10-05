@@ -211,6 +211,7 @@ class StationDashboard extends StatelessWidget {
         _niedMaxLabel(data.niedMaxStation),
         const Color(0xFF00DC8C),
         valueColor: _niedMaxColor(),
+        useShindo: true,
       ),
       if (!phoneMode)
         Container(
@@ -227,6 +228,7 @@ class StationDashboard extends StatelessWidget {
         _snetMaxLabel(),
         const Color(0xFF00E5FF),
         valueColor: _snetMaxColor(),
+        useShindo: true,
       ),
       if (!phoneMode)
         Container(
@@ -280,6 +282,7 @@ class StationDashboard extends StatelessWidget {
             : '--',
         const Color(0xFF1ABC9C),
         valueColor: _tremMaxColor(),
+        useShindo: true,
       ),
       if (!phoneMode && AppEdition.hasPAlertStations)
         Container(
@@ -296,6 +299,7 @@ class StationDashboard extends StatelessWidget {
         data.pAlertMaxStation?.shindoLabel ?? '--',
         const Color(0xFFE74C3C),
         valueColor: _pAlertMaxColor(),
+        useShindo: true,
       ),
     ]);
   }
@@ -335,6 +339,9 @@ class StationDashboard extends StatelessWidget {
               ),
             ),
           ),
+        // Keep each phone frame in its original slot when a source is hidden.
+        for (var i = children.length; i < 3; i++)
+          const Expanded(child: SizedBox.shrink()),
       ],
     );
   }
@@ -346,8 +353,16 @@ class StationDashboard extends StatelessWidget {
     String value,
     Color accent, {
     Color? valueColor,
+    bool useShindo = false,
   }) {
+    final valueStyle = TextStyle(
+      color: valueColor ?? Colors.white.withValues(alpha: 0.9),
+      fontSize: phoneMode ? 18 : _s(14, context),
+      fontWeight: FontWeight.w800,
+      height: 1.0,
+    );
     return Container(
+      key: ValueKey('station-max-$source'),
       width: _ws(75, context),
       padding: EdgeInsets.symmetric(
         vertical: _s(2, context),
@@ -385,15 +400,32 @@ class StationDashboard extends StatelessWidget {
             ),
           ),
           SizedBox(height: _s(1, context)),
-          Text(
-            value,
-            style: TextStyle(
-              color: valueColor ?? Colors.white.withValues(alpha: 0.9),
-              fontSize: phoneMode ? 18 : _s(14, context),
-              fontWeight: FontWeight.w800,
-              height: 1.0,
-            ),
-          ),
+          _buildMaxValue(value, valueStyle, useShindo: useShindo),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMaxValue(
+    String value,
+    TextStyle style, {
+    required bool useShindo,
+  }) {
+    final hasSuffix = useShindo &&
+        value.length == 2 &&
+        (value[0] == '5' || value[0] == '6') &&
+        (value[1] == '+' || value[1] == '-');
+    if (!hasSuffix) return Text(value, style: style);
+    return Semantics(
+      label: value,
+      excludeSemantics: true,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        textDirection: TextDirection.ltr,
+        children: [
+          Text(value[0], style: style),
+          Text(value[1], style: style.copyWith(fontSize: style.fontSize! * .55)),
         ],
       ),
     );

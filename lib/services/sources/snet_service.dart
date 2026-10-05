@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import '../../models/snet_station.dart';
 import 'shindo_color_util.dart';
+import 'station_image_decoder.dart';
 
 class SnetService {
   static final SnetService _instance = SnetService._internal();
@@ -390,6 +391,14 @@ class SnetService {
           '[S-net] tile HTTP ${response.statusCode} len=${response.bodyBytes.length} z=$z x=$x y=$y',
         );
         return null;
+      }
+      if (StationImageDecoder.cpuOnly) {
+        final decoded = await StationImageDecoder.decodeCpu(response.bodyBytes);
+        if (decoded == null || decoded.width != _tileSize ||
+            decoded.height != _tileSize) {
+          return null;
+        }
+        return decoded.rgba;
       }
       final codec = await ui.instantiateImageCodec(response.bodyBytes);
       final ui.FrameInfo frame;

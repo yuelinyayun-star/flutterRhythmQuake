@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutterrhythmquake/core/app_edition.dart';
 import 'package:flutterrhythmquake/providers/quake_provider.dart';
 import 'package:flutterrhythmquake/providers/map_state_provider.dart';
 import 'package:flutterrhythmquake/widgets/ui/alert_module.dart';
@@ -380,9 +381,18 @@ void main() {
           'KMA',
           'SeisJS',
           'TREM',
-          'P-Alert',
+          if (AppEdition.hasPAlertStations) 'P-Alert',
         ]) {
           expect(find.text(label), findsOneWidget);
+          final card = find.byKey(ValueKey('station-max-$label'));
+          final frame = find.ancestor(of: card, matching: find.byType(ClipRRect)).first;
+          final dashboard = tester.getSize(find.byType(StationDashboard));
+          final frameSize = tester.getSize(frame);
+          expect(frameSize.width, closeTo(dashboard.width, .01));
+          expect(frameSize.height, closeTo(dashboard.height / 6 - 6, .01));
+        }
+        if (!AppEdition.hasPAlertStations) {
+          expect(find.text('P-Alert'), findsNothing);
         }
         await tester.drag(
           find.byKey(const ValueKey('mobile-list-grip')),

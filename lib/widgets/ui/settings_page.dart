@@ -29,6 +29,7 @@ import 'wauth_token_field.dart';
 import '../../services/sources/nowquake_cenc_intensity_service.dart';
 import '../../services/sources/fdsn_motion_service.dart';
 import '../../services/sources/fdsn_source_catalog.dart';
+import '../../core/seedlink_station_style.dart';
 import '../../core/fdsn_intensity.dart';
 import '../../services/sources/nied_monitor.dart';
 import '../../services/sources/source_manager.dart';
@@ -546,6 +547,9 @@ class _SettingsPageState extends State<SettingsPage>
       _fdsnStationLimit = FdsnMotionService.normalizeStationLimit(
         prefs.getInt(_fdsnStationLimitKey) ??
             FdsnMotionService.defaultStationLimit,
+      );
+      SeedLinkStationStyle.shape.value = SeedLinkStationStyle.parseMode(
+        prefs.getString(SeedLinkStationStyle.preferenceKey),
       );
       FdsnIntensity.scale.value = FdsnIntensity.parseScale(
         prefs.getString(FdsnIntensity.preferenceKey),
@@ -2096,9 +2100,11 @@ class _SettingsPageState extends State<SettingsPage>
               if (!kIsWeb) ...[
                 _buildFdsnStationSelector(),
                 const _SettingsDivider(),
-                _buildFdsnStationLimitSelector(),
+                _buildSeedLinkShapeSelector(),
                 const _SettingsDivider(),
                 _buildFdsnIntensitySelector(),
+                const _SettingsDivider(),
+                _buildFdsnStationLimitSelector(),
               ],
             ],
           ),
@@ -3650,7 +3656,7 @@ class _SettingsPageState extends State<SettingsPage>
 
   Widget _buildFdsnStationSelector() {
     return _buildSettingRow(
-      title: 'FDSN 测站',
+      title: 'SeedLink全球测站连接',
       subtitle: 'SeedLink 实时测站',
       leading: Icons.public_outlined,
       control: Column(
@@ -3700,8 +3706,7 @@ class _SettingsPageState extends State<SettingsPage>
   }
 
   Widget _buildFdsnIntensitySelector() => _buildSettingRow(
-    title: 'FDSN 烈度显示',
-    subtitle: '仪器烈度估算',
+    title: 'SeedLink测站数值与配色',
     leading: Icons.palette_outlined,
     control: ValueListenableBuilder<FdsnIntensityScale>(
       valueListenable: FdsnIntensity.scale,
@@ -3710,12 +3715,35 @@ class _SettingsPageState extends State<SettingsPage>
         options: const [
           _SelectOption(FdsnIntensityScale.mmi, 'MMI'),
           _SelectOption(FdsnIntensityScale.csis, '中国烈度（估算）'),
+          _SelectOption(FdsnIntensityScale.gq, '信号比值'),
         ],
         onChanged: (value) async {
           if (value == null) return;
           FdsnIntensity.scale.value = value;
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString(FdsnIntensity.preferenceKey, value.name);
+        },
+      ),
+    ),
+  );
+
+  Widget _buildSeedLinkShapeSelector() => _buildSettingRow(
+    title: 'SeedLink测站显示样式',
+    leading: Icons.category_outlined,
+    control: ValueListenableBuilder<SeedLinkShapeMode>(
+      valueListenable: SeedLinkStationStyle.shape,
+      builder: (context, mode, child) => _buildSegmentedSelector<SeedLinkShapeMode>(
+        value: mode,
+        options: const [
+          _SelectOption(SeedLinkShapeMode.triangle, '三角形'),
+          _SelectOption(SeedLinkShapeMode.circle, '圆形'),
+          _SelectOption(SeedLinkShapeMode.sensorType, '按类别'),
+        ],
+        onChanged: (value) async {
+          if (value == null) return;
+          SeedLinkStationStyle.shape.value = value;
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString(SeedLinkStationStyle.preferenceKey, value.name);
         },
       ),
     ),

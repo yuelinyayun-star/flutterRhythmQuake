@@ -9,6 +9,7 @@ import 'package:flutterrhythmquake/providers/quake_provider.dart';
 import 'package:flutterrhythmquake/services/debug/history_replay.dart';
 import 'package:flutterrhythmquake/services/debug/replay_station_display.dart';
 import 'package:flutterrhythmquake/services/debug/station_json_archive.dart';
+import 'package:flutterrhythmquake/services/debug/station_replay_blocks.dart';
 import 'package:flutterrhythmquake/services/eew_history_store.dart';
 import 'package:flutterrhythmquake/services/station_history_capture.dart';
 import 'package:flutterrhythmquake/services/foreground_station_payload.dart';
@@ -57,7 +58,7 @@ void main() {
     final original = HistoryReplayPackage.fromGroup(groupWith(frames));
     final text = original.encode();
     final map = jsonDecode(text) as Map;
-    expect(map['stationArchive']['format'], StationJsonArchive.format);
+    expect(map['stationArchive']['format'], StationReplayFrames.format);
     expect(text, isNot(contains('imageBytes')));
     final restored = HistoryReplayPackage.decode(text);
     expect(
@@ -221,7 +222,7 @@ void main() {
       ).single;
       expect(restored.originalJson, isNull);
       final display = ReplayStationDisplay()..update({'nied': restored});
-      expect(display.nied, hasLength(1630));
+      expect(display.nied, hasLength(stations.length));
       expect(
         ForegroundStationPayload.nied(
           display.nied,

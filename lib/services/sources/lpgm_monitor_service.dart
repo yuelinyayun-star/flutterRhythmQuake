@@ -13,6 +13,7 @@ import '../../models/nied_scan_positions.dart';
 import '../../models/nied_station_db.dart';
 import 'http_response_bytes.dart';
 import 'web_source_proxy.dart';
+import 'station_image_decoder.dart';
 
 class LpgmStationReading {
   final String code;
@@ -723,6 +724,11 @@ class LpgmMonitorService {
           return null;
         }
         bytes = await readHttpResponseBytes(res, timeout: _imageTimeout);
+      }
+      if (StationImageDecoder.cpuOnly) {
+        final decoded = await StationImageDecoder.decodeCpu(bytes);
+        if (decoded == null) return null;
+        return (decoded.packedRgb, decoded.width, decoded.height, bytes);
       }
       final codec = await ui.instantiateImageCodec(bytes);
       final frame = await codec.getNextFrame();

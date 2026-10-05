@@ -91,6 +91,16 @@ install(CODE "
 set(INSTALL_BUNDLE_DATA_DIR "${CMAKE_INSTALL_PREFIX}/data")
 set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}/lib")
 
+# Native assets look up the unversioned name; runtime-only distributions may
+# provide only libsqlite3.so.0. Include the runtime in the relocatable bundle.
+find_library(SQLITE_RUNTIME_LIBRARY NAMES sqlite3 libsqlite3.so.0)
+if(NOT SQLITE_RUNTIME_LIBRARY)
+  message(FATAL_ERROR "SQLite runtime library is required")
+endif()
+get_filename_component(SQLITE_RUNTIME_REAL_LIBRARY "${SQLITE_RUNTIME_LIBRARY}" REALPATH)
+install(FILES "${SQLITE_RUNTIME_REAL_LIBRARY}"
+  DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" RENAME libsqlite3.so COMPONENT Runtime)
+
 install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
   COMPONENT Runtime)
 

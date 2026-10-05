@@ -45,7 +45,8 @@ void main() {
   });
 
   test('MMI remains separate; CSIS uses SI PGA and PGV, never MMI as CSIS', () {
-    expect(FdsnIntensity.parseScale(null), FdsnIntensityScale.mmi);
+    expect(FdsnIntensity.parseScale(null), FdsnIntensityScale.gq);
+    expect(FdsnIntensity.parseScale('mmi'), FdsnIntensityScale.mmi);
     expect(FdsnIntensity.parseScale('csis'), FdsnIntensityScale.csis);
     expect(
       FdsnIntensity.estimateCsis(pgaGal: 10, pgvCms: 1),

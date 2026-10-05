@@ -1,4 +1,6 @@
 import 'dart:typed_data';
+import '../core/seedlink_station_style.dart';
+import '../core/seedlink_activity.dart';
 
 import 'package:latlong2/latlong.dart';
 
@@ -193,6 +195,8 @@ class ForegroundStationPayload {
             'pgv': station.pgv,
             'intensity': station.intensity,
             'lastMotionUpdate': station.lastMotionUpdate?.toIso8601String(),
+            'sensorType': station.sensorType.name,
+            if (station.activity != null) 'activity': station.activity!.toJson(),
           },
         )
         .toList(growable: false),
@@ -204,6 +208,8 @@ class ForegroundStationPayload {
     'network': sample.network,
     'station': sample.station,
     'channel': sample.channel,
+    'sensorType': sample.sensorType.name,
+    if (sample.activity != null) 'activity': sample.activity!.toJson(),
     'pga': sample.pga,
     'pgv': sample.pgv,
     'intensity': sample.intensity,
@@ -640,6 +646,8 @@ class ForegroundStationPayload {
       network: raw['network']?.toString() ?? '',
       station: raw['station']?.toString() ?? '',
       channel: raw['channel']?.toString() ?? '',
+      sensorType: SeedLinkSensorType.parse(raw['sensorType']?.toString()),
+      activity: SeedLinkActivity.fromJson(raw['activity']),
       pga: _number(raw['pga']),
       pgv: _number(raw['pgv']),
       intensity: _number(raw['intensity']),
@@ -667,6 +675,8 @@ class ForegroundStationPayload {
       pgv: _number(raw['pgv']),
       intensity: _number(raw['intensity']),
       lastMotionUpdate: _date(raw['lastMotionUpdate']),
+      sensorType: SeedLinkSensorType.parse(raw['sensorType']?.toString()),
+      activity: SeedLinkActivity.fromJson(raw['activity']),
     );
   }
 

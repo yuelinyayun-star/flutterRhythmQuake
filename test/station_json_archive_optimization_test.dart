@@ -232,7 +232,10 @@ void main() {
         final stations = ForegroundStationPayload.decodeNied(
           frame.snapshot['stations'],
         );
-        expect(stations, hasLength(1630));
+        expect(
+          stations,
+          hasLength((frame.snapshot['stations'] as List).length),
+        );
         expect(
           ForegroundStationPayload.nied(
             stations,
@@ -244,7 +247,7 @@ void main() {
       }
       if (const bool.fromEnvironment('STATION_ARCHIVE_BENCHMARK')) {
         debugPrint(
-          'STATION_GIF_ARCHIVE: frames=${frames.length}, stations=1630, '
+          'STATION_GIF_ARCHIVE: frames=${frames.length}, stations=${(frames.first.snapshot['stations'] as List).length}, '
           'bytes=${utf8.encode(encoded).length}, '
           'referenceEncodeUs=${referenceWatch.elapsedMicroseconds}, '
           'encodeUs=${encodeWatch.elapsedMicroseconds}',

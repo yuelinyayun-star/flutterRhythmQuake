@@ -7,16 +7,27 @@ import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:flutterrhythmquake/core/seedlink_activity.dart';
 import 'package:flutterrhythmquake/core/fdsn_intensity.dart';
+import 'package:flutterrhythmquake/core/seedlink_station_style.dart';
 import 'package:flutterrhythmquake/services/sources/fdsn_station_service.dart';
 import 'package:flutterrhythmquake/widgets/map/fdsn_station_layer.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() => FdsnIntensity.scale.value = FdsnIntensityScale.gq);
+  tearDown(() => FdsnIntensity.scale.value = FdsnIntensityScale.mmi);
   setUpAll(() async {
     final font = FontLoader('MPLUSRounded1c')
       ..addFont(rootBundle.load('assets/fonts/MPLUSRounded1c-Bold.ttf'));
     await font.load();
+    final calibri = File('C:/Windows/Fonts/calibri.ttf');
+    await (FontLoader('Calibri')..addFont(
+          calibri.existsSync()
+              ? calibri.readAsBytes().then((b) => ByteData.sublistView(b))
+              : rootBundle.load('assets/fonts/MPLUSRounded1c-Bold.ttf'),
+        ))
+        .load();
   });
   testWidgets('World copies stay on their coordinates during fractional zoom', (
     tester,
@@ -28,7 +39,7 @@ void main() {
     final controller = MapController();
     final key = GlobalKey();
     const location = LatLng(0, 105);
-    List<int>? centeredPixels;
+    final diagnostics = FdsnLayerDiagnostics();
     await tester.pumpWidget(
       MaterialApp(
         home: RepaintBoundary(
@@ -42,6 +53,7 @@ void main() {
             ),
             children: [
               FdsnStationLayer(
+                diagnostics: diagnostics,
                 stations: [
                   FdsnStation(
                     network: 'XX',
@@ -58,7 +70,19 @@ void main() {
         ),
       ),
     );
-    for (final zoom in [1.0, 1.13, 1.27, 1.05, 7.123, 15.317, 18.913]) {
+    for (final zoom in [
+      1.0,
+      1.13,
+      1.27,
+      1.05,
+      4.0,
+      4.5,
+      5.0,
+      6.0,
+      7.123,
+      15.317,
+      18.913,
+    ]) {
       controller.move(location, zoom);
       await tester.pump();
       await tester.runAsync(() async {
@@ -69,19 +93,15 @@ void main() {
         final bytes = (await shot.toByteData(
           format: ui.ImageByteFormat.rawRgba,
         ))!;
-        final centerPixels = <int>[
-          for (var y = 354; y < 367; y++)
-            for (var x = 634; x < 647; x++)
-              bytes.getUint8((y * shot.width + x) * 4 + 2),
-        ];
-        if (centeredPixels != null) {
-          expect(
-            centerPixels,
-            orderedEquals(centeredPixels!),
-            reason: 'zoom anchor must not wobble or change size at $zoom',
-          );
+        var diameter = 0;
+        for (var x = 628; x < 652; x++) {
+          if (bytes.getUint8((360 * shot.width + x) * 4 + 2) > 30) diameter++;
         }
-        centeredPixels = centerPixels;
+        expect(
+          diameter,
+          closeTo(14 * SeedLinkStationStyle.markerScale(zoom), 2),
+          reason: 'marker must shrink with wider view at $zoom',
+        );
         final world = controller.camera.getWorldWidthAtZoom();
         for (var copy = -2; copy <= 2; copy++) {
           final x = 640 + copy * world;
@@ -108,6 +128,8 @@ void main() {
         shot.dispose();
       });
     }
+    expect(diagnostics.atlasBuilds, 1);
+    expect(diagnostics.projections, 1);
     await tester.pumpWidget(const SizedBox());
     controller.dispose();
   });
@@ -129,7 +151,7 @@ void main() {
           location: '',
           source: 'EarthScope',
           coordinate: LatLng(28 + (i ~/ 100) * .08, 101 + (i % 100) * .08),
-          intensity: (i % 10 + 1).toDouble(),
+          activity: SeedLinkActivity(ratio: math.pow(10, i % 5).toDouble()),
           lastMotionUpdate: now,
         ),
     ]);
@@ -193,6 +215,25 @@ void main() {
     );
     expect(diagnostics.atlasBuilds, 1);
     expect(diagnostics.atlasDraws, diagnostics.pictureRecordings);
+    final numericWatch = Stopwatch()..start();
+    final indicesBefore = diagnostics.spatialIndexBuilds;
+    for (var n = 0; n < 30; n++) {
+      stations.value = [
+        for (var i = 0; i < stations.value.length; i++)
+          stations.value[i].copyWith(
+            activity: SeedLinkActivity(ratio: (i % 100 + 1) * 100.0 + n * .1),
+          ),
+      ];
+      await tester.pump();
+    }
+    numericWatch.stop();
+    debugPrint(
+      'SeedLink 5000 changed ratios: ${numericWatch.elapsedMicroseconds ~/ 30} us/pump',
+    );
+    expect(diagnostics.atlasSlots, 18);
+    expect(diagnostics.atlasBuilds, 1);
+    expect(diagnostics.spatialIndexBuilds, indicesBefore);
+    expect(diagnostics.projections, 5000);
     debugPrint(
       'FDSN layer paints: ${diagnostics.paints}, recordings: ${diagnostics.pictureRecordings}',
     );
@@ -214,7 +255,7 @@ void main() {
           location: '',
           source: 'EarthScope',
           coordinate: const LatLng(30, 105),
-          intensity: 1,
+          activity: const SeedLinkActivity(ratio: 1),
           lastMotionUpdate: now,
         ),
         FdsnStation(
@@ -223,7 +264,7 @@ void main() {
           location: '',
           source: 'EarthScope',
           coordinate: const LatLng(40, -100),
-          intensity: 1,
+          activity: const SeedLinkActivity(ratio: 1),
           lastMotionUpdate: now,
         ),
       ]);
@@ -249,7 +290,9 @@ void main() {
       expect(diagnostics.recordedStations, 1);
       stations.value = [
         stations.value.first,
-        stations.value.last.copyWith(intensity: 9),
+        stations.value.last.copyWith(
+          activity: const SeedLinkActivity(ratio: 20000),
+        ),
       ];
       await tester.pump();
       expect(diagnostics.paints, 1);
@@ -282,7 +325,7 @@ void main() {
           location: '',
           source: 'EarthScope',
           coordinate: const LatLng(0, 0),
-          intensity: 10,
+          activity: const SeedLinkActivity(ratio: 20000),
           lastMotionUpdate: DateTime.now(),
         ),
       ];
@@ -375,7 +418,9 @@ void main() {
                       coordinate: i == 1200
                           ? const LatLng(30, 105)
                           : const LatLng(30, 104),
-                      intensity: i == 1200 ? null : 10,
+                      activity: SeedLinkActivity(
+                        ratio: i == 1200 ? null : 20000,
+                      ),
                       lastMotionUpdate: now,
                     ),
                 ],
@@ -420,7 +465,9 @@ void main() {
             30 + i % 5 * .1,
             i.isEven ? 179 + i * .01 : -179 - i * .01,
           ),
-          intensity: i % 11 == 0 ? null : (i % 10 + 1).toDouble(),
+          activity: SeedLinkActivity(
+            ratio: i % 11 == 0 ? null : math.pow(10, i % 5).toDouble(),
+          ),
           lastMotionUpdate: DateTime.now(),
         ),
     ];
@@ -501,7 +548,7 @@ void main() {
         location: '',
         source: 'EarthScope',
         coordinate: const LatLng(30, 105),
-        intensity: 1,
+        activity: const SeedLinkActivity(ratio: 1),
         lastMotionUpdate: DateTime.now(),
       );
       final stations = ValueNotifier([station]);
@@ -523,17 +570,28 @@ void main() {
         ),
       );
       expect(diagnostics.pictureRecordings, 1);
-      stations.value = [station.copyWith(intensity: 2.49)];
+      stations.value = [
+        station.copyWith(activity: const SeedLinkActivity(ratio: 2.41)),
+      ];
       await tester.pump();
       final belowHalf = diagnostics.pictureRecordings;
-      stations.value = [station.copyWith(intensity: 2.50)];
+      stations.value = [
+        station.copyWith(activity: const SeedLinkActivity(ratio: 2.51)),
+      ];
       await tester.pump();
       expect(diagnostics.pictureRecordings, belowHalf + 1);
-      stations.value = [station.copyWith(intensity: 3.09)];
+      stations.value = [
+        station.copyWith(activity: const SeedLinkActivity(ratio: 2.52)),
+      ];
       await tester.pump();
-      expect(diagnostics.pictureRecordings, belowHalf + 1,
-          reason: '2.50 and 3.09 must share the same digit and color');
-      stations.value = [station.copyWith(intensity: 8)];
+      expect(
+        diagnostics.pictureRecordings,
+        belowHalf + 1,
+        reason: '2.51 and 2.52 must share the same digit and color',
+      );
+      stations.value = [
+        station.copyWith(activity: const SeedLinkActivity(ratio: 20000)),
+      ];
       await tester.pump();
       expect(diagnostics.pictureRecordings, belowHalf + 2);
       expect(diagnostics.projections, 1);
@@ -545,7 +603,10 @@ void main() {
       await tester.pump();
       final recordings = diagnostics.pictureRecordings;
       stations.value = [
-        station.copyWith(intensity: 10, lastMotionUpdate: DateTime.now()),
+        station.copyWith(
+          activity: const SeedLinkActivity(ratio: 20000),
+          lastMotionUpdate: DateTime.now(),
+        ),
       ];
       await tester.pump();
       expect(diagnostics.pictureRecordings, recordings + 1);
@@ -564,7 +625,7 @@ void main() {
       location: '',
       source: 'EarthScope',
       coordinate: const LatLng(30, 105),
-      intensity: 1,
+      activity: const SeedLinkActivity(ratio: 1),
       lastMotionUpdate: DateTime.now().subtract(
         FdsnStation.motionRetention - const Duration(seconds: 1),
       ),
@@ -614,93 +675,101 @@ void main() {
     stations.dispose();
   });
   for (final size in [const Size(390, 844), const Size(1280, 720)]) {
-    testWidgets('FDSN canvas, scale switch, gestures and two-digit size $size', (
-      tester,
-    ) async {
-      tester.view.devicePixelRatio = 1;
-      tester.view.physicalSize = size;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      addTearDown(() => FdsnIntensity.scale.value = FdsnIntensityScale.mmi);
-      final controller = MapController();
-      final key = GlobalKey();
-      final stations = [
-        for (var n = 1; n <= 12; n++)
-          FdsnStation(
-            network: 'XX',
-            station: 'TEST$n',
-            location: '',
-            source: 'EarthScope',
-            coordinate: LatLng(
-              30.7 - ((n - 1) ~/ 4) * .65,
-              104.1 + ((n - 1) % 4) * .6,
-            ),
-            intensity: n <= 10 ? n.toDouble() : null,
-            pga: 100 * math.pow(10, (n - 6.59) / 3.17).toDouble(),
-            pgv: 100 * math.pow(10, (n - 9.77) / 3).toDouble(),
-            lastMotionUpdate: DateTime.now(),
-          ),
-      ];
-      await tester.pumpWidget(
-        MaterialApp(
-          home: RepaintBoundary(
-            key: key,
-            child: FlutterMap(
-              mapController: controller,
-              options: const MapOptions(
-                backgroundColor: Color(0xFF242424),
-                initialCenter: LatLng(30, 105),
-                initialZoom: 7.5,
+    testWidgets(
+      'SeedLink canvas, shape switch, gestures and decimal labels $size',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = size;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(
+          () => SeedLinkStationStyle.shape.value = SeedLinkShapeMode.circle,
+        );
+        final controller = MapController();
+        final key = GlobalKey();
+        final stations = [
+          for (var n = 1; n <= 12; n++)
+            FdsnStation(
+              network: 'XX',
+              station: 'TEST$n',
+              location: '',
+              source: 'EarthScope',
+              coordinate: LatLng(
+                30.7 - ((n - 1) ~/ 4) * .65,
+                104.1 + ((n - 1) % 4) * .6,
               ),
-              children: [
-                const ColoredBox(color: Color(0xFF242424)),
-                FdsnStationLayer(stations: stations),
-              ],
+              activity: SeedLinkActivity(
+                ratio: n <= 10 ? math.pow(10, (n - 1) / 2).toDouble() : null,
+              ),
+              pga: 100 * math.pow(10, (n - 6.59) / 3.17).toDouble(),
+              pgv: 100 * math.pow(10, (n - 9.77) / 3).toDouble(),
+              lastMotionUpdate: DateTime.now(),
+            ),
+        ];
+        await tester.pumpWidget(
+          MaterialApp(
+            home: RepaintBoundary(
+              key: key,
+              child: FlutterMap(
+                mapController: controller,
+                options: const MapOptions(
+                  backgroundColor: Color(0xFF242424),
+                  initialCenter: LatLng(30, 105),
+                  initialZoom: 7.5,
+                ),
+                children: [
+                  const ColoredBox(color: Color(0xFF242424)),
+                  FdsnStationLayer(stations: stations),
+                ],
+              ),
             ),
           ),
-        ),
-      );
-      await tester.pump();
-      expect(find.byType(MarkerLayer), findsNothing);
-      final images = <List<int>>[];
-      for (final scale in FdsnIntensityScale.values) {
-        FdsnIntensity.scale.value = scale;
+        );
         await tester.pump();
-        await tester.runAsync(() async {
-          final shot =
-              await (key.currentContext!.findRenderObject()
-                      as RenderRepaintBoundary)
-                  .toImage();
-          final rgba = (await shot.toByteData(
-            format: ui.ImageByteFormat.rawRgba,
-          ))!;
-          images.add(rgba.buffer.asUint8List().toList());
-          final png = (await shot.toByteData(format: ui.ImageByteFormat.png))!;
-          final dir = Directory('tmp/fdsn_review')..createSync(recursive: true);
-          await File(
-            '${dir.path}/${scale.name}-${size.width.toInt()}.png',
-          ).writeAsBytes(png.buffer.asUint8List());
-          shot.dispose();
-        });
-      }
-      expect(images[0], isNot(orderedEquals(images[1])));
-      final before = controller.camera.center;
-      await tester.drag(find.byType(FlutterMap), const Offset(50, 30));
-      await tester.pumpAndSettle();
-      expect(controller.camera.center, isNot(before));
-      final watch = Stopwatch()..start();
-      for (var i = 0; i < 30; i++) {
-        controller.move(LatLng(30 + i * .001, 105), 7.5);
-        await tester.pump();
-      }
-      watch.stop();
-      // Diagnostic only; test engine timing is not a Release frame-rate claim.
-      debugPrint(
-        'FDSN camera pumps ($size): ${watch.elapsedMicroseconds ~/ 30} us average',
-      );
-      expect(tester.takeException(), isNull);
-      await tester.pumpWidget(const SizedBox());
-      controller.dispose();
-    });
+        expect(find.byType(MarkerLayer), findsNothing);
+        final images = <List<int>>[];
+        for (final scale in SeedLinkShapeMode.values) {
+          SeedLinkStationStyle.shape.value = scale;
+          await tester.pump();
+          await tester.runAsync(() async {
+            final shot =
+                await (key.currentContext!.findRenderObject()
+                        as RenderRepaintBoundary)
+                    .toImage();
+            final rgba = (await shot.toByteData(
+              format: ui.ImageByteFormat.rawRgba,
+            ))!;
+            images.add(rgba.buffer.asUint8List().toList());
+            final png = (await shot.toByteData(
+              format: ui.ImageByteFormat.png,
+            ))!;
+            final dir = Directory('tmp/fdsn_review')
+              ..createSync(recursive: true);
+            await File(
+              '${dir.path}/${scale.name}-${size.width.toInt()}.png',
+            ).writeAsBytes(png.buffer.asUint8List());
+            shot.dispose();
+          });
+        }
+        expect(images[0], isNot(orderedEquals(images[1])));
+        final before = controller.camera.center;
+        await tester.drag(find.byType(FlutterMap), const Offset(50, 30));
+        await tester.pumpAndSettle();
+        expect(controller.camera.center, isNot(before));
+        final watch = Stopwatch()..start();
+        for (var i = 0; i < 30; i++) {
+          controller.move(LatLng(30 + i * .001, 105), 7.5);
+          await tester.pump();
+        }
+        watch.stop();
+        // Diagnostic only; test engine timing is not a Release frame-rate claim.
+        debugPrint(
+          'FDSN camera pumps ($size): ${watch.elapsedMicroseconds ~/ 30} us average',
+        );
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+        controller.dispose();
+      },
+    );
   }
 }

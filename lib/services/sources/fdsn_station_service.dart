@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
+import '../../core/seedlink_station_style.dart';
+import '../../core/seedlink_activity.dart';
 import 'fdsn_source_catalog.dart';
 import 'fdsn_http_client.dart';
 
@@ -23,6 +25,8 @@ class FdsnStation {
   final double? pgv;
   final double? intensity;
   final DateTime? lastMotionUpdate;
+  final SeedLinkSensorType sensorType;
+  final SeedLinkActivity? activity;
 
   const FdsnStation({
     required this.network,
@@ -38,6 +42,8 @@ class FdsnStation {
     this.pgv,
     this.intensity,
     this.lastMotionUpdate,
+    this.sensorType = SeedLinkSensorType.unknown,
+    this.activity,
   });
 
   String get code => '$network.$station';
@@ -52,6 +58,8 @@ class FdsnStation {
   bool get hasActiveMotionMeasurement => isMotionActive && hasMotionMeasurement;
 
   FdsnStation copyWith({
+    SeedLinkActivity? activity,
+    SeedLinkSensorType? sensorType,
     double? pga,
     double? pgv,
     double? intensity,
@@ -71,6 +79,8 @@ class FdsnStation {
       pgv: pgv ?? this.pgv,
       intensity: intensity ?? this.intensity,
       lastMotionUpdate: lastMotionUpdate ?? this.lastMotionUpdate,
+      sensorType: sensorType ?? this.sensorType,
+      activity: activity ?? this.activity,
     );
   }
 }

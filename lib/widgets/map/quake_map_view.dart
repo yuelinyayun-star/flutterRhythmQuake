@@ -40,6 +40,7 @@ import '../../core/utils/volcano_icon_assets.dart';
 import 'seisjs_layer.dart';
 import 'fdsn_station_layer.dart';
 import 'fdsn_map_station_store.dart';
+import '../../core/seedlink_station_style.dart';
 import '../../core/fdsn_intensity.dart';
 import '../../core/app_edition.dart';
 import 'fssn_cmt_layer.dart';
@@ -505,6 +506,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   bool _fdsnServicesActive = false;
   String _lastForegroundFdsnConfig = '';
   final Map<String, FdsnMotionSample> _pendingFdsnMotionSamples = {};
+  final Map<String, FdsnMotionSample> _pendingFdsnMeasuredSamples = {};
   final Map<String, FdsnMotionSample> _latestFdsnMotionSamples = {};
   final Map<String, DateTime> _latestFdsnMotionReceivedAt = {};
   final Map<String, DateTime> _lastFdsnUiUpdateAt = {};
@@ -1319,6 +1321,9 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     };
     _fdsnSeedLinkEnabled = !kIsWeb &&
         (prefs.getBool(QuakeMapView.fdsnSeedLinkEnabledPreferenceKey) ?? false);
+    SeedLinkStationStyle.shape.value = SeedLinkStationStyle.parseMode(
+      prefs.getString(SeedLinkStationStyle.preferenceKey),
+    );
     FdsnIntensity.scale.value = FdsnIntensity.parseScale(
       prefs.getString(FdsnIntensity.preferenceKey),
     );
@@ -3094,7 +3099,24 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     final key = '${sample.source}:${sample.code}';
     final previous = _latestFdsnMotionSamples[key];
     if (previous != null && sample.timestamp.isBefore(previous.timestamp)) return;
-    if (!sample.hasMeasurement && previous?.hasMeasurement == true) return;
+    if (!sample.hasMeasurement && sample.activity == null &&
+        previous?.hasMeasurement == true) {
+      return;
+    }
+    // Keep calibrated observations separate: new ratio-only data must neither
+    // erase an OBS trigger nor relabel old PGA/PGV as a new measurement.
+    if (sample.hasMeasurement && _obsAutomationInputs.hasListeners) {
+      _pendingFdsnMeasuredSamples[key] = sample;
+    }
+    if (!sample.hasMeasurement && previous?.hasMeasurement == true) {
+      sample = FdsnMotionSample(
+        source: sample.source, network: sample.network, station: sample.station,
+        channel: sample.channel, timestamp: sample.timestamp,
+        active: sample.active, activity: sample.activity,
+        pga: previous!.pga, pgv: previous.pgv, intensity: previous.intensity,
+        sensorType: previous.sensorType,
+      );
+    }
     _pendingFdsnMotionSamples[key] = sample;
     _latestFdsnMotionSamples[key] = sample;
     _latestFdsnMotionReceivedAt[key] = DateTime.now();
@@ -3113,7 +3135,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     final receivedAt = _latestFdsnMotionReceivedAt;
     _pendingFdsnMotionSamples.clear();
     if (_obsAutomationInputs.hasListeners) {
-      for (final sample in samples.values) {
+      for (final sample in _pendingFdsnMeasuredSamples.values) {
         final intensityLevel = sample.intensity?.floor() ?? -1;
         _obsAutomationInputs.ingestStationSample(
           'fdsn',
@@ -3130,6 +3152,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       }
     }
 
+    _pendingFdsnMeasuredSamples.clear();
     var changed = false;
     for (final entry in samples.entries) {
       final sample = entry.value;
@@ -3137,9 +3160,11 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       if (station == null) continue;
       final now = receivedAt[entry.key]!;
       final sameValues =
-          station.pga == sample.pga &&
-          station.pgv == sample.pgv &&
-          station.intensity == sample.intensity;
+          station.pga == (sample.pga ?? station.pga) &&
+          station.pgv == (sample.pgv ?? station.pgv) &&
+          station.intensity == (sample.intensity ?? station.intensity) &&
+          (!sample.hasMeasurement || station.sensorType == sample.sensorType) &&
+          station.activity == (sample.activity ?? station.activity);
       final lastUiUpdate = _lastFdsnUiUpdateAt[entry.key];
       if (sameValues &&
           station.lastMotionUpdate != null &&
@@ -3154,6 +3179,8 @@ class _QuakeMapViewState extends State<QuakeMapView> {
           pgv: sample.pgv,
           intensity: sample.intensity,
           lastMotionUpdate: sample.timestamp,
+          sensorType: sample.hasMeasurement ? sample.sensorType : null,
+          activity: sample.activity,
         ),
       );
       changed = true;
@@ -3177,6 +3204,8 @@ class _QuakeMapViewState extends State<QuakeMapView> {
             pgv: sample.pgv,
             intensity: sample.intensity,
             lastMotionUpdate: sample.timestamp,
+            sensorType: sample.hasMeasurement ? sample.sensorType : null,
+            activity: sample.activity,
           );
         })
         .toList(growable: false);
@@ -3644,6 +3673,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     _fdsnMotionFlushTimer = null;
     _pendingFdsnMotionSamples.clear();
     _fdsnMotionService.disconnect();
+    _pendingFdsnMeasuredSamples.clear();
     _fdsnMotionService.connect(
       stationLimit: QuakeMapView.fdsnStationLimitNotifier.value,
       enabledSources: enabledSources,
@@ -3672,6 +3702,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       _latestFdsnMotionReceivedAt.clear();
       _lastFdsnUiUpdateAt.clear();
     }
+    _pendingFdsnMeasuredSamples.clear();
     _fdsnMotionService.disconnect(
       clearSourceStatuses: clearStations ||
           !BackgroundService().isAndroidConnectionHostedByForegroundService,

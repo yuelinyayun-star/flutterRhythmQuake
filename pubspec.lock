@@ -161,6 +161,14 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "1.19.1"
+  complex:
+    dependency: transitive
+    description:
+      name: complex
+      sha256: dba084899c0a4bd2fcba9a36760409171d7bee7c35a749cc4451348270361325
+      url: "https://pub.flutter-io.cn"
+    source: hosted
+    version: "0.7.2"
   convert:
     dependency: transitive
     description:
@@ -528,6 +536,14 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "4.1.2"
+  iirjdart:
+    dependency: "direct main"
+    description:
+      name: iirjdart
+      sha256: "5bd8aa6af6ee67473fbf7fbbfc7b992d0bb95768a16aaa62e70613389e564df8"
+      url: "https://pub.flutter-io.cn"
+    source: hosted
+    version: "0.1.0"
   image:
     dependency: "direct main"
     description:

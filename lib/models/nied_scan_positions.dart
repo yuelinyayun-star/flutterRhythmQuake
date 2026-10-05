@@ -20,6 +20,11 @@ class NiedScanPoint {
 }
 
 class NiedScanPositions {
+  static const String version = 'nied_scan_1634_20261004_v2';
+  // Four additions and the adjacent TKY014 correction, not a full-table sync.
+  static const String additionsSourceRevision =
+      'faa8da2f11f72010c8d905871ac702d9f3620f92';
+
   static const Map<String, NiedScanPoint> points = {
     "ABSH01": NiedScanPoint(centerX: 289, centerY: 42, offsetX: 0, offsetY: 0),
     "ABSH02": NiedScanPoint(centerX: 293, centerY: 45, offsetX: 0, offsetY: 0),
@@ -751,6 +756,7 @@ class NiedScanPositions {
     "HKD059": NiedScanPoint(centerX: 322, centerY: 59, offsetX: 0, offsetY: 1),
     "HKD060": NiedScanPoint(centerX: 326, centerY: 57, offsetX: 0, offsetY: 0),
     "HKD062": NiedScanPoint(centerX: 299, centerY: 63, offsetX: 0, offsetY: 0),
+    "HKD063": NiedScanPoint(centerX: 338, centerY: 52, offsetX: 0, offsetY: 0),
     "HKD064": NiedScanPoint(centerX: 337, centerY: 55, offsetX: -1, offsetY: 0),
     "HKD066": NiedScanPoint(centerX: 336, centerY: 63, offsetX: 0, offsetY: 0),
     "HKD070": NiedScanPoint(centerX: 339, centerY: 70, offsetX: 0, offsetY: 0),
@@ -800,6 +806,7 @@ class NiedScanPositions {
     "HKD122": NiedScanPoint(centerX: 268, centerY: 75, offsetX: 0, offsetY: 0),
     "HKD124": NiedScanPoint(centerX: 268, centerY: 80, offsetX: 0, offsetY: 0),
     "HKD125": NiedScanPoint(centerX: 275, centerY: 85, offsetX: 0, offsetY: 0),
+    "HKD126": NiedScanPoint(centerX: 271, centerY: 90, offsetX: 0, offsetY: 0),
     "HKD127": NiedScanPoint(centerX: 269, centerY: 83, offsetX: 1, offsetY: 0),
     "HKD128": NiedScanPoint(centerX: 269, centerY: 85, offsetX: 0, offsetY: 0),
     "HKD129": NiedScanPoint(centerX: 264, centerY: 89, offsetX: 0, offsetY: 0),
@@ -1041,6 +1048,12 @@ class NiedScanPositions {
     "ISK005": NiedScanPoint(
       centerX: 169,
       centerY: 221,
+      offsetX: -1,
+      offsetY: 0,
+    ),
+    "ISK006": NiedScanPoint(
+      centerX: 164,
+      centerY: 223,
       offsetX: -1,
       offsetY: 0,
     ),
@@ -2238,8 +2251,14 @@ class NiedScanPositions {
     "TKY012": NiedScanPoint(centerX: 227, centerY: 322, offsetX: 0, offsetY: 0),
     "TKY014": NiedScanPoint(
       centerX: 227,
-      centerY: 259,
+      centerY: 260,
       offsetX: 0,
+      offsetY: -1,
+    ),
+    "TKY023": NiedScanPoint(
+      centerX: 228,
+      centerY: 259,
+      offsetX: -1,
       offsetY: -1,
     ),
     "TKY024": NiedScanPoint(centerX: 226, centerY: 256, offsetX: 0, offsetY: 0),

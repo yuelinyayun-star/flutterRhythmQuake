@@ -14,6 +14,7 @@ import 'jp_shindo_scale.dart';
 import 'nied_gif_observation.dart';
 import 'nied_background_worker.dart';
 import 'http_response_bytes.dart';
+import 'station_image_decoder.dart';
 
 class NiedReplayConfig {
   final bool enabled;
@@ -872,6 +873,16 @@ class NiedMonitorService extends ChangeNotifier {
 
   Future<_DecodedGifFrame?> _decodeBytes(Uint8List bytes) async {
     try {
+      if (StationImageDecoder.cpuOnly) {
+        final decoded = await StationImageDecoder.decodeCpu(bytes);
+        if (decoded == null) return null;
+        return _DecodedGifFrame(
+          packedRgb: decoded.packedRgb,
+          gifBytes: bytes,
+          width: decoded.width,
+          height: decoded.height,
+        );
+      }
       final ui.Codec codec = await ui.instantiateImageCodec(bytes);
       final ui.FrameInfo frame = await codec.getNextFrame();
       final ui.Image image = frame.image;

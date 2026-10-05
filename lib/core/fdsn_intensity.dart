@@ -1,14 +1,17 @@
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 
-enum FdsnIntensityScale { mmi, csis }
+enum FdsnIntensityScale { mmi, csis, gq }
 
 class FdsnIntensity {
   static const preferenceKey = 'fdsn_intensity_scale';
-  static final scale = ValueNotifier(FdsnIntensityScale.mmi);
+  static final scale = ValueNotifier(FdsnIntensityScale.gq);
 
-  static FdsnIntensityScale parseScale(String? value) =>
-      value == 'csis' ? FdsnIntensityScale.csis : FdsnIntensityScale.mmi;
+  static FdsnIntensityScale parseScale(String? value) => switch (value) {
+    'mmi' => FdsnIntensityScale.mmi,
+    'csis' => FdsnIntensityScale.csis,
+    _ => FdsnIntensityScale.gq,
+  };
 
   /// GB/T 17742-2020 amplitude relation, SI units. Existing FDSN record peaks
   /// are only scalar-sensitivity estimates, not filtered three-axis peaks.
@@ -33,6 +36,7 @@ class FdsnIntensity {
     double? pgaGal,
     double? pgvCms,
   }) {
+    if (scale == FdsnIntensityScale.gq) return null;
     final value = scale == FdsnIntensityScale.mmi
         ? mmi
         : estimateCsis(pgaGal: pgaGal, pgvCms: pgvCms);

@@ -11,8 +11,9 @@ import 'history_replay_file_web.dart'
     if (dart.library.io) 'history_replay_file_io.dart'
     as replay_file;
 
-Uint8List _encodeReplay(HistoryReplayPackage package) =>
-    Uint8List.fromList(utf8.encode(package.encode()));
+Uint8List _encodeReplay(HistoryReplayPackage package) => package.encodeBytes();
+HistoryReplayPackage _decodeReplay(Uint8List bytes) =>
+    HistoryReplayPackage.decode(utf8.decode(bytes));
 
 Future<bool> exportHistoryReplay(HistoryReplayPackage package) async {
   final bytes = await compute(_encodeReplay, package);
@@ -82,7 +83,7 @@ class _HistoryReplayControlsState extends State<HistoryReplayControls> {
         } else {
           throw const FormatException('无法读取选中的回放包');
         }
-        packages.add(HistoryReplayPackage.decode(utf8.decode(bytes)));
+        packages.add(await compute(_decodeReplay, bytes));
       }
       if (mounted) widget.controller.importPackages(packages);
     } catch (error) {
@@ -159,7 +160,9 @@ class _HistoryReplayControlsState extends State<HistoryReplayControls> {
         ),
         IconButton(
           tooltip: '停止回放',
-          onPressed: controller.active || controller.preparing ? controller.stop : null,
+          onPressed: controller.active || controller.preparing
+              ? controller.stop
+              : null,
           icon: const Icon(Icons.stop),
         ),
         if (package?.manualTiming == true)
@@ -245,11 +248,11 @@ class _HistoryReplayControlsState extends State<HistoryReplayControls> {
             ),
           ],
           _timelineSwitch(),
-          if (_error != null)
+          if (_error != null || controller.playbackError != null)
             Tooltip(
-              message: _error!,
+              message: _error ?? controller.playbackError!,
               child: Text(
-                _error!,
+                _error ?? controller.playbackError!,
                 maxLines: 3,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontSize: 12, color: Colors.redAccent),

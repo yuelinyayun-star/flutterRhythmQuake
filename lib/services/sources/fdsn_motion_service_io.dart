@@ -4,6 +4,9 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import '../../core/seedlink_station_style.dart';
+import '../../core/seedlink_activity.dart';
+import 'seedlink_signal_analysis.dart';
 import 'package:http/http.dart' as http;
 import 'fdsn_channel_sensitivity.dart';
 import 'fdsn_channel_catalog.dart';
@@ -26,6 +29,8 @@ class FdsnMotionSample {
   final double? pgv;
   final double? intensity;
   final bool active;
+  final SeedLinkSensorType sensorType;
+  final SeedLinkActivity? activity;
   final DateTime timestamp;
 
   const FdsnMotionSample({
@@ -38,6 +43,8 @@ class FdsnMotionSample {
     this.pgv,
     this.intensity,
     this.active = false,
+    this.sensorType = SeedLinkSensorType.unknown,
+    this.activity,
   });
 
   String get code => '$network.$station';
@@ -281,7 +288,7 @@ class FdsnMotionService {
         'decodeRejected': c._decodeRejected,
         'stale': c._staleCount,
         'received': c._receivedStations.length,
-        'pending': c._pendingPackets.length,
+        'pending': c._measurementRecords.length,
         'socketOpen': c._socket != null,
         'connected': c._connected,
         'connectAttempts': c._connectAttempts,
@@ -964,9 +971,8 @@ class _SeedLinkConnection {
   bool _running = false;
   int _runGeneration = 0;
   bool _connected = false;
-  int _activePacketJobs = 0;
   final List<int> _buffer = [];
-  final Map<String, Uint8List> _pendingPackets = {};
+  final _signalAnalysis = <String, SeedLinkSignalAnalysis>{};
   final Map<String, DateTime> _receivedStations = {};
   final Set<String> _acceptedStations = {};
   int _replyIndex = 0;
@@ -1046,7 +1052,7 @@ class _SeedLinkConnection {
     _responseCache.clear();
     _responseRetryAfter.clear();
     _buffer.clear();
-    _pendingPackets.clear();
+    _signalAnalysis.clear();
     _measurementRecords.clear();
     _measurementJobs.clear();
     _receivedStations.clear();
@@ -1275,9 +1281,10 @@ class _SeedLinkConnection {
     if (!_isCurrentRun(generation)) return;
     var consumed = 0;
     var processed = 0;
+    final budget = Stopwatch()..start();
     // Bound synchronous decoding per event-loop turn. Keep every raw packet
     // in order, while allowing frame and input callbacks between bursts.
-    while (processed < 128) {
+    while (processed < 128 && budget.elapsedMicroseconds < 4000) {
       final start = _findSeedLinkHeader(_buffer, consumed);
       if (start < 0) {
         consumed = max(consumed, _buffer.length - 7);
@@ -1303,7 +1310,7 @@ class _SeedLinkConnection {
     // Compact once per socket chunk, instead of shifting all remaining packets
     // after each 520-byte record.
     if (consumed > 0) _buffer.removeRange(0, consumed);
-    if (processed == 128 && _buffer.length >= _packetSize) {
+    if (_buffer.length >= _packetSize) {
       _packetDrainTimer = Timer(
         Duration.zero,
         () => _drainPacketBuffer(generation),
@@ -1313,30 +1320,11 @@ class _SeedLinkConnection {
 
   void _schedulePacket(Uint8List packet, int generation) {
     if (!_isCurrentRun(generation)) return;
-    if (_activePacketJobs >= 200) {
-      final key = ascii.decode(packet.sublist(16, 28), allowInvalid: true);
-      // Keep the latest raw record per NSLC while metadata is loading. A busy
-      // station must not discard the first records of other stations.
-      _pendingPackets[key] = packet;
-      return;
+    try {
+      _handlePacket(packet, generation);
+    } catch (error) {
+      debugPrint('SeedLink record rejected: $error');
     }
-    _activePacketJobs++;
-    unawaited(
-      _handlePacket(packet, generation)
-          .catchError((Object error) {
-            if (_isCurrentRun(generation)) {
-              debugPrint('SeedLink record rejected: $error');
-            }
-          })
-          .whenComplete(() {
-            _activePacketJobs--;
-            if (_running && _pendingPackets.isNotEmpty) {
-              final key = _pendingPackets.keys.first;
-              final next = _pendingPackets.remove(key)!;
-              _schedulePacket(next, _runGeneration);
-            }
-          }),
-    );
   }
 
   int _findSeedLinkHeader(List<int> data, [int offset = 0]) {
@@ -1364,7 +1352,7 @@ class _SeedLinkConnection {
     return -1;
   }
 
-  Future<void> _handlePacket(Uint8List packet, int generation) async {
+  void _handlePacket(Uint8List packet, int generation) {
     if (!_isCurrentRun(generation)) return;
     _packetCount++;
     final record = Uint8List.sublistView(packet, 8);
@@ -1421,6 +1409,11 @@ class _SeedLinkConnection {
       onStatusChanged();
     }
 
+    final key =
+        '${miniSeed.network}.${miniSeed.station}.${miniSeed.location}.${miniSeed.channel}';
+    final activity = _signalAnalysis
+        .putIfAbsent(key, SeedLinkSignalAnalysis.new)
+        .accept(miniSeed.samples, miniSeed.sampleRate, miniSeed.startTime);
     onSample(
       FdsnMotionSample(
         source: source,
@@ -1429,41 +1422,19 @@ class _SeedLinkConnection {
         channel: miniSeed.channel,
         timestamp: miniSeed.startTime,
         active: true,
+        activity: activity,
       ),
     );
 
-    if (channelCatalog != null) {
-      final key =
-          '${miniSeed.network}.${miniSeed.station}.${miniSeed.location}.${miniSeed.channel}';
-      final previous = _measurementRecords[key];
-      if (previous == null ||
-          !miniSeed.startTime.isBefore(previous.startTime)) {
-        _measurementRecords[key] = miniSeed;
-      }
-      if (_measurementJobs.add(key)) {
-        unawaited(_measureLatest(key, source, miniSeed, generation));
-      }
-      return;
+    // Only calibrated metrics may coalesce during slow metadata requests.
+    // The continuous detector above consumes every original record first.
+    final previous = _measurementRecords[key];
+    if (previous == null || !miniSeed.startTime.isBefore(previous.startTime)) {
+      _measurementRecords[key] = miniSeed;
     }
-    final response = await _responseFor(source, miniSeed, generation);
-    if (response == null || !_isCurrentRun(generation)) return;
-
-    final metrics = _calculateMotionMetrics(miniSeed, response);
-    if (!metrics.hasMeasurement) return;
-
-    onSample(
-      FdsnMotionSample(
-        source: source,
-        network: miniSeed.network,
-        station: miniSeed.station,
-        channel: miniSeed.channel,
-        timestamp: miniSeed.startTime,
-        pga: metrics.pga,
-        pgv: metrics.pgv,
-        intensity: metrics.intensity,
-        active: true,
-      ),
-    );
+    if (_measurementJobs.length < 200 && _measurementJobs.add(key)) {
+      unawaited(_measureLatest(key, source, miniSeed, generation));
+    }
   }
 
   Future<void> _measureLatest(
@@ -1498,7 +1469,9 @@ class _SeedLinkConnection {
           pga: metrics.pga,
           pgv: metrics.pgv,
           intensity: metrics.intensity,
+          sensorType: SeedLinkSensorType.fromUnit(response.unit),
           active: true,
+          activity: _signalAnalysis[key]?.snapshot,
         ),
       );
     } catch (error) {
@@ -1509,6 +1482,20 @@ class _SeedLinkConnection {
         final next = _measurementRecords[key];
         if (next != null && _measurementJobs.add(key)) {
           unawaited(_measureLatest(key, source, next, generation));
+        } else if (_measurementJobs.length < 200) {
+          for (final entry in _measurementRecords.entries) {
+            if (_measurementJobs.add(entry.key)) {
+              final pending = entry.value;
+              final owner =
+                  _stationSources['${pending.network}.${pending.station}'];
+              if (owner != null) {
+                unawaited(
+                  _measureLatest(entry.key, owner, pending, generation),
+                );
+              }
+              break;
+            }
+          }
         }
       }
     }
@@ -1808,7 +1795,7 @@ class _SeedLinkConnection {
     _packetDrainTimer?.cancel();
     _packetDrainTimer = null;
     _buffer.clear();
-    _pendingPackets.clear();
+    _signalAnalysis.clear();
     _measurementRecords.clear();
     _measurementJobs.clear();
     _receivedStations.clear();

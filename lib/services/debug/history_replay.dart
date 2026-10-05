@@ -12,12 +12,16 @@ import '../../models/station_history_frame.dart';
 import '../ntp_service.dart';
 import '../quake_event_adapter.dart';
 import 'station_json_archive.dart';
+import 'station_replay_blocks.dart';
+import 'station_archive_storage_web.dart'
+    if (dart.library.io) 'station_archive_storage_io.dart'
+    as compression;
 
 enum HistoryReplayTiming { report, arrival, manual }
 
 class HistoryReplayPackage {
   static const format = 'rhythmquake-replay';
-  static const version = 1;
+  static const version = 2;
   static const maxBytes = 128 * 1024 * 1024;
   static const maxReports = 1000;
   static const maxDuration = Duration(days: 1);
@@ -51,7 +55,10 @@ class HistoryReplayPackage {
   static bool hasPayload(UnifiedQuakeData event) =>
       event.sourcePayload?.isNotEmpty == true;
 
-  factory HistoryReplayPackage.fromGroup(EewEventGroup group) {
+  factory HistoryReplayPackage.fromGroup(
+    EewEventGroup group, {
+    bool hasArchivedStations = false,
+  }) {
     final saved = group.reports.where(hasPayload).toList();
     return HistoryReplayPackage._validated(
       group.latest.hypocenter,
@@ -60,6 +67,7 @@ class HistoryReplayPackage {
       stationFrames: group.stationFrames,
       storedStations: group.storedStations,
       captureEndedAt: group.captureEndedAt,
+      hasArchivedStations: hasArchivedStations,
     );
   }
 
@@ -124,6 +132,7 @@ class HistoryReplayPackage {
     StoredStationHistory? storedStations,
     DateTime? captureEndedAt,
     HistoryReplayTiming? forcedTiming,
+    bool hasArchivedStations = false,
   }) {
     if (reports.isEmpty || reports.length > maxReports || omitted < 0) {
       throw const FormatException('回放报文数量无效');
@@ -149,6 +158,7 @@ class HistoryReplayPackage {
         arrivalInstants ??
         reports.map((event) => event.arrivedAt?.toUtc()).toList();
     final hasStations =
+        hasArchivedStations ||
         stationFrames.isNotEmpty ||
         (storedStations?.frameKeys.isNotEmpty ?? false);
     final hasArrivalTimeline =
@@ -200,7 +210,7 @@ class HistoryReplayPackage {
     if ((captureEndedAt != null &&
             (captureEndedAt.isBefore(times.first) ||
                 captureEndedAt.difference(times.first) > maxDuration)) ||
-        stationFrames.any(
+        StationReplayFrames.describe(stationFrames).any(
           (frame) =>
               frame.receivedAt.difference(times.first).abs() > maxDuration,
         )) {
@@ -217,10 +227,12 @@ class HistoryReplayPackage {
           arrivalInstants == null &&
           timing == HistoryReplayTiming.arrival &&
           reports.any((event) => event.arrivedAt?.isUtc == false),
-      List.unmodifiable(
-        List<StationHistoryFrame>.of(stationFrames)
-          ..sort((a, b) => a.receivedAt.compareTo(b.receivedAt)),
-      ),
+      stationFrames is StationReplayFrames
+          ? stationFrames
+          : List.unmodifiable(
+              List<StationHistoryFrame>.of(stationFrames)
+                ..sort((a, b) => a.receivedAt.compareTo(b.receivedAt)),
+            ),
       captureEndedAt?.toUtc(),
       storedStations,
     );
@@ -260,9 +272,9 @@ class HistoryReplayPackage {
       end = captureEndedAt!;
     }
     if (stationFrames.isNotEmpty) {
-      final stationEnd = stationFrames.last.receivedAt.add(
-        const Duration(seconds: 30),
-      );
+      final stationEnd = StationReplayFrames.describe(
+        stationFrames,
+      ).last.receivedAt.add(const Duration(seconds: 30));
       if (stationEnd.isAfter(end)) end = stationEnd;
     }
     final storedEnd = storedStations?.lastReceivedAt?.add(
@@ -273,28 +285,58 @@ class HistoryReplayPackage {
   }
 
   String encode() {
+    return utf8.decode(encodeBytes());
+  }
+
+  Uint8List encodeBytes() {
     if (storedStations?.frameKeys.isNotEmpty ?? false) {
       throw StateError('Load saved station data before exporting');
     }
-    final text = jsonEncode({
-      'format': format,
-      'version': version,
-      'name': name,
-      'omittedReports': omittedReports,
-      'arrivalInstantsUtc': _arrivalInstants
-          .map((time) => time?.toUtc().toIso8601String())
-          .toList(),
-      'reports': reports.map((e) => e.toMap()).toList(),
+    final bytes = JsonUtf8Encoder().convert({
+      ...exportMetadata(),
       if (stationFrames.isNotEmpty)
-        'stationArchive': StationJsonArchive.encode(stationFrames),
-      if (captureEndedAt != null)
-        'captureEndedAt': captureEndedAt!.toIso8601String(),
+        'stationArchive':
+            stationFrames is StationReplayFrames &&
+                (stationFrames as StationReplayFrames).archive != null
+            ? (stationFrames as StationReplayFrames).archive
+            : _compressedStations(stationFrames),
     });
-    if (utf8.encode(text).length > maxBytes) {
+    if (bytes.length > maxBytes) {
       throw const FormatException('回放包超过 128 MiB');
     }
-    return text;
+    return bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
   }
+
+  static Map<String, dynamic> _compressedStations(
+    List<StationHistoryFrame> frames,
+  ) => {
+    'format': StationReplayFrames.format,
+    'blocks': [
+      for (var start = 0; start < frames.length; start += 64)
+        () {
+          final end = (start + 64).clamp(0, frames.length);
+          final table = StationJsonArchive.encode(frames.sublist(start, end));
+          return StationReplayFrames.encodeBlock(
+            table,
+            compression.compress(JsonUtf8Encoder().convert(table)),
+          );
+        }(),
+    ],
+  };
+
+  /// Shared metadata for regular and incremental native-file exports.
+  Map<String, dynamic> exportMetadata() => {
+    'format': format,
+    'version': version,
+    'name': name,
+    'omittedReports': omittedReports,
+    'arrivalInstantsUtc': _arrivalInstants
+        .map((time) => time?.toUtc().toIso8601String())
+        .toList(),
+    'reports': reports.map((e) => e.toMap()).toList(),
+    if (captureEndedAt != null)
+      'captureEndedAt': captureEndedAt!.toIso8601String(),
+  };
 
   factory HistoryReplayPackage.decode(String text) {
     if (utf8.encode(text).length > maxBytes) {
@@ -304,7 +346,7 @@ class HistoryReplayPackage {
       final value = jsonDecode(text);
       if (value is! Map<String, dynamic> ||
           value['format'] != format ||
-          value['version'] != version ||
+          (value['version'] != 1 && value['version'] != version) ||
           value['reports'] is! List ||
           value['name'] is! String ||
           value['omittedReports'] is! int) {
@@ -341,7 +383,9 @@ class HistoryReplayPackage {
         arrivalInstants: arrivalInstants,
         importedLegacy: true,
         stationFrames: value['stationArchive'] != null
-            ? StationJsonArchive.decode(value['stationArchive'] as Map)
+            ? (value['stationArchive']['format'] == StationReplayFrames.format
+                  ? StationReplayFrames.decode(value['stationArchive'] as Map)
+                  : StationJsonArchive.decode(value['stationArchive'] as Map))
             : (value['stationFrames'] as List? ?? const [])
                   .map((frame) => StationHistoryFrame.fromMap(frame as Map))
                   .toList(),
@@ -436,7 +480,8 @@ class _ReplayPlan {
       }
     }
     final reports = <(UnifiedQuakeData, DateTime)>[];
-    final frames = <String, StationHistoryFrame>{};
+    final frames = <String, StationReplayEntry>{};
+    final releases = <void Function()>[];
     final expiries = <(HistoryReplayPackage, DateTime)>[];
     var end = anchorEnd;
     for (final package in selected) {
@@ -455,13 +500,18 @@ class _ReplayPlan {
       }
       // Restore already-active events at the cursor using their latest report.
       reports.addAll(initial.values.map((report) => (report, start)));
-      for (final frame in package.stationFrames) {
+      if (package.stationFrames is StationReplayFrames) {
+        releases.add((package.stationFrames as StationReplayFrames).release);
+      }
+      for (final frame in StationReplayFrames.describe(package.stationFrames)) {
         final key = '${frame.kind}:${frame.receivedAt.microsecondsSinceEpoch}';
         final previous = frames[key];
         if (previous != null &&
-            !identical(previous, frame) &&
-            jsonEncode(previous.toMap()) != jsonEncode(frame.toMap())) {
-          throw const FormatException('联动回放的同一时刻测站记录冲突');
+            (previous.identity != frame.identity || frame.identity == null)) {
+          if (jsonEncode(previous.load().toMap()) !=
+              jsonEncode(frame.load().toMap())) {
+            throw const FormatException('联动回放的同一时刻测站记录冲突');
+          }
         }
         frames[key] = previous ?? frame;
       }
@@ -473,8 +523,11 @@ class _ReplayPlan {
       });
     return _ReplayPlan(
       reports: indexed.map((item) => item.$2).toList(),
-      stationFrames: frames.values.toList()
-        ..sort((a, b) => a.receivedAt.compareTo(b.receivedAt)),
+      stationFrames: StationReplayFrames(
+        frames.values.toList()
+          ..sort((a, b) => a.receivedAt.compareTo(b.receivedAt)),
+        release: releases,
+      ),
       expiries: expiries,
       start: start,
       end: end,
@@ -510,6 +563,7 @@ class HistoryReplayController extends ChangeNotifier {
   String? _session;
   Timer? _timer;
   Timer? _stationTimer;
+  String? playbackError;
   final List<Timer> _expiryTimers = [];
   final Map<String, HistoryReplayPackage> _imports = {};
   List<EewEventGroup> _relatedHistory = const [];
@@ -686,26 +740,37 @@ class HistoryReplayController extends ChangeNotifier {
     final started = now();
     final session = 'replay-${started.microsecondsSinceEpoch}-${++_sequence}';
     _session = session;
+    playbackError = null;
     played = 0;
     final clockOffset = started.difference(plan.start);
     _clockOffset = clockOffset;
     var stationIndex = 0;
+    final stationEntries = StationReplayFrames.describe(
+      plan.stationFrames,
+    ).toList();
     void deliverStations() {
       if (_session != session) return;
       final current = Map<String, StationHistoryFrame>.of(
         stationSnapshots.value,
       );
       final position = now().subtract(clockOffset);
-      while (stationIndex < plan.stationFrames.length &&
-          !plan.stationFrames[stationIndex].receivedAt.isAfter(position)) {
-        final frame = plan.stationFrames[stationIndex++];
-        current[frame.kind] = frame;
+      try {
+        while (stationIndex < stationEntries.length &&
+            !stationEntries[stationIndex].receivedAt.isAfter(position)) {
+          final frame = stationEntries[stationIndex++].load();
+          current[frame.kind] = frame;
+        }
+      } catch (error) {
+        stop();
+        playbackError = '回放失败：$error';
+        notifyListeners();
+        return;
       }
       stationSnapshots.value = Map.unmodifiable(current);
       if (_session != session || stationIndex == plan.stationFrames.length) {
         return;
       }
-      final due = plan.stationFrames[stationIndex].receivedAt.add(clockOffset);
+      final due = stationEntries[stationIndex].receivedAt.add(clockOffset);
       final delay = due.difference(now());
       _stationTimer = Timer(
         delay.isNegative ? Duration.zero : delay,
@@ -714,6 +779,7 @@ class HistoryReplayController extends ChangeNotifier {
     }
 
     deliverStations();
+    if (_session != session) return;
     void deliver() {
       if (_session != session) return;
       final report = plan.reports[played].$1;
@@ -784,6 +850,8 @@ class HistoryReplayController extends ChangeNotifier {
     }
     _expiryTimers.clear();
     _advance = null;
+    final frames = _plan?.stationFrames;
+    if (frames is StationReplayFrames) frames.release();
     _plan = null;
     final anchor = _storedAnchor;
     if (anchor != null) _package = HistoryReplayPackage.fromGroup(anchor);
@@ -798,6 +866,8 @@ class HistoryReplayController extends ChangeNotifier {
 
   @override
   void dispose() {
+    final frames = _plan?.stationFrames;
+    if (frames is StationReplayFrames) frames.release();
     _preparation++;
     _timer?.cancel();
     _stationTimer?.cancel();

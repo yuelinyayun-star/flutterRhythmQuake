@@ -1,5 +1,4 @@
 import 'dart:collection';
-import 'dart:convert';
 import '../../models/source_payload.dart';
 import '../../models/station_history_frame.dart';
 
@@ -9,8 +8,7 @@ class StationJsonArchive {
   static const format = 'station-json-table-v1';
 
   static Map<String, dynamic> encode(Iterable<StationHistoryFrame> frames) {
-    final nodes = <dynamic>[];
-    final indices = <String, int>{};
+    final table = StationJsonTable();
     final references = HashMap<Object, int>.identity();
     final strings = <String, int>{};
     int intern(dynamic value) {
@@ -35,21 +33,13 @@ class StationJsonArchive {
       } else {
         node = value;
       }
-      final key = jsonEncode(node);
-      final previous = indices[key];
-      if (previous != null) {
-        if (cache != null) cache[value] = previous;
-        return previous;
-      }
-      final index = nodes.length;
-      nodes.add(node);
-      indices[key] = index;
+      final index = table.intern(node);
       if (cache != null) cache[value] = index;
       return index;
     }
 
     final roots = [for (final frame in frames) intern(frame.toMap())];
-    return {'format': format, 'nodes': nodes, 'frames': roots};
+    return table.archive(roots);
   }
 
   static List<StationHistoryFrame> decode(Map archive) {
@@ -103,5 +93,120 @@ class StationJsonArchive {
           return StationHistoryFrame.fromMap(reference(root) as Map);
         }(),
     ];
+  }
+}
+
+/// Hashing only locates candidates; exact node equality resolves collisions.
+/// In particular, JSON integers, doubles and signed zero stay distinct.
+class StationJsonTable {
+  final List<dynamic> nodes = [];
+  final Map<Object, int> _indices = {};
+  final Map<int, List<int>> _collisions = {};
+
+  Object _scalarKey(dynamic node) => node is num
+      ? (node.runtimeType, node, node is double && node.isNegative)
+      : (node.runtimeType, node);
+
+  int intern(dynamic node) {
+    if (node is! List) {
+      final key = _scalarKey(node);
+      return _indices.putIfAbsent(key, () {
+        nodes.add(node);
+        return nodes.length - 1;
+      });
+    }
+    final hash = Object.hashAll(node);
+    final existing = _indices[hash];
+    if (existing != null) {
+      bool matches(int index) {
+        final candidate = nodes[index] as List;
+        if (candidate.length != node.length) return false;
+        for (var i = 0; i < node.length; i++) {
+          if (candidate[i] != node[i]) return false;
+        }
+        return true;
+      }
+
+      if (matches(existing)) return existing;
+      for (final index in _collisions[hash] ?? const <int>[]) {
+        if (matches(index)) return index;
+      }
+    }
+    final index = nodes.length;
+    nodes.add(node);
+    if (existing == null) {
+      _indices[hash] = index;
+    } else {
+      (_collisions[hash] ??= []).add(index);
+    }
+    return index;
+  }
+
+  /// Merge compact tables without expanding station maps or copying all frames.
+  List<int> append(Map archive) {
+    if (archive['format'] != StationJsonArchive.format ||
+        archive['nodes'] is! List ||
+        archive['frames'] is! List) {
+      throw const FormatException('Invalid station JSON table');
+    }
+    final remap = <int>[];
+    int reference(dynamic index) {
+      if (index is! int || index < 0 || index >= remap.length) {
+        throw const FormatException('Invalid station JSON reference');
+      }
+      return remap[index];
+    }
+
+    for (final node in archive['nodes'] as List) {
+      if (node is List) {
+        if (node.isEmpty ||
+            (node.first != 'l' && !(node.first == 'm' && node.length.isOdd))) {
+          throw const FormatException('Invalid station JSON node');
+        }
+        remap.add(intern([node.first, ...node.skip(1).map(reference)]));
+      } else {
+        if (node is Map) throw const FormatException('Invalid scalar node');
+        remap.add(intern(node));
+      }
+    }
+    return (archive['frames'] as List).map(reference).toList();
+  }
+
+  Map<String, dynamic> archive(List<int> roots) => {
+    'format': StationJsonArchive.format,
+    'nodes': nodes,
+    'frames': roots,
+  };
+
+  void releaseIndex() {
+    _indices.clear();
+    _collisions.clear();
+  }
+
+  Map<String, int> _fields(int root) {
+    final node = nodes[root];
+    if (node is! List || node.first != 'm') {
+      throw const FormatException('Invalid station frame object');
+    }
+    final fields = <String, int>{};
+    for (var i = 1; i < node.length; i += 2) {
+      final key = nodes[node[i] as int];
+      if (key is! String || fields.containsKey(key)) {
+        throw const FormatException('Invalid station frame field');
+      }
+      fields[key] = node[i + 1] as int;
+    }
+    return fields;
+  }
+
+  DateTime receipt(int root) {
+    final fields = _fields(root);
+    final index = fields['receivedAt'];
+    final value = index == null ? null : nodes[index];
+    final time = value is String ? DateTime.tryParse(value) : null;
+    if (time == null || !time.isUtc) {
+      throw const FormatException('Invalid station frame receipt');
+    }
+    return time;
   }
 }
