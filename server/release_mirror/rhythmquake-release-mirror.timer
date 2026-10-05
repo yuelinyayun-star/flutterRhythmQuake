@@ -1,0 +1,11 @@
+[Unit]
+Description=Check public RhythmQuake releases every 15 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=15min
+RandomizedDelaySec=30s
+Unit=rhythmquake-release-mirror.service
+
+[Install]
+WantedBy=timers.target

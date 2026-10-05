@@ -4,7 +4,7 @@ RhythmQuake 是一款基于 Flutter 开发的跨平台地震与多灾种监测�
 
 当前公开版本：`1.0.5+21`。
 
-[下载最新版本](https://github.com/yuelinyayun-star/flutterRhythmQuake/releases/latest) · [打开 Web 版](https://eew.yuelinrhythm.top/) · [回放文件夹](https://file.yuelinrhythm.top/public/share/2me6CJMrNsVOv_-aFfNePQ) · [查看文档](docs/README.md)
+[下载最新版本](https://github.com/yuelinyayun-star/flutterRhythmQuake/releases/latest) · [安装包归档](https://file.yuelinrhythm.top/public/share/Rfvwpk6z7f0uEcMWc_sa1g) · [打开 Web 版](https://eew.yuelinrhythm.top/) · [回放文件夹](https://file.yuelinrhythm.top/public/share/2me6CJMrNsVOv_-aFfNePQ) · [查看文档](docs/README.md)
 
 > 开发状态：项目仍在持续完善，功能和文档会随代码更新。
 
@@ -57,6 +57,8 @@ RhythmQuake 是一款基于 Flutter 开发的跨平台地震与多灾种监测�
 ## 下载与平台
 
 当前公开版提供以下文件，发布页同时附有对应的 SHA-256 校验文件：
+
+[TG 云盘安装包归档](https://file.yuelinrhythm.top/public/share/Rfvwpk6z7f0uEcMWc_sa1g) 按版本和平台分类保存公开发布文件与校验文件。归档从 `1.0.5+21` 开始，由服务器定期从 GitHub Release 同步，并在上传后读回校验；发布后可能有短暂延迟。
 
 | 平台 | 下载 / 使用入口 | 文件形式 |
 | --- | --- | --- |

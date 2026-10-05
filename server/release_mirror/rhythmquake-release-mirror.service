@@ -1,0 +1,24 @@
+[Unit]
+Description=RhythmQuake public GitHub releases to Telegram cloud
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=filebrowser
+Group=filebrowser
+ExecStart=/usr/bin/python3 /opt/rhythmquake-release-mirror/mirror.py
+TimeoutStartSec=4h
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/rhythmquake-release-mirror
+MemoryHigh=128M
+MemoryMax=256M
+CPUQuota=20%
+Nice=15
+IOSchedulingClass=idle
+TasksMax=32
+Environment=GOMEMLIMIT=64MiB
