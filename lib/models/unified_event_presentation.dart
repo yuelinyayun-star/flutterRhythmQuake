@@ -1,5 +1,25 @@
+import '../core/intensity_calculator.dart';
 import '../core/utils/quake_time.dart';
 import 'unified_quake_data.dart';
+
+/// Badge-only estimate: never replace the source intensity or notification data.
+int? estimatedJianCeaBadgeIntensity(UnifiedQuakeData event) {
+  if (event.source != 'ceaEew' ||
+      event.apiTypeLabel != 'Jian Project' ||
+      !event.isEew ||
+      event.useShindo ||
+      event.isCanceled ||
+      event.isAssumption ||
+      event.isHistory ||
+      !const {'', '-'}.contains(event.maxIntensity.trim()) ||
+      !event.magnitude.isFinite ||
+      event.magnitude <= 0 ||
+      !event.depth.isFinite ||
+      event.depth < 0) {
+    return null;
+  }
+  return IntensityCalculator.calcCsisLevel(event.magnitude, event.depth, 0);
+}
 
 String unifiedRomanIntensityLabel(String value) {
   final parsed = double.tryParse(value.trim());

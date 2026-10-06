@@ -1115,10 +1115,15 @@ class _AlertModuleState extends State<AlertModule> {
     }
 
     final presentation = UnifiedEventPresentation.fromEvent(event);
+    final estimatedIntensity = estimatedJianCeaBadgeIntensity(event);
     return _buildUnifiedListStyleBadge(
       color: color,
-      value: presentation.intensityValue,
-      label: presentation.intensityLabel,
+      value: estimatedIntensity == null
+          ? presentation.intensityValue
+          : estimatedIntensity == 0
+          ? '0'
+          : unifiedRomanIntensityLabel('$estimatedIntensity'),
+      label: estimatedIntensity == null ? presentation.intensityLabel : '预估烈度',
       useShindo: event.useShindo,
     );
   }
