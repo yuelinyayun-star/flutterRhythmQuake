@@ -17,15 +17,18 @@ import sys
 import time
 import uuid
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
+from pathlib import Path
 
 import aiohttp
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.http11 import Request, Response
+
+from anomaly_archive import AnomalyArchive
 
 
 KST = timezone(timedelta(hours=9), "KST")
@@ -50,6 +53,8 @@ class Config:
     heartbeat_seconds: float = float(os.environ.get("KMA_HEARTBEAT_SECONDS", "25"))
     max_clients: int = int(os.environ.get("KMA_MAX_CLIENTS", "500"))
     access_token: str = os.environ.get("KMA_RELAY_TOKEN", "")
+    anomaly_directory: str = os.environ.get("KMA_ANOMALY_DIRECTORY", "")
+    anomaly_max_pending_bytes: int = int(os.environ.get("KMA_ANOMALY_MAX_PENDING_BYTES", str(64 * 1024 * 1024)))
 
 
 @dataclass(frozen=True)
@@ -75,6 +80,12 @@ class Fetched:
     body: bytes
     headers: dict[str, str]
     round_trip_seconds: float
+
+
+class DecodeError(ValueError):
+    def __init__(self, message: str, partial: dict):
+        super().__init__(message)
+        self.partial = partial
 
 
 @dataclass
@@ -183,9 +194,11 @@ def decode_stations(data: bytes) -> list[Station]:
         )
         longitude = longitude_base + lon_raw / 100
         if not (30 <= latitude <= 40 and 120 <= longitude <= 132):
-            raise ValueError(
+            raise DecodeError(
                 f"invalid KMA station coordinate at bit {offset}: "
-                f"{latitude}, {longitude}"
+                f"{latitude}, {longitude}",
+                {"stations": [station.to_json() for station in stations],
+                 "invalidCoordinate": {"bitOffset": offset, "latitude": latitude, "longitude": longitude}},
             )
         stations.append(Station(round(latitude, 2), round(longitude, 2)))
 
@@ -201,8 +214,9 @@ def decode_raw_levels(frame: bytes, station_count: int) -> list[int]:
         nibbles.append(value & 0x0F)
         if len(nibbles) >= station_count:
             return nibbles[:station_count]
-    raise ValueError(
-        f"KMA frame contains {len(nibbles)} levels for {station_count} stations"
+    raise DecodeError(
+        f"KMA frame contains {len(nibbles)} levels for {station_count} stations",
+        {"rawMmi": nibbles},
     )
 
 
@@ -296,6 +310,10 @@ class KmaRelay:
         self.stop_event = asyncio.Event()
         self._last_attempted_utc: datetime | None = None
         self._last_summary_log_monotonic = 0.0
+        self.anomalies = AnomalyArchive(config.anomaly_directory, config.anomaly_max_pending_bytes)
+        self._station_input: tuple[str, Fetched] | None = None
+        self._station_attempt: tuple[str, Fetched] | None = None
+        self._parser_sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
     def _authorized(self, request: Request) -> bool:
         if not self.config.access_token:
@@ -480,6 +498,7 @@ class KmaRelay:
 
     async def _refresh_station_table(self, stamp: str) -> bool:
         response = await self.http.fetch(f"data/{stamp}.s")
+        self._station_attempt = (stamp, response)
         self.state.last_official_status = response.status
         if response.status != HTTPStatus.OK:
             LOGGER.warning("KMA station table %s.s returned HTTP %s", stamp, response.status)
@@ -489,39 +508,88 @@ class KmaRelay:
         changed = digest != self.state.station_digest
         self.state.stations = stations
         self.state.station_digest = digest
+        self._station_input = self._station_attempt
         if changed:
             LOGGER.info("KMA station table loaded: %d stations", len(stations))
             await self.broadcast(self._station_message("kma_stations_update"))
         return True
 
-    async def _accept_frame(self, stamp_utc: datetime, frame: bytes) -> None:
-        header = decode_header(frame)
+    def _record_anomaly(self, stamp_utc: datetime, frame: bytes, response: Fetched | None,
+                        decoded: dict, reasons: list[str], stage: str, error: Exception | None = None,
+                        forwarded: bool = False) -> None:
+        if self.anomalies.directory is None:
+            return
+        originals = {"raw/frame.b": frame}
+
+        def source_info(stamp: str, fetched: Fetched, attachment: str):
+            originals[attachment] = fetched.body
+            extension = "b" if attachment.endswith(".b") else "s"
+            return {"requestPath": f"data/{stamp}.{extension}",
+                    "attachment": attachment, "httpStatus": fetched.status,
+                    "roundTripSeconds": fetched.round_trip_seconds,
+                    "headers": {key: value for key, value in fetched.headers.items()
+                                if key.lower() in {"st", "date", "content-type", "content-length",
+                                                   "content-encoding", "last-modified", "etag"}}}
+
+        stamp = stamp_utc.strftime("%Y%m%d%H%M%S")
+        report = {"schemaVersion": 1, "recordedAtUtc": datetime.now(UTC).isoformat(),
+                  "frameUtc": stamp_utc.isoformat(), "frameKst": stamp_utc.astimezone(KST).isoformat(),
+                  "parserSha256": self._parser_sha256, "reasons": reasons, "parseStage": stage,
+                  "relayWillForward": forwarded, "decoded": decoded,
+                  "stations": [station.to_json() for station in self.state.stations],
+                  "frameRequest": source_info(stamp, response, "raw/frame.b") if response else None,
+                  "stationTableUsed": None, "stationTableAttempt": None,
+                  "exception": {"type": type(error).__name__, "message": str(error)} if error else None}
+        if self._station_input is not None:
+            report["stationTableUsed"] = source_info(*self._station_input, "raw/stations.s")
+        if self._station_attempt is not None:
+            attachment = "raw/stations.s" if self._station_attempt is self._station_input else "raw/station_attempt.s"
+            report["stationTableAttempt"] = source_info(*self._station_attempt, attachment)
+        self.anomalies.submit(report, originals)
+
+    async def _accept_frame(self, stamp_utc: datetime, frame: bytes, response: Fetched | None = None) -> None:
         stamp = stamp_utc.strftime("%Y%m%d%H%M%S")
         level_capacity = frame_level_capacity(frame)
-        if (
-            not self.state.stations
-            or header.station_table_changed
-            or len(self.state.stations) > level_capacity
-        ):
-            if self.state.stations and len(self.state.stations) > level_capacity:
-                LOGGER.info(
-                    "KMA station table has %d stations but frame %s provides "
-                    "%d values; refreshing station table",
-                    len(self.state.stations),
-                    stamp,
-                    level_capacity,
-                )
-            if not await self._refresh_station_table(stamp):
-                raise ValueError("station table required by frame is unavailable")
-
-        raw_mmi = decode_raw_levels(frame, len(self.state.stations))
-        mmi = [fan_compatible_mmi(level) for level in raw_mmi]
+        decoded = {"header": None, "frameLevelCapacity": level_capacity, "rawMmi": None, "Data": None}
+        self._station_attempt = None
+        stage = "header"
+        try:
+            header = decode_header(frame)
+            decoded["header"] = asdict(header)
+            stage = "station_table"
+            if (
+                not self.state.stations
+                or header.station_table_changed
+                or len(self.state.stations) > level_capacity
+            ):
+                if self.state.stations and len(self.state.stations) > level_capacity:
+                    LOGGER.info(
+                        "KMA station table has %d stations but frame %s provides "
+                        "%d values; refreshing station table",
+                        len(self.state.stations), stamp, level_capacity,
+                    )
+                if not await self._refresh_station_table(stamp):
+                    raise ValueError("station table required by frame is unavailable")
+            stage = "levels"
+            raw_mmi = decode_raw_levels(frame, len(self.state.stations))
+            decoded["rawMmi"] = raw_mmi
+            mmi = [fan_compatible_mmi(level) for level in raw_mmi]
+        except Exception as error:
+            if isinstance(error, DecodeError):
+                decoded["partial"] = error.partial
+            self._record_anomaly(stamp_utc, frame, response, decoded, ["decode_failed"], stage, error)
+            raise
         timestamp_kst = stamp_utc.astimezone(KST).strftime("%Y-%m-%d %H:%M:%S")
         timestamp_utc = stamp_utc.isoformat().replace("+00:00", "Z")
         data = {
             "timestamp": timestamp_kst,
             "mmi": mmi,
         }
+        decoded["Data"] = data
+        if -3 in mmi:
+            decoded["clientRejectedStationIndices"] = [index for index, value in enumerate(mmi) if value == -3]
+            self._record_anomaly(stamp_utc, frame, response, decoded,
+                                 ["client_contains_minus3"], "complete", forwarded=True)
         canonical = json.dumps(
             data, ensure_ascii=False, sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
@@ -591,10 +659,14 @@ class KmaRelay:
                     if response.status == HTTPStatus.NOT_FOUND:
                         continue
                     if response.status != HTTPStatus.OK:
+                        self._station_attempt = None
+                        self._record_anomaly(candidate, response.body, response,
+                                             {"header": None, "rawMmi": None, "Data": None},
+                                             ["upstream_http_error"], "http")
                         raise ConnectionError(
                             f"KMA frame {stamp}.b returned HTTP {response.status}"
                         )
-                    await self._accept_frame(candidate, response.body)
+                    await self._accept_frame(candidate, response.body, response)
                     accepted = True
                     break
                 except Exception as exc:
@@ -654,6 +726,7 @@ class KmaRelay:
             "consecutiveFailures": self.state.consecutive_failures,
             "lastOfficialHttpStatus": self.state.last_official_status,
             "acceptedFrames": self.state.accepted_frames,
+            "anomalyArchive": self.anomalies.status(),
         }
         return payload, healthy
 
@@ -675,6 +748,7 @@ class KmaRelay:
 
     async def run(self) -> None:
         await self.http.start()
+        self.anomalies.start()
         poll_task = asyncio.create_task(self.poll_forever(), name="kma-poller")
         heartbeat_task = asyncio.create_task(
             self.heartbeat_forever(), name="websocket-heartbeat"
@@ -703,6 +777,7 @@ class KmaRelay:
                 task.cancel()
             await asyncio.gather(poll_task, heartbeat_task, return_exceptions=True)
             await self.http.close()
+            await self.anomalies.close()
 
 
 async def check_once(config: Config) -> int:

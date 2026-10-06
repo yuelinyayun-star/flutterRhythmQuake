@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodically upload KMA anomaly batches
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=1min
+RandomizedDelaySec=5s
+Unit=kma-anomaly-upload.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,24 @@
+[Unit]
+Description=Upload exact KMA anomaly evidence to Telegram cloud
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=rhythmquake
+Group=rhythmquake
+ExecStart=/opt/rhythmquake/kma-pews-relay/.venv/bin/python /opt/rhythmquake/kma-pews-relay/upload_anomalies.py
+TimeoutStartSec=20min
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/rhythmquake-kma-anomalies
+MemoryHigh=96M
+MemoryMax=128M
+CPUQuota=10%
+Nice=15
+IOSchedulingClass=idle
+TasksMax=32
+Environment=GOMEMLIMIT=48MiB

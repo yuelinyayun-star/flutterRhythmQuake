@@ -1,6 +1,6 @@
 # KMA PEWS Relay
 
-这是给 Windows 服务器使用的韩国气象厅 PEWS 实时测站转发服务。
+这是给 Windows / Linux 服务器使用的韩国气象厅 PEWS 实时测站转发服务。
 
 服务直接请求：
 
@@ -147,3 +147,65 @@ $env:KMA_RELAY_HOST = '127.0.0.1'
 - 最新帧年龄不超过 `KMA_STALE_AFTER_SECONDS`。
 
 WebSocket 已建立但 KMA 数据卡住不会被判定为健康。
+
+## 异常原文归档
+
+Linux 服务端可启用独立异常归档，不改变客户端屏蔽条件，也不改变现有
+WebSocket `Data`、`md5` 或原始码到 MMI 的转换。
+
+记录条件：解析结果包含客户端会整帧屏蔽的 `-3`、帧或测站表解码失败、
+上游帧返回非 200/404 HTTP 状态。单纯 MMI 较高不判为异常。普通 404、
+没有收到响应的网络超时和常规心跳不产生数据归档。
+
+每份记录是 ZIP，包含：
+
+```text
+report.json             UTF-8 JSON：实际解析结果、异常原因、解析阶段、时间、HTTP 元数据
+raw/frame.b             接收时的原始响应字节，未修改
+raw/stations.s          解析使用的原始测站表（复用缓存时保留当时获取时间）
+raw/station_attempt.s   刷新测站表失败时的新响应；仅在存在时保存
+```
+
+JSON 保存头部字段、原始站点码 `rawMmi`、转换后的完整 `Data`、当前测站坐标及
+客户端屏蔽站点索引。解码中断时保留已经实际得到的部分结果；没有解析出的
+字段为 `null`，不补造数据。所有原始附件及完整记录包都有 SHA-256。
+记录原文必须在接收时进行，事后请求相同时间路径不能证明得到的是同一内容。
+HTTP 元数据只保存 ST、日期、内容类型等诊断字段，不保存令牌或 Cookie。
+
+开启方式：将 `anomalies.conf` 部署到
+`/etc/systemd/system/kma-pews-relay.service.d/anomalies.conf`，重载并重启 KMA。
+默认本地目录是 `/var/lib/rhythmquake-kma-anomalies/outbox`，待上传容量上限
+64 MiB，工作队列上限 8 份，单份完整原文与 JSON 上限 4 MiB。
+写盘和低级 ZIP 压缩在后台线程中完成，不在实时轮询协程里执行。
+容量满或记录失败会明确写入日志，并在 `/health` 的 `anomalyArchive`
+字段显示失败计数，不会悄悄截断原文，也不会为记录失败而阻断转发。
+
+安装 `kma-anomaly-upload.service` / `.timer`，每轮结束后约一分钟上传一批。
+上传账户与 KMA 相同，为 `rhythmquake`。将现有仅含 `tgfs` / `tgfs-webdav`
+的 rclone 配置部署到 `/etc/rhythmquake-kma-anomalies/telegram.conf`，文件权限
+`root:rhythmquake 0640`、父目录权限 `root:rhythmquake 0750`；凭据不能提交到仓库。
+上传通过已验证的本机 TGFS WebDAV，而不是异步 FUSE 写缓存。
+
+TG 云盘目录独立于安装包和回放：
+
+```text
+Telegram 云盘/KMA异常记录/YYYY-MM-DD/批次.zip
+```
+
+日期和批次文件名使用 UTC，JSON 同时保存 UTC 和韩国时间。
+每批最多 120 份或 8 MiB 内层记录，外层 ZIP 不重复压缩；内层记录包原封不动。
+上传后读回校验整批 SHA-256，成功才删除本地原文包与上传暂存。
+失败保留同一批次，重试不重复生成不同名字；只保留一份最近上传记录，
+避免上传收据无限增长。上传进程限制内存 128 MiB、CPU 单核 10%，任务结束退出。
+没有为异常目录创建匿名公开分享。
+
+实时验证工具（不会启动另一个 WebSocket 服务）：
+
+```bash
+.venv/bin/python validate_live_archive.py --directory /var/lib/rhythmquake-kma-validation
+.venv/bin/python upload_anomalies.py --directory /var/lib/rhythmquake-kma-validation --validation
+```
+
+验证使用真实实时帧、原始测站表和生产解析器，显式标记
+`manual_live_validation` / `validationOnly`，上传到 `KMA异常记录/验证/`，
+不伪造异常、不修改测站值，不混入正式异常日期目录。
