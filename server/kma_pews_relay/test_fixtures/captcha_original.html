@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="format-detection" content="telephone=no, address=no, email=no"/>
+<title></title>
+<style>
+body { 
+	margin-left: 0px; 
+	margin-top: 0px;
+	margin-right: 0px;
+	margin-bottom: 0px;
+	font-family: "Malgun Gothic", "simsun", "MS UI Gothic", "arial", "dotum";
+	font-size: 14px;
+	color:#3d3d3d;
+	background-color:#cedae8
+}
+#content_area {
+	width:420px;
+	height:410px;
+	position:absolute;
+	top:50%;
+	left:50%;
+	margin-top:-200px;
+	margin-left:-200px;
+}
+#user_set_area {
+	width:420px;
+	height:320px;
+	border: 1px solid #3d3d3d;
+	background-color:#fff;
+}
+#captcha_area{
+	border:solid #CCCCCC 1px;
+	width:203px;
+	-webkit-border-radius: 10px;
+	-moz-border-radius: 10px;
+	border-radius: 10px;
+	padding:25px;
+	margin-top:3px;
+	margin-left:80px;
+	background-color: #ffffff;
+}
+.captcha1 {
+	-webkit-transform: skew(-10deg,-10deg);
+	transform: skew(-10deg,-10deg);
+}
+</style>
+</head>
+<body>
+<div id="content_area">
+	<div></div>
+	<h2>Require Captcha</h2>
+	<div id="user_set_area">
+		<div style="padding:10px;">
+			<div style="height:5px; background-color:#3d3d3d"></div>
+			<h3>Security Check</h3>
+			<h5>Please enter the text below</h5>
+			<div id="captcha_area" align="center" style="margin-top:34px;">
+				<img src="captcha.png" id="captcha" class="captcha1" />
+			</div>
+			<form method="get" action="/pews/data/20261006050010.b">
+				<input type="hidden" name="org_query" value="">
+				<div style="margin-top:25px;margin-left:25px;">
+					<span>Text in the boxs </span>
+					<input name="waf_captcha_value" type="text" style="margin-left:10px;" />
+					<input type="submit" value="SUBMIT"/>
+				</div>
+			</form>
+			<div id="err_msg" style="color:#8d0404"></div>
+
+		</div>
+	</div>	
+</div>
+<body>
+</html>

@@ -88,6 +88,30 @@ class DecodeError(ValueError):
         self.partial = partial
 
 
+class UpstreamContentError(ValueError):
+    def __init__(self, reason: str):
+        super().__init__(f"KMA returned non-binary content: {reason}")
+        self.reason = reason
+
+
+def reject_html_response(body: bytes, headers: dict[str, str] | None = None) -> None:
+    content_type = next((value.lower().split(";", 1)[0].strip()
+                         for key, value in (headers or {}).items()
+                         if key.lower() == "content-type"), "")
+    prefix = body[:256].removeprefix(b"\xef\xbb\xbf").lstrip().lower()
+    if content_type not in {"text/html", "application/xhtml+xml"} and not prefix.startswith(
+        (b"<!doctype html", b"<html", b"<br>", b"<br/>", b"<br />")
+    ):
+        return
+    if b"waf_captcha_value" in body:
+        reason = "upstream_captcha_html"
+    elif b"Web firewall security policies" in body:
+        reason = "upstream_firewall_html"
+    else:
+        reason = "upstream_html_response"
+    raise UpstreamContentError(reason)
+
+
 @dataclass
 class RelayState:
     stations: list[Station] = field(default_factory=list)
@@ -503,6 +527,7 @@ class KmaRelay:
         if response.status != HTTPStatus.OK:
             LOGGER.warning("KMA station table %s.s returned HTTP %s", stamp, response.status)
             return False
+        reject_html_response(response.body, response.headers)
         stations = decode_stations(response.body)
         digest = hashlib.sha256(response.body).hexdigest()
         changed = digest != self.state.station_digest
@@ -552,8 +577,10 @@ class KmaRelay:
         level_capacity = frame_level_capacity(frame)
         decoded = {"header": None, "frameLevelCapacity": level_capacity, "rawMmi": None, "Data": None}
         self._station_attempt = None
-        stage = "header"
+        stage = "http_content"
         try:
+            reject_html_response(frame, response.headers if response else None)
+            stage = "header"
             header = decode_header(frame)
             decoded["header"] = asdict(header)
             stage = "station_table"
@@ -577,7 +604,8 @@ class KmaRelay:
         except Exception as error:
             if isinstance(error, DecodeError):
                 decoded["partial"] = error.partial
-            self._record_anomaly(stamp_utc, frame, response, decoded, ["decode_failed"], stage, error)
+            reasons = [error.reason] if isinstance(error, UpstreamContentError) else ["decode_failed"]
+            self._record_anomaly(stamp_utc, frame, response, decoded, reasons, stage, error)
             raise
         timestamp_kst = stamp_utc.astimezone(KST).strftime("%Y-%m-%d %H:%M:%S")
         timestamp_utc = stamp_utc.isoformat().replace("+00:00", "Z")
@@ -799,9 +827,11 @@ async def check_once(config: Config) -> int:
                 continue
             if frame.status != HTTPStatus.OK:
                 raise RuntimeError(f"{stamp}.b returned HTTP {frame.status}")
+            reject_html_response(frame.body, frame.headers)
             table = await client.fetch(f"data/{stamp}.s")
             if table.status != HTTPStatus.OK:
                 raise RuntimeError(f"{stamp}.s returned HTTP {table.status}")
+            reject_html_response(table.body, table.headers)
             stations = decode_stations(table.body)
             header = decode_header(frame.body)
             raw = decode_raw_levels(frame.body, len(stations))

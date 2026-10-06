@@ -1,6 +1,7 @@
 import asyncio
 from datetime import UTC, datetime
 import io
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -10,7 +11,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 import zipfile
 
 from anomaly_archive import AnomalyArchive, REPORT_NAME, sha256_file
-from kma_pews_relay import Config, Fetched, KmaRelay, Station
+from kma_pews_relay import Config, Fetched, KmaRelay, Station, UpstreamContentError, reject_html_response
 from upload_anomalies import prepare, transfer, upload_batch, validate_manifest
 
 
@@ -60,6 +61,72 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         await self.relay._accept_frame(self.stamp, bytes.fromhex("00000000aa"))
         self.assertEqual(await self.records(), [])
         self.assertEqual(self.relay.state.latest_data["mmi"], [11, 11])
+
+    async def test_original_html_rejected_before_decode_and_preserved(self):
+        fixtures = Path(__file__).parent / "test_fixtures"
+        for name, reason, digest in [
+            ("captcha_original.html", "upstream_captcha_html", "070169b75a0a54fb70b9e439e9022e3c5070e8f97a5ef9dd771fde423ae080d4"),
+            ("firewall_original.html", "upstream_firewall_html", "f68ab4450bafa8848d5efd0546b4251b0e19a4e741391cbbe00ff6ae6e58cd1f"),
+        ]:
+            frame = (fixtures / name).read_bytes()
+            self.assertEqual(hashlib.sha256(frame).hexdigest(), digest)
+            previous = self.relay.snapshot_payload()
+            fetched = Fetched(200, frame, {"Content-Type": "text/html"}, .08)
+            with self.assertRaises(UpstreamContentError) as error:
+                await self.relay._accept_frame(self.stamp, frame, fetched)
+            self.assertEqual(error.exception.reason, reason)
+            self.assertEqual(self.relay.snapshot_payload()["Data"], previous["Data"])
+            self.assertEqual(self.relay.state.accepted_frames, 0)
+            self.assertIsNone(self.relay.state.latest_received_monotonic)
+            self.assertFalse(self.relay.health_payload()[1])
+            self.relay.broadcast.assert_not_awaited()
+        files = await self.records()
+        self.assertEqual(len(files), 2)
+        for file in files:
+            with zipfile.ZipFile(file) as archive:
+                report = json.loads(archive.read("report.json"))
+                self.assertEqual(hashlib.sha256(archive.read("raw/frame.b")).hexdigest(), report["originals"]["raw/frame.b"]["sha256"])
+            self.assertEqual(report["parseStage"], "http_content")
+            self.assertIsNone(report["decoded"]["header"])
+            self.assertIsNone(report["decoded"]["Data"])
+            self.assertFalse(report["relayWillForward"])
+
+    async def test_html_signature_rejected_without_correct_content_type(self):
+        frame = (Path(__file__).parent / "test_fixtures" / "firewall_original.html").read_bytes()
+        with self.assertRaises(UpstreamContentError):
+            reject_html_response(frame, {"Content-Type": "application/octet-stream"})
+        with self.assertRaises(UpstreamContentError):
+            reject_html_response(frame)
+
+    async def test_station_html_does_not_replace_table(self):
+        body = (Path(__file__).parent / "test_fixtures" / "captcha_original.html").read_bytes()
+        self.relay.http.fetch = AsyncMock(return_value=Fetched(200, body, {"Content-Type": "text/html"}, .08))
+        previous = list(self.relay.state.stations)
+        with self.assertRaises(UpstreamContentError):
+            await self.relay._accept_frame(self.stamp, bytes.fromhex("800000001c"))
+        self.assertEqual(self.relay.state.stations, previous)
+        self.relay.broadcast.assert_not_awaited()
+        files = await self.records()
+        with zipfile.ZipFile(files[0]) as archive:
+            self.assertEqual(archive.read("raw/station_attempt.s"), body)
+            report = json.loads(archive.read("report.json"))
+        self.assertEqual(report["reasons"], ["upstream_captcha_html"])
+        self.assertEqual(report["parseStage"], "station_table")
+
+    async def test_rejected_html_keeps_last_valid_frame_and_health_expires(self):
+        self.relay.clock.update(str(self.stamp.timestamp()), 0, 0)
+        await self.relay._accept_frame(self.stamp, bytes.fromhex("000000001c"))
+        self.relay.broadcast.reset_mock()
+        previous = self.relay.snapshot_payload()
+        body = (Path(__file__).parent / "test_fixtures" / "firewall_original.html").read_bytes()
+        with self.assertRaises(UpstreamContentError):
+            await self.relay._accept_frame(self.stamp, body, Fetched(200, body, {"content-type": "text/html; charset=utf-8"}, .08))
+        self.assertEqual(self.relay.state.accepted_frames, 1)
+        self.assertEqual(self.relay.snapshot_payload()["Data"], previous["Data"])
+        self.assertEqual(self.relay.state.latest_md5, previous["md5"])
+        self.relay.broadcast.assert_not_awaited()
+        with patch("kma_pews_relay.time.monotonic", return_value=self.relay.state.latest_received_monotonic + 6):
+            self.assertFalse(self.relay.health_payload()[1])
 
     async def test_short_frame_keeps_input_and_null_output(self):
         frame = b"\x01\x02"
