@@ -22,6 +22,7 @@
 library;
 
 import 'dart:async';
+import '../core/cwa_report_intensities.dart';
 import 'dart:convert';
 import '../core/utils/catalog_event_identity.dart';
 import '../core/app_edition.dart';
@@ -303,11 +304,15 @@ class QuakeProvider with ChangeNotifier {
       eventId: '$session:${original.eventId}',
       replaySessionId: session,
     );
-    final expired = _unifiedEvents.where((event) =>
-      event.replaySessionId == session &&
-      event.source == replay.source &&
-      (event.eventId == replay.eventId || _isSameUnifiedEewEvent(event, replay)),
-    ).toList();
+    final expired = _unifiedEvents
+        .where(
+          (event) =>
+              event.replaySessionId == session &&
+              event.source == replay.source &&
+              (event.eventId == replay.eventId ||
+                  _isSameUnifiedEewEvent(event, replay)),
+        )
+        .toList();
     if (expired.isEmpty) return;
     for (final event in expired) {
       if (event.isEew) _clearEewVoice(event);
@@ -388,9 +393,18 @@ class QuakeProvider with ChangeNotifier {
   void _syncStationHistoryRecording() {
     final active = _unifiedEvents.any((e) => e.isEew && !e.isReplay);
     if (active && _stationHistoryRecording) {
-      if (_eewHistory.any((g) => !g.hasStationHistory && _unifiedEvents.any(
-          (e) => !e.isReplay && e.isEew && e.source == g.latest.source &&
-          (e.eventId == g.eventId || _isSameUnifiedEewEvent(e, g.latest))))) {
+      if (_eewHistory.any(
+        (g) =>
+            !g.hasStationHistory &&
+            _unifiedEvents.any(
+              (e) =>
+                  !e.isReplay &&
+                  e.isEew &&
+                  e.source == g.latest.source &&
+                  (e.eventId == g.eventId ||
+                      _isSameUnifiedEewEvent(e, g.latest)),
+            ),
+      )) {
         for (final frame in StationHistoryCapture.instance.latest) {
           _recordStationHistoryFrame(frame);
         }
@@ -417,19 +431,33 @@ class QuakeProvider with ChangeNotifier {
     var changed = false;
     for (var i = 0; i < _eewHistory.length; i++) {
       final group = _eewHistory[i];
-      if (!_unifiedEvents.any((e) => e.isEew && !e.isReplay &&
-          e.source == group.latest.source &&
-          (e.eventId == group.eventId || _isSameUnifiedEewEvent(e, group.latest)))) {
+      if (!_unifiedEvents.any(
+        (e) =>
+            e.isEew &&
+            !e.isReplay &&
+            e.source == group.latest.source &&
+            (e.eventId == group.eventId ||
+                _isSameUnifiedEewEvent(e, group.latest)),
+      )) {
         continue;
       }
-      if (frame.receivedAt.isBefore(group.firstArrivedAt.toUtc().subtract(const Duration(minutes: 3))) ||
-          (group.storedStations?.frameKeys.contains('${_editionEewHistoryPreferenceKey}_station_${frame.kind}_${frame.receivedAt.microsecondsSinceEpoch}') ?? false) ||
-          group.stationFrames.any((saved) => saved.kind == frame.kind && saved.receivedAt == frame.receivedAt)) {
+      if (frame.receivedAt.isBefore(
+            group.firstArrivedAt.toUtc().subtract(const Duration(minutes: 3)),
+          ) ||
+          (group.storedStations?.frameKeys.contains(
+                '${_editionEewHistoryPreferenceKey}_station_${frame.kind}_${frame.receivedAt.microsecondsSinceEpoch}',
+              ) ??
+              false) ||
+          group.stationFrames.any(
+            (saved) =>
+                saved.kind == frame.kind &&
+                saved.receivedAt == frame.receivedAt,
+          )) {
         continue;
       }
-      _eewHistory[i] = group.copyWith(stationFrames: List.unmodifiable([
-        ...group.stationFrames, frame,
-      ]));
+      _eewHistory[i] = group.copyWith(
+        stationFrames: List.unmodifiable([...group.stationFrames, frame]),
+      );
       changed = true;
     }
     if (changed && _eewHistoryPersistTimer == null) {
@@ -439,6 +467,7 @@ class QuakeProvider with ChangeNotifier {
       });
     }
   }
+
   Timer? _eewHistoryPersistTimer;
   Future<void> _eewHistoryPersistChain = Future<void>.value();
 
@@ -585,6 +614,7 @@ class QuakeProvider with ChangeNotifier {
   /// key -> 最近一次看到的时间，超过 24 小时会清理，避免启动时旧/新数据混乱。
   final Map<String, DateTime> _seenUsgsInfoBodyKeys = {};
   static const String _seenUsgsInfoBodyKeysKey = 'seen_usgs_info_body_keys';
+  static const int _maxSeenInfoBodyKeys = 1000;
 
   /// EMSC 信息事件主体内容去重缓存。
   /// key -> 最近一次看到的时间，超过 24 小时会清理，避免启动时旧/新数据混乱。
@@ -1676,14 +1706,13 @@ class QuakeProvider with ChangeNotifier {
           : EewHistoryRetention.defaultMaxPerSource,
       keepForever: prefs.getBool(EewHistoryRetention.keepForeverKey) ?? false,
     );
-    final restored = (await _eewHistoryStore
-        .restoreForStartup(
+    final restored =
+        (await _eewHistoryStore.restoreForStartup(
           prefs,
           legacyFallbackKey: AppEdition.isPublic
               ? _eewHistoryPreferenceKey
               : null,
-        ))
-        .where(
+        )).where(
           (group) => group.reports.every(
             (report) => AppEdition.allowsUnifiedSource(report.source),
           ),
@@ -3069,6 +3098,7 @@ class QuakeProvider with ChangeNotifier {
       event.magnitude.toStringAsFixed(3),
       event.maxIntensity,
       QuakeTime.unifiedInstantUtc(event).toIso8601String(),
+      event.warnArea,
     ].join('|');
   }
 
@@ -3281,11 +3311,7 @@ class QuakeProvider with ChangeNotifier {
   }
 
   Future<void> _persistSeenUsgsInfoBodyKeys() async {
-    final now = DateTime.now().toUtc();
-    const ttl = Duration(hours: 24);
-    _seenUsgsInfoBodyKeys.removeWhere(
-      (_, seenAt) => now.difference(seenAt) > ttl,
-    );
+    _pruneSeenInfoBodyKeys(_seenUsgsInfoBodyKeys);
     final prefs = await SharedPreferences.getInstance();
     final rows = _seenUsgsInfoBodyKeys.entries
         .map((entry) => '${entry.key}|${entry.value.millisecondsSinceEpoch}')
@@ -3314,11 +3340,7 @@ class QuakeProvider with ChangeNotifier {
   }
 
   Future<void> _persistSeenEmscInfoBodyKeys() async {
-    final now = DateTime.now().toUtc();
-    const ttl = Duration(hours: 24);
-    _seenEmscInfoBodyKeys.removeWhere(
-      (_, seenAt) => now.difference(seenAt) > ttl,
-    );
+    _pruneSeenInfoBodyKeys(_seenEmscInfoBodyKeys);
     final prefs = await SharedPreferences.getInstance();
     final rows = _seenEmscInfoBodyKeys.entries
         .map((entry) => '${entry.key}|${entry.value.millisecondsSinceEpoch}')
@@ -3347,11 +3369,7 @@ class QuakeProvider with ChangeNotifier {
   }
 
   Future<void> _persistSeenCwaInfoBodyKeys() async {
-    final now = DateTime.now().toUtc();
-    const ttl = Duration(hours: 24);
-    _seenCwaInfoBodyKeys.removeWhere(
-      (_, seenAt) => now.difference(seenAt) > ttl,
-    );
+    _pruneSeenInfoBodyKeys(_seenCwaInfoBodyKeys);
     final prefs = await SharedPreferences.getInstance();
     final rows = _seenCwaInfoBodyKeys.entries
         .map((entry) => '${entry.key}|${entry.value.millisecondsSinceEpoch}')
@@ -3371,6 +3389,20 @@ class QuakeProvider with ChangeNotifier {
         _seenNoUpdateInfoEvents.length - _maxSeenNoUpdateInfoEvents;
     for (var i = 0; i < removeCount; i++) {
       _seenNoUpdateInfoEvents.remove(sorted[i].key);
+    }
+  }
+
+  void _pruneSeenInfoBodyKeys(Map<String, DateTime> cache) {
+    final now = DateTime.now().toUtc();
+    cache.removeWhere(
+      (_, seenAt) => now.difference(seenAt.toUtc()) > const Duration(hours: 24),
+    );
+    if (cache.length <= _maxSeenInfoBodyKeys) return;
+    final oldest = cache.entries.toList()
+      ..sort((a, b) => a.value.compareTo(b.value));
+    final removeCount = cache.length - _maxSeenInfoBodyKeys;
+    for (var i = 0; i < removeCount; i++) {
+      cache.remove(oldest[i].key);
     }
   }
 
@@ -3415,6 +3447,7 @@ class QuakeProvider with ChangeNotifier {
     UnifiedQuakeData oldEvent,
     UnifiedQuakeData event,
   ) {
+    if (CwaReportIntensities.isObservedRevision(oldEvent, event)) return true;
     if (event.origin == WhewsService.adapterOrigin) return false;
     if (!_isNoUpdateTimeFanInfoSource(event.source)) return false;
     if (_noUpdateTimeFanInfoSourceKey(oldEvent.source) !=
@@ -3815,7 +3848,9 @@ class QuakeProvider with ChangeNotifier {
           final isWhewsSameReportBodyCorrection =
               _isWhewsSameReportBodyCorrection(oldEvent, event);
           suppressInfoActions =
-              isUsgsSameReportBodyCorrection || isWhewsSameReportBodyCorrection;
+              isUsgsSameReportBodyCorrection ||
+              isWhewsSameReportBodyCorrection ||
+              CwaReportIntensities.isObservedRevision(oldEvent, event);
           if (!isNewerReport &&
               !isNewerJmaLpgmReport &&
               !isNewerOrigin &&
@@ -3846,7 +3881,8 @@ class QuakeProvider with ChangeNotifier {
       final isNewInfoEvent =
           !event.isEew &&
           _unifiedCanonicalEventId(oldEvent) != _unifiedCanonicalEventId(event);
-      if (!event.isEew && !isNewInfoEvent &&
+      if (!event.isEew &&
+          !isNewInfoEvent &&
           internationalCatalogSource(event.source) != null) {
         // Parameter revisions update the card, not the alert or its lifetime.
         suppressInfoActions = true;
@@ -4744,8 +4780,11 @@ class QuakeProvider with ChangeNotifier {
       for (var i = 0; i < _eewHistory.length; i++) {
         final group = _eewHistory[i];
         if (group.latest.source == event.source &&
-            (group.eventId == event.eventId || _isSameUnifiedEewEvent(group.latest, event))) {
-          _eewHistory[i] = group.copyWith(captureEndedAt: DateTime.now().toUtc());
+            (group.eventId == event.eventId ||
+                _isSameUnifiedEewEvent(group.latest, event))) {
+          _eewHistory[i] = group.copyWith(
+            captureEndedAt: DateTime.now().toUtc(),
+          );
           _schedulePersistEewHistory();
         }
       }

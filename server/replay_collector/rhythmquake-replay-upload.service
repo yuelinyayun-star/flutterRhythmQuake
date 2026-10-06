@@ -1,0 +1,16 @@
+[Unit]
+Description=Upload RhythmQuake replays to the TGFS Telegram cloud folder
+After=network-online.target filebrowser-quantum.service
+
+[Service]
+Type=oneshot
+User=filebrowser
+Group=filebrowser
+ExecStart=/usr/bin/python3 /opt/rhythmquake-collector/upload_telegram.py
+TimeoutStartSec=2h
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/rhythmquake-collector/outbox

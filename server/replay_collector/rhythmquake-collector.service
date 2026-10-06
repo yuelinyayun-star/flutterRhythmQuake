@@ -1,0 +1,36 @@
+[Unit]
+Description=RhythmQuake independent replay collector (no GQ, ICL or SeedLink)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/rhythmquake-collector/jian-token
+
+[Service]
+Type=simple
+User=filebrowser
+Group=filebrowser
+EnvironmentFile=/etc/rhythmquake-collector/collector.env
+Environment=XDG_DATA_HOME=/var/lib/rhythmquake-collector/runtime
+Environment=LIBGL_ALWAYS_SOFTWARE=1
+Environment=NO_AT_BRIDGE=1
+Environment=GSETTINGS_BACKEND=memory
+WorkingDirectory=/opt/rhythmquake-collector/bundle
+ExecStart=/usr/bin/xvfb-run -a -s "-screen 0 640x480x24" ./flutterrhythmquake
+Restart=on-failure
+RestartSec=60
+CPUAccounting=true
+MemoryAccounting=true
+CPUQuota=100%
+MemoryHigh=640M
+MemoryMax=896M
+OOMPolicy=stop
+TimeoutStopSec=120
+UMask=0077
+StateDirectory=rhythmquake-collector
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/rhythmquake-collector
+
+[Install]
+WantedBy=multi-user.target

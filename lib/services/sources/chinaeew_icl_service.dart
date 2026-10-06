@@ -19,6 +19,7 @@ class ChinaEewIclService extends BaseSourceService {
     'https://mobile-new.chinaeew.cn/v1/earlywarnings?start_at=&updates=',
   );
   static const pollInterval = Duration(seconds: 30);
+  static const _seenReportLimit = 200;
 
   http.Client client = http.Client();
   final _stateController = StreamController<void>.broadcast();
@@ -105,6 +106,11 @@ class ChinaEewIclService extends BaseSourceService {
         final previous = _seenReports[id];
         if (previous != null && revision <= previous) continue;
         _seenReports[id] = revision;
+        if (_seenReports.length > _seenReportLimit) {
+          final removeCount = _seenReports.length - _seenReportLimit;
+          final oldest = _seenReports.keys.take(removeCount).toList();
+          _seenReports.removeWhere((key, _) => oldest.contains(key));
+        }
         if (baseline || !_isRecent(summary['updateAt'])) continue;
         final body = await _matchingDetail(id, revision) ?? summary;
         if (!_enabled || generation != _generation) return;

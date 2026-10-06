@@ -17,6 +17,9 @@ class NowQuakeCencIntensityService extends BaseSourceService {
   static const String _baseUrl = 'https://api-cencint-public.nowquake.cn';
   static const String _socketUrl =
       'wss://api-cencint-public.nowquake.cn/websocket';
+  static const int _summaryCacheLimit = 20;
+  static const int _detailCacheLimit = 16;
+  static const Duration _detailCacheTtl = Duration(days: 1);
 
   @override
   String get name => 'NowQuake';
@@ -133,15 +136,15 @@ class NowQuakeCencIntensityService extends BaseSourceService {
         _log('忽略缺少事件ID或有效测站坐标的推送');
         return;
       }
-      _detailCache[detail.reportId] = _NowQuakeDetailCacheEntry(
+      _putDetail(detail.reportId, _NowQuakeDetailCacheEntry(
         detail,
         DateTime.now(),
-      );
+      ));
       onCencIrData?.call(detail);
       final infoEvent = unifiedInfoFromJson(data);
       if (infoEvent != null) emitUnified(infoEvent);
       final summary = summaryFromJson(data);
-      _summariesById[detail.reportId] = summary;
+      _putSummary(detail.reportId, summary);
       _listRequestSucceeded = true;
       _emitSummaryList();
       onListAvailabilityChanged?.call();
@@ -186,9 +189,10 @@ class NowQuakeCencIntensityService extends BaseSourceService {
           items.add(summaryFromJson(Map<String, dynamic>.from(item)));
         }
       }
-      _summariesById.addEntries(
-        items.map((item) => MapEntry(item['id']?.toString() ?? '', item)),
-      );
+      for (final item in items) {
+        final id = item['id']?.toString() ?? '';
+        if (id.isNotEmpty) _putSummary(id, item);
+      }
       _summariesById.remove('');
       _lastListFetchAt = DateTime.now();
       _completeListRequest(success: true);
@@ -215,9 +219,10 @@ class NowQuakeCencIntensityService extends BaseSourceService {
     if (normalizedId.isEmpty || _manualClose) return null;
     final cached = _detailCache[normalizedId];
     if (cached != null &&
-        DateTime.now().difference(cached.fetchedAt) < const Duration(days: 1)) {
+        DateTime.now().difference(cached.fetchedAt) < _detailCacheTtl) {
       return cached.data;
     }
+    if (cached != null) _detailCache.remove(normalizedId);
     try {
       final response = await http
           .get(Uri.parse('$_baseUrl/event/$normalizedId'))
@@ -233,10 +238,10 @@ class NowQuakeCencIntensityService extends BaseSourceService {
         Map<String, dynamic>.from(decoded),
       );
       if (detail.reportId.isEmpty) return null;
-      _detailCache[detail.reportId] = _NowQuakeDetailCacheEntry(
+      _putDetail(detail.reportId, _NowQuakeDetailCacheEntry(
         detail,
         DateTime.now(),
-      );
+      ));
       return detail;
     } catch (error) {
       _log('事件详情请求异常: id=$normalizedId $error');
@@ -321,6 +326,34 @@ class NowQuakeCencIntensityService extends BaseSourceService {
           );
     onCencIrListUpdated?.call(items);
   }
+
+  void _putSummary(String id, Map<String, dynamic> summary) {
+    if (id.isEmpty) return;
+    _summariesById.remove(id);
+    _summariesById[id] = summary;
+    while (_summariesById.length > _summaryCacheLimit) {
+      _summariesById.remove(_summariesById.keys.first);
+    }
+  }
+
+  void _putDetail(String id, _NowQuakeDetailCacheEntry entry) {
+    if (id.isEmpty) return;
+    final now = entry.fetchedAt;
+    _detailCache.removeWhere(
+      (_, value) => now.difference(value.fetchedAt) >= _detailCacheTtl,
+    );
+    _detailCache.remove(id);
+    _detailCache[id] = entry;
+    while (_detailCache.length > _detailCacheLimit) {
+      _detailCache.remove(_detailCache.keys.first);
+    }
+  }
+
+  @visibleForTesting
+  int get summaryCacheSize => _summariesById.length;
+
+  @visibleForTesting
+  int get detailCacheSize => _detailCache.length;
 
   void _startWatchdog(int serial) {
     _watchdogTimer?.cancel();

@@ -12,6 +12,8 @@ import '../models/jian_sources.dart';
 import '../utils/catalog_location.dart';
 import '../models/volcano_event_data.dart';
 import '../core/intensity_calculator.dart';
+import '../core/cwa_intensity_prediction.dart';
+import '../core/cwa_report_intensities.dart';
 import '../core/utils/jma_seis_int_loc.dart';
 import '../core/utils/quake_time.dart';
 import '../utils/kma_location.dart';
@@ -38,8 +40,11 @@ class QuakeEventAdapter {
     final lng = _catalogNumber(raw['longitude']);
     final magnitude = _catalogNumber(raw['magnitude']);
     final originTime = _parseTime(raw['shockTime'] ?? raw['startAt'], 8);
-    if (id == null || revision == null || revision < 1 ||
-        !hasCatalogCoordinates(lat, lng) || magnitude == null ||
+    if (id == null ||
+        revision == null ||
+        revision < 1 ||
+        !hasCatalogCoordinates(lat, lng) ||
+        magnitude == null ||
         originTime == null) {
       return null;
     }
@@ -58,14 +63,14 @@ class QuakeEventAdapter {
       isEew: true,
       timeZone: 8,
       titleText: '成都高新减灾研究所地震预警',
-      reportNumText: intensity.estimated
-          ? '第$revision报（烈度估算）'
-          : '第$revision报',
+      reportNumText: intensity.estimated ? '第$revision报（烈度估算）' : '第$revision报',
       useShindo: false,
       maxIntensity: intensityText,
       className: _setClassName(intensityText, false, false),
-      hypocenter: _stringValue(raw['placeName']) ??
-          _stringValue(raw['epicenter']) ?? '',
+      hypocenter:
+          _stringValue(raw['placeName']) ??
+          _stringValue(raw['epicenter']) ??
+          '',
       originTime: originTime,
       reportTime: _parseTime(raw['updateTime'] ?? raw['updateAt'], 8),
       magnitude: magnitude,
@@ -107,8 +112,12 @@ class QuakeEventAdapter {
     final lng = _catalogNumber(raw['longitude']);
     final magnitude = _catalogNumber(raw['magnitude']);
     final originTime = _parseTime(raw['shockTime'] ?? raw['startAt'], 8);
-    if (id == null || id.isEmpty || revision == null || revision < 1 ||
-        !hasCatalogCoordinates(lat, lng) || magnitude == null ||
+    if (id == null ||
+        id.isEmpty ||
+        revision == null ||
+        revision < 1 ||
+        !hasCatalogCoordinates(lat, lng) ||
+        magnitude == null ||
         originTime == null) {
       return null;
     }
@@ -120,8 +129,8 @@ class QuakeEventAdapter {
       allowEstimate: type != 'all',
     );
     final intensityText = intensity.value?.toStringAsFixed(1) ?? '-';
-    final location = _stringValue(raw['placeName']) ??
-        _stringValue(raw['epicenter']) ?? '';
+    final location =
+        _stringValue(raw['placeName']) ?? _stringValue(raw['epicenter']) ?? '';
     final reportTime = _parseTime(raw['updateTime'] ?? raw['updateAt'], 8);
     return UnifiedQuakeData(
       source: 'iclEew',
@@ -130,9 +139,7 @@ class QuakeEventAdapter {
       isEew: true,
       timeZone: 8,
       titleText: '成都高新减灾研究所地震预警',
-      reportNumText: intensity.estimated
-          ? '第$revision报（烈度估算）'
-          : '第$revision报',
+      reportNumText: intensity.estimated ? '第$revision报（烈度估算）' : '第$revision报',
       useShindo: false,
       maxIntensity: intensityText,
       className: _setClassName(intensityText, false, false),
@@ -288,7 +295,13 @@ class QuakeEventAdapter {
       isFinal: raw['isFinal'] == true,
       isCanceled: canceled,
       isAssumption: raw['isPLUM'] == true,
-      warnArea: canceled || areas.isEmpty ? '' : jsonEncode(areas),
+      warnArea: canceled
+          ? ''
+          : type == 'cwa'
+          ? CwaReportIntensities.toWarnArea(raw)
+          : areas.isEmpty
+          ? ''
+          : jsonEncode(areas),
       apiTypeLabel: 'Jian Project',
       isJmaLpgm: type == 'jma' && raw['telegram'] == 'VXSE62',
       isHistory: isHistory,
@@ -577,9 +590,10 @@ class QuakeEventAdapter {
       case 'va':
         return _whewsVolcanoInfo(data);
       default:
-        return _whewsGenericInfo(sourceKey, data).copyWith(
-          sourcePayload: Map<String, dynamic>.unmodifiable(raw),
-        );
+        return _whewsGenericInfo(
+          sourceKey,
+          data,
+        ).copyWith(sourcePayload: Map<String, dynamic>.unmodifiable(raw));
     }
   }
 
@@ -936,18 +950,22 @@ class QuakeEventAdapter {
       );
     }
 
-    final depth = _catalogNumber(data['depth']) ?? _catalogNumber(data['depthKm']) ?? -1;
-    final magnitude = _catalogNumber(data['magnitude']) ?? _catalogNumber(data['mag']) ?? -1;
+    final depth =
+        _catalogNumber(data['depth']) ?? _catalogNumber(data['depthKm']) ?? -1;
+    final magnitude =
+        _catalogNumber(data['magnitude']) ?? _catalogNumber(data['mag']) ?? -1;
     final reportedIntensity = parseReportedIntensity(data['maxIntensity']);
     final maxIntensity = reportedIntensity != null
         ? (reportedIntensity == reportedIntensity.roundToDouble()
-              ? reportedIntensity.toInt().toString() : reportedIntensity.toString())
+              ? reportedIntensity.toInt().toString()
+              : reportedIntensity.toString())
         : _whewsFallbackIntensity(magnitude, depth);
     final lat = _catalogNumber(data['latitude']) ?? _catalogNumber(data['lat']);
-    final lng = _catalogNumber(data['longitude']) ?? _catalogNumber(data['lng']);
+    final lng =
+        _catalogNumber(data['longitude']) ?? _catalogNumber(data['lng']);
     final hasLocation = hasCatalogCoordinates(lat, lng);
-    final location = _stringValue(data['location']) ??
-        _stringValue(data['placeName']) ?? '';
+    final location =
+        _stringValue(data['location']) ?? _stringValue(data['placeName']) ?? '';
     return UnifiedQuakeData(
       source: 'whews_$source',
       origin: _originWhews,
@@ -960,9 +978,12 @@ class QuakeEventAdapter {
       maxIntensity: maxIntensity,
       className: _setClassName(maxIntensity, false, false),
       hypocenter: catalogDisplayLocation(location, lat, lng),
-      originTime: _parseTime(data['shockTime'], 8) ?? _parseTime(data['originTime'], 8),
-      reportTime: _parseTime(data['updateTime'], 8) ??
-          _parseTime(data['createTime'], 8) ?? _parseTime(data['reportTime'], 8),
+      originTime:
+          _parseTime(data['shockTime'], 8) ?? _parseTime(data['originTime'], 8),
+      reportTime:
+          _parseTime(data['updateTime'], 8) ??
+          _parseTime(data['createTime'], 8) ??
+          _parseTime(data['reportTime'], 8),
       magnitude: magnitude,
       depth: depth,
       depthText: _formatDepthText(depth, 8),
@@ -1059,9 +1080,9 @@ class QuakeEventAdapter {
   static bool _isUnadaptedSourceKey(String source) {
     return source.startsWith('unadapted_') ||
         (source.startsWith('whews_') &&
-            !whewsCatalogSources.containsKey(source) && source != 'whews_va');
+            !whewsCatalogSources.containsKey(source) &&
+            source != 'whews_va');
   }
-
 
   // ═══════════════════════════════════════════════════════════════════════════
   // EEW 预警源
@@ -1240,13 +1261,20 @@ class QuakeEventAdapter {
         _parseDouble(data['Depth'] ?? data['depth']) ?? -1,
         8,
       ),
-      lat: _parseDouble(data['Latitude'] ?? data['latitude']) ?? 0,
-      lng: _parseDouble(data['Longitude'] ?? data['longitude']) ?? 0,
+      lat: _parseDouble(data['Latitude'] ?? data['latitude']),
+      lng: _parseDouble(data['Longitude'] ?? data['longitude']),
       isWarn: isWarn,
       isFinal: data['isFinal'] == true || data['final'] == true,
       isCanceled: cancelTitle,
       isAssumption: false,
+      warnArea: cancelTitle ? '' : _cwaWarnAreaJson(data['warnArea']),
     );
+  }
+
+  static String _cwaWarnAreaJson(Object? value) {
+    if (value is String) return value;
+    if (value is List) return jsonEncode(value);
+    return '';
   }
 
   static UnifiedQuakeData? _ceaEew(
@@ -1472,7 +1500,8 @@ class QuakeEventAdapter {
           : data['maxIntensity'],
     );
     final isWarn = intensityRaw != null && intensityRaw >= 6.5;
-    final maxIntensity = intensityRaw != null &&
+    final maxIntensity =
+        intensityRaw != null &&
             whewsIntensity?.isNotEmpty == true &&
             parseReportedIntensity(whewsIntensity) == intensityRaw
         ? whewsIntensity!
@@ -1823,14 +1852,49 @@ class QuakeEventAdapter {
     Map<String, dynamic> data,
     int origin,
   ) {
-    final shindoText =
-        (data['jmaShindo'] ?? data['maxIntensity']?.toString()) as String?;
+    final expTech = origin == 0 && data.containsKey('time');
+    final observedRanks = CwaReportIntensities.countyRanks(data);
+    final reportRank = expTech
+        ? CwaReportIntensities.encodedRank(data['int'])
+        : null;
+    final maximumObserved = observedRanks.isEmpty
+        ? null
+        : observedRanks.values.reduce((a, b) => a > b ? a : b);
+    final maximumLabel = maximumObserved == null
+        ? null
+        : CwaIntensityPrediction.labels[maximumObserved];
+    final shindoText = expTech
+        ? (reportRank ?? maximumObserved) == null
+              ? null
+              : CwaIntensityPrediction.labels[(reportRank ?? maximumObserved)!]
+        : (data['jmaShindo'] ?? data['maxIntensity'])?.toString() ??
+              maximumLabel;
+    final originTime = _parseTime(
+      expTech ? data['time'] : data['originTime'],
+      8,
+    );
+    if (expTech &&
+        (data['id'] is! String ||
+            (data['id'] as String).isEmpty ||
+            originTime == null ||
+            [
+              'mag',
+              'lat',
+              'lon',
+              'depth',
+            ].any((key) => _catalogNumber(data[key]) == null))) {
+      return null;
+    }
+    final rawLocation = '${data['location'] ?? data['loc'] ?? ''}';
+    final location = expTech
+        ? RegExp(r'\(位於(.+)\)').firstMatch(rawLocation)?.group(1) ?? rawLocation
+        : rawLocation;
     final useShindo = true;
 
     return UnifiedQuakeData(
       source: source,
       origin: origin,
-      eventId: '${data['eventId'] ?? ''}',
+      eventId: '${data['eventId'] ?? data['id'] ?? ''}',
       isEew: false,
       timeZone: 8,
       titleText: '中央氣象署 地震報告',
@@ -1838,17 +1902,18 @@ class QuakeEventAdapter {
       useShindo: useShindo,
       maxIntensity: _normalizeJmaShindo(shindoText),
       className: _setClassName(shindoText, useShindo, false),
-      hypocenter: '${data['location'] ?? ''}',
-      originTime: _parseTime(data['originTime'] as String?, 8),
+      hypocenter: location,
+      originTime: originTime,
       // WHEWS 提供真实 updateTime；旧来源继续保留原有 +5 分钟兼容逻辑。
       reportTime: origin == _originWhews
           ? _parseTime(data['reportTime'] ?? data['updateTime'], 8)
-          : _addMinutes(_parseTime(data['originTime'] as String?, 8), 5),
-      magnitude: _parseDouble(data['magnitude']) ?? -1,
+          : _addMinutes(originTime, 5),
+      magnitude: _parseDouble(data['magnitude'] ?? data['mag']) ?? -1,
       depth: _parseDouble(data['depth']) ?? -1,
       depthText: _formatDepthText(_parseDouble(data['depth']) ?? -1, 8),
-      lat: _parseDouble(data['latitude']) ?? 0,
-      lng: _parseDouble(data['longitude']) ?? 0,
+      lat: _parseDouble(data['latitude'] ?? data['lat']) ?? 0,
+      lng: _parseDouble(data['longitude'] ?? data['lon']) ?? 0,
+      warnArea: CwaReportIntensities.toWarnArea(data),
     );
   }
 
@@ -2869,8 +2934,12 @@ class QuakeEventAdapter {
 
   static double? parseReportedIntensity(dynamic value) {
     final intensity = _parseIntensityValue(value);
-    return intensity != null && intensity.isFinite &&
-        intensity >= 0 && intensity <= 12 ? intensity : null;
+    return intensity != null &&
+            intensity.isFinite &&
+            intensity >= 0 &&
+            intensity <= 12
+        ? intensity
+        : null;
   }
 
   // Only the new WHEWS EEW contract uses these aliases. Keep FAN/Wolfx intact.
@@ -2908,8 +2977,11 @@ class QuakeEventAdapter {
     }
     final issue = body['issue'];
     return _parseTime(
-      body['ReportTime'] ?? body['reportTime'] ?? body['createTime'] ??
-          body['updateTime'] ?? (issue is Map ? issue['time'] : null),
+      body['ReportTime'] ??
+          body['reportTime'] ??
+          body['createTime'] ??
+          body['updateTime'] ??
+          (issue is Map ? issue['time'] : null),
       timeZone,
     );
   }

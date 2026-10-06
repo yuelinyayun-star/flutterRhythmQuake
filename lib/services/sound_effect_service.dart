@@ -63,6 +63,9 @@ class SoundEffectService {
     '60s': 'sounds/general/60s.mp3',
   };
 
+  static const _cooldownEntryTtl = Duration(hours: 1);
+  static const _cooldownEntryLimit = 64;
+
   final Map<String, DateTime> _lastPlayedAt = {};
   final Map<String, Future<_PreparedSound>> _pools = {};
   final Set<_PreparedSound> _detectionPools = {};
@@ -143,6 +146,7 @@ class SoundEffectService {
     if (cooldown > Duration.zero) {
       final last = _lastPlayedAt[key];
       final now = DateTime.now();
+      _pruneCooldownKeys(now);
       if (last != null && now.difference(last) < cooldown) return;
       _lastPlayedAt[key] = now;
     }
@@ -156,6 +160,22 @@ class SoundEffectService {
       debugPrint('SoundEffect playback failed ($key): $error');
     }
   }
+
+  void _pruneCooldownKeys(DateTime now) {
+    _lastPlayedAt.removeWhere(
+      (_, timestamp) => now.difference(timestamp) >= _cooldownEntryTtl,
+    );
+    if (_lastPlayedAt.length <= _cooldownEntryLimit) return;
+    final oldest = _lastPlayedAt.entries.toList()
+      ..sort((a, b) => a.value.compareTo(b.value));
+    final removeCount = _lastPlayedAt.length - _cooldownEntryLimit;
+    for (var i = 0; i < removeCount; i++) {
+      _lastPlayedAt.remove(oldest[i].key);
+    }
+  }
+
+  @visibleForTesting
+  int get cooldownCacheSize => _lastPlayedAt.length;
 
   Future<void> playShindo(
     int shindo, {

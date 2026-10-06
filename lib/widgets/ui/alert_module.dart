@@ -11,6 +11,8 @@ import '../../models/unified_quake_data.dart';
 import '../../models/unified_event_presentation.dart';
 import '../../models/weather_alarm.dart';
 import '../../core/intensity_calculator.dart';
+import '../../core/cwa_intensity_prediction.dart';
+import '../map/ka_shindo_marker_style.dart';
 import '../../core/source_estimation/source_estimate_quality.dart';
 import '../../core/source_estimation/source_estimation_models.dart';
 import '../../core/source_estimation/source_estimation_presentation.dart';
@@ -1115,6 +1117,17 @@ class _AlertModuleState extends State<AlertModule> {
     }
 
     final presentation = UnifiedEventPresentation.fromEvent(event);
+    final cwaBadge = cwaEewBadgeIntensity(event);
+    if (cwaBadge != null) {
+      return _buildUnifiedListStyleBadge(
+        color: KaShindoMarkerStyle.colorForLevel(
+          CwaIntensityPrediction.markerLevels[cwaBadge.rank],
+        ),
+        value: CwaIntensityPrediction.labels[cwaBadge.rank],
+        label: cwaBadge.estimated ? '预估震度' : presentation.intensityLabel,
+        useShindo: true,
+      );
+    }
     final estimatedIntensity = estimatedNewApiEewBadgeIntensity(event);
     final reportedZero = event.isEew &&
         !event.useShindo &&

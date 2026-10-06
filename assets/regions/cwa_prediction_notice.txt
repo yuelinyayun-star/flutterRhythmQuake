@@ -1,0 +1,13 @@
+CWA prediction township reference data
+
+Source: ExpTechTW/TREM-Lite
+https://github.com/ExpTechTW/TREM-Lite/blob/274bafc2d16124f70583fd481ce34e35b8820e2b/legacy/src/resource/data/region.json
+License: GNU Affero General Public License version 3 (TREM-LICENSE.txt).
+
+The township names, reference coordinates, areas and available site factors in
+lib/core/cwa_prediction_towns.dart are a mechanical conversion of this public
+dataset. Missing factors remain absent in the data. The unamplified model uses
+a neutral factor of 1 for those reference points.
+
+The application uses its existing Taiwan county boundaries and CWA palette.
+No third-party proprietary client boundaries, colors or source code are bundled.

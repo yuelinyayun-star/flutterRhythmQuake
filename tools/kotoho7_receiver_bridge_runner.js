@@ -214,7 +214,11 @@ function applyDownloadedCloudValues(thread, values, { runDetection = true, runHy
 
 function shindoToScratchLevelIndex(thread, shindo) {
   if (shindo == null || Number.isNaN(Number(shindo))) return 0;
-  const table = listValue(thread, 'd #震度換算30段階').map(Number);
+  // Later segments contain colors and display classes, not intensity levels.
+  const table = listValue(thread, 'd #震度換算30段階').slice(0, 30).map(Number);
+  if (table.length !== 30 || table.some(value => !Number.isFinite(value))) {
+    throw new Error('Original 30-level intensity table is invalid');
+  }
   let bestIndex = 1;
   let bestDistance = Infinity;
   for (let i = 0; i < table.length; i++) {

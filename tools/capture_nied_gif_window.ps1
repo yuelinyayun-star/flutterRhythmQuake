@@ -18,6 +18,8 @@ param(
     [string]$SensorSelectionPolicy = "surface_jma_s_primary_v1",
     [string]$Layers = "jma_s,jma_b,acmap_s,acmap_b,vcmap_s,vcmap_b,dcmap_s,dcmap_b",
     [string]$OutputRoot = "tmp/captures",
+    [ValidateSet("https://smi.lmoniexp.bosai.go.jp", "http://www.kmoni.bosai.go.jp")]
+    [string]$BaseUrl = "https://smi.lmoniexp.bosai.go.jp",
     [switch]$ValidateOnly
 )
 
@@ -99,7 +101,7 @@ try {
         foreach ($layer in $layerList) {
             $fileName = "$stamp.$layer.gif"
             $filePath = Join-Path $outputDirectory $fileName
-            $url = "https://smi.lmoniexp.bosai.go.jp/data/map_img/RealTimeImg/$layer/$date/$fileName"
+            $url = "$BaseUrl/data/map_img/RealTimeImg/$layer/$date/$fileName"
             $retrievalStartedAt = Get-Date
             try {
                 $cacheStatus = if (Test-Path -LiteralPath $filePath) { "existing" } else { "downloaded" }

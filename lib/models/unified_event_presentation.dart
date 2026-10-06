@@ -1,6 +1,75 @@
 import '../core/intensity_calculator.dart';
+import '../core/cwa_intensity_prediction.dart';
+import '../core/cwa_report_intensities.dart';
 import '../core/utils/quake_time.dart';
 import 'unified_quake_data.dart';
+
+CwaIntensityForecast? cwaForecastForEvent(UnifiedQuakeData event) {
+  final raw = event.sourcePayload;
+  if (!(event.source == 'cwaEew' || event.source == 'cwaEqlist') ||
+      event.isCanceled ||
+      event.isAssumption ||
+      raw?['isCancel'] == true ||
+      raw?['cancel'] == true ||
+      raw?['isTraining'] == true ||
+      event.lat == null ||
+      event.lng == null) {
+    return null;
+  }
+  // Missing correction means the explicitly unadjusted local model, not an
+  // inferred upstream correction. A supplied invalid correction is rejected.
+  final hasAdjustment = raw?.containsKey('pgaAdj') == true;
+  final adjustment = hasAdjustment
+      ? double.tryParse(raw!['pgaAdj'].toString())
+      : 1.0;
+  if (adjustment == null) return null;
+  return CwaIntensityPrediction.predict(
+    magnitude: event.magnitude,
+    depth: event.depth,
+    lat: event.lat!,
+    lng: event.lng!,
+    adjustment: adjustment,
+    warnAreaJson: event.warnArea,
+  );
+}
+
+/// Only structured CWA areas count as observed map data.
+bool cwaObservedFillAvailable(UnifiedQuakeData event) {
+  if (event.source != 'cwaEqlist' || event.isEew || event.isCanceled) {
+    return false;
+  }
+  return CwaReportIntensities.fromWarnArea(event.warnArea).isNotEmpty;
+}
+
+/// Only the newly connected CWA badge paths use local missing-value estimates.
+({int rank, bool estimated})? cwaEewBadgeIntensity(UnifiedQuakeData event) {
+  if (event.source != 'cwaEew' ||
+      !event.isEew ||
+      event.isCanceled ||
+      event.isAssumption ||
+      event.sourcePayload?['isCancel'] == true ||
+      event.sourcePayload?['cancel'] == true ||
+      event.sourcePayload?['isTraining'] == true ||
+      !const {'FAN', 'Jian Project', 'WHEWS'}.contains(event.apiTypeLabel)) {
+    return null;
+  }
+  final reported = CwaIntensityPrediction.parseRank(event.maxIntensity);
+  if (reported != null) return (rank: reported, estimated: false);
+  if (!const {
+    '',
+    '-',
+    '--',
+    '不明',
+    '未知',
+    'unknown',
+  }.contains(event.maxIntensity.trim())) {
+    return null;
+  }
+  final forecast = cwaForecastForEvent(event);
+  return forecast == null
+      ? null
+      : (rank: forecast.maximumRank, estimated: true);
+}
 
 /// New API badges reuse FAN's CSIS estimate without replacing source values.
 int? estimatedNewApiEewBadgeIntensity(UnifiedQuakeData event) {

@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+collector.env
+jian-token
+telegram.conf
+telegram.conf.tmp

@@ -23,6 +23,7 @@
 | [FAN Studio API 文档](fan_studio_api/) | FAN GET 与 WebSocket 原始文档归档 |
 | [WAuth Gateway](../server/wauth_gateway/README.md) | OAuth/PKCE 网关部署和安全边界 |
 | [KMA PEWS Relay](../server/kma_pews_relay/README.md) | KMA 二进制帧转发服务部署与协议 |
+| [SASMEX 转发协议](sasmex_relay_protocol.md) | SASMEX-CIRES WSS、健康检查、快照和字段含义 |
 
 任何私钥、用户 API Key、访问令牌和服务器密码都不得写入文档或示例。服务端 Secret 必须通过环境变量注入。
 

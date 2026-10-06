@@ -1,4 +1,5 @@
 import 'dart:collection';
+import '../core/cwa_report_intensities.dart';
 
 import '../core/utils/quake_time.dart';
 import '../core/utils/catalog_event_identity.dart';
@@ -424,6 +425,7 @@ class BackgroundEventProcessor {
       event.magnitude.toStringAsFixed(3),
       event.maxIntensity,
       QuakeTime.unifiedInstantUtc(event).toIso8601String(),
+      if (event.source == 'cwaEqlist') event.warnArea,
     ].join('|');
   }
 
@@ -498,6 +500,7 @@ class BackgroundEventProcessor {
     UnifiedQuakeData oldEvent,
     UnifiedQuakeData event,
   ) {
+    if (CwaReportIntensities.isObservedRevision(oldEvent, event)) return true;
     if (event.origin == WhewsService.adapterOrigin) return false;
     if (!_isNoUpdateTimeFanInfoSource(event.source)) return false;
     if (_noUpdateTimeFanInfoSourceKey(oldEvent.source) !=

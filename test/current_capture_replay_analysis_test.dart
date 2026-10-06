@@ -2,20 +2,33 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:crypto/crypto.dart';
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
 
 import 'package:flutterrhythmquake/core/nied_replay_logger.dart';
+import 'package:flutterrhythmquake/models/nied_scan_positions.dart';
 import 'package:flutterrhythmquake/core/source_estimation/jma2001_travel_time_approximation.dart';
 import 'package:flutterrhythmquake/core/source_estimation/source_estimation_models.dart';
 import 'package:flutterrhythmquake/core/source_estimation/source_estimator.dart';
 import 'package:flutterrhythmquake/core/source_estimation/station_event_tracker.dart';
 import 'package:flutterrhythmquake/services/sources/lmoni_image_service.dart';
+import 'package:flutterrhythmquake/services/sources/nied_monitor.dart';
 import 'package:flutterrhythmquake/services/sources/nied_source_estimation_driver.dart';
 
 import 'support/nied_replay_fixture.dart';
+import 'support/nied_magnitude_audit.dart';
 
 void main() {
+  if (const bool.fromEnvironment('CURRENT_CAPTURE_DEPTH_REVIEW')) {
+    test(
+      'replays depth review captures with production HYP configuration',
+      _runDepthReview,
+      timeout: const Timeout(Duration(minutes: 15)),
+    );
+    return;
+  }
   const runPolicyMatrix = bool.fromEnvironment(
     'CURRENT_CAPTURE_WRITEBACK_POLICY_MATRIX',
   );
@@ -139,6 +152,111 @@ void main() {
     final mdFile = File('${outDir.path}/report.md');
     mdFile.writeAsStringSync(_markdown(reports));
   });
+}
+
+Future<void> _runDepthReview() async {
+  const output = String.fromEnvironment('CURRENT_CAPTURE_OUTPUT_DIRECTORY');
+  expect(output, isNotEmpty);
+  final solverHash = sha256
+      .convert(
+        await File(
+          'lib/core/source_estimation/source_estimator.dart',
+        ).readAsBytes(),
+      )
+      .toString();
+  stdout.writeln('DEPTH_REVIEW_STARTED solver=$solverHash');
+  final reports = <Map<String, Object?>>[];
+  const caseNames = String.fromEnvironment(
+    'CURRENT_CAPTURE_DEPTH_REVIEW_CASES',
+    defaultValue:
+        'kyoto_s_m18_d12,ibaraki_offshore_m19_ref,'
+        'fukushima_aizu_m32_20260624_jma_eq5,wakayama_south_m25_20260622_hinet,'
+        'fukushima_aizu_m46_20260702_jma_p2p,quiet_20260625_233535_jst_live',
+  );
+  for (final name in caseNames.split(',')) {
+    final manifest =
+        jsonDecode(
+              await File(
+                'test/fixtures/source_estimation/$name.json',
+              ).readAsString(),
+            )
+            as Map<String, dynamic>;
+    final capture = Directory(manifest['captureDirectory'] as String);
+    expect(capture.existsSync(), isTrue, reason: 'Missing raw capture: $name');
+    final replayCase = _ReplayCase(
+      id: manifest['caseId'] as String,
+      label: name,
+      startJst: DateTime.parse(manifest['startTimeJst'] as String),
+      endJst: DateTime.parse(manifest['endTimeJst'] as String),
+      truth: null,
+      equake: null,
+    );
+    Future<String> inputHash() async {
+      final hashes = StringBuffer();
+      for (
+        var t = replayCase.startJst;
+        !t.isAfter(replayCase.endJst);
+        t = t.add(const Duration(seconds: 1))
+      ) {
+        final name = '${formatNiedTimeKey(t)}.jma_s.gif';
+        final file = File('${capture.path}/$name');
+        hashes.writeln(
+          await file.exists()
+              ? '$name:${sha256.convert(await file.readAsBytes())}'
+              : '$name:MISSING',
+        );
+      }
+      return sha256.convert(utf8.encode(hashes.toString())).toString();
+    }
+
+    final before = await inputHash();
+    final report = await _runCase(
+      capture,
+      replayCase,
+      compactReport: true,
+      advanceTimersFromFrames: true,
+      estimator: const bool.fromEnvironment('CURRENT_CAPTURE_MAGNITUDE_AUDIT')
+          ? NiedMagnitudeAuditEstimator()
+          : NiedDartHypSourceEstimator(
+              searchSchedule: NiedHypSearchSchedule.referenceBroadFourStage,
+              writebackPolicy: NiedHypWritebackPolicy.nonIncreasingCurrent,
+            ),
+    );
+    expect(
+      await inputHash(),
+      before,
+      reason: 'Raw capture must remain unchanged',
+    );
+    expect(report['processedFrameCount'], greaterThan(0));
+    // Labels are attached only after inference, never supplied to the solver.
+    report['referenceLabel'] = manifest['truth'];
+    report['eventLabels'] = manifest['eventLabels'];
+    report['rawInputSha256'] = before;
+    reports.add(report);
+    final directory = Directory(output)..createSync(recursive: true);
+    await File('${directory.path}/report.json').writeAsString(
+      const JsonEncoder.withIndent('  ').convert({
+        'solverSha256': solverHash,
+        'scanPositionsVersion': NiedScanPositions.version,
+        'scanPositionsSha256': sha256
+            .convert(
+              await File('lib/models/nied_scan_positions.dart').readAsBytes(),
+            )
+            .toString(),
+        'searchSchedule': 'referenceBroadFourStage',
+        'writebackPolicy': 'nonIncreasingCurrent',
+        'labelsUsedInInference': false,
+        'timerClock': 'original_frame_timestamps',
+        'cases': reports,
+      }),
+    );
+    stdout.writeln(
+      'DEPTH_REVIEW_CASE ${report['id']} '
+      'frames=${report['processedFrameCount']} missing=${report['missingFrameCount']} '
+      'estimates=${report['estimateFrameCount']}',
+    );
+  }
+  StationEventTracker.instance.resetNied();
 }
 
 Future<void> _runWritebackPolicyMatrix() async {
@@ -363,6 +481,7 @@ Future<Map<String, Object?>> _runCase(
   _ReplayCase replayCase, {
   required bool compactReport,
   NiedDartHypSourceEstimator? estimator,
+  bool advanceTimersFromFrames = false,
 }) async {
   NiedReplayLogger.instance.resetForTest();
   StationEventTracker.instance.resetNied();
@@ -373,6 +492,10 @@ Future<Map<String, Object?>> _runCase(
     ..stop()
     ..start();
   final driver = NiedSourceEstimationDriver();
+  final replayClock = advanceTimersFromFrames ? FakeAsync() : null;
+  var previousFrameTime = replayCase.startJst;
+  T atReplayTime<T>(T Function() operation) =>
+      replayClock == null ? operation() : replayClock.run((_) => operation());
 
   List<dynamic>? latestStations;
   final sub = imageService.stationStream.listen((stations) {
@@ -381,11 +504,35 @@ Future<Map<String, Object?>> _runCase(
 
   final frames = <Map<String, Object?>>[];
   var missing = 0;
+  final lifecycleCodes = const String.fromEnvironment(
+    'CURRENT_CAPTURE_STATION_LIFECYCLE_CODES',
+  ).split(',').where((code) => code.isNotEmpty).toSet();
+  List<Map<String, Object?>> lifecycleSnapshot(List<dynamic> stations) => [
+    for (final station in stations.cast<NiedStation>())
+      if (lifecycleCodes.contains(station.code))
+        {
+          'code': station.code,
+          'stationIntensity': station.gifObservation?.shindo,
+          'level': station.kaLevel,
+          'ascend': station.ascend,
+          'activity': station.activity,
+          'isActive': station.isActive,
+          'activeTimerRunning': station.activeTimer?.isActive ?? false,
+          'triggerStamp': station.triggerStamp,
+          'lastDataTime': station.lastDataTime?.toUtc().toIso8601String(),
+          'detectState': station.detectState,
+          'detectReason': station.detectReason,
+        },
+  ];
   for (
     var t = replayCase.startJst;
     !t.isAfter(replayCase.endJst);
     t = t.add(const Duration(seconds: 1))
   ) {
+    // Station activation holds use timers. Advance them by source time, not
+    // CPU execution speed; the captured observations/timestamps stay intact.
+    replayClock?.elapse(t.difference(previousFrameTime));
+    previousFrameTime = t;
     final file = File(
       '${captureDirectory.path}${Platform.pathSeparator}'
       '${formatNiedTimeKey(t)}.jma_s.gif',
@@ -404,19 +551,24 @@ Future<Map<String, Object?>> _runCase(
       continue;
     }
     final observedAt = _jstWallClockToUtc(t);
-    imageService.processPixels(
-      decoded.packedRgb,
-      surfaceGifBytes: decoded.gifBytes,
-      dataTime: observedAt,
-      receivedAt: observedAt,
+    atReplayTime(
+      () => imageService.processPixels(
+        decoded.packedRgb,
+        surfaceGifBytes: decoded.gifBytes,
+        dataTime: observedAt,
+        receivedAt: observedAt,
+      ),
     );
+    replayClock?.flushMicrotasks();
     await Future<void>.delayed(Duration.zero);
     final stations = latestStations;
     if (stations == null) continue;
+    final lifecycleBefore = lifecycleCodes.isEmpty
+        ? null
+        : lifecycleSnapshot(stations);
     final algorithmStopwatch = Stopwatch()..start();
-    final detection = driver.processStations(
-      stations.cast(),
-      observedAt: observedAt,
+    final detection = atReplayTime(
+      () => driver.processStations(stations.cast(), observedAt: observedAt),
     );
     algorithmStopwatch.stop();
     final event = StationEventTracker.instance.currentNiedEvent.value;
@@ -431,6 +583,13 @@ Future<Map<String, Object?>> _runCase(
       'eventId': detection.eventId,
       'stage': event?.stageName,
       'algorithmRuntimeMicros': algorithmStopwatch.elapsedMicroseconds,
+      if (lifecycleBefore != null)
+        'stationLifecycle': {
+          'beforeDriver': lifecycleBefore,
+          'afterDriver': lifecycleSnapshot(stations),
+        },
+      if (estimator is NiedMagnitudeAuditEstimator)
+        'magnitudeAudit': _snapshotReplayValue(estimator.latestAudit),
       'estimate': estimate == null
           ? null
           : {

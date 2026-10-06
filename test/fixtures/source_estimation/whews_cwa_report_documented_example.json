@@ -1,0 +1,36 @@
+{
+  "Data": {
+    "id": "115067",
+    "shockTime": "2026-01-19 07:48:27",
+    "updateTime": "2026-01-19 07:48:27",
+    "latitude": 23.8,
+    "longitude": 121.6,
+    "depth": 20.0,
+    "magnitude": 5.9,
+    "placeName": "臺灣東部海域",
+    "maxIntensity": "2",
+    "intensities": [
+      {
+        "pref": "花蓮縣",
+        "maxIntensity": "2",
+        "areas": [
+          {
+            "area": "花蓮縣",
+            "maxIntensity": "2",
+            "stations": [
+              {
+                "code": "EHP",
+                "name": "和平",
+                "intensity": "2",
+                "latitude": 24.31,
+                "longitude": 121.75
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "md5": "...",
+  "source": "cwa"
+}

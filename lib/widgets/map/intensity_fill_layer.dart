@@ -5,8 +5,11 @@ import '../../core/utils/topojson_loader.dart';
 import '../../core/intensity_calculator.dart';
 import '../../core/utils/seis_int_loc.dart';
 import '../../core/utils/jma_seis_int_loc.dart';
+import '../../core/cwa_intensity_prediction.dart';
+import '../../core/cwa_report_intensities.dart';
+import 'ka_shindo_marker_style.dart';
 
-enum IntensityFillMode { jma, csis }
+enum IntensityFillMode { jma, csis, cwa, cwaObserved }
 
 bool _sameDoubleValue(double a, double b) => a == b || (a.isNaN && b.isNaN);
 
@@ -22,6 +25,7 @@ class IntensityFillLayer extends StatefulWidget {
   final bool showBorder;
   final bool enabled;
   final String warnAreaJson;
+  final CwaIntensityForecast? cwaForecast;
 
   const IntensityFillLayer({
     super.key,
@@ -36,6 +40,7 @@ class IntensityFillLayer extends StatefulWidget {
     this.showBorder = true,
     this.enabled = true,
     this.warnAreaJson = '',
+    this.cwaForecast,
   });
 
   @override
@@ -53,6 +58,10 @@ class _IntensityFillLayerState extends State<IntensityFillLayer> {
   double _lastLng = -1;
   String _lastSource = '';
   String _lastWarnArea = '';
+  IntensityFillMode? _lastMode;
+  CwaIntensityForecast? _lastCwaForecast;
+  Object? _polygonStyleKey;
+  List<Polygon> _polygonCache = const [];
 
   @override
   void initState() {
@@ -70,10 +79,13 @@ class _IntensityFillLayerState extends State<IntensityFillLayer> {
         !_sameDoubleValue(oldWidget.hypoLat, widget.hypoLat) ||
         !_sameDoubleValue(oldWidget.hypoLng, widget.hypoLng);
     final warnAreaChanged = oldWidget.warnAreaJson != widget.warnAreaJson;
+    final modelChanged =
+        oldWidget.mode != widget.mode ||
+        oldWidget.cwaForecast != widget.cwaForecast;
 
     if (sourceChanged) {
       _loadData();
-    } else if ((dataChanged || warnAreaChanged) &&
+    } else if ((dataChanged || warnAreaChanged || modelChanged) &&
         _topoData != null &&
         !_loading) {
       _calculateIntensities();
@@ -118,6 +130,8 @@ class _IntensityFillLayerState extends State<IntensityFillLayer> {
         _sameDoubleValue(widget.hypoLat, _lastLat) &&
         _sameDoubleValue(widget.hypoLng, _lastLng) &&
         widget.source == _lastSource &&
+        widget.mode == _lastMode &&
+        widget.cwaForecast == _lastCwaForecast &&
         widget.warnAreaJson == _lastWarnArea) {
       return;
     }
@@ -128,9 +142,30 @@ class _IntensityFillLayerState extends State<IntensityFillLayer> {
     _lastLng = widget.hypoLng;
     _lastSource = widget.source;
     _lastWarnArea = widget.warnAreaJson;
+    _lastMode = widget.mode;
+    _lastCwaForecast = widget.cwaForecast;
 
     final intensities = <String, double>{};
     final classNames = <String, String>{};
+
+    if (widget.mode == IntensityFillMode.cwa ||
+        widget.mode == IntensityFillMode.cwaObserved) {
+      final ranks = widget.mode == IntensityFillMode.cwaObserved
+          ? CwaReportIntensities.fromWarnArea(widget.warnAreaJson)
+          : widget.cwaForecast?.countyRanks;
+      if (ranks != null) {
+        for (final region in _topoData!.regions) {
+          final rank =
+              ranks[CwaIntensityPrediction.canonicalCounty(region.name)];
+          if (rank != null) intensities[region.name] = rank.toDouble();
+        }
+      }
+      setState(() {
+        _regionIntensities = intensities;
+        _regionClassNames = const {};
+      });
+      return;
+    }
 
     if (widget.mode == IntensityFillMode.jma &&
         widget.warnAreaJson.isNotEmpty) {
@@ -373,9 +408,27 @@ class _IntensityFillLayerState extends State<IntensityFillLayer> {
       return const SizedBox.shrink();
     }
 
+    final styleKey = (
+      _topoData,
+      _regionIntensities,
+      _regionClassNames,
+      widget.mode,
+      widget.minIntensity,
+      widget.opacity,
+      widget.showBorder,
+    );
+    if (styleKey == _polygonStyleKey) {
+      return _polygonCache.isEmpty
+          ? const SizedBox.shrink()
+          : PolygonLayer(polygons: _polygonCache);
+    }
     final polygons = <Polygon>[];
 
     for (final region in _topoData!.regions) {
+      if (widget.mode == IntensityFillMode.cwaObserved &&
+          !_regionIntensities.containsKey(region.name)) {
+        continue;
+      }
       final intensity = _regionIntensities[region.name] ?? 0;
       final className = _regionClassNames[region.name];
       if (className == null && intensity < widget.minIntensity) continue;
@@ -385,6 +438,11 @@ class _IntensityFillLayerState extends State<IntensityFillLayer> {
                 Color(IntensityCalculator.getJmaShindoColor(intensity))
           : widget.mode == IntensityFillMode.jma
           ? Color(IntensityCalculator.getJmaShindoColor(intensity))
+          : widget.mode == IntensityFillMode.cwa ||
+                widget.mode == IntensityFillMode.cwaObserved
+          ? KaShindoMarkerStyle.colorForLevel(
+              CwaIntensityPrediction.markerLevels[intensity.toInt()],
+            )
           : Color(IntensityCalculator.getCsisColor(intensity.round()));
 
       for (final polygonPoints in region.polygons) {
@@ -401,6 +459,8 @@ class _IntensityFillLayerState extends State<IntensityFillLayer> {
       }
     }
 
+    _polygonStyleKey = styleKey;
+    _polygonCache = polygons;
     if (polygons.isEmpty) {
       return const SizedBox.shrink();
     }

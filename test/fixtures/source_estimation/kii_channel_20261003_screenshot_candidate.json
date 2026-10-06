@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "caseId": "20261003_kii_screenshot_214551_jst_candidate",
+  "caseType": "event",
+  "captureDirectory": "tmp/captures/20261003_kii_screenshot_214551_jst_candidate",
+  "timeZone": "Asia/Tokyo",
+  "gifNamePattern": "{stamp}.{layer}.gif",
+  "startTimeJst": "2026-10-03T21:45:21",
+  "endTimeJst": "2026-10-03T21:47:51",
+  "sensitivity": 2,
+  "eventLabels": {
+    "catalogTruthVerified": false,
+    "includeInDetectionMetrics": false
+  },
+  "classification": {
+    "source": "user_screenshot_time_candidate",
+    "notes": "Raw official kmoni jma_s GIFs fetched with capture_nied_gif_window.ps1. Screenshot time zone and event identity require verification. The screenshot's 4 km estimate is not catalog truth and is not supplied to inference."
+  }
+}

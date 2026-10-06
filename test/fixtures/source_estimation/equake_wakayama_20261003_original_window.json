@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "caseId": "equake_wakayama_20261003_original_window",
+  "caseType": "event",
+  "captureDirectory": "tmp/equake_replays/20261003214550_wakayama_gifs",
+  "timeZone": "Asia/Tokyo",
+  "gifNamePattern": "{stamp}.{layer}.gif",
+  "startTimeJst": "2026-10-03T21:45:50",
+  "endTimeJst": "2026-10-03T21:47:47",
+  "sensitivity": 2,
+  "eventLabels": {
+    "catalogTruthVerified": false,
+    "includeInDetectionMetrics": false
+  },
+  "classification": {
+    "source": "user_supplied_equake_replay_format_3",
+    "notes": "Original GIF byte slices, without added warmup frames. All 118 jma_s frames match the independently downloaded NIED originals. EQ runtime comparison is pending; folder suffix is not a magnitude label."
+  }
+}

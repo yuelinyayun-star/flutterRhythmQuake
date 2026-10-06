@@ -4,6 +4,7 @@ import 'dart:math' show min;
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../../../core/intensity_calculator.dart';
+import '../../../core/cwa_report_intensities.dart';
 import '../../../models/quake_message.dart';
 import 'eqlist_http_poll_gate.dart';
 
@@ -37,6 +38,13 @@ class CwaEqlistService {
   static final CwaEqlistService _instance = CwaEqlistService._internal();
   factory CwaEqlistService() => _instance;
   CwaEqlistService._internal();
+  @visibleForTesting
+  CwaEqlistService.forTesting(http.Client client) : _client = client;
+
+  http.Client? _client;
+  bool _fetching = false;
+  int _generation = 0;
+  final _details = <String, ({Map<String, dynamic> raw, DateTime at})>{};
 
   /// ExpTech v2 API地址
   static const String _url =
@@ -76,23 +84,27 @@ class CwaEqlistService {
 
   /// 停止轮询
   void stop() {
+    _generation++;
     _timer?.cancel();
     _timer = null;
   }
 
   /// 获取地震数据
   Future<void> _fetch() async {
-    if (_pushGate.shouldSkipHttp) return;
+    if (_fetching || _pushGate.shouldSkipHttp) return;
+    _fetching = true;
+    final generation = _generation;
     try {
-      final resp = await http
-          .get(Uri.parse(_url))
-          .timeout(const Duration(seconds: 15));
+      final resp =
+          await (_client?.get(Uri.parse(_url)) ?? http.get(Uri.parse(_url)))
+              .timeout(const Duration(seconds: 15));
+      if (generation != _generation) return;
       if (resp.statusCode != 200) {
         onStatusChanged?.call(false);
         return;
       }
 
-      final raw = resp.body;
+      final raw = utf8.decode(resp.bodyBytes);
       final data = json.decode(raw);
       if (data is! List) {
         debugPrint(
@@ -102,8 +114,8 @@ class CwaEqlistService {
         return;
       }
 
-      final currentPayload = data.isNotEmpty
-          ? _normalizeItemForUnifiedUi(data.first)
+      final currentPayload = data.isNotEmpty && data.first is Map
+          ? Map<String, dynamic>.from(data.first as Map)
           : null;
 
       _latestList.clear();
@@ -113,12 +125,66 @@ class CwaEqlistService {
         if (parsed != null) _latestList.add(parsed);
       }
 
-      if (currentPayload != null) onCurrentUpdated?.call(currentPayload);
       onListUpdated?.call(_latestList);
       onStatusChanged?.call(true);
+      if (currentPayload != null) {
+        final detail = await _loadDetail(currentPayload);
+        if (generation != _generation) return;
+        onCurrentUpdated?.call(detail ?? currentPayload);
+      }
     } catch (e) {
+      if (generation != _generation) return;
       debugPrint('CWA Eqlist fetch error: $e');
       onStatusChanged?.call(false);
+    } finally {
+      _fetching = false;
+    }
+  }
+
+  @visibleForTesting
+  Future<void> fetchForTesting() => _fetch();
+
+  Future<Map<String, dynamic>?> _loadDetail(
+    Map<String, dynamic> summary,
+  ) async {
+    final id = summary['id'];
+    if (id is! String || id.isEmpty) return null;
+    final key = '$id|${summary['md5'] ?? ''}';
+    final cached = _details.remove(key);
+    if (cached != null &&
+        DateTime.now().difference(cached.at) < const Duration(minutes: 5)) {
+      _details[key] = cached;
+      return cached.raw;
+    }
+    try {
+      final uri = Uri.https('api.core.exptech.dev', '/api/v2/eq/report/$id');
+      final resp = await (_client?.get(uri) ?? http.get(uri)).timeout(
+        const Duration(seconds: 6),
+      );
+      if (resp.statusCode != 200) return null;
+      final decoded = jsonDecode(utf8.decode(resp.bodyBytes));
+      if (decoded is! Map) return null;
+      final detail = Map<String, dynamic>.from(decoded);
+      // Bind the original detail to this exact summary, never the nearest quake.
+      if (detail['id'] != id ||
+          ![
+            'time',
+            'lat',
+            'lon',
+            'mag',
+            'depth',
+          ].every((field) => detail[field] == summary[field]) ||
+          CwaReportIntensities.countyRanks(detail).isEmpty) {
+        return null;
+      }
+      _details[key] = (raw: detail, at: DateTime.now());
+      while (_details.length > 16) {
+        _details.remove(_details.keys.first);
+      }
+      return detail;
+    } catch (e) {
+      debugPrint('CWA report detail fetch error: $e');
+      return null;
     }
   }
 
@@ -187,48 +253,6 @@ class CwaEqlistService {
     }
   }
 
-  /// 将 CWA 数据项规范成统一 UI 已使用的 CWA 字段。
-  Map<String, dynamic>? _normalizeItemForUnifiedUi(Object? item) {
-    if (item is! Map) return null;
-    final map = Map<String, dynamic>.from(item);
-
-    final id = map['id']?.toString() ?? '';
-    if (id.isEmpty) return null;
-
-    final magnitude = double.tryParse(map['mag']?.toString() ?? '');
-    final latitude = double.tryParse(map['lat']?.toString() ?? '');
-    final longitude = double.tryParse(map['lon']?.toString() ?? '');
-    final depth = double.tryParse(map['depth']?.toString() ?? '');
-    final originTime = _formatEpochAsUtc8(map['time']);
-    if (magnitude == null ||
-        latitude == null ||
-        longitude == null ||
-        depth == null ||
-        originTime == null) {
-      return null;
-    }
-
-    String location = map['loc']?.toString() ?? '';
-    location = _extractCwaLocation(location);
-
-    final int intensityNum = int.tryParse(map['int']?.toString() ?? '') ?? -1;
-    final String? jmaShindo = _cwaIntensityToKanji(intensityNum);
-
-    return {
-      'eventId': id,
-      'location': location.isNotEmpty ? location : '未知地点',
-      'latitude': latitude,
-      'longitude': longitude,
-      'depth': depth,
-      'originTime': originTime,
-      'shockTime': originTime,
-      'updateTime': originTime,
-      'magnitude': magnitude,
-      'jmaShindo': jmaShindo,
-      'maxIntensity': IntensityCalculator.calcCsisLevel(magnitude, depth, 0),
-    };
-  }
-
   /// 提取 CWA 地点名称
   ///
   /// CWA地点格式: "花蓮縣政府南偏西方 25.0 公里 (位於花蓮縣秀林鄉)"
@@ -244,22 +268,6 @@ class CwaEqlistService {
     }
 
     return loc.substring(start + 3, end);
-  }
-
-  /// 将毫秒时间戳格式化为 UTC+8 字符串。
-  String? _formatEpochAsUtc8(Object? value) {
-    final milliseconds = value is int
-        ? value
-        : int.tryParse(value?.toString() ?? '');
-    if (milliseconds == null || milliseconds <= 0) return null;
-    final time = DateTime.fromMillisecondsSinceEpoch(
-      milliseconds,
-      isUtc: true,
-    ).add(const Duration(hours: 8));
-    String two(int part) => part.toString().padLeft(2, '0');
-    return '${time.year.toString().padLeft(4, '0')}-'
-        '${two(time.month)}-${two(time.day)} '
-        '${two(time.hour)}:${two(time.minute)}:${two(time.second)}';
   }
 
   /// 将 CWA 震度数值转换为符号格式

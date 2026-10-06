@@ -81,6 +81,8 @@ class TtsService {
   static const gptSovitsUrlKey = 'tts_gpt_sovits_url';
   static const gptSovitsRefAudioKey = 'tts_gpt_sovits_ref_audio';
   static const gptSovitsPromptTextKey = 'tts_gpt_sovits_prompt_text';
+  static const _dedupeEntryTtl = Duration(hours: 1);
+  static const _dedupeEntryLimit = 256;
 
   final FlutterTts _flutterTts = FlutterTts();
   final Queue<_TtsJob> _queue = Queue<_TtsJob>();
@@ -345,6 +347,7 @@ class TtsService {
 
     if (dedupeKey != null && dedupeWindow > Duration.zero) {
       final now = DateTime.now();
+      _pruneDedupeKeys(now);
       final last = _lastSpokenAt[dedupeKey];
       if (last != null && now.difference(last) < dedupeWindow) return;
       _lastSpokenAt[dedupeKey] = now;
@@ -390,6 +393,22 @@ class TtsService {
     }
     unawaited(_processQueue());
   }
+
+  void _pruneDedupeKeys(DateTime now) {
+    _lastSpokenAt.removeWhere(
+      (_, timestamp) => now.difference(timestamp) >= _dedupeEntryTtl,
+    );
+    if (_lastSpokenAt.length <= _dedupeEntryLimit) return;
+    final oldest = _lastSpokenAt.entries.toList()
+      ..sort((a, b) => a.value.compareTo(b.value));
+    final removeCount = _lastSpokenAt.length - _dedupeEntryLimit;
+    for (var i = 0; i < removeCount; i++) {
+      _lastSpokenAt.remove(oldest[i].key);
+    }
+  }
+
+  @visibleForTesting
+  int get dedupeCacheSize => _lastSpokenAt.length;
 
   bool get _hasCriticalEewSpeech =>
       (_activeJob?.isCriticalEew == true && _activeJob?.obsolete != true) ||

@@ -175,6 +175,29 @@ void main() {
     expect(summary['_source'], 'nowquake');
   });
 
+  test('bounds long-running summary and detail caches', () {
+    final service = NowQuakeCencIntensityService();
+    addTearDown(service.dispose);
+
+    for (var index = 0; index < 100; index++) {
+      final raw = Map<String, dynamic>.from(sample)
+        ..['type'] = 'data'
+        ..['eq_id'] = 'long-run-$index'
+        ..['stations'] = [
+          {
+            'name': 'station-$index',
+            'latitude': 41.74,
+            'longitude': 81.42,
+            'int': 1.0,
+          },
+        ];
+      service.handleSocketMessageForTest(jsonEncode(raw));
+    }
+
+    expect(service.summaryCacheSize, lessThanOrEqualTo(20));
+    expect(service.detailCacheSize, lessThanOrEqualTo(16));
+  });
+
   test('builds a realtime unified information event for the UI', () {
     final event = NowQuakeCencIntensityService.unifiedInfoFromJson(sample);
 

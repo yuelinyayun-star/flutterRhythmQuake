@@ -29,6 +29,7 @@ from websockets.asyncio.server import ServerConnection, serve
 from websockets.http11 import Request, Response
 
 from anomaly_archive import AnomalyArchive
+from sasmex_relay import SasmexConfig, SasmexFeed
 
 
 KST = timezone(timedelta(hours=9), "KST")
@@ -55,6 +56,18 @@ class Config:
     access_token: str = os.environ.get("KMA_RELAY_TOKEN", "")
     anomaly_directory: str = os.environ.get("KMA_ANOMALY_DIRECTORY", "")
     anomaly_max_pending_bytes: int = int(os.environ.get("KMA_ANOMALY_MAX_PENDING_BYTES", str(64 * 1024 * 1024)))
+    sasmex_base_url: str = os.environ.get(
+        "SASMEX_BASE_URL", "https://rss.sasmex.net"
+    ).rstrip("/")
+    sasmex_poll_seconds: float = float(
+        os.environ.get("SASMEX_POLL_SECONDS", "10")
+    )
+    sasmex_timeout_seconds: float = float(
+        os.environ.get("SASMEX_REQUEST_TIMEOUT_SECONDS", "15")
+    )
+    sasmex_stale_after_seconds: float = float(
+        os.environ.get("SASMEX_STALE_AFTER_SECONDS", "90")
+    )
 
 
 @dataclass(frozen=True)
@@ -335,6 +348,17 @@ class KmaRelay:
         self._last_attempted_utc: datetime | None = None
         self._last_summary_log_monotonic = 0.0
         self.anomalies = AnomalyArchive(config.anomaly_directory, config.anomaly_max_pending_bytes)
+        self.sasmex_clients: set[ServerConnection] = set()
+        self.sasmex_send_locks: dict[ServerConnection, asyncio.Lock] = {}
+        self.sasmex = SasmexFeed(
+            SasmexConfig(
+                base_url=config.sasmex_base_url,
+                poll_seconds=config.sasmex_poll_seconds,
+                timeout_seconds=config.sasmex_timeout_seconds,
+                stale_after_seconds=config.sasmex_stale_after_seconds,
+            ),
+            self._broadcast_sasmex_update,
+        )
         self._station_input: tuple[str, Fetched] | None = None
         self._station_attempt: tuple[str, Fetched] | None = None
         self._parser_sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
@@ -371,7 +395,7 @@ class KmaRelay:
         path = parsed.path.rstrip("/") or "/"
         upgrade = request.headers.get("Upgrade", "").lower() == "websocket"
 
-        if upgrade and path in {"/kma-station", "/ws"}:
+        if upgrade and path in {"/kma-station", "/ws", "/sasmex-eew"}:
             if self._authorized(request):
                 return None
             return self._json_response(
@@ -400,6 +424,19 @@ class KmaRelay:
             return self._json_response(
                 connection, HTTPStatus.OK, self.snapshot_payload()
             )
+        if path == "/sasmex/health":
+            health = self.sasmex.state.health(
+                self.config.sasmex_stale_after_seconds
+            )
+            return self._json_response(
+                connection,
+                HTTPStatus.OK if health["healthy"] else HTTPStatus.SERVICE_UNAVAILABLE,
+                health,
+            )
+        if path == "/sasmex/snapshot":
+            return self._json_response(
+                connection, HTTPStatus.OK, self.sasmex.state.snapshot()
+            )
         if path == "/":
             return self._json_response(
                 connection,
@@ -409,6 +446,9 @@ class KmaRelay:
                     "websocket": "/kma-station",
                     "health": "/health",
                     "snapshot": "/snapshot",
+                    "sasmexWebSocket": "/sasmex-eew",
+                    "sasmexHealth": "/sasmex/health",
+                    "sasmexSnapshot": "/sasmex/snapshot",
                     "timeSource": "KMA ST response header",
                 },
             )
@@ -417,6 +457,10 @@ class KmaRelay:
         )
 
     async def handle_websocket(self, websocket: ServerConnection) -> None:
+        path = urlsplit(websocket.request.path).path.rstrip("/") or "/"
+        if path == "/sasmex-eew":
+            await self.handle_sasmex_websocket(websocket)
+            return
         if len(self.clients) >= self.config.max_clients:
             await websocket.send(
                 self._encode({"type": "error", "message": "连接数超限"})
@@ -467,8 +511,79 @@ class KmaRelay:
             self.client_send_locks.pop(websocket, None)
             LOGGER.info("WebSocket disconnected: %s; clients=%d", peer, len(self.clients))
 
+    async def handle_sasmex_websocket(self, websocket: ServerConnection) -> None:
+        if len(self.sasmex_clients) >= self.config.max_clients:
+            await websocket.send(
+                self._encode({"type": "error", "message": "连接数超限"})
+            )
+            await websocket.close(code=1013, reason="server capacity reached")
+            return
+
+        self.sasmex_clients.add(websocket)
+        self.sasmex_send_locks[websocket] = asyncio.Lock()
+        peer = websocket.remote_address
+        LOGGER.info(
+            "SASMEX WebSocket connected: %s; clients=%d",
+            peer,
+            len(self.sasmex_clients),
+        )
+        try:
+            await self._send_sasmex(websocket, self._sasmex_heartbeat_message())
+            if self.sasmex.state.latest_event is not None:
+                await self._send_sasmex(
+                    websocket,
+                    self._sasmex_update_message(self.sasmex.state.latest_event),
+                )
+            async for raw_message in websocket:
+                text = (
+                    raw_message.decode("utf-8")
+                    if isinstance(raw_message, bytes)
+                    else raw_message
+                )
+                message: Any = None
+                is_ping = text.strip().lower() == "ping"
+                if not is_ping:
+                    try:
+                        message = json.loads(text)
+                        is_ping = message.get("type") == "ping"
+                    except (json.JSONDecodeError, AttributeError):
+                        is_ping = False
+                if is_ping:
+                    await self._send_sasmex(
+                        websocket, self._sasmex_heartbeat_message("pong")
+                    )
+                elif text.strip().lower() == "query" or (
+                    isinstance(message, dict) and message.get("type") == "query"
+                ):
+                    await self._send_sasmex(
+                        websocket,
+                        self._sasmex_update_message(
+                            self.sasmex.state.latest_event,
+                            message_type="query_response",
+                        ),
+                    )
+        except Exception as exc:
+            LOGGER.debug("SASMEX WebSocket %s ended: %s", peer, exc)
+        finally:
+            self.sasmex_clients.discard(websocket)
+            self.sasmex_send_locks.pop(websocket, None)
+            LOGGER.info(
+                "SASMEX WebSocket disconnected: %s; clients=%d",
+                peer,
+                len(self.sasmex_clients),
+            )
+
     async def _send(self, websocket: ServerConnection, payload: dict[str, Any]) -> None:
         lock = self.client_send_locks.get(websocket)
+        if lock is None:
+            return
+        async with lock:
+            await websocket.send(self._encode(payload))
+
+    async def _send_sasmex(
+        self, websocket: ServerConnection, payload: dict[str, Any]
+    ) -> None:
+        lock = self.sasmex_send_locks.get(websocket)
         if lock is None:
             return
         async with lock:
@@ -486,6 +601,40 @@ class KmaRelay:
             if isinstance(result, Exception):
                 self.clients.discard(client)
                 self.client_send_locks.pop(client, None)
+
+    async def broadcast_sasmex(self, payload: dict[str, Any]) -> None:
+        if not self.sasmex_clients:
+            return
+        clients = list(self.sasmex_clients)
+        results = await asyncio.gather(
+            *(self._send_sasmex(client, payload) for client in clients),
+            return_exceptions=True,
+        )
+        for client, result in zip(clients, results):
+            if isinstance(result, Exception):
+                self.sasmex_clients.discard(client)
+                self.sasmex_send_locks.pop(client, None)
+
+    async def _broadcast_sasmex_update(self, event: dict[str, Any]) -> None:
+        await self.broadcast_sasmex(self._sasmex_update_message(event))
+
+    def _sasmex_heartbeat_message(self, message_type: str = "heartbeat") -> dict[str, Any]:
+        return {
+            "type": message_type,
+            "source": "sasmex",
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+
+    @staticmethod
+    def _sasmex_update_message(
+        event: dict[str, Any] | None,
+        message_type: str = "update",
+    ) -> dict[str, Any]:
+        return {
+            "type": message_type,
+            "source": "sasmex",
+            "Data": event,
+        }
 
     @staticmethod
     def _encode(payload: dict[str, Any]) -> str:
@@ -718,6 +867,7 @@ class KmaRelay:
             await self.broadcast(
                 self._heartbeat_message()
             )
+            await self.broadcast_sasmex(self._sasmex_heartbeat_message())
 
     async def _sleep_or_stop(self, seconds: float) -> None:
         try:
@@ -755,6 +905,9 @@ class KmaRelay:
             "lastOfficialHttpStatus": self.state.last_official_status,
             "acceptedFrames": self.state.accepted_frames,
             "anomalyArchive": self.anomalies.status(),
+            "sasmex": self.sasmex.state.health(
+                self.config.sasmex_stale_after_seconds
+            ),
         }
         return payload, healthy
 
@@ -772,12 +925,17 @@ class KmaRelay:
                 "eventId": self.state.latest_event_id,
                 "timeSource": "KMA-ST",
             },
+            "sasmex": self.sasmex.state.snapshot(),
         }
 
     async def run(self) -> None:
         await self.http.start()
         self.anomalies.start()
+        await self.sasmex.start()
         poll_task = asyncio.create_task(self.poll_forever(), name="kma-poller")
+        sasmex_task = asyncio.create_task(
+            self.sasmex.poll_forever(self.stop_event), name="sasmex-poller"
+        )
         heartbeat_task = asyncio.create_task(
             self.heartbeat_forever(), name="websocket-heartbeat"
         )
@@ -801,9 +959,12 @@ class KmaRelay:
                 await self.stop_event.wait()
         finally:
             self.stop_event.set()
-            for task in (poll_task, heartbeat_task):
+            for task in (poll_task, heartbeat_task, sasmex_task):
                 task.cancel()
-            await asyncio.gather(poll_task, heartbeat_task, return_exceptions=True)
+            await asyncio.gather(
+                poll_task, heartbeat_task, sasmex_task, return_exceptions=True
+            )
+            await self.sasmex.close()
             await self.http.close()
             await self.anomalies.close()
 

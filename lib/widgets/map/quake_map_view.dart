@@ -45,6 +45,7 @@ import '../../core/fdsn_intensity.dart';
 import '../../core/app_edition.dart';
 import 'fssn_cmt_layer.dart';
 import 'intensity_fill_layer.dart';
+import '../../models/unified_event_presentation.dart';
 import 'jma_lpgm_region_fill_layer.dart';
 import 'station_dot_painter_layer.dart';
 import 'tsunami_layer.dart';
@@ -2856,7 +2857,16 @@ class _QuakeMapViewState extends State<QuakeMapView> {
             hypoLat: qm.latitude,
             hypoLng: qm.longitude,
             source: regionSource,
-            mode: useJma ? IntensityFillMode.jma : IntensityFillMode.csis,
+            mode: regionSource == 'tw'
+                ? u.isEew || !cwaObservedFillAvailable(u)
+                      ? IntensityFillMode.cwa
+                      : IntensityFillMode.cwaObserved
+                : useJma
+                ? IntensityFillMode.jma
+                : IntensityFillMode.csis,
+            cwaForecast: regionSource == 'tw'
+                ? cwaForecastForEvent(u)
+                : null,
             minIntensity: 1.0,
             opacity: 0.55,
             enabled: true,

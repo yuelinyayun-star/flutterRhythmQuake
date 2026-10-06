@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'package:latlong2/latlong.dart';
+import '../cwa_intensity_prediction.dart';
 
 class TopoJsonRegion {
   final String name;
@@ -57,7 +58,7 @@ class TopoJsonLoader {
   static TopoJsonData? get cnData => _cnData;
   static TopoJsonData? get jpData => _jpData;
   static TopoJsonData? get krData => _krData;
-  static TopoJsonData? get twData => _twData ?? _cnData;
+  static TopoJsonData? get twData => _twData;
 
   static Future<void> loadAll() async {
     await Future.wait([loadCnEew(), loadJpEew(), loadKrEew()]);
@@ -107,7 +108,18 @@ class TopoJsonLoader {
 
   static Future<TopoJsonData?> loadTwEew() async {
     if (_twData != null) return _twData;
-    return loadCnEew();
+    final data = await loadCnEew();
+    if (data == null) return null;
+    return _twData ??= TopoJsonData(
+      source: 'tw',
+      regions: data.regions
+          .where(
+            (region) => CwaIntensityPrediction.counties.contains(
+              CwaIntensityPrediction.canonicalCounty(region.name),
+            ),
+          )
+          .toList(growable: false),
+    );
   }
 
   static Future<TopoJsonData?> loadJpTsunami() async {

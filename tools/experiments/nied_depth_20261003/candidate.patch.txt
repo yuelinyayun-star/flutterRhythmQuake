@@ -1,0 +1,138 @@
+diff --git a/lib/core/source_estimation/source_estimator.dart b/lib/core/source_estimation/source_estimator.dart
+index d5e4ffe..29997b4 100644
+--- a/lib/core/source_estimation/source_estimator.dart
++++ b/lib/core/source_estimation/source_estimator.dart
+@@ -11707,6 +11707,133 @@ SourceEstimate? _estimateNiedHypWorkerFrame(
+       stageMoves = <Map<String, Object?>>[];
+     }
+   }
++  if (referenceAlignedSearch && current.score.isFinite) {
++    const refinementStepKm = 2.0;
++    const refinementMoveLimit = 3;
++    var refinementRounds = 0;
++    var refinementEvaluatedCount = 0;
++    var refinementRejectedCount = 0;
++    var refinementRejectedReasons = <String, int>{};
++    var refinementMoves = <Map<String, Object?>>[];
++    var terminalCandidates = <Map<String, Object?>>[];
++    var terminationReason = 'local_minimum';
++
++    // Preserve the four broad KA stages; only probe bounded depth neighbors.
++    while (refinementRounds < refinementMoveLimit) {
++      refinementRounds++;
++      _NiedHypWorkerResult? bestCandidate;
++      String? bestDirection;
++      terminalCandidates = <Map<String, Object?>>[];
++      for (final direction in const [-1, 1]) {
++        final depthKm = current.depthKm + direction * refinementStepKm;
++        final directionName = direction < 0 ? 'depth-2' : 'depth+2';
++        final rejectReason = _niedHypWorkerCandidateRejectReason(
++          latitude: current.latitude,
++          longitude: current.longitude,
++          depthKm: depthKm,
++          constraints: candidateConstraints,
++        );
++        if (rejectReason != null) {
++          refinementRejectedCount++;
++          refinementRejectedReasons[rejectReason] =
++              (refinementRejectedReasons[rejectReason] ?? 0) + 1;
++          terminalCandidates.add({
++            'direction': directionName,
++            'latitude': current.latitude,
++            'longitude': current.longitude,
++            'depth_km': depthKm,
++            'evaluated': false,
++            'reject_reason': rejectReason,
++          });
++          continue;
++        }
++        refinementEvaluatedCount++;
++        candidateScoreCallCount++;
++        final candidate = _scoreNiedHypWorkerCandidate(
++          active,
++          inactive,
++          observedAt: request.observedAt,
++          earliestAt: earliestAt,
++          latitude: current.latitude,
++          longitude: current.longitude,
++          depthKm: depthKm,
++          allowSWave: allowSWave,
++          applyInactivePenalty: inactivePenaltyGateOpen,
++          stationSFlagByCode: scoringSFlagByCode,
++          candidateConstraints: candidateConstraints,
++          adjacencyByStationId: frame.adjacencyByStationId,
++          referenceAligned: true,
++          referencePreviousWavesByFirstWave:
++              state.referencePreviousWavesByFirstWave,
++        );
++        terminalCandidates.add({
++          'direction': directionName,
++          'latitude': candidate.latitude,
++          'longitude': candidate.longitude,
++          'depth_km': candidate.depthKm,
++          'score': candidate.score,
++          'evaluated': true,
++        });
++        if (candidate.score + 1e-9 < current.score &&
++            (bestCandidate == null ||
++                candidate.score < bestCandidate.score)) {
++          bestCandidate = candidate;
++          bestDirection = directionName;
++        }
++      }
++
++      final selectedCandidate = bestCandidate;
++      if (selectedCandidate == null) break;
++      refinementMoves.add({
++        'stage_iteration': refinementRounds,
++        'total_iteration': totalIteration + refinementRounds,
++        'direction': bestDirection,
++        'from': {
++          'latitude': current.latitude,
++          'longitude': current.longitude,
++          'depth_km': current.depthKm,
++          'score': current.score,
++        },
++        'to': {
++          'latitude': selectedCandidate.latitude,
++          'longitude': selectedCandidate.longitude,
++          'depth_km': selectedCandidate.depthKm,
++          'score': selectedCandidate.score,
++        },
++      });
++      current = selectedCandidate;
++      if (refinementRounds == refinementMoveLimit) {
++        terminationReason = 'move_limit';
++      }
++    }
++    stages.add({
++      'step_index': steps.length,
++      'degree_step': 0.0,
++      'depth_step_km': refinementStepKm,
++      'depth_only_refinement': true,
++      'move_limit': refinementMoveLimit,
++      'termination_reason': terminationReason,
++      'iterations': refinementRounds,
++      'total_iterations': totalIteration + refinementRounds,
++      'evaluated_candidate_count': refinementEvaluatedCount,
++      'rejected_candidate_count': refinementRejectedCount,
++      'rejected_reason_counts': refinementRejectedReasons,
++      'moves': refinementMoves,
++      'best_score': current.score,
++      'best_latitude': current.latitude,
++      'best_longitude': current.longitude,
++      'best_depth_km': current.depthKm,
++      'terminal_center': {
++        'latitude': current.latitude,
++        'longitude': current.longitude,
++        'depth_km': current.depthKm,
++        'score': current.score,
++        'error_level': current.errorLevel,
++        'inactive_penalty': current.inactivePenalty,
++      },
++      'terminal_candidates': terminalCandidates,
++    });
++  }
+   final searchedResult = current.copyWith(searchStages: stages);
+   searchStopwatch.stop();
+   // NiedHypoInf keeps rejected clusters internally, but does not publish one

@@ -41,6 +41,21 @@ WebSocket: ws://0.0.0.0:8765/kma-station
 当前快照:  http://127.0.0.1:8765/snapshot
 ```
 
+同一服务还会轮询公开的 SASMEX-CIRES RSS/CAP 页面，并提供独立的预警 WSS，
+不会把 CAP XML 混入 KMA 二进制测站频道：
+
+```text
+WebSocket: ws://0.0.0.0:8765/sasmex-eew
+健康检查:  http://127.0.0.1:8765/sasmex/health
+当前快照:  http://127.0.0.1:8765/sasmex/snapshot
+```
+
+生产环境由同一个反向代理域名映射为 `wss://你的域名/sasmex-eew`。
+该频道使用 `https://rss.sasmex.net` 的公开 `latest` JSON 和事件 CAP XML，
+不需要 SASNO 付费 Webhook。CAP XML 只在服务端作为解析输入，对外 WSS 和快照接口
+只发送结构化 JSON，不发送 XML 原文。只有最新事件发生变化时才广播 `update`；连接
+建立时会发送 `heartbeat` 和当前事件快照。
+
 线上使用时应由 IIS、Caddy 或 Nginx 终止 HTTPS/WSS，再反向代理到 `127.0.0.1:8765`。
 
 ## 与现有客户端兼容的消息
@@ -111,6 +126,15 @@ Authorization: Bearer 你的令牌
 | `KMA_STALE_AFTER_SECONDS` | `5` | 超过该时间未收到新帧则健康检查返回 503 |
 | `KMA_HEARTBEAT_SECONDS` | `25` | 应用层 heartbeat 间隔 |
 
+SASMEX 参数：
+
+| 环境变量 | 默认值 | 说明 |
+| --- | ---: | --- |
+| `SASMEX_BASE_URL` | `https://rss.sasmex.net` | 公开 RSS/CAP 站点 |
+| `SASMEX_POLL_SECONDS` | `10` | latest 轮询间隔 |
+| `SASMEX_REQUEST_TIMEOUT_SECONDS` | `15` | 单次公开接口超时 |
+| `SASMEX_STALE_AFTER_SECONDS` | `90` | 健康检查允许的轮询间隔 |
+
 ## Windows 防火墙
 
 如果反向代理与 relay 不在同一台机器，才需要开放 relay 端口：
@@ -132,6 +156,7 @@ $env:KMA_RELAY_HOST = '127.0.0.1'
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest -v test_kma_pews_relay.py
+.\.venv\Scripts\python.exe -m unittest -v test_sasmex_relay.py
 ```
 
 官方实时数据检查：

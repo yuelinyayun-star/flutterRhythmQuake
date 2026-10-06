@@ -1421,6 +1421,8 @@ class FanService extends BaseSourceService {
         // CWA 数据源：仅设置 jmaShindo 震度徽章字符串
         if (maxIntensityStr.isNotEmpty) {
           jmaShindo = _formatShindo(maxIntensityStr);
+        } else if (epiIntensityStr.isNotEmpty) {
+          jmaShindo = _formatShindo(epiIntensityStr);
         }
       } else {
         // 其他数据源：使用 API 原始数值型烈度
@@ -1600,50 +1602,70 @@ class FanService extends BaseSourceService {
             rawPayload: json,
           );
         } else {
-          _emitFanUnified(source, <String, dynamic>{
-            'eventId': eventId.isNotEmpty
-                ? eventId
-                : id.isNotEmpty
-                ? id
-                : md5,
-            'location': location,
-            'magnitude': source == QuakeSourceType.geonet
-                ? json['magnitude']
-                : magnitude > 0
-                ? magnitude
-                : magnitudel,
-            'depth': source == QuakeSourceType.geonet ? json['depth'] : depth,
-            'latitude': source == QuakeSourceType.geonet
-                ? json['latitude']
-                : latitude,
-            'longitude': source == QuakeSourceType.geonet
-                ? json['longitude']
-                : longitude,
-            'originTime': json['shockTime']?.toString() ?? '',
-            'maxIntensity': source == QuakeSourceType.geonet
-                ? null
-                : finalIntensity,
-            'jmaShindo': jmaShindo,
-            'infoTypeName': infoTypeName,
-            'reviewType': reviewType ?? '',
-            'type': reviewType ?? '',
-            'verify': verify,
-            'updates': updates,
-            'isWarn': source == QuakeSourceType.jma_fan && infoTypeName == '警報',
-            'isFinal': isFinal,
-            'isCancel': isCancel,
-            'isAssumption': false,
-            'isTraining': isTraining,
-            'placeName': location,
-            'createTime': json['createTime']?.toString() ?? '',
-            'updateTime': updateTime,
-            'shockTime': json['shockTime']?.toString() ?? '',
-            'nodalPlane1': nodalPlane1 ?? '',
-            'nodalPlane2': nodalPlane2 ?? '',
-            'centroidDepth': json['centroidDepth'],
-            'momentTensor': momentTensor,
-            'momentTensorConvention': 'ned',
-          }, rawPayload: json, onUnified: onUnified);
+          _emitFanUnified(
+            source,
+            <String, dynamic>{
+              'eventId': eventId.isNotEmpty
+                  ? eventId
+                  : id.isNotEmpty
+                  ? id
+                  : md5,
+              'location': location,
+              'magnitude': source == QuakeSourceType.geonet
+                  ? json['magnitude']
+                  : magnitude > 0
+                  ? magnitude
+                  : magnitudel,
+              'depth':
+                  source == QuakeSourceType.geonet ||
+                      source == QuakeSourceType.cwa_eew
+                  ? json['depth']
+                  : depth,
+              'latitude':
+                  source == QuakeSourceType.geonet ||
+                      source == QuakeSourceType.cwa_eew
+                  ? json['latitude']
+                  : latitude,
+              'longitude':
+                  source == QuakeSourceType.geonet ||
+                      source == QuakeSourceType.cwa_eew
+                  ? json['longitude']
+                  : longitude,
+              'originTime': json['shockTime']?.toString() ?? '',
+              'maxIntensity': source == QuakeSourceType.geonet
+                  ? null
+                  : finalIntensity,
+              'jmaShindo': jmaShindo,
+              if (source == QuakeSourceType.cwa_eew)
+                'warnArea': json['warnArea'],
+              if (source == QuakeSourceType.cwa) ...{
+                'intensities': json['intensities'],
+                'intensityAreas': json['intensityAreas'],
+              },
+              'infoTypeName': infoTypeName,
+              'reviewType': reviewType ?? '',
+              'type': reviewType ?? '',
+              'verify': verify,
+              'updates': updates,
+              'isWarn':
+                  source == QuakeSourceType.jma_fan && infoTypeName == '警報',
+              'isFinal': isFinal,
+              'isCancel': isCancel,
+              'isAssumption': false,
+              'isTraining': isTraining,
+              'placeName': location,
+              'createTime': json['createTime']?.toString() ?? '',
+              'updateTime': updateTime,
+              'shockTime': json['shockTime']?.toString() ?? '',
+              'nodalPlane1': nodalPlane1 ?? '',
+              'nodalPlane2': nodalPlane2 ?? '',
+              'centroidDepth': json['centroidDepth'],
+              'momentTensor': momentTensor,
+              'momentTensorConvention': 'ned',
+            },
+            rawPayload: json,
+            onUnified: onUnified,
+          );
         }
       }
 

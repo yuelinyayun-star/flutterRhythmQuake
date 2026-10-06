@@ -1,0 +1,10 @@
+[Unit]
+Description=Retry pending RhythmQuake Telegram uploads
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=1min
+Unit=rhythmquake-replay-upload.service
+
+[Install]
+WantedBy=timers.target

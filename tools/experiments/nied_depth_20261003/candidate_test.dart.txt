@@ -1,0 +1,189 @@
+// Archived candidate-only test. Not part of the production test suite.
+import 'dart:math' as math;
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:flutterrhythmquake/core/source_estimation/kanameishi_jma2001_travel_time_table.dart';
+import 'package:flutterrhythmquake/core/source_estimation/source_estimation_models.dart';
+import 'package:flutterrhythmquake/core/source_estimation/source_estimator.dart';
+
+void main() {
+  final stationOffsets = <(double, double)>[
+    (-0.38, -0.12),
+    (-0.31, 0.24),
+    (-0.22, -0.36),
+    (-0.14, 0.13),
+    (-0.06, 0.38),
+    (0.04, -0.29),
+    (0.12, 0.08),
+    (0.2, -0.4),
+    (0.28, 0.27),
+    (0.36, -0.05),
+    (0.43, 0.18),
+    (0.5, -0.24),
+  ];
+
+  ({SourceEstimate estimate, List<Map<String, Object?>> stages})
+  estimateSyntheticFixture({
+    required double sourceDepthKm,
+    required String eventId,
+  }) {
+    final estimator = NiedDartHypSourceEstimator(
+      searchSchedule: NiedHypSearchSchedule.referenceBroadFourStage,
+      writebackPolicy: NiedHypWritebackPolicy.nonIncreasingCurrent,
+    );
+    final origin = DateTime(2026, 10, 3, 12);
+    const sourceLatitude = 34.60;
+    const sourceLongitude = 135.20;
+
+    double surfaceDistanceKm(double latitude, double longitude) {
+      const earthRadiusKm = 6371.0;
+      double radians(double degrees) => degrees * math.pi / 180.0;
+      final dLat = radians(latitude - sourceLatitude);
+      final dLng = radians(longitude - sourceLongitude);
+      final a =
+          math.pow(math.sin(dLat / 2), 2) +
+          math.cos(radians(sourceLatitude)) *
+              math.cos(radians(latitude)) *
+              math.pow(math.sin(dLng / 2), 2);
+      return earthRadiusKm * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    }
+
+    // Synthetic boundary fixture only; these generated times are not capture
+    // data and are not supplied as source coordinates/depth to the estimator.
+    final stations = <Map<String, Object?>>[
+      for (var index = 0; index < stationOffsets.length; index++)
+        () {
+          final (latitudeOffset, longitudeOffset) = stationOffsets[index];
+          final latitude = sourceLatitude + latitudeOffset;
+          final longitude = sourceLongitude + longitudeOffset;
+          final travelSeconds =
+              KanameishiJma2001TravelTimeTable.travelTimeSeconds(
+                surfaceDistanceKm: surfaceDistanceKm(latitude, longitude),
+                depthKm: sourceDepthKm,
+                pWave: true,
+              );
+          final triggerAt = origin.add(
+            Duration(milliseconds: (travelSeconds * 1000).round()),
+          );
+          final code = 'SHALLOW$index';
+          return <String, Object?>{
+            'id': code,
+            'code': code,
+            'latLng': [latitude, longitude],
+            'triggerStamp': triggerAt.millisecondsSinceEpoch,
+            'updateStamp': triggerAt.millisecondsSinceEpoch,
+            'ascend': 4,
+            'level': 4,
+            'isActive': true,
+          };
+        }(),
+    ];
+    final request = SourceEstimationRequest(
+      sourceId: 'nied',
+      eventId: eventId,
+      observedAt: origin.add(const Duration(seconds: 40)),
+      stageName: 'confirmed',
+      maxShindo: 1,
+      stations: const [],
+      metadata: {
+        'nied_hypocenter_input_format': 'nied_station_hypocenter_snapshot_v1',
+        'nied_hypocenter_new_active_stations': stations,
+        'nied_hypocenter_active_stations': stations,
+        'nied_hypocenter_inactive_stations': const <Map<String, Object?>>[],
+        'nied_hypocenter_adj_station_ids': {
+          for (var index = 0; index < stationOffsets.length; index++)
+            'SHALLOW$index': [
+              if (index > 0) 'SHALLOW${index - 1}',
+              if (index + 1 < stationOffsets.length) 'SHALLOW${index + 1}',
+            ],
+        },
+      },
+    );
+
+    final estimate = estimator.estimate(request);
+    expect(estimate, isNotNull, reason: request.metadata.toString());
+    final search = estimate!.diagnostics['search']! as Map<String, Object?>;
+    return (
+      estimate: estimate,
+      stages: (search['stages']! as List).cast<Map<String, Object?>>(),
+    );
+  }
+
+  void expectOriginalBroadStages(List<Map<String, Object?>> stages) {
+    expect(stages, hasLength(5));
+    final broadStages = stages.take(4).toList();
+    expect(broadStages.map((stage) => stage['degree_step']).toList(), [
+      3.0,
+      1.0,
+      0.3,
+      0.1,
+    ]);
+    expect(broadStages.map((stage) => stage['depth_step_km']).toList(), [
+      100.0,
+      50.0,
+      20.0,
+      10.0,
+    ]);
+    expect(broadStages.every((stage) => stage['move_limit'] == 1000), isTrue);
+  }
+
+  Map<String, Object?> expectBoundedRefinement(
+    List<Map<String, Object?>> stages,
+  ) {
+    expectOriginalBroadStages(stages);
+    final refinement = stages.last;
+    expect(refinement['depth_only_refinement'], isTrue);
+    expect(refinement['depth_step_km'], 2.0);
+    expect(refinement['move_limit'], 3);
+    expect(refinement['evaluated_candidate_count'], inInclusiveRange(0, 6));
+    final moves = (refinement['moves']! as List).cast<Map<String, Object?>>();
+    expect(moves.length, lessThanOrEqualTo(3));
+    for (final move in moves) {
+      final from = move['from']! as Map<String, Object?>;
+      final to = move['to']! as Map<String, Object?>;
+      expect(to['score'], lessThan(from['score']! as num));
+      expect(to['latitude'], from['latitude']);
+      expect(to['longitude'], from['longitude']);
+      expect(
+        ((to['depth_km']! as num) - (from['depth_km']! as num)).abs(),
+        2.0,
+      );
+    }
+    return refinement;
+  }
+
+  test('synthetic unit fixture: bounded refinement recovers a 4 km source', () {
+    final result = estimateSyntheticFixture(
+      sourceDepthKm: 4.0,
+      eventId: 'synthetic-unit-fixture-depth-4',
+    );
+
+    expect(result.estimate.depthKm, 4.0);
+    final refinement = expectBoundedRefinement(result.stages);
+    expect(refinement['moves'], isNotEmpty);
+  });
+
+  test(
+    'synthetic unit fixture: zero-km boundary rejects negative depth and holds without improvement',
+    () {
+      final result = estimateSyntheticFixture(
+        sourceDepthKm: 0.0,
+        eventId: 'synthetic-unit-fixture-depth-0',
+      );
+
+      expect(result.estimate.depthKm, 0.0);
+      expect(result.estimate.depthKm, greaterThanOrEqualTo(0.0));
+      final refinement = expectBoundedRefinement(result.stages);
+      expect(refinement['termination_reason'], 'local_minimum');
+      expect(refinement['moves'], isEmpty);
+      expect(refinement['rejected_reason_counts'], {'depth_below_0_km': 1});
+      final terminalCandidates = (refinement['terminal_candidates']! as List)
+          .cast<Map<String, Object?>>();
+      final negativeCandidate = terminalCandidates.singleWhere(
+        (candidate) => (candidate['depth_km']! as num) < 0,
+      );
+      expect(negativeCandidate['evaluated'], isFalse);
+      expect(negativeCandidate['reject_reason'], 'depth_below_0_km');
+    },
+  );
+}
