@@ -2,15 +2,18 @@ import '../core/intensity_calculator.dart';
 import '../core/utils/quake_time.dart';
 import 'unified_quake_data.dart';
 
-/// Badge-only estimate: never replace the source intensity or notification data.
-int? estimatedJianCeaBadgeIntensity(UnifiedQuakeData event) {
-  if (event.source != 'ceaEew' ||
-      event.apiTypeLabel != 'Jian Project' ||
+/// New API badges reuse FAN's CSIS estimate without replacing source values.
+int? estimatedNewApiEewBadgeIntensity(UnifiedQuakeData event) {
+  final raw = event.sourcePayload;
+  if (!const {'Jian Project', 'WHEWS'}.contains(event.apiTypeLabel) ||
       !event.isEew ||
       event.useShindo ||
       event.isCanceled ||
       event.isAssumption ||
       event.isHistory ||
+      raw?['isCancel'] == true ||
+      raw?['cancel'] == true ||
+      raw?['isTraining'] == true ||
       !const {'', '-'}.contains(event.maxIntensity.trim()) ||
       !event.magnitude.isFinite ||
       event.magnitude <= 0 ||

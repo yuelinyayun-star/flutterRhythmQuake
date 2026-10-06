@@ -48,7 +48,7 @@ void main() {
 
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  for (final type in ['cea', 'cea-pr']) {
+  for (final type in ['cea', 'cea-pr', 'sa']) {
     test(
       'original $type gets a badge-only estimate without rewriting data',
       () {
@@ -62,7 +62,7 @@ void main() {
 
         expect(event.maxIntensity, '-');
         expect(
-          estimatedJianCeaBadgeIntensity(event),
+          estimatedNewApiEewBadgeIntensity(event),
           IntensityCalculator.calcCsisLevel(event.magnitude, event.depth, 0),
         );
         expect(jsonEncode(raw), original);
@@ -79,9 +79,9 @@ void main() {
   }
 
   test('other original Jian EEW badges are not changed', () {
-    for (final type in ['sa', 'jma-eew', 'cwa-eew', 'kma-eew']) {
+    for (final type in ['jma-eew', 'cwa-eew', 'kma-eew']) {
       expect(
-        estimatedJianCeaBadgeIntensity(eventFor(type)),
+        estimatedNewApiEewBadgeIntensity(eventFor(type)),
         isNull,
         reason: type,
       );
@@ -95,13 +95,12 @@ void main() {
       final event = eventFor('cea');
       for (final value in ['0', '3.5', 'Ⅵ', 'VI', '?', '不明']) {
         expect(
-          estimatedJianCeaBadgeIntensity(event.copyWith(maxIntensity: value)),
+          estimatedNewApiEewBadgeIntensity(event.copyWith(maxIntensity: value)),
           isNull,
         );
       }
       for (final invalid in [
         event.copyWith(apiTypeLabel: 'FAN'),
-        event.copyWith(apiTypeLabel: 'WHEWS'),
         event.copyWith(isEew: false),
         event.copyWith(useShindo: true),
         event.copyWith(isCanceled: true),
@@ -115,7 +114,7 @@ void main() {
         event.copyWith(depth: double.nan),
         event.copyWith(depth: double.infinity),
       ]) {
-        expect(estimatedJianCeaBadgeIntensity(invalid), isNull);
+        expect(estimatedNewApiEewBadgeIntensity(invalid), isNull);
       }
     },
   );
@@ -126,7 +125,7 @@ void main() {
     const Size(844, 390),
     const Size(1280, 900),
   ]) {
-    for (final type in ['cea', 'cea-pr']) {
+    for (final type in ['cea', 'cea-pr', 'sa']) {
       testWidgets('$type badge keeps its box and fits at $size', (
         tester,
       ) async {
@@ -176,7 +175,7 @@ void main() {
         final original = eventFor(type);
         await show(original);
         expect(find.text('预估烈度'), findsOneWidget);
-        final estimate = estimatedJianCeaBadgeIntensity(original)!;
+        final estimate = estimatedNewApiEewBadgeIntensity(original)!;
         expect(
           find.text(unifiedRomanIntensityLabel('$estimate')),
           findsOneWidget,
@@ -225,6 +224,24 @@ void main() {
         expect(find.text('III'), findsOneWidget);
         expect(tester.getSize(badgeBox('烈度')), estimatedBoxSize);
         expect(tester.takeException(), isNull);
+        await show(original.copyWith(maxIntensity: '0.0'));
+        expect(find.text('预估烈度'), findsNothing);
+        expect(find.text('0'), findsOneWidget);
+        expect(tester.getSize(badgeBox('烈度')), estimatedBoxSize);
+        expect(tester.takeException(), isNull);
+        // Model-level WHEWS display cases, not modified source captures.
+        await show(original.copyWith(apiTypeLabel: 'WHEWS'));
+        expect(find.text('预估烈度'), findsOneWidget);
+        expect(tester.getSize(badgeBox('预估烈度')), estimatedBoxSize);
+        for (final (value, label) in [('6.49', 'VI'), ('6.5', 'VII')]) {
+          await show(
+            original.copyWith(apiTypeLabel: 'WHEWS', maxIntensity: value),
+          );
+          expect(find.text('预估烈度'), findsNothing);
+          expect(find.text(label), findsOneWidget);
+          expect(tester.getSize(badgeBox('烈度')), estimatedBoxSize);
+          expect(tester.takeException(), isNull);
+        }
         await tester.pumpWidget(const SizedBox());
       });
     }

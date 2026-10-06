@@ -1115,11 +1115,15 @@ class _AlertModuleState extends State<AlertModule> {
     }
 
     final presentation = UnifiedEventPresentation.fromEvent(event);
-    final estimatedIntensity = estimatedJianCeaBadgeIntensity(event);
+    final estimatedIntensity = estimatedNewApiEewBadgeIntensity(event);
+    final reportedZero = event.isEew &&
+        !event.useShindo &&
+        const {'Jian Project', 'WHEWS'}.contains(event.apiTypeLabel) &&
+        double.tryParse(event.maxIntensity) == 0;
     return _buildUnifiedListStyleBadge(
       color: color,
       value: estimatedIntensity == null
-          ? presentation.intensityValue
+          ? (reportedZero ? '0' : presentation.intensityValue)
           : estimatedIntensity == 0
           ? '0'
           : unifiedRomanIntensityLabel('$estimatedIntensity'),

@@ -219,9 +219,12 @@ class QuakeEventAdapter {
         ? originalLocation
         : catalogDisplayLocation(originalLocation, lat, lng);
     final intensityValue = raw['intensity'] ?? raw['maxMMI'];
+    final reportedIntensity =
+        parseReportedIntensity(intensityValue) ??
+        (eew && !useShindo ? parseReportedIntensity(raw['maxMMI']) : null);
     final intensity = useShindo
         ? _normalizeJmaShindo(_stringValue(intensityValue))
-        : parseReportedIntensity(intensityValue)?.toString() ??
+        : reportedIntensity?.toString() ??
               (eew ? '-' : _whewsFallbackIntensity(magnitude, depth));
     final serial = _parseInt(raw['serial'] ?? raw['number']);
     final review = _stringValue(raw['infoTypeName']) ?? '';
@@ -1253,7 +1256,15 @@ class QuakeEventAdapter {
   ) {
     final intensityRaw = origin == _originWolfx
         ? _parseDouble(data['MaxIntensity'])
+        : origin == _originWhews
+        ? _whewsReportedEewIntensity(data)
         : _parseDouble(data['maxIntensity']);
+    // The existing badge rounds once; do not first round to one decimal.
+    final intensityText = intensityRaw == null
+        ? '-'
+        : origin == _originWhews
+        ? intensityRaw.toString()
+        : intensityRaw.toStringAsFixed(1);
     final isWarn = intensityRaw != null && intensityRaw >= 6.5;
     final reportNumText = origin == _originWolfx
         ? '第${(data['ReportNum'] ?? data['ReportCount']) ?? '1'}報'
@@ -1268,10 +1279,8 @@ class QuakeEventAdapter {
       titleText: '中国地震预警网地震预警',
       reportNumText: reportNumText,
       useShindo: false,
-      maxIntensity: intensityRaw != null
-          ? intensityRaw.toStringAsFixed(1)
-          : '-',
-      className: _setClassName(intensityRaw?.toStringAsFixed(1), false, false),
+      maxIntensity: intensityText,
+      className: _setClassName(intensityText, false, false),
       hypocenter:
           '${data['HypoCenter'] ?? data['Hypocenter'] ?? data['location'] ?? ''}',
       originTime: _parseTime(
@@ -1459,14 +1468,18 @@ class QuakeEventAdapter {
         : null;
     final intensityRaw = _parseIntensityValue(
       origin == _originWhews
-          ? data['maxMmi'] ?? data['maxIntensity'] ?? data['maxMmiLabel']
+          ? _whewsReportedEewIntensity(data)
           : data['maxIntensity'],
     );
     final isWarn = intensityRaw != null && intensityRaw >= 6.5;
-    final maxIntensity = whewsIntensity?.isNotEmpty == true
+    final maxIntensity = intensityRaw != null &&
+            whewsIntensity?.isNotEmpty == true &&
+            parseReportedIntensity(whewsIntensity) == intensityRaw
         ? whewsIntensity!
         : intensityRaw != null
-        ? intensityRaw.toStringAsFixed(1)
+        ? (origin == _originWhews
+              ? intensityRaw.toString()
+              : intensityRaw.toStringAsFixed(1))
         : '-';
     final originTimeValue = origin == _originWhews
         ? data['shockTime'] ?? data['originTime']
@@ -1508,7 +1521,14 @@ class QuakeEventAdapter {
     Map<String, dynamic> data,
     int origin,
   ) {
-    final intensityRaw = _parseDouble(data['maxIntensity']);
+    final intensityRaw = origin == _originWhews
+        ? _whewsReportedEewIntensity(data)
+        : _parseDouble(data['maxIntensity']);
+    final intensityText = intensityRaw == null
+        ? '-'
+        : origin == _originWhews
+        ? intensityRaw.toString()
+        : intensityRaw.toStringAsFixed(1);
     final isWarn = intensityRaw != null && intensityRaw >= 6.5;
     final parsedReportNumber = _parseInt(data['updates']);
     final reportNumber = parsedReportNumber != null && parsedReportNumber > 0
@@ -1527,10 +1547,8 @@ class QuakeEventAdapter {
       titleText: 'ShakeAlert Earthquake Early Warning',
       reportNumText: '第$reportNumber報',
       useShindo: false,
-      maxIntensity: intensityRaw != null
-          ? intensityRaw.toStringAsFixed(1)
-          : '-',
-      className: _setClassName(intensityRaw?.toStringAsFixed(1), false, false),
+      maxIntensity: intensityText,
+      className: _setClassName(intensityText, false, false),
       hypocenter: '${data['location'] ?? ''}',
       originTime: _parseTime(data['originTime'] as String?, timeZone),
       reportTime: _parseTime(
@@ -2853,6 +2871,22 @@ class QuakeEventAdapter {
     final intensity = _parseIntensityValue(value);
     return intensity != null && intensity.isFinite &&
         intensity >= 0 && intensity <= 12 ? intensity : null;
+  }
+
+  // Only the new WHEWS EEW contract uses these aliases. Keep FAN/Wolfx intact.
+  static double? _whewsReportedEewIntensity(Map<String, dynamic> data) {
+    for (final key in const [
+      'maxIntensity',
+      'epiIntensity',
+      'maxMMI',
+      'maxMmi',
+      'maxMmiLabel',
+      'intensity',
+    ]) {
+      final value = parseReportedIntensity(data[key]);
+      if (value != null) return value;
+    }
+    return null;
   }
 
   static int? _parseInt(dynamic value) {
