@@ -291,6 +291,18 @@ class SasmexConfig:
     stale_after_seconds: float
 
 
+@dataclass(frozen=True)
+class SasmexFetched:
+    path: str
+    url: str
+    status: int
+    body: bytes
+    content_type: str
+    headers: dict[str, str]
+    round_trip_seconds: float
+    received_at_utc: str
+
+
 @dataclass
 class SasmexState:
     latest_event: dict[str, Any] | None = None
@@ -345,15 +357,19 @@ class SasmexFeed:
         self,
         config: SasmexConfig,
         on_update: Callable[[dict[str, Any]], Awaitable[None]],
+        on_archive: Callable[[dict[str, Any], list[dict[str, Any]]], Awaitable[None]] | None = None,
     ) -> None:
         self.config = config
         self.on_update = on_update
+        self.on_archive = on_archive
         self.state = SasmexState()
         self.session: aiohttp.ClientSession | None = None
         self._known_alert_summaries: dict[str, str] = {}
         self._event_fingerprints: OrderedDict[str, str] = OrderedDict()
         self._recent_fingerprints: OrderedDict[str, None] = OrderedDict()
         self._dedup_limit = 256
+        self._poll_requests: list[dict[str, Any]] = []
+        self._pending_archives: list[dict[str, Any]] = []
 
     async def start(self) -> None:
         timeout = aiohttp.ClientTimeout(total=self.config.timeout_seconds)
@@ -373,24 +389,67 @@ class SasmexFeed:
             await self.session.close()
             self.session = None
 
-    async def _get(self, path: str) -> tuple[int, bytes, str]:
+    async def _get(self, path: str) -> SasmexFetched:
         if self.session is None:
             raise RuntimeError("SASMEX HTTP client hasn't been started")
         url = urljoin(f"{self.config.base_url.rstrip('/')}/", path.lstrip("/"))
+        started = time.monotonic()
         try:
             async with self.session.get(url) as response:
-                return response.status, await response.read(), response.headers.get(
-                    "Content-Type", ""
+                body = await response.read()
+                return SasmexFetched(
+                    path=path,
+                    url=url,
+                    status=response.status,
+                    body=body,
+                    content_type=response.headers.get("Content-Type", ""),
+                    headers={key: value for key, value in response.headers.items()
+                             if key.lower() in {"content-type", "content-length", "date", "etag", "last-modified"}},
+                    round_trip_seconds=time.monotonic() - started,
+                    received_at_utc=datetime.now(UTC).isoformat(),
                 )
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise ConnectionError(f"GET {url} failed: {exc}") from exc
 
+    def _normalize_fetched(self, path: str, result: Any) -> SasmexFetched:
+        if isinstance(result, SasmexFetched):
+            return result
+        status, body, content_type = result
+        return SasmexFetched(
+            path=path,
+            url=urljoin(f"{self.config.base_url.rstrip('/')}/", path.lstrip("/")),
+            status=status,
+            body=body,
+            content_type=content_type,
+            headers={"Content-Type": content_type} if content_type else {},
+            round_trip_seconds=0.0,
+            received_at_utc=datetime.now(UTC).isoformat(),
+        )
+
+    def _record_request(self, kind: str, fetched: SasmexFetched, attachment: str) -> None:
+        self._poll_requests.append(
+            {
+                "kind": kind,
+                "method": "GET",
+                "path": fetched.path,
+                "url": fetched.url,
+                "status": fetched.status,
+                "contentType": fetched.content_type,
+                "headers": fetched.headers,
+                "roundTripSeconds": round(fetched.round_trip_seconds, 6),
+                "receivedAtUtc": fetched.received_at_utc,
+                "attachment": attachment,
+                "body": fetched.body,
+            }
+        )
+
     async def _fetch_event(
         self, summary: Mapping[str, Any]
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        cap_status, cap_body, _ = await self._get(
-            f"/api/v1/alerts/{summary['id']}/cap/"
-        )
+        cap_path = f"/api/v1/alerts/{summary['id']}/cap/"
+        cap_fetched = self._normalize_fetched(cap_path, await self._get(cap_path))
+        self._record_request("cap", cap_fetched, f"raw/cap-{summary['id']}.xml")
+        cap_status, cap_body = cap_fetched.status, cap_fetched.body
         if cap_status != 200:
             raise ConnectionError(
                 f"SASMEX CAP endpoint returned HTTP {cap_status} for {summary['id']}"
@@ -425,6 +484,7 @@ class SasmexFeed:
         event: dict[str, Any],
         cap: Mapping[str, Any],
         now: datetime,
+        requests: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any] | None:
         fingerprint = _fingerprint(summary, cap)
         event_id = str(summary.get("id") or "")
@@ -440,10 +500,14 @@ class SasmexFeed:
         self.state.last_change_at = now
         self.state.accepted_updates += 1
         await self.on_update(event)
+        self._pending_archives.append({"event": event, "requests": list(requests or [])})
         return event
 
     async def _poll_latest(self, now: datetime) -> dict[str, Any] | None:
-        status, body, _ = await self._get("/api/v1/alerts/latest/")
+        path = "/api/v1/alerts/latest/"
+        fetched = self._normalize_fetched(path, await self._get(path))
+        self._record_request("latest", fetched, "raw/latest.json")
+        status, body = fetched.status, fetched.body
         if status != 200:
             raise ConnectionError(f"SASMEX latest endpoint returned HTTP {status}")
         try:
@@ -459,7 +523,10 @@ class SasmexFeed:
         return await self._accept_event(summary, event, cap, now)
 
     async def _poll_alert_index(self, now: datetime) -> list[dict[str, Any]]:
-        status, body, _ = await self._get("/api/v1/alerts/?type=alert")
+        path = "/api/v1/alerts/?type=alert"
+        fetched = self._normalize_fetched(path, await self._get(path))
+        self._record_request("alertIndex", fetched, "raw/alerts.json")
+        status, body = fetched.status, fetched.body
         if status != 200:
             raise ConnectionError(f"SASMEX alert index returned HTTP {status}")
         try:
@@ -487,19 +554,35 @@ class SasmexFeed:
                 continue
             self._known_alert_summaries[event_id] = summary_fingerprint
             event, cap = await self._fetch_event(summary)
-            accepted = await self._accept_event(summary, event, cap, now)
+            accepted = await self._accept_event(
+                summary, event, cap, now, list(self._poll_requests)
+            )
             if accepted is not None:
                 updates.append(accepted)
         return updates
 
     async def poll_once(self) -> dict[str, Any] | None:
         now = datetime.now(UTC)
+        self._poll_requests = []
+        self._pending_archives = []
         self.state.last_poll_at = now
         self.state.last_error = None
         self.state.consecutive_failures = 0
-        latest_event = await self._poll_latest(now)
-        alert_events = await self._poll_alert_index(now)
-        return alert_events[-1] if alert_events else latest_event
+        try:
+            latest_event = await self._poll_latest(now)
+            alert_events = await self._poll_alert_index(now)
+            return alert_events[-1] if alert_events else latest_event
+        finally:
+            if self.on_archive is not None:
+                requests = list(self._poll_requests)
+                pending = list(self._pending_archives)
+                self._pending_archives = []
+                for item in pending:
+                    try:
+                        await self.on_archive(item["event"], requests)
+                    except Exception:
+                        # Archiving must never stop polling or block the live feed.
+                        pass
 
     async def poll_forever(self, stop_event: asyncio.Event) -> None:
         while not stop_event.is_set():

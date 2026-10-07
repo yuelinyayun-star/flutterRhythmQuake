@@ -178,6 +178,24 @@ $env:KMA_RELAY_HOST = '127.0.0.1'
 
 WebSocket 已建立但 KMA 数据卡住不会被判定为健康。
 
+## SASMEX 原始归档
+
+SASMEX 每个通过现有去重并进入发送流程的新事件，都会在后台写入一份独立 ZIP，
+再由独立 timer 上传到 TG 云盘的 `SASMEX原始归档/YYYY-MM-DD/`。归档包含：
+
+```text
+report.json             请求 URL、GET 状态、响应头、接收时间、耗时、事件编号和文件 SHA-256
+raw/latest.json         本轮实际 GET 到的 latest 原始 JSON
+raw/alerts.json         本轮实际 GET 到的正式警报列表原始 JSON
+raw/cap-<id>.xml        对应事件实际 GET 到的原始 CAP XML
+parsed.json             服务端解析后准备发送的事件 JSON
+emitted.json            实际通过 SASMEX WebSocket 发出的完整 JSON
+```
+
+原始响应按 UTF-8/字节原样保存，不用二次请求覆盖；上传通过 TGFS WebDAV 回读校验，
+校验成功后才删除服务器本地临时 ZIP，失败则保留并重试。归档目录和 KMA 异常目录
+分开，避免混淆。服务端健康接口中的 `sasmexArchive` 显示队列、成功和失败计数。
+
 ## 异常原文归档
 
 Linux 服务端可启用独立异常归档，不改变客户端屏蔽条件，也不改变现有

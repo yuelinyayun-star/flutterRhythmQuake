@@ -29,6 +29,7 @@ from websockets.asyncio.server import ServerConnection, serve
 from websockets.http11 import Request, Response
 
 from anomaly_archive import AnomalyArchive
+from sasmex_archive import SasmexArchive
 from sasmex_relay import SasmexConfig, SasmexFeed
 
 
@@ -56,6 +57,10 @@ class Config:
     access_token: str = os.environ.get("KMA_RELAY_TOKEN", "")
     anomaly_directory: str = os.environ.get("KMA_ANOMALY_DIRECTORY", "")
     anomaly_max_pending_bytes: int = int(os.environ.get("KMA_ANOMALY_MAX_PENDING_BYTES", str(64 * 1024 * 1024)))
+    sasmex_archive_directory: str = os.environ.get("SASMEX_ARCHIVE_DIRECTORY", "")
+    sasmex_archive_max_pending_bytes: int = int(
+        os.environ.get("SASMEX_ARCHIVE_MAX_PENDING_BYTES", str(64 * 1024 * 1024))
+    )
     sasmex_base_url: str = os.environ.get(
         "SASMEX_BASE_URL", "https://rss.sasmex.net"
     ).rstrip("/")
@@ -348,6 +353,10 @@ class KmaRelay:
         self._last_attempted_utc: datetime | None = None
         self._last_summary_log_monotonic = 0.0
         self.anomalies = AnomalyArchive(config.anomaly_directory, config.anomaly_max_pending_bytes)
+        self.sasmex_archive = SasmexArchive(
+            config.sasmex_archive_directory,
+            config.sasmex_archive_max_pending_bytes,
+        )
         self.sasmex_clients: set[ServerConnection] = set()
         self.sasmex_send_locks: dict[ServerConnection, asyncio.Lock] = {}
         self.sasmex = SasmexFeed(
@@ -358,6 +367,7 @@ class KmaRelay:
                 stale_after_seconds=config.sasmex_stale_after_seconds,
             ),
             self._broadcast_sasmex_update,
+            self._archive_sasmex_update,
         )
         self._station_input: tuple[str, Fetched] | None = None
         self._station_attempt: tuple[str, Fetched] | None = None
@@ -617,6 +627,42 @@ class KmaRelay:
 
     async def _broadcast_sasmex_update(self, event: dict[str, Any]) -> None:
         await self.broadcast_sasmex(self._sasmex_update_message(event))
+
+    async def _archive_sasmex_update(
+        self, event: dict[str, Any], requests: list[dict[str, Any]]
+    ) -> None:
+        emitted = self._sasmex_update_message(event)
+        originals: dict[str, bytes] = {
+            "parsed.json": json.dumps(
+                event, ensure_ascii=False, indent=2
+            ).encode("utf-8"),
+            "emitted.json": json.dumps(
+                emitted, ensure_ascii=False, indent=2
+            ).encode("utf-8"),
+        }
+        request_metadata: list[dict[str, Any]] = []
+        for request in requests:
+            attachment = request.get("attachment")
+            body = request.get("body")
+            if not isinstance(attachment, str) or not isinstance(body, bytes):
+                continue
+            originals[attachment] = body
+            request_metadata.append({
+                key: value for key, value in request.items() if key != "body"
+            })
+        recorded_at = datetime.now(UTC).isoformat()
+        event_time = event.get("sent") or event.get("time") or recorded_at
+        report = {
+            "schemaVersion": 1,
+            "source": "sasmex",
+            "recordedAtUtc": recorded_at,
+            "eventTimeUtc": event_time,
+            "eventId": event.get("id") or event.get("eventId"),
+            "requests": request_metadata,
+            "parsedJson": "parsed.json",
+            "emittedJson": "emitted.json",
+        }
+        self.sasmex_archive.submit(report, originals)
 
     def _sasmex_heartbeat_message(self, message_type: str = "heartbeat") -> dict[str, Any]:
         return {
@@ -905,6 +951,7 @@ class KmaRelay:
             "lastOfficialHttpStatus": self.state.last_official_status,
             "acceptedFrames": self.state.accepted_frames,
             "anomalyArchive": self.anomalies.status(),
+            "sasmexArchive": self.sasmex_archive.status(),
             "sasmex": self.sasmex.state.health(
                 self.config.sasmex_stale_after_seconds
             ),
@@ -931,6 +978,7 @@ class KmaRelay:
     async def run(self) -> None:
         await self.http.start()
         self.anomalies.start()
+        self.sasmex_archive.start()
         await self.sasmex.start()
         poll_task = asyncio.create_task(self.poll_forever(), name="kma-poller")
         sasmex_task = asyncio.create_task(
@@ -965,6 +1013,7 @@ class KmaRelay:
                 poll_task, heartbeat_task, sasmex_task, return_exceptions=True
             )
             await self.sasmex.close()
+            await self.sasmex_archive.close()
             await self.http.close()
             await self.anomalies.close()
 

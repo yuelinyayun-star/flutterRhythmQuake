@@ -3,6 +3,12 @@
 本文档说明服务端从 SASMEX-CIRES CAP 报文中解析出的客户端 JSON。服务端内部读取
 CAP XML，但对 APP 只发送 JSON，不发送 XML 原文，也不补充 SASMEX 没有提供的震级、深度、烈度或测站数据。
 
+服务端另外会把通过去重并实际发出的新事件归档到 TG 云盘的
+`SASMEX原始归档/YYYY-MM-DD/`。归档包保留本次实际 GET 的 `latest` JSON、正式警报列表
+JSON、对应 CAP XML、解析后的 JSON，以及完整的 WebSocket 输出 JSON；`report.json` 保存
+请求 URL、状态码、响应头、接收时间、耗时和各文件 SHA-256。上传回读校验成功后才删除
+服务器临时包，失败会保留并由 timer 重试。
+
 ## 1. 连接地址
 
 APP 只需要连接一个 WebSocket：
