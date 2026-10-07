@@ -47,6 +47,11 @@ wss://ws.yuelinrhythm.top/sasmex-eew
 当前公开样本中，`Monitor` 报文是“检测到地震但没有发出警报”；`Execute` 报文是“已执行警报动作”。
 当前 CAP 样本没有明确返回 `Alerta Preventiva` 或 `Alerta Pública` 这两个官方名称，因此服务端不判断具体官方等级。
 
+服务端轮询两个索引：`/api/v1/alerts/latest/` 用于获取最新检测或事件，
+`/api/v1/alerts/?type=alert` 用于补充发现正式警报。启动时正式警报列表只建立基线，
+不会把历史记录重新发送；新出现或摘要更新的警报才会读取 CAP 并推送。两个索引指向同一条报文时，
+服务端会用事件 ID、CAP 内容指纹和近期指纹缓存去重。
+
 ## 3. Monitor 示例：检测到地震但未发警报
 
 这是 SASMEX 真实报文 `20260902031439` 的客户端格式：

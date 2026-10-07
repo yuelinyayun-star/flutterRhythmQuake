@@ -131,9 +131,14 @@ SASMEX 参数：
 | 环境变量 | 默认值 | 说明 |
 | --- | ---: | --- |
 | `SASMEX_BASE_URL` | `https://rss.sasmex.net` | 公开 RSS/CAP 站点 |
-| `SASMEX_POLL_SECONDS` | `10` | latest 轮询间隔 |
+| `SASMEX_POLL_SECONDS` | `10` | `latest` 和正式警报索引的轮询间隔 |
 | `SASMEX_REQUEST_TIMEOUT_SECONDS` | `15` | 单次公开接口超时 |
 | `SASMEX_STALE_AFTER_SECONDS` | `90` | 健康检查允许的轮询间隔 |
+
+每轮同时检查 `/api/v1/alerts/latest/` 和
+`/api/v1/alerts/?type=alert`。服务启动时只记录正式警报索引作为基线，避免把历史警报全部重放；
+之后出现新警报或列表摘要发生变化时，才读取对应 CAP 并通过 SASMEX WebSocket 推送。
+检测事件和正式警报使用事件 ID、CAP 内容指纹以及有限大小的近期指纹缓存去重。
 
 ## Windows 防火墙
 

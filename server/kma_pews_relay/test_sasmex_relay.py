@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
+from datetime import UTC, datetime
 
-from sasmex_relay import parse_alert_summary, parse_cap_xml, to_client_payload
+from sasmex_relay import (
+    SasmexConfig,
+    SasmexFeed,
+    parse_alert_list,
+    parse_alert_summary,
+    parse_cap_xml,
+    to_client_payload,
+)
 
 
 CAP = '''<?xml version="1.0" encoding="UTF-8"?>
@@ -73,6 +82,106 @@ CAP_WARNING = '''<?xml version="1.0" encoding="UTF-8"?>
 
 
 class SasmexRelayTest(unittest.TestCase):
+    def test_parses_formal_alert_index(self) -> None:
+        result = parse_alert_list(
+            {
+                "alerts": [
+                    {
+                        "id": "20260504091933",
+                        "is_event": False,
+                        "references": [
+                            {
+                                "id": "20260504091932",
+                                "is_event": True,
+                            }
+                        ],
+                        "region": 42201,
+                        "states": [40],
+                        "time": "2026-05-04T09:19:33",
+                    }
+                ],
+                "count": 1,
+            }
+        )
+        self.assertEqual(result[0]["id"], "20260504091933")
+        self.assertFalse(result[0]["isEvent"])
+        self.assertEqual(result[0]["references"][0]["id"], "20260504091932")
+
+    def test_alert_index_baseline_does_not_replay_history(self) -> None:
+        updates: list[dict] = []
+
+        async def on_update(event: dict) -> None:
+            updates.append(event)
+
+        feed = SasmexFeed(
+            SasmexConfig(
+                base_url="https://rss.sasmex.net",
+                poll_seconds=10,
+                timeout_seconds=15,
+                stale_after_seconds=90,
+            ),
+            on_update,
+        )
+
+        async def run() -> None:
+            async def get(path: str):
+                if path == "/api/v1/alerts/?type=alert":
+                    return (
+                        200,
+                        b'{"alerts": [{"id": "old", "is_event": false}]}',
+                        "application/json",
+                    )
+                raise AssertionError(path)
+
+            feed._get = get  # type: ignore[method-assign]
+            result = await feed._poll_alert_index(datetime.now(UTC))
+            self.assertEqual(result, [])
+            self.assertTrue(feed.state.alert_index_initialized)
+            self.assertEqual(feed.state.alert_index_count, 1)
+            self.assertEqual(updates, [])
+
+        asyncio.run(run())
+
+    def test_alert_index_fetches_new_formal_alert_after_baseline(self) -> None:
+        updates: list[dict] = []
+
+        async def on_update(event: dict) -> None:
+            updates.append(event)
+
+        feed = SasmexFeed(
+            SasmexConfig(
+                base_url="https://rss.sasmex.net",
+                poll_seconds=10,
+                timeout_seconds=15,
+                stale_after_seconds=90,
+            ),
+            on_update,
+        )
+        responses = [
+            b'{"alerts": [{"id": "old", "is_event": false}]}',
+            b'{"alerts": [{"id": "new", "is_event": false}, {"id": "old", "is_event": false}]}',
+        ]
+
+        async def run() -> None:
+            async def get(path: str):
+                self.assertEqual(path, "/api/v1/alerts/?type=alert")
+                return 200, responses.pop(0), "application/json"
+
+            async def fetch_event(summary):
+                return (
+                    {"id": summary["id"], "sasmexAlertIssued": True},
+                    {"responseType": "Execute"},
+                )
+
+            feed._get = get  # type: ignore[method-assign]
+            feed._fetch_event = fetch_event  # type: ignore[method-assign]
+            await feed._poll_alert_index(datetime.now(UTC))
+            result = await feed._poll_alert_index(datetime.now(UTC))
+            self.assertEqual([event["id"] for event in result], ["new"])
+            self.assertEqual([event["id"] for event in updates], ["new"])
+
+        asyncio.run(run())
+
     def test_summary_normalizes_public_list_fields(self) -> None:
         result = parse_alert_summary(
             {

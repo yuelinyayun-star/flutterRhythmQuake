@@ -8,6 +8,7 @@ import json
 import re
 import time
 import xml.etree.ElementTree as ET
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Awaitable, Callable, Mapping
@@ -113,6 +114,21 @@ def parse_alert_summary(payload: Mapping[str, Any]) -> dict[str, Any]:
         "states": list(payload.get("states") or []),
         "time": payload.get("time"),
     }
+
+
+def parse_alert_list(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Normalize the public formal-alert index without inventing fields."""
+
+    alerts = payload.get("alerts")
+    if not isinstance(alerts, list):
+        raise ValueError("SASMEX alert list response has no alerts array")
+    return [
+        summary
+        for item in alerts
+        if isinstance(item, Mapping)
+        for summary in [parse_alert_summary(item)]
+        if summary["id"]
+    ]
 
 
 def parse_cap_xml(xml_text: str) -> dict[str, Any]:
@@ -284,6 +300,8 @@ class SasmexState:
     last_error: str | None = None
     consecutive_failures: int = 0
     accepted_updates: int = 0
+    alert_index_initialized: bool = False
+    alert_index_count: int = 0
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -317,6 +335,8 @@ class SasmexState:
             "consecutiveFailures": self.consecutive_failures,
             "acceptedUpdates": self.accepted_updates,
             "latestEventId": (self.latest_event or {}).get("id"),
+            "alertIndexInitialized": self.alert_index_initialized,
+            "alertIndexCount": self.alert_index_count,
         }
 
 
@@ -330,6 +350,10 @@ class SasmexFeed:
         self.on_update = on_update
         self.state = SasmexState()
         self.session: aiohttp.ClientSession | None = None
+        self._known_alert_summaries: dict[str, str] = {}
+        self._event_fingerprints: OrderedDict[str, str] = OrderedDict()
+        self._recent_fingerprints: OrderedDict[str, None] = OrderedDict()
+        self._dedup_limit = 256
 
     async def start(self) -> None:
         timeout = aiohttp.ClientTimeout(total=self.config.timeout_seconds)
@@ -361,21 +385,9 @@ class SasmexFeed:
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise ConnectionError(f"GET {url} failed: {exc}") from exc
 
-    async def poll_once(self) -> dict[str, Any] | None:
-        now = datetime.now(UTC)
-        status, body, _ = await self._get("/api/v1/alerts/latest/")
-        if status != 200:
-            raise ConnectionError(f"SASMEX latest endpoint returned HTTP {status}")
-        try:
-            summary_payload = json.loads(body.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ValueError("SASMEX latest response is not valid UTF-8 JSON") from exc
-        if not isinstance(summary_payload, dict):
-            raise ValueError("SASMEX latest response is not an object")
-        summary = parse_alert_summary(summary_payload)
-        if not summary["id"]:
-            raise ValueError("SASMEX latest response has no event id")
-
+    async def _fetch_event(
+        self, summary: Mapping[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         cap_status, cap_body, _ = await self._get(
             f"/api/v1/alerts/{summary['id']}/cap/"
         )
@@ -388,20 +400,106 @@ class SasmexFeed:
         except UnicodeDecodeError as exc:
             raise ValueError("SASMEX CAP response is not UTF-8") from exc
         cap = parse_cap_xml(cap_xml)
-        event = to_client_payload(summary, cap)
+        return to_client_payload(summary, cap), cap
+
+    @staticmethod
+    def _summary_fingerprint(summary: Mapping[str, Any]) -> str:
+        return hashlib.sha256(
+            json.dumps(summary, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            .encode("utf-8")
+        ).hexdigest()
+
+    def _remember_event(self, event_id: str, fingerprint: str) -> None:
+        self._event_fingerprints[event_id] = fingerprint
+        self._event_fingerprints.move_to_end(event_id)
+        self._recent_fingerprints[fingerprint] = None
+        self._recent_fingerprints.move_to_end(fingerprint)
+        while len(self._event_fingerprints) > self._dedup_limit:
+            self._event_fingerprints.popitem(last=False)
+        while len(self._recent_fingerprints) > self._dedup_limit:
+            self._recent_fingerprints.popitem(last=False)
+
+    async def _accept_event(
+        self,
+        summary: Mapping[str, Any],
+        event: dict[str, Any],
+        cap: Mapping[str, Any],
+        now: datetime,
+    ) -> dict[str, Any] | None:
         fingerprint = _fingerprint(summary, cap)
-        self.state.last_poll_at = now
-        self.state.last_error = None
-        self.state.consecutive_failures = 0
-        if fingerprint == self.state.latest_fingerprint:
+        event_id = str(summary.get("id") or "")
+        if (
+            self._event_fingerprints.get(event_id) == fingerprint
+            or fingerprint in self._recent_fingerprints
+        ):
             return None
 
+        self._remember_event(event_id, fingerprint)
         self.state.latest_event = event
         self.state.latest_fingerprint = fingerprint
         self.state.last_change_at = now
         self.state.accepted_updates += 1
         await self.on_update(event)
         return event
+
+    async def _poll_latest(self, now: datetime) -> dict[str, Any] | None:
+        status, body, _ = await self._get("/api/v1/alerts/latest/")
+        if status != 200:
+            raise ConnectionError(f"SASMEX latest endpoint returned HTTP {status}")
+        try:
+            summary_payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("SASMEX latest response is not valid UTF-8 JSON") from exc
+        if not isinstance(summary_payload, dict):
+            raise ValueError("SASMEX latest response is not an object")
+        summary = parse_alert_summary(summary_payload)
+        if not summary["id"]:
+            raise ValueError("SASMEX latest response has no event id")
+        event, cap = await self._fetch_event(summary)
+        return await self._accept_event(summary, event, cap, now)
+
+    async def _poll_alert_index(self, now: datetime) -> list[dict[str, Any]]:
+        status, body, _ = await self._get("/api/v1/alerts/?type=alert")
+        if status != 200:
+            raise ConnectionError(f"SASMEX alert index returned HTTP {status}")
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("SASMEX alert index response is not valid UTF-8 JSON") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("SASMEX alert index response is not an object")
+        summaries = parse_alert_list(payload)
+        self.state.alert_index_count = len(summaries)
+
+        if not self.state.alert_index_initialized:
+            self._known_alert_summaries = {
+                summary["id"]: self._summary_fingerprint(summary)
+                for summary in summaries
+            }
+            self.state.alert_index_initialized = True
+            return []
+
+        updates: list[dict[str, Any]] = []
+        for summary in summaries:
+            event_id = summary["id"]
+            summary_fingerprint = self._summary_fingerprint(summary)
+            if self._known_alert_summaries.get(event_id) == summary_fingerprint:
+                continue
+            self._known_alert_summaries[event_id] = summary_fingerprint
+            event, cap = await self._fetch_event(summary)
+            accepted = await self._accept_event(summary, event, cap, now)
+            if accepted is not None:
+                updates.append(accepted)
+        return updates
+
+    async def poll_once(self) -> dict[str, Any] | None:
+        now = datetime.now(UTC)
+        self.state.last_poll_at = now
+        self.state.last_error = None
+        self.state.consecutive_failures = 0
+        latest_event = await self._poll_latest(now)
+        alert_events = await self._poll_alert_index(now)
+        return alert_events[-1] if alert_events else latest_event
 
     async def poll_forever(self, stop_event: asyncio.Event) -> None:
         while not stop_event.is_set():
