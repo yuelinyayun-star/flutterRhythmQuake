@@ -3,6 +3,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../models/tsunami_message.dart';
+import 'nmefc_tsunami_layer.dart';
 
 class InternationalTsunamiLayer extends StatelessWidget {
   final TsunamiMessage? tsunami;
@@ -13,29 +14,23 @@ class InternationalTsunamiLayer extends StatelessWidget {
   Widget build(BuildContext context) {
     final data = tsunami;
     if (data == null ||
-        !_isInternationalSource(data.source) ||
+        !data.source.isBulletinSource ||
         !data.isDisplayableAt(DateTime.now())) {
       return const SizedBox.shrink();
     }
     final lat = data.epicenterLat;
     final lng = data.epicenterLng;
-    if (lat == null ||
-        lng == null ||
-        !lat.isFinite ||
-        !lng.isFinite ||
-        lat < -90 ||
-        lat > 90 ||
-        lng < -180 ||
-        lng > 180) {
-      return const SizedBox.shrink();
-    }
-
     final isInformation = data.isInformation;
     final color = isInformation
         ? const Color(0xFF4AA3FF)
         : _gradeColor(data.className);
-    return MarkerLayer(
-      markers: [
+    final markers = <Marker>[
+      if (lat != null &&
+          lng != null &&
+          lat.isFinite &&
+          lng.isFinite &&
+          lat.abs() <= 90 &&
+          lng.abs() <= 180)
         Marker(
           point: LatLng(lat, lng),
           width: 28,
@@ -60,14 +55,35 @@ class InternationalTsunamiLayer extends StatelessWidget {
             ),
           ),
         ),
-      ],
-    );
-  }
-
-  static bool _isInternationalSource(TsunamiSource source) {
-    return source == TsunamiSource.ptwc ||
-        source == TsunamiSource.ntwc ||
-        source == TsunamiSource.incois;
+      for (final station in data.observations.where((e) => e.hasValidPosition))
+        Marker(
+          point: LatLng(station.latitude, station.longitude),
+          width: 78,
+          height: 42,
+          child: Tooltip(
+            message: [
+              data.source.displayLabel,
+              if (station.stationName.isNotEmpty) station.stationName,
+              if (station.stationId.isNotEmpty) station.stationId,
+              if (station.maxWaveHeight.isNotEmpty)
+                '波高：${station.maxWaveHeight}',
+              if (station.time.isNotEmpty)
+                '到达：${data.formatLocalTime(station.time)}',
+              if (station.condition.isNotEmpty) station.condition,
+            ].join('\n'),
+            child: TsunamiObservationMarker(
+              color: color,
+              size: 14,
+              label: station.maxWaveHeight.isEmpty
+                  ? null
+                  : station.maxWaveHeight,
+            ),
+          ),
+        ),
+    ];
+    return markers.isEmpty
+        ? const SizedBox.shrink()
+        : MarkerLayer(markers: markers);
   }
 
   static Color _gradeColor(String className) {

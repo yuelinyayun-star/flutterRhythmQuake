@@ -33,6 +33,7 @@ import 'sources/usgs_eqlist_service.dart';
 import 'sources/wolfx_service.dart';
 import 'sources/whews_service.dart';
 import 'sources/jian_service.dart';
+import 'sources/sasmex_service.dart';
 import 'sources/jian_station_service.dart';
 import 'wauth_credential_store.dart';
 import 'foreground_station_payload.dart';
@@ -77,7 +78,8 @@ BackgroundEventProcessor? _backgroundEventProcessor;
 
 void setBackgroundJmaVolcanoPushEnabled(bool enabled) {
   _backgroundEventProcessor?.jmaVolcanoPushEnabled = enabled;
-  _backgroundSettings?[BackgroundEventProcessor.jmaVolcanoPushEnabledPreferenceKey] =
+  _backgroundSettings?[BackgroundEventProcessor
+          .jmaVolcanoPushEnabledPreferenceKey] =
       enabled;
 }
 
@@ -89,10 +91,14 @@ SourceStatusUpdate? backgroundJianStatus() {
   final jian = _backgroundManager?.getSource<JianService>();
   return jian == null
       ? null
-      : SourceStatusUpdate(jian.name, jian.connectionStatus,
+      : SourceStatusUpdate(
+          jian.name,
+          jian.connectionStatus,
           authenticationStatus: jian.authenticationStatus,
-          credentialInfo: jian.credentialInfo);
+          credentialInfo: jian.credentialInfo,
+        );
 }
+
 UsgsEqlistService? _backgroundOfficialUsgs;
 EmscEqlistService? _backgroundOfficialEmsc;
 CwaEqlistService? _backgroundOfficialCwa;
@@ -186,7 +192,8 @@ Future<bool> reloadBackgroundStationSettings() async {
         _backgroundJianKma!.stop();
         final source = prefs.getString('kma_data_source') ?? 'pews';
         if ((prefs.getBool('api_source_kma_pews_enabled') ?? true) &&
-            source != 'whews' && source != 'jian') {
+            source != 'whews' &&
+            source != 'jian') {
           _backgroundKma!.setConnectionSource(source);
           _backgroundKma!.setExternalInputEnabled(false);
           _backgroundKma!.connect();
@@ -196,7 +203,10 @@ Future<bool> reloadBackgroundStationSettings() async {
         _backgroundWhewsSnet!.stop();
         _backgroundJianSnet!.stop();
         if ((prefs.getBool('api_source_snet_enabled') ?? true) &&
-            !const {'whews', 'jian'}.contains(prefs.getString('snet_data_source'))) {
+            !const {
+              'whews',
+              'jian',
+            }.contains(prefs.getString('snet_data_source'))) {
           unawaited(_backgroundSnet!.startMonitoring());
         }
       case 'trem':
@@ -344,9 +354,11 @@ Future<void> startBackgroundSources({
   late final BackgroundEventProcessor processor;
   processor = BackgroundEventProcessor(
     sourceInfoMagFilters: sourceMagFilters,
-    jmaVolcanoPushEnabled: prefs.getBool(
-      BackgroundEventProcessor.jmaVolcanoPushEnabledPreferenceKey,
-    ) ?? true,
+    jmaVolcanoPushEnabled:
+        prefs.getBool(
+          BackgroundEventProcessor.jmaVolcanoPushEnabledPreferenceKey,
+        ) ??
+        true,
     infoActionWhitelist:
         prefs.getString(
           BackgroundEventProcessor.infoActionWhitelistPreferenceKey,
@@ -524,19 +536,23 @@ Future<void> startBackgroundSources({
   fan.onCencIrData = onCencIrData;
   nowQuakeCencIr.onCencIrData = onCencIrData;
   fan.onCencIrListUpdated = (items) => onCencIrList('fan', items);
-  nowQuakeCencIr.onCencIrListUpdated =
-      (items) => onCencIrList('nowquake', items);
+  nowQuakeCencIr.onCencIrListUpdated = (items) =>
+      onCencIrList('nowquake', items);
   fan.onWeatherAlarm = onWeatherAlarm;
   whews.onWeatherAlarm = onWeatherAlarm;
   manager.registerSource(wolfx);
   manager.registerSource(whews);
   manager.registerSource(jian);
-  manager.setSourceEnabled(jian.name,
-    prefs.getBool(JianService.enabledPreferenceKey) ?? false);
+  manager.setSourceEnabled(
+    jian.name,
+    prefs.getBool(JianService.enabledPreferenceKey) ?? false,
+  );
   manager.registerSource(fan);
   manager.registerSource(nowQuakeCencIr);
   manager.registerSource(p2p);
   manager.registerSource(mock);
+  final sasmex = SasmexService();
+  manager.registerSource(sasmex);
   if (AppEdition.hasGlobalQuake) manager.registerSource(globalQuake);
   if (AppEdition.hasIcl) {
     manager.registerSource(jianIcl);
@@ -556,6 +572,10 @@ Future<void> startBackgroundSources({
     'P2P',
     prefs.getBool('api_source_p2pquake_enabled') ?? true,
   );
+  manager.setSourceEnabled(
+    SasmexService.sourceName,
+    prefs.getBool(SasmexService.enabledPreferenceKey) ?? true,
+  );
 
   var nowQuakeStatus = SourceStatus.disconnected;
   var fanCencIrFallbackActive = !nowQuakeCencIrEnabled;
@@ -572,14 +592,17 @@ Future<void> startBackgroundSources({
     }
     fan.setCencIrRequestsEnabled(fanCencIrFallbackActive);
   }
+
   nowQuakeCencIr.onListAvailabilityChanged = syncFanCencIrRequests;
-  _backgroundSubscriptions.add(manager.onStatusUpdate.listen((update) {
-    if (update.sourceName == nowQuakeCencIr.name) {
-      nowQuakeStatus = update.status;
-      syncFanCencIrRequests();
-    }
-    onSourceStatus(update);
-  }));
+  _backgroundSubscriptions.add(
+    manager.onStatusUpdate.listen((update) {
+      if (update.sourceName == nowQuakeCencIr.name) {
+        nowQuakeStatus = update.status;
+        syncFanCencIrRequests();
+      }
+      onSourceStatus(update);
+    }),
+  );
   _backgroundSubscriptions.add(manager.onQuakeEvent.listen(onQuakeEvent));
 
   // 先桥接所有事件，再连接基础 API；测站和地图图层不应阻塞列表获取。
@@ -591,13 +614,16 @@ Future<void> startBackgroundSources({
     nowQuakeCencIr.onUnifiedEvent,
     p2p.onUnifiedEvent,
     mock.onUnifiedEvent,
+    sasmex.onUnifiedEvent,
     if (AppEdition.hasGlobalQuake) globalQuake.onUnifiedEvent,
     if (AppEdition.hasIcl) jianIcl.onUnifiedEvent,
     if (AppEdition.hasIcl) chinaEewIcl.onUnifiedEvent,
   ]) {
-    _backgroundSubscriptions.add(stream.listen(
-      (event) => _handleUnifiedEvent(event, processor, onUnifiedEvent),
-    ));
+    _backgroundSubscriptions.add(
+      stream.listen(
+        (event) => _handleUnifiedEvent(event, processor, onUnifiedEvent),
+      ),
+    );
   }
   for (final stream in [
     p2p.onTsunamiEvent,
@@ -628,6 +654,10 @@ Future<void> startBackgroundSources({
     officialEmsc.onListUpdated = (items) => onSourceList('emsc', items);
     officialEmsc.onCurrentUpdated = (data) =>
         handleOfficialCurrent('emsc', data);
+    officialEmsc.onStatusChanged = (connected) => onSourceStatus(
+      SourceStatusUpdate('EMSC', connected ? SourceStatus.connected :
+          officialEmsc.isRunning ? SourceStatus.error : SourceStatus.disconnected),
+    );
     officialEmsc.start();
   }
   if (_isInfoSourceEnabled(prefs, QuakeSourceType.cwa)) {
@@ -707,20 +737,32 @@ Future<void> startBackgroundSources({
   });
   jianNied.stateNotifier.addListener(() {
     if (prefs.getString('nied_data_source') == 'jian') {
-      onSourceStatus(SourceStatusUpdate(
-        'NIED', _stationSocketState(jianNied.stateNotifier.value)));
+      onSourceStatus(
+        SourceStatusUpdate(
+          'NIED',
+          _stationSocketState(jianNied.stateNotifier.value),
+        ),
+      );
     }
   });
   jianSnet.stateNotifier.addListener(() {
     if (prefs.getString('snet_data_source') == 'jian') {
-      onSourceStatus(SourceStatusUpdate(
-        'S-net', _stationSocketState(jianSnet.stateNotifier.value)));
+      onSourceStatus(
+        SourceStatusUpdate(
+          'S-net',
+          _stationSocketState(jianSnet.stateNotifier.value),
+        ),
+      );
     }
   });
   jianKma.stateNotifier.addListener(() {
     if (prefs.getString('kma_data_source') == 'jian') {
-      onSourceStatus(SourceStatusUpdate(
-        'KMA', _stationSocketState(jianKma.stateNotifier.value)));
+      onSourceStatus(
+        SourceStatusUpdate(
+          'KMA',
+          _stationSocketState(jianKma.stateNotifier.value),
+        ),
+      );
     }
   });
 
@@ -818,13 +860,19 @@ Future<void> startBackgroundSources({
     }),
   );
   _backgroundStationSubscriptions.add(
-    jianNied.frameStream.listen((frame) => onStationData(_whewsNiedPayload(frame))),
+    jianNied.frameStream.listen(
+      (frame) => onStationData(_whewsNiedPayload(frame)),
+    ),
   );
   _backgroundStationSubscriptions.add(
-    jianSnet.frameStream.listen((frame) => onStationData(_whewsSnetPayload(frame))),
+    jianSnet.frameStream.listen(
+      (frame) => onStationData(_whewsSnetPayload(frame)),
+    ),
   );
   _backgroundStationSubscriptions.add(
-    jianKma.frameStream.listen((frame) => onStationData(_whewsKmaPayload(frame))),
+    jianKma.frameStream.listen(
+      (frame) => onStationData(_whewsKmaPayload(frame)),
+    ),
   );
 
   if (prefs.getBool('api_source_nied_monitor_enabled') ?? true) {
@@ -881,7 +929,9 @@ Future<void> startBackgroundSources({
   for (final entry in fdsnStations.entries) {
     _backgroundAuxSubscriptions.add(
       entry.value.stationStream.listen((stations) {
-        onStationData(ForegroundStationPayload.fdsnStations(entry.key, stations));
+        onStationData(
+          ForegroundStationPayload.fdsnStations(entry.key, stations),
+        );
       }),
     );
   }
@@ -1002,7 +1052,9 @@ Future<void> startBackgroundSources({
     jmaSatelliteCloud.start(interval: JmaSatelliteCloudService.refreshInterval);
   }
   if (prefs.getBool('map_overlay_nsmcSatelliteCloudLayer') ?? false) {
-    nsmcSatelliteCloud.start(interval: NsmcSatelliteCloudService.refreshInterval);
+    nsmcSatelliteCloud.start(
+      interval: NsmcSatelliteCloudService.refreshInterval,
+    );
   }
   if (prefs.getBool('map_overlay_satelliteCloudLayer') ?? false) {
     fanSatellite.start(interval: const Duration(minutes: 30));
@@ -1179,6 +1231,7 @@ Future<void> stopBackgroundSources() async {
   _backgroundOfficialEmsc?.stop();
   _backgroundOfficialEmsc?.onCurrentUpdated = null;
   _backgroundOfficialEmsc?.onListUpdated = null;
+  _backgroundOfficialEmsc?.onStatusChanged = null;
   _backgroundOfficialCwa?.stop();
   _backgroundOfficialCwa?.onCurrentUpdated = null;
   _backgroundOfficialCwa?.onListUpdated = null;

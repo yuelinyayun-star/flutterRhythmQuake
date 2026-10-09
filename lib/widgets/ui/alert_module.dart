@@ -116,7 +116,7 @@ class _AlertModuleState extends State<AlertModule> {
           valueListenable: StationEventTracker.instance.currentNiedEvent,
           builder: (context, sourceEvent, child) {
             final provider = context.read<QuakeProvider>();
-            _syncAshfallWindowTimer(provider.unifiedEvents);
+            _syncAshfallWindowTimer(provider.unifiedDisplayEvents);
             final showSourceEstimationUi = context
                 .watch<MapStateProvider>()
                 .showEstimatedEpicenter;
@@ -124,7 +124,7 @@ class _AlertModuleState extends State<AlertModule> {
               provider, showSourceEstimationUi, sourceEvent,
             );
             final unifiedCount =
-                provider.unifiedEvents.length + sourceUnified.length;
+                provider.unifiedDisplayEvents.length + sourceUnified.length;
             final bool hasUnified = unifiedCount > 0;
             final Widget alertContent = _buildAlertContent(
               provider,
@@ -141,9 +141,9 @@ class _AlertModuleState extends State<AlertModule> {
 
             final followEew =
                 UiScale.isPhone(context) &&
-                provider.unifiedEvents.any((event) => event.isEew);
+                provider.unifiedDisplayEvents.any((event) => event.isEew);
             final pageItemCount = followEew
-                ? provider.unifiedEvents.where((event) => event.isEew).length
+                ? provider.unifiedDisplayEvents.where((event) => event.isEew).length
                 : unifiedCount;
             final focusedInfo =
                 followEew && provider.mobileEewDisplayEvent?.isEew == false;
@@ -174,7 +174,7 @@ class _AlertModuleState extends State<AlertModule> {
   }
 
   int _alertUiSignature(QuakeProvider provider) {
-    final unifiedEvents = provider.unifiedEvents;
+    final unifiedEvents = provider.unifiedDisplayEvents;
     return Object.hash(
       Object.hashAll(unifiedEvents.map((event) => event.hashCode)),
       provider.currentUnifiedIndex,
@@ -247,7 +247,7 @@ class _AlertModuleState extends State<AlertModule> {
     List<UnifiedQuakeData> sourceUnified,
   ) {
     final hasUnified =
-        provider.unifiedEvents.isNotEmpty || sourceUnified.isNotEmpty;
+        provider.unifiedDisplayEvents.isNotEmpty || sourceUnified.isNotEmpty;
 
     if (hasUnified) {
       _syncFlashController(false);
@@ -832,14 +832,15 @@ class _AlertModuleState extends State<AlertModule> {
     QuakeProvider provider,
     List<UnifiedQuakeData> sourceUnified,
   ) {
-    final events = [...provider.unifiedEvents, ...sourceUnified];
+    final events = [...provider.unifiedDisplayEvents, ...sourceUnified];
     final eew = events.where((e) => e.isEew).toList();
     final info = events.where((e) => !e.isEew).toList();
     final followEew = UiScale.isPhone(context) && eew.isNotEmpty;
     final ordered = followEew ? eew : [...eew, ...info];
     final cameraEvent = provider.mobileCameraDisplayEvent;
-    final followInfoCamera =
-        UiScale.isPhone(context) && sourceUnified.isEmpty && cameraEvent != null;
+    final followInfoCamera = UiScale.isPhone(context) &&
+        sourceUnified.isEmpty && cameraEvent != null &&
+        provider.historyInfoDisplayEvent == null;
     final List<UnifiedQuakeData> visibleEvents;
     if (followEew || followInfoCamera) {
       _stopUnifiedPageTimer();
@@ -916,7 +917,7 @@ class _AlertModuleState extends State<AlertModule> {
         StationEventTracker.instance.currentNiedEvent.value,
       );
       final count =
-          context.read<QuakeProvider>().unifiedEvents.length +
+          context.read<QuakeProvider>().unifiedDisplayEvents.length +
           sourceUnified.length;
       final nextPageCount = _unifiedPageCount(count);
       if (nextPageCount <= 1) {
@@ -1324,7 +1325,7 @@ class _AlertModuleState extends State<AlertModule> {
 
     final presentation = UnifiedEventPresentation.fromEvent(event);
 
-    return Column(
+    final info = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -1345,7 +1346,7 @@ class _AlertModuleState extends State<AlertModule> {
             fontSize: _s(12, context),
             fontWeight: FontWeight.w600,
           ),
-          maxLines: event.isVolcanoEvent ? 2 : 1,
+          maxLines: event.isVolcanoEvent || event.source == 'sasmex' ? 2 : 1,
           overflow: TextOverflow.ellipsis,
         ),
         SizedBox(height: _s(3, context)),
@@ -1373,6 +1374,12 @@ class _AlertModuleState extends State<AlertModule> {
           ),
         ],
       ],
+    );
+    if (presentation.detailText.isEmpty) return info;
+    return Tooltip(
+      message: presentation.detailText,
+      constraints: const BoxConstraints(maxWidth: 360),
+      child: info,
     );
   }
 

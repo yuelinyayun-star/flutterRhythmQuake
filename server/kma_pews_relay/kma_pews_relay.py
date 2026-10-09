@@ -31,6 +31,7 @@ from websockets.http11 import Request, Response
 from anomaly_archive import AnomalyArchive
 from sasmex_archive import SasmexArchive
 from sasmex_relay import SasmexConfig, SasmexFeed
+from sidesis_realtime import SidesisRealtimeConfig, SidesisRealtimeFeed
 
 
 KST = timezone(timedelta(hours=9), "KST")
@@ -72,6 +73,18 @@ class Config:
     )
     sasmex_stale_after_seconds: float = float(
         os.environ.get("SASMEX_STALE_AFTER_SECONDS", "90")
+    )
+    sidesis_url: str = os.environ.get(
+        "SIDESIS_SOCKET_URL", "wss://sidesis.iigea.org/socket.io/"
+    )
+    sidesis_reconnect_seconds: float = float(
+        os.environ.get("SIDESIS_RECONNECT_SECONDS", "3")
+    )
+    sidesis_timeout_seconds: float = float(
+        os.environ.get("SIDESIS_SOCKET_TIMEOUT_SECONDS", "20")
+    )
+    sidesis_stale_after_seconds: float = float(
+        os.environ.get("SIDESIS_STALE_AFTER_SECONDS", "90")
     )
 
 
@@ -366,8 +379,17 @@ class KmaRelay:
                 timeout_seconds=config.sasmex_timeout_seconds,
                 stale_after_seconds=config.sasmex_stale_after_seconds,
             ),
-            self._broadcast_sasmex_update,
+            self._ignore_sasmex_update,
             self._archive_sasmex_update,
+        )
+        self.sasno_realtime = SidesisRealtimeFeed(
+            SidesisRealtimeConfig(
+                url=config.sidesis_url,
+                reconnect_seconds=config.sidesis_reconnect_seconds,
+                timeout_seconds=config.sidesis_timeout_seconds,
+                stale_after_seconds=config.sidesis_stale_after_seconds,
+            ),
+            self._handle_sasno_update,
         )
         self._station_input: tuple[str, Fetched] | None = None
         self._station_attempt: tuple[str, Fetched] | None = None
@@ -435,17 +457,30 @@ class KmaRelay:
                 connection, HTTPStatus.OK, self.snapshot_payload()
             )
         if path == "/sasmex/health":
-            health = self.sasmex.state.health(
+            cap_health = self.sasmex.state.health(
                 self.config.sasmex_stale_after_seconds
             )
+            realtime_health = self.sasno_realtime.state.health(
+                self.config.sidesis_stale_after_seconds
+            )
+            health = dict(realtime_health)
+            health["primarySource"] = "sidesis.iigea.org/socket.io"
+            health["sasmexCap"] = cap_health
+            health["sasnoRealtime"] = realtime_health
             return self._json_response(
                 connection,
-                HTTPStatus.OK if health["healthy"] else HTTPStatus.SERVICE_UNAVAILABLE,
+                HTTPStatus.OK if realtime_health["healthy"] else HTTPStatus.SERVICE_UNAVAILABLE,
                 health,
             )
         if path == "/sasmex/snapshot":
             return self._json_response(
-                connection, HTTPStatus.OK, self.sasmex.state.snapshot()
+                connection,
+                HTTPStatus.OK,
+                {
+                    "primarySource": "sidesis.iigea.org/socket.io",
+                    "sasnoRealtime": self.sasno_realtime.state.snapshot(),
+                    "sasmexCap": self.sasmex.state.snapshot(),
+                },
             )
         if path == "/":
             return self._json_response(
@@ -459,6 +494,7 @@ class KmaRelay:
                     "sasmexWebSocket": "/sasmex-eew",
                     "sasmexHealth": "/sasmex/health",
                     "sasmexSnapshot": "/sasmex/snapshot",
+                    "sasnoRealtime": "Sidesis Socket.IO wss://sidesis.iigea.org/socket.io/",
                     "timeSource": "KMA ST response header",
                 },
             )
@@ -539,10 +575,13 @@ class KmaRelay:
         )
         try:
             await self._send_sasmex(websocket, self._sasmex_heartbeat_message())
-            if self.sasmex.state.latest_event is not None:
+            if self.sasno_realtime.state.latest_event is not None:
                 await self._send_sasmex(
                     websocket,
-                    self._sasmex_update_message(self.sasmex.state.latest_event),
+                    self._sasno_event_message(
+                        self.sasno_realtime.state.latest_event,
+                        message_type="snapshot",
+                    ),
                 )
             async for raw_message in websocket:
                 text = (
@@ -567,8 +606,8 @@ class KmaRelay:
                 ):
                     await self._send_sasmex(
                         websocket,
-                        self._sasmex_update_message(
-                            self.sasmex.state.latest_event,
+                        self._sasno_event_message(
+                            self.sasno_realtime.state.latest_event,
                             message_type="query_response",
                         ),
                     )
@@ -625,8 +664,49 @@ class KmaRelay:
                 self.sasmex_clients.discard(client)
                 self.sasmex_send_locks.pop(client, None)
 
-    async def _broadcast_sasmex_update(self, event: dict[str, Any]) -> None:
-        await self.broadcast_sasmex(self._sasmex_update_message(event))
+    async def _ignore_sasmex_update(self, event: dict[str, Any]) -> None:
+        """Keep CAP events out of the client WebSocket; archive them separately."""
+        return None
+
+    async def _handle_sasno_update(
+        self, event: dict[str, Any], raw_frame: bytes, event_name: str
+    ) -> None:
+        emitted = self._sasno_event_message(event)
+        await self.broadcast_sasmex(emitted)
+        self._archive_sasno_update(event, raw_frame, event_name, emitted)
+
+    def _archive_sasno_update(
+        self,
+        event: dict[str, Any],
+        raw_frame: bytes,
+        event_name: str,
+        emitted: dict[str, Any],
+    ) -> None:
+        recorded_at = datetime.now(UTC).isoformat()
+        event_time = event.get("sent") or event.get("updated") or recorded_at
+        report = {
+            "schemaVersion": 1,
+            "source": "sasmex",
+            "transport": "sidesis-socket-io",
+            "endpoint": self.config.sidesis_url,
+            "eventName": event_name,
+            "recordedAtUtc": recorded_at,
+            "eventTimeUtc": event_time,
+            "eventId": event.get("id") or event.get("eventId"),
+            "rawFrame": "raw/socketio-frame.txt",
+            "parsedJson": "parsed.json",
+            "emittedJson": "emitted.json",
+        }
+        originals = {
+            "raw/socketio-frame.txt": raw_frame,
+            "parsed.json": json.dumps(
+                event, ensure_ascii=False, indent=2
+            ).encode("utf-8"),
+            "emitted.json": json.dumps(
+                emitted, ensure_ascii=False, indent=2
+            ).encode("utf-8"),
+        }
+        self.sasmex_archive.submit(report, originals)
 
     async def _archive_sasmex_update(
         self, event: dict[str, Any], requests: list[dict[str, Any]]
@@ -669,6 +749,17 @@ class KmaRelay:
             "type": message_type,
             "source": "sasmex",
             "timestamp": datetime.now(UTC).isoformat(),
+        }
+
+    @staticmethod
+    def _sasno_event_message(
+        event: dict[str, Any] | None,
+        message_type: str = "update",
+    ) -> dict[str, Any]:
+        return {
+            "type": message_type,
+            "source": "sasmex",
+            "Data": event,
         }
 
     @staticmethod
@@ -952,8 +1043,11 @@ class KmaRelay:
             "acceptedFrames": self.state.accepted_frames,
             "anomalyArchive": self.anomalies.status(),
             "sasmexArchive": self.sasmex_archive.status(),
-            "sasmex": self.sasmex.state.health(
+            "sasmexCap": self.sasmex.state.health(
                 self.config.sasmex_stale_after_seconds
+            ),
+            "sasnoRealtime": self.sasno_realtime.state.health(
+                self.config.sidesis_stale_after_seconds
             ),
         }
         return payload, healthy
@@ -972,7 +1066,8 @@ class KmaRelay:
                 "eventId": self.state.latest_event_id,
                 "timeSource": "KMA-ST",
             },
-            "sasmex": self.sasmex.state.snapshot(),
+            "sasmexCap": self.sasmex.state.snapshot(),
+            "sasnoRealtime": self.sasno_realtime.state.snapshot(),
         }
 
     async def run(self) -> None:
@@ -980,9 +1075,14 @@ class KmaRelay:
         self.anomalies.start()
         self.sasmex_archive.start()
         await self.sasmex.start()
+        await self.sasno_realtime.start()
         poll_task = asyncio.create_task(self.poll_forever(), name="kma-poller")
         sasmex_task = asyncio.create_task(
             self.sasmex.poll_forever(self.stop_event), name="sasmex-poller"
+        )
+        sasno_task = asyncio.create_task(
+            self.sasno_realtime.poll_forever(self.stop_event),
+            name="sasno-realtime-poller",
         )
         heartbeat_task = asyncio.create_task(
             self.heartbeat_forever(), name="websocket-heartbeat"
@@ -1007,12 +1107,17 @@ class KmaRelay:
                 await self.stop_event.wait()
         finally:
             self.stop_event.set()
-            for task in (poll_task, heartbeat_task, sasmex_task):
+            for task in (poll_task, heartbeat_task, sasmex_task, sasno_task):
                 task.cancel()
             await asyncio.gather(
-                poll_task, heartbeat_task, sasmex_task, return_exceptions=True
+                poll_task,
+                heartbeat_task,
+                sasmex_task,
+                sasno_task,
+                return_exceptions=True,
             )
             await self.sasmex.close()
+            await self.sasno_realtime.close()
             await self.sasmex_archive.close()
             await self.http.close()
             await self.anomalies.close()

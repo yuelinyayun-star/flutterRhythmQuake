@@ -20,7 +20,7 @@ void main() {
   });
 
   test(
-    'JMA and F-net CMT update their buckets without entering default history',
+    'JMA and F-net CMT have independent rows in default history',
     () {
       final provider = QuakeProvider();
       addTearDown(provider.dispose);
@@ -30,7 +30,7 @@ void main() {
 
       expect(provider.historyBySource['jmaCmt'], hasLength(1));
       expect(provider.historyBySource['fnetCmt'], hasLength(1));
-      expect(provider.historyList, isEmpty);
+      expect(provider.historyList, hasLength(2));
     },
   );
 
@@ -58,6 +58,7 @@ void _clearCmtBuckets() {
   final buckets = EqlistManager().getAllBuckets();
   for (final key in const [
     'cencCmt',
+    'fssnCmt',
     'usgsCmt',
     'jmaCmt',
     'fnetCmt',

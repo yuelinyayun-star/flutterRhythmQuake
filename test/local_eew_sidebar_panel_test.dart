@@ -3,8 +3,12 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:flutterrhythmquake/core/travel_time_service.dart';
 import 'package:flutterrhythmquake/services/quake_event_adapter.dart';
+import 'package:flutterrhythmquake/services/sources/sasmex_service.dart';
+import 'package:flutterrhythmquake/core/calculator.dart';
+import 'package:flutterrhythmquake/models/sasmex_map_geometry.dart';
 import 'package:flutterrhythmquake/widgets/ui/local_eew_sidebar_panel.dart';
 
 void main() {
@@ -16,6 +20,71 @@ void main() {
   final data = jsonDecode(body) as Map<String, dynamic>;
   final report = Map<String, dynamic>.from((data['data'] as List).last);
   final event = QuakeEventAdapter.convertChinaEewIcl(report)!;
+
+  test('SASMEX original event countdown matches its S wave without depth', () {
+    final frame =
+        jsonDecode(
+              File(
+                'test/fixtures/sasmex_firestore_20261006.relay.json',
+              ).readAsStringSync(encoding: utf8),
+            )
+            as Map<String, dynamic>;
+    final sasmex = SasmexService.parseRelayFrame(frame)!;
+    final before = jsonEncode(sasmex.sourcePayload);
+    const userLat = 29.36;
+    const userLng = 120.17;
+    final distance = QuakeCalculator.haversineDistance(
+      sasmex.lat!,
+      sasmex.lng!,
+      userLat,
+      userLng,
+    );
+    final estimate = calculateLocalEewEstimate(
+      sasmex,
+      userLat: userLat,
+      userLng: userLng,
+      elapsedSeconds: 20.2,
+    );
+    expect(estimate.secondsToSWave, (distance / 5 - 20.2).round());
+    expect(estimate.intensity, isNull);
+    expect(sasmex.depth, -1);
+    expect(sasmex.magnitude, -1);
+    expect(jsonEncode(sasmex.sourcePayload), before);
+    final atEpicenter = calculateLocalEewEstimate(
+      sasmex,
+      userLat: sasmex.lat,
+      userLng: sasmex.lng,
+      elapsedSeconds: 20,
+    );
+    expect(atEpicenter.secondsToSWave, 0);
+    final animation = SasmexMapAnimation(
+      const LatLng(16.29569, -97.90988),
+      20,
+      false,
+    );
+    expect(
+      SasmexMapAnimation.sArrivalSeconds(animation.sRadiusMeters / 1000),
+      20,
+    );
+    expect(
+      calculateLocalEewEstimate(
+        sasmex,
+        userLat: null,
+        userLng: null,
+        elapsedSeconds: 20,
+      ).secondsToSWave,
+      isNull,
+    );
+    expect(
+      calculateLocalEewEstimate(
+        sasmex.copyWith(isCanceled: true),
+        userLat: userLat,
+        userLng: userLng,
+        elapsedSeconds: 20,
+      ).secondsToSWave,
+      isNull,
+    );
+  });
 
   test('local estimate uses the captured report and local position', () async {
     await TravelTimeService().ensureLoaded();

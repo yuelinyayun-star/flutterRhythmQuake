@@ -48,11 +48,12 @@ void main() {
       tester.view.physicalSize = size;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
+      final provider = (await tester.runAsync(() async => _CarouselProvider()))!;
       await tester.pumpWidget(
         MultiProvider(
           providers: [
-            ChangeNotifierProvider<QuakeProvider>(
-              create: (_) => _CarouselProvider(),
+            ChangeNotifierProvider<QuakeProvider>.value(
+              value: provider,
             ),
             ChangeNotifierProvider(create: (_) => MapStateProvider()),
           ],
@@ -77,6 +78,7 @@ void main() {
       expect(find.text(phone ? '3/5' : '1/2'), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
+      provider.dispose();
     });
   }
 }

@@ -90,12 +90,11 @@ packages:
     source: hosted
     version: "5.2.1"
   audioplayers_windows:
-    dependency: transitive
+    dependency: "direct overridden"
     description:
-      name: audioplayers_windows
-      sha256: "95f875a96c88c3dbbcb608d4f8288e300b0113d256a81d0b3197fcc18f0dc91a"
-      url: "https://pub.flutter-io.cn"
-    source: hosted
+      path: "third_party/audioplayers_windows"
+      relative: true
+    source: path
     version: "4.3.1"
   boolean_selector:
     dependency: transitive

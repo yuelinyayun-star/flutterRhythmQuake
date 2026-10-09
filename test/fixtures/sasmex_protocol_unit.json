@@ -1,0 +1,29 @@
+{
+  "upstreamUnitInput": {
+    "title": "Sismo",
+    "updated": "2026-10-07T14:00:00Z",
+    "identifier": "CAP-1",
+    "msgType": "Alert",
+    "severity": "Minor",
+    "info": [
+      {
+        "event": "Sismo Moderado",
+        "description": "Descripción original",
+        "severity": "Moderate"
+      }
+    ]
+  },
+  "relayEvent": {
+    "source": "sasmex",
+    "id": "CAP-1",
+    "eventId": "CAP-1",
+    "isWarn": false,
+    "severity": "Moderate",
+    "epochMs": 1791381600000,
+    "title": "Sismo",
+    "updated": "2026-10-07T14:00:00Z",
+    "msgType": "Alert",
+    "event": "Sismo Moderado",
+    "description": "Descripción original"
+  }
+}

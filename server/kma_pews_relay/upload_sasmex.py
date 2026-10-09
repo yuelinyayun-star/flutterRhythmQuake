@@ -15,11 +15,12 @@ import zipfile
 from sasmex_archive import REPORT_NAME, atomic_json, sha256_file
 
 FOLDER = "SASMEX原始归档"
+COMPARISON_FOLDER = FOLDER + "/双连接对照"
 MAX_BATCH_BYTES = 8 * 1024 * 1024
 
 
 def validate_manifest(manifest, folder=FOLDER):
-    if folder not in {FOLDER, FOLDER + "/验证"}:
+    if folder not in {FOLDER, FOLDER + "/验证", COMPARISON_FOLDER}:
         raise ValueError("Unexpected archive folder")
     entries = manifest["records"]
     if not isinstance(entries, list) or not 1 <= len(entries) <= 120:
@@ -155,13 +156,16 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--directory", type=Path, default=Path("/var/lib/rhythmquake-sasmex-archive"))
     parser.add_argument("--config", type=Path, default=Path("/etc/rhythmquake-kma-anomalies/telegram.conf"))
-    parser.add_argument("--validation", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--validation", action="store_true")
+    mode.add_argument("--comparison", action="store_true")
     args = parser.parse_args()
     import fcntl
     try:
         with (args.directory / ".upload.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            upload_batch(args.directory, args.config, FOLDER + "/验证" if args.validation else FOLDER)
+            folder = COMPARISON_FOLDER if args.comparison else FOLDER + "/验证" if args.validation else FOLDER
+            upload_batch(args.directory, args.config, folder)
         return 0
     except BlockingIOError:
         return 0

@@ -1,0 +1,13 @@
+{
+  "intensity": "Leve",
+  "epicenter": {
+    "latitude": 16.29569,
+    "longitude": -97.90988
+  },
+  "unix": 1791259786,
+  "metadata": {
+    "source": "SASNO",
+    "version": "6.1.0"
+  },
+  "region": "Santa María Huazolotitlán, Oax."
+}

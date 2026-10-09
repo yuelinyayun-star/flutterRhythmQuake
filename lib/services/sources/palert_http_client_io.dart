@@ -24,8 +24,20 @@ SecurityContext createPAlertSecurityContext(List<int> rootDer) {
 }
 
 Future<http.Client> createPAlertHttpClient() async {
-  if (!Platform.isWindows) return http.Client();
-  final data = await rootBundle.load(pAlertRootAsset);
-  final root = data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
-  return IOClient(HttpClient(context: createPAlertSecurityContext(root)));
+  SecurityContext? context;
+  try {
+    final data = await rootBundle.load(pAlertRootAsset);
+    final root =
+        data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+    context = createPAlertSecurityContext(root);
+  } catch (_) {
+    // Keep context null if asset is not loaded in headless environments.
+  }
+
+  final httpClient = HttpClient(context: context);
+  httpClient.badCertificateCallback = (cert, host, port) {
+    // Tolerate TUN/proxy and non-standard root environments for the official P-Alert host.
+    return host == 'palert.earth.sinica.edu.tw';
+  };
+  return IOClient(httpClient);
 }

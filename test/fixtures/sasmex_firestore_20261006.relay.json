@@ -1,0 +1,32 @@
+{
+  "type": "snapshot",
+  "source": "sasmex",
+  "Data": {
+    "source": "sasmex",
+    "id": "1791259786000",
+    "eventId": "1791259786000",
+    "epochMs": 1791259786000,
+    "region": "Santa María Huazolotitlán, Oax.",
+    "lat": 16.29569,
+    "lng": -97.90988,
+    "intensidad": "Leve",
+    "grado": 1,
+    "severidad": 2,
+    "isWarn": false,
+    "original": {
+      "metadata": {
+        "version": "6.1.0",
+        "source": "SASNO"
+      },
+      "region": "Santa María Huazolotitlán, Oax.",
+      "unix": 1791259786,
+      "intensity": "Leve",
+      "epicenter": {
+        "longitude": -97.90988,
+        "latitude": 16.29569
+      }
+    },
+    "severity": "Minor",
+    "severityOrigin": "intensity"
+  }
+}

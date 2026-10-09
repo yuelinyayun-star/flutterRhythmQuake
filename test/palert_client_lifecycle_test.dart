@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -17,6 +18,48 @@ class _TrackingClient extends http.BaseClient {
 
   @override
   void close() => closed = true;
+}
+
+class _PAlertQueryClient extends http.BaseClient {
+  int stationListRequests = 0;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final body =
+        jsonDecode(utf8.decode(await request.finalize().toBytes()))
+            as Map<String, dynamic>;
+    final isStationList = body['query'].toString().contains('stationList');
+    if (isStationList) stationListRequests++;
+    final timestamp = DateTime.now().toUtc().toIso8601String();
+    final response = isStationList
+        ? {
+            'data': {
+              'stationList': {
+                'staInfos': [
+                  {'station': 'A', 'lat': 24.0, 'lon': 121.0},
+                ],
+                'timestamp': timestamp,
+              },
+            },
+          }
+        : {
+            'data': {
+              'pga': {
+                'timestamp': timestamp,
+                'dataVals': {'OTHER': 1.0},
+              },
+              'pgv': {
+                'timestamp': timestamp,
+                'dataVals': {'OTHER': 1.0},
+              },
+            },
+          };
+    return http.StreamedResponse(
+      Stream.value(utf8.encode(jsonEncode(response))),
+      200,
+      request: request,
+    );
+  }
 }
 
 void main() {
@@ -86,4 +129,15 @@ void main() {
       expect(service.dataTimeNotifier.value, isNull);
     },
   );
+
+  test('Fetches the station list once when the connection starts', () async {
+    final client = _PAlertQueryClient();
+    final service = PAlertService.forTesting(clientFactory: () async => client);
+    addTearDown(service.stop);
+
+    service.start();
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+
+    expect(client.stationListRequests, 1);
+  });
 }

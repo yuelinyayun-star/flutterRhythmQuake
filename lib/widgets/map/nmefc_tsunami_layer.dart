@@ -40,7 +40,7 @@ class NmefcTsunamiLayer extends StatelessWidget {
         height: showLabel ? 42 : 28,
         child: Tooltip(
           message: _observationTooltip(station),
-          child: _NmefcObservationMarker(
+          child: TsunamiObservationMarker(
             color: color,
             size: size,
             label: showLabel ? station.maxWaveHeight : null,
@@ -69,12 +69,13 @@ class NmefcTsunamiLayer extends StatelessWidget {
   }
 }
 
-class _NmefcObservationMarker extends StatelessWidget {
+class TsunamiObservationMarker extends StatelessWidget {
   final Color color;
   final double size;
   final String? label;
 
-  const _NmefcObservationMarker({
+  const TsunamiObservationMarker({
+    super.key,
     required this.color,
     required this.size,
     this.label,

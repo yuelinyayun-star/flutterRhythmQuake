@@ -26,6 +26,64 @@ class QuakeEventAdapter {
 
   QuakeEventAdapter._();
 
+  /// Presentation of an existing catalogue row, never a new feed delivery.
+  /// Keep the original row (including product references) and source clocks.
+  static UnifiedQuakeData catalogInfo(QuakeMessage event, String source) {
+    final zone = event.timeZone ?? QuakeTime.wallClockOffsetHours(event.source);
+    final useShindo = const {
+      QuakeSourceType.wolfx, QuakeSourceType.p2p,
+      QuakeSourceType.jma_fan, QuakeSourceType.cwa,
+    }.contains(event.source);
+    final intensity = useShindo
+        ? event.jmaShindo ?? '-'
+        : event.maxIntensity?.toString() ?? '-';
+    final title = switch (event.source) {
+      QuakeSourceType.cenc => '中国地震台网地震信息',
+      QuakeSourceType.usgs => 'USGS 地震情报',
+      QuakeSourceType.wolfx || QuakeSourceType.jma_fan || QuakeSourceType.p2p
+        => '日本气象厅地震信息',
+      QuakeSourceType.cwa => '中央氣象署 地震報告',
+      _ => event.infoTypeName ?? event.source.warningLabel,
+    };
+    return UnifiedQuakeData(
+      source: source,
+      origin: -2,
+      eventId: event.eventId,
+      isEew: false,
+      timeZone: zone,
+      titleText: title,
+      reportNumText: event.reportNumText ??
+          (event.reportNumber != null ? '第${event.reportNumber}报' :
+            event.reviewType ?? ''),
+      useShindo: useShindo,
+      maxIntensity: intensity,
+      className: _setClassName(intensity, useShindo, event.isCanceled),
+      hypocenter: event.source == QuakeSourceType.kma_eq
+          ? kmaDisplayLocation(event.location, event.latitude, event.longitude)
+          : event.location,
+      originTime: event.originTime,
+      reportTime: event.reportTime,
+      magnitude: event.magnitude,
+      depth: event.depth,
+      depthText: _formatDepthText(event.depth, zone),
+      lat: event.latitude,
+      lng: event.longitude,
+      isFinal: event.isFinal,
+      isCanceled: event.isCanceled,
+      isAssumption: event.isAssumption,
+      apiTypeLabel: event.apiTypeLabel ?? '',
+      nodalPlane1: event.nodalPlane1,
+      nodalPlane2: event.nodalPlane2,
+      centroidDepth: event.centroidDepth,
+      momentTensor: event.momentTensor,
+      cmtMetadata: event.cmtMetadata,
+      rawEvent: event,
+      isHistory: true,
+      hasReportSequence: event.reportNumber != null ||
+          (event.reportNumText?.isNotEmpty ?? false),
+    );
+  }
+
   static const jianOrigin = 4;
   static const jianIclOrigin = 5;
   static const chinaEewIclOrigin = 6;
@@ -557,6 +615,8 @@ class QuakeEventAdapter {
       case 'sa_eew':
         data['maxIntensity'] ??= data['maxMmi'];
         return convert('sa', data, _originWhews);
+      case 'early_est':
+        return _whewsEarlyEstInfo(raw);
       case 'jma':
         return _whewsJmaInfo(data);
       case 'cwa':
@@ -595,6 +655,54 @@ class QuakeEventAdapter {
           data,
         ).copyWith(sourcePayload: Map<String, dynamic>.unmodifiable(raw));
     }
+  }
+
+  // Early-est uses our existing information slot, including catalog filters
+  // and history. Its upstream "warning" category does not select EEW UI.
+  static UnifiedQuakeData _whewsEarlyEstInfo(Map<String, dynamic> raw) {
+    var magnitude = -1.0;
+    // Display preference only; retain all three measurements in sourcePayload.
+    for (final field in ['Mwp', 'Mwpd', 'mb']) {
+      final value = _catalogNumber(raw[field]);
+      if (value != null && value >= 0) {
+        magnitude = value;
+        break;
+      }
+    }
+    final depth = _catalogNumber(raw['depth']) ?? -1.0;
+    final lat = _catalogNumber(raw['latitude']);
+    final lng = _catalogNumber(raw['longitude']);
+    final hasLocation = hasCatalogCoordinates(lat, lng);
+    final serial = _parseInt(raw['updates']);
+    final hasSequence = serial != null && serial > 0;
+    final intensity = _whewsFallbackIntensity(magnitude, depth);
+    return UnifiedQuakeData(
+      source: 'earlyEst',
+      origin: _originWhews,
+      eventId: _stringValue(raw['id']) ?? '',
+      isEew: false,
+      timeZone: 8,
+      titleText: '${QuakeSourceType.earlyEst.displayName}地震信息',
+      reportNumText: hasSequence ? '第$serial報' : '',
+      hasReportSequence: hasSequence,
+      useShindo: false,
+      maxIntensity: intensity,
+      className: _setClassName(intensity, false, false),
+      hypocenter: catalogDisplayLocation(
+        _stringValue(raw['placeName']) ?? '',
+        lat,
+        lng,
+      ),
+      originTime: _parseTime(raw['shockTime'], 8),
+      reportTime: _parseTime(raw['createTime'], 8),
+      magnitude: magnitude,
+      depth: depth,
+      depthText: _formatDepthText(depth, 8),
+      lat: hasLocation ? lat : null,
+      lng: hasLocation ? lng : null,
+      apiTypeLabel: 'WHEWS',
+      useSourceTimeForExpiry: true,
+    );
   }
 
   static UnifiedQuakeData _whewsJmaInfo(Map<String, dynamic> data) {
@@ -2217,7 +2325,7 @@ class QuakeEventAdapter {
     // WHEWS/FAN fields follow FAN_API's UTC+8 contract. Direct EMSC uses
     // ISO instants and is localized to the device by _parseTime.
     timeZone: origin == _originWolfx ? QuakeTime.systemTimeZoneHours : 8,
-  );
+  )?.copyWith(useSourceTimeForExpiry: origin == _originWolfx);
 
   static UnifiedQuakeData? _bcsf(
     String source,
@@ -3191,6 +3299,10 @@ class QuakeEventAdapter {
           isTest: false,
           isInfoEvent: true,
           infoTypeName: reviewType == 'reviewed' ? '正式测定' : '自动测定',
+          reviewType: reviewType,
+          reportTime: _parseTime(entry['ReportTime'] as String?, 8),
+          timeZone: 8,
+          apiTypeLabel: 'Wolfx',
         ),
       );
     }

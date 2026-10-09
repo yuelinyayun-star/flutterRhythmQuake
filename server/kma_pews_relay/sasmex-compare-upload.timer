@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodically upload SASMEX dual connection evidence
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=1min
+RandomizedDelaySec=5s
+Unit=sasmex-compare-upload.service
+
+[Install]
+WantedBy=timers.target

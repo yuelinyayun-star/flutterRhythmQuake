@@ -126,6 +126,7 @@ class UnifiedEventPresentation {
     required this.intensityLabel,
     required this.intensityValue,
     required this.apiTypeLabel,
+    this.detailText = '',
   });
 
   final String title;
@@ -136,8 +137,53 @@ class UnifiedEventPresentation {
   final String intensityLabel;
   final String intensityValue;
   final String apiTypeLabel;
+  final String detailText;
 
   factory UnifiedEventPresentation.fromEvent(UnifiedQuakeData event) {
+    if (event.source == 'sasmex') {
+      final raw = event.sourcePayload;
+      final rawSeverity = _sasmexText(raw?['severity']);
+      final severity = rawSeverity ?? '';
+      final severityLabel = switch (severity.trim().toLowerCase()) {
+        'minor' => '轻微',
+        'moderate' => '中等',
+        'severe' => '严重',
+        _ => severity.isEmpty ? '未知' : severity,
+      };
+      final messageType = _sasmexText(raw?['msgType']);
+      final statusText =
+          '类型：${messageType ?? '未知'} · 严重性：${rawSeverity ?? '未知'}';
+      final details = <String>[
+        for (final field in const {
+          'region': '原始地点',
+          'title': '上游标题',
+          'event': '上游事件',
+          'description': '原始描述',
+          'severity': '原始严重性',
+          'intensidad': '上游强度文字',
+          'grado': 'grado 原值',
+          'severidad': 'severidad 原值',
+          'msgType': '消息类型',
+          'sent': '发布时间原文',
+          'updated': '更新时间原文',
+          'circle': '震中圆原文',
+        }.entries)
+          if (_sasmexText(raw?[field.key]) case final String value)
+            '${field.value}：$value',
+      ];
+      return UnifiedEventPresentation(
+        title: _displayTitle(event),
+        primaryText: event.hypocenter.isEmpty ? '地点未知' : event.hypocenter,
+        secondaryText: statusText,
+        compactSecondaryText: statusText,
+        timeText:
+            '发布 ${QuakeTime.formatSourceClockInSystem(event.originTime, event.timeZone)}',
+        intensityLabel: '严重性',
+        intensityValue: severityLabel,
+        apiTypeLabel: event.apiTypeLabel,
+        detailText: details.join('\n'),
+      );
+    }
     if (event.isJmaLpgm) {
       final title = event.reportNumText.isNotEmpty
           ? '${event.titleText} ${event.reportNumText}'
@@ -217,7 +263,8 @@ class UnifiedEventPresentation {
     final intensityLabel = isForeignVolcano
         ? '噴火'
         : (event.useShindo ? '震度' : '烈度');
-    final displayIntensityValue = isForeignVolcano && (intensityValue == '不明' || intensityValue == '-')
+    final displayIntensityValue =
+        isForeignVolcano && (intensityValue == '不明' || intensityValue == '-')
         ? '噴火'
         : intensityValue;
 
@@ -240,6 +287,12 @@ class UnifiedEventPresentation {
     timeText,
     if (apiTypeLabel.isNotEmpty) apiTypeLabel,
   ].where((line) => line.trim().isNotEmpty).join('\n');
+}
+
+String? _sasmexText(Object? value) {
+  if (value == null) return null;
+  final text = value.toString();
+  return text.trim().isEmpty ? null : text;
 }
 
 String _displayTitle(UnifiedQuakeData event) {

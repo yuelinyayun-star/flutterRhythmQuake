@@ -1,0 +1,46 @@
+{
+  "name": "projects/sasno-d79e1/databases/(default)/documents/app/events",
+  "fields": {
+    "SASNOEVENTDATA": {
+      "mapValue": {
+        "fields": {
+          "metadata": {
+            "mapValue": {
+              "fields": {
+                "version": {
+                  "stringValue": "6.1.0"
+                },
+                "source": {
+                  "stringValue": "SASNO"
+                }
+              }
+            }
+          },
+          "epicenter": {
+            "mapValue": {
+              "fields": {
+                "longitude": {
+                  "doubleValue": -97.90988
+                },
+                "latitude": {
+                  "doubleValue": 16.29569
+                }
+              }
+            }
+          },
+          "intensity": {
+            "stringValue": "Leve"
+          },
+          "unix": {
+            "integerValue": "1791259786"
+          },
+          "region": {
+            "stringValue": "Santa María Huazolotitlán, Oax."
+          }
+        }
+      }
+    }
+  },
+  "createTime": "2026-04-22T00:17:50.294874Z",
+  "updateTime": "2026-10-06T04:10:06.094315Z"
+}

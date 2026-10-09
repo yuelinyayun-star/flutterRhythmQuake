@@ -25,6 +25,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'wave_layer.dart';
+import 'sasmex_map_layer.dart';
 import 'user_location_layer.dart';
 import 'nied_intensity_layer.dart';
 import 'kma_intensity_layer.dart';
@@ -53,6 +54,8 @@ import 'international_tsunami_layer.dart';
 import 'nmefc_tsunami_layer.dart';
 import 'typhoon_layer.dart';
 import 'fan_radar_layer.dart';
+import 'usgs_shakemap_layer.dart';
+import '../../models/usgs_shakemap.dart';
 import 'jma_radar_layer.dart';
 import 'jma_satellite_cloud_layer.dart';
 import 'nsmc_satellite_cloud_layer.dart';
@@ -625,6 +628,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       EewWaveCameraFollowGate();
   String _lastEewTakeoverSignature = '';
   String? _lastSelectedHistoryCameraKey;
+  int? _lastHistoryProductCameraKey;
   bool _pendingNiedStationFocus = false;
   bool _pendingKmaStationFocus = false;
   bool _pendingTremStationFocus = false;
@@ -707,6 +711,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     };
     StationHistoryCapture.instance.publish(kind, snapshot, source: source);
   }
+
   MapStateProvider? _mapStateProvider;
   bool _providerCallbacksBound = false;
   bool _mapDataServicesStarted = false;
@@ -2504,6 +2509,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     return Object.hash(
       provider.unifiedMapRevision,
       identityHashCode(provider.cencIrData),
+      identityHashCode(provider.usgsShakeMap.frame),
       Object.hashAll(unifiedEvents.map((event) => event.hashCode)),
       Object.hashAll(mapEvents.map(_quakeMessageVisualSignature)),
     );
@@ -3019,6 +3025,12 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   }
 
   void _onQuakeProviderChanged() {
+    final productKey = Object.hash(identityHashCode(_quakeProvider?.cencIrData),
+      identityHashCode(_quakeProvider?.usgsShakeMap.frame));
+    if (_lastHistoryProductCameraKey != productKey) {
+      _lastHistoryProductCameraKey = productKey;
+      _queueCameraPolicyRefresh();
+    }
     if (_stationReplayActive != _lastStationReplayActive) {
       _onStationReplayChanged();
     }
@@ -3254,6 +3266,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     }
     if (_lastSelectedHistoryCameraKey != selectedHistoryCameraKey) {
       _lastSelectedHistoryCameraKey = selectedHistoryCameraKey;
+      _quakeProvider?.selectHistoryMapProducts(mapState?.selectedHistoryEvent);
       _queueCameraPolicyRefresh(force: false);
     }
     if (!_initialCameraPolicyApplied && mapState?.mapController != null) {
@@ -4396,6 +4409,35 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     });
   }
 
+  bool _focusHistoryProduct(QuakeProvider provider, MapStateProvider mapState) {
+    final frame = provider.usgsShakeMap.frame;
+    if (frame != null) {
+      final p = frame.product;
+      mapState.smartMoveToPoints([
+        LatLng(p.south, p.west), LatLng(p.north, p.east),
+        LatLng(frame.event.latitude, frame.event.longitude),
+      ], padding: 0.8, minZoom: 2.0, maxZoom: 10.0,
+        viewportPadding: (cencIrViewportPadding(context) ??
+            const EdgeInsets.all(50)).copyWith(bottom: 155),
+        screenOffset: _eventFocusOffset(),
+        sourceTag: 'policy-shakemap-${p.identity}', minInterval: Duration.zero);
+      return true;
+    }
+    final selected = mapState.selectedHistoryEvent;
+    final ir = provider.cencIrData;
+    if (selected == null || ir == null) return false;
+    final points = cencIrFocusPoints(data: ir, eventId: ir.reportId,
+      epicenterLatitude: selected.latitude, epicenterLongitude: selected.longitude);
+    if (points.isEmpty) return false;
+    mapState.smartMoveToPoints(points, padding: 0.8, minZoom: 3.0, maxZoom: 12.0,
+      viewportPadding: cencIrViewportPadding(context),
+      focusAnchor: LatLng(selected.latitude, selected.longitude),
+      screenOffset: _eventFocusOffset(),
+      sourceTag: 'policy-history-cenc-ir-${ir.reportId}-${ir.gmtCreate}',
+      minInterval: Duration.zero);
+    return true;
+  }
+
   void _applyCameraPolicy({bool force = false}) {
     if (!mounted) return;
     final mapState = _mapStateProvider;
@@ -4441,6 +4483,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
           selectedHistory.longitude,
         )) {
       provider.setMobileCameraInfoFocus(null);
+      if (_focusHistoryProduct(provider, mapState)) return;
       mapState.smartMoveToCenter(
         LatLng(selectedHistory.latitude, selectedHistory.longitude),
         zoom: 7.0,
@@ -4584,6 +4627,9 @@ class _QuakeMapViewState extends State<QuakeMapView> {
     }
 
     _clearPreferredEventFocus();
+
+    if (provider.usgsShakeMap.frame != null &&
+        _focusHistoryProduct(provider, mapState)) return;
 
     _eewWaveCameraFollowGate.syncEvents(const [], now);
     // Multiple networks share one extent, including when NIED has an estimate.
@@ -6470,6 +6516,12 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                           _buildSeisJsStationLayer(),
                           _buildSnetStationLayer(),
                           _buildFdsnStationLayer(),
+                          Selector<QuakeProvider, (UsgsShakeMapFrame?, String?)>(
+                            selector: (context, provider) =>
+                                (provider.usgsShakeMap.frame, provider.usgsShakeMap.status),
+                            builder: (context, value, child) =>
+                                UsgsShakeMapLayer(frame: value.$1, status: value.$2),
+                          ),
                           Selector<QuakeProvider, CencIrData?>(
                             selector: (context, provider) =>
                                 provider.cencIrData,
@@ -6696,6 +6748,16 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                                   }
 
                                   final allLayers = <Widget>[];
+                                  final sasmexEvents = unifiedEvents
+                                      .where(
+                                        (event) => event.source == 'sasmex',
+                                      )
+                                      .toList(growable: false);
+                                  if (sasmexEvents.isNotEmpty) {
+                                    allLayers.add(
+                                      SasmexMapLayer(events: sasmexEvents),
+                                    );
+                                  }
                                   final userPos =
                                       LocationService().currentPosition;
                                   final userLatLng = userPos != null
@@ -6736,15 +6798,19 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                                       );
 
                                       allLayers.add(
-                                        QuakeWaveLayer(
-                                          key: ValueKey('unified_$layerKey'),
-                                          event: qm,
-                                          showWaves: u.isEew,
-                                          userPosition: userLatLng,
-                                          colorMode: SWaveColorMode.intensity,
-                                          blinkOn: u.isEew ? blinkOn : true,
-                                          sWaveColor: _unifiedWaveColor(
-                                            u.className,
+                                        IgnorePointer(
+                                          child: QuakeWaveLayer(
+                                            key: ValueKey('unified_$layerKey'),
+                                            event: qm,
+                                            // SASMEX 复用波圈、颜色和震中；只按网页计算半径。
+                                            showWaves: u.isEew,
+                                            showEpicenterLabel:
+                                                qm.source !=
+                                                QuakeSourceType.sasmex,
+                                            userPosition: userLatLng,
+                                            colorMode: SWaveColorMode.intensity,
+                                            blinkOn: u.isEew ? blinkOn : true,
+                                            sWaveColor: _unifiedWaveColor(u.className),
                                           ),
                                         ),
                                       );
@@ -6763,6 +6829,8 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                                 _unifiedMapUiSignature(provider),
                             builder: (context, signature, child) {
                               final provider = context.read<QuakeProvider>();
+                              final selectedCmt = context.watch<MapStateProvider>()
+                                  .selectedHistoryEvent;
                               final cmts = provider.unifiedMapEvents
                                   .where(
                                     (e) =>
@@ -6774,6 +6842,8 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                                         e.source ==
                                             QuakeSourceType.hinetAquaCmt,
                                   )
+                                  .where((e) => selectedCmt?.eventId != e.eventId ||
+                                      selectedCmt?.source != e.source)
                                   .map(FssnCmtMarker.fromQuakeMessage)
                                   .toList();
                               return FssnCmtLayer(markers: cmts);
@@ -6783,7 +6853,11 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                             selector: (context, mapProvider) =>
                                 mapProvider.selectedHistoryEvent,
                             builder: (context, selected, child) {
-                              return HistoryMarkerLayer(event: selected);
+                              return Selector<QuakeProvider, UsgsShakeMapFrame?>(
+                                selector: (_, provider) => provider.usgsShakeMap.frame,
+                                builder: (_, frame, child) => HistoryMarkerLayer(
+                                  event: selected ?? frame?.event),
+                              );
                             },
                           ),
                           Selector<
@@ -6794,6 +6868,8 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                               TsunamiMessage? ptwc,
                               TsunamiMessage? ntwc,
                               TsunamiMessage? incois,
+                              TsunamiMessage? cat,
+                              TsunamiMessage? cwa,
                             })
                           >(
                             selector: (context, provider) => (
@@ -6802,6 +6878,8 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                               ptwc: provider.ptwcTsunami,
                               ntwc: provider.ntwcTsunami,
                               incois: provider.incoisTsunami,
+                              cat: provider.catTsunami,
+                              cwa: provider.cwaTsunami,
                             ),
                             builder: (context, tsunamiData, child) {
                               final jma = tsunamiData.jma;
@@ -6809,11 +6887,13 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                               final ptwc = tsunamiData.ptwc;
                               final ntwc = tsunamiData.ntwc;
                               final incois = tsunamiData.incois;
+                              final cat = tsunamiData.cat;
+                              final cwa = tsunamiData.cwa;
                               if (jma == null &&
                                   nmefc == null &&
                                   ptwc == null &&
                                   ntwc == null &&
-                                  incois == null) {
+                                  incois == null && cat == null && cwa == null) {
                                 return const SizedBox.shrink();
                               }
                               return Stack(
@@ -6844,6 +6924,10 @@ class _QuakeMapViewState extends State<QuakeMapView> {
                                       key: const ValueKey('tsunami_incois'),
                                       tsunami: incois,
                                     ),
+                                  if (cat != null)
+                                    InternationalTsunamiLayer(key: const ValueKey('tsunami_cat'), tsunami: cat),
+                                  if (cwa != null)
+                                    InternationalTsunamiLayer(key: const ValueKey('tsunami_cwa'), tsunami: cwa),
                                 ],
                               );
                             },

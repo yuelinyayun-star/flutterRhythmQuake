@@ -1,0 +1,20 @@
+{
+  "id": "115005-2",
+  "updates": 2,
+  "shockTime": "2026-07-28 15:28:00",
+  "latitude": 32.6,
+  "longitude": 130.7,
+  "depth": 10.0,
+  "magnitude": 7.1,
+  "placeName": "日本 九州島",
+  "agency": "CWA",
+  "description": "頃獲太平洋海嘯警報中心通報，針對０７月２８日１５時２８分（臺灣時間）日本　九州島規模７﹒１地震，依據該中心最新資訊，確認解除太平洋地區的海嘯威脅。",
+  "eventId": "115005",
+  "expires": "2026-07-29 00:28:00",
+  "headline": "海嘯消息 第2報",
+  "issueTime": "2026-07-28 16:28:00",
+  "level": "Information",
+  "reportColor": "綠色",
+  "reportType": "海嘯消息",
+  "updateTime": "2026-07-28 16:28:00"
+}

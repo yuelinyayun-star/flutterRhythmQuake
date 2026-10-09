@@ -1,5 +1,31 @@
 # KMA PEWS Relay
 
+## SASMEX 双连接对照
+
+2026-10-08 按用户要求撤下测站服务、地图测站圆点及测站订阅。
+州提示、已有震中和 P/S 波继续使用本项目地图组件。
+
+APP 继续连接 `wss://ws.yuelinrhythm.top/sasmex-eew`，实时事件仅来自既有 Sidesis
+Socket.IO。独立 `sasmex-dual-monitor.service` 同时只读观察同一 Socket.IO 根命名空间与
+`https://firestore.googleapis.com/v1/projects/sasno-d79e1/databases/(default)/documents/app/events`。
+Firestore 每秒轮询，只建立原始基线并记录变化，不调用旧预警映射，不向 APP 推送。
+
+新服务代码放在 `/opt/rhythmquake/sasmex-dual-monitor`，旧 Firestore 轮询实现与实读
+原文在其中的 `backup/` 留存并随首次启动归档。原 KMA/EEW 服务无须修改或重启。
+服务器状态文件 `/var/lib/rhythmquake-sasmex-compare/connection-status.json` 每 60 秒更新。
+记录实际连接、断线、传输帧、业务帧、符合现有 APP 解析条件的帧以及 Firestore 成功数、
+原文 SHA-256、文档时间和内容变化数。连接健康与新事件出现分别统计。
+
+`sasmex-compare-upload.timer` 每分钟将批次上传至 TG 云盘
+`SASMEX原始归档/双连接对照/YYYY-MM-DD/`，上传后回读校验 SHA-256 与大小，
+通过后才删除临时包。归档失败计数与最后错误保留在状态文件，积压最多 64 MiB，
+不会覆盖已有原文。相同 Firestore 响应仅累计轮询计数；首个响应、文档变化、异常响应、
+恢复和连接状态均单独留档。原事件时间保留在原文，归档文件日期使用实际采集时间。
+
+部署本地准备文件后安装三个 systemd unit 并启动：
+`systemctl enable --now sasmex-dual-monitor.service sasmex-compare-upload.timer`。
+两个读取客户端没有 APP 广播接口；Firestore 原有旧文档不会重报。
+
 这是给 Windows / Linux 服务器使用的韩国气象厅 PEWS 实时测站转发服务。
 
 服务直接请求：
@@ -51,10 +77,34 @@ WebSocket: ws://0.0.0.0:8765/sasmex-eew
 ```
 
 生产环境由同一个反向代理域名映射为 `wss://你的域名/sasmex-eew`。
-该频道使用 `https://rss.sasmex.net` 的公开 `latest` JSON 和事件 CAP XML，
-不需要 SASNO 付费 Webhook。CAP XML 只在服务端作为解析输入，对外 WSS 和快照接口
-只发送结构化 JSON，不发送 XML 原文。只有最新事件发生变化时才广播 `update`；连接
-建立时会发送 `heartbeat` 和当前事件快照。
+该频道的主实时事件源是网页实际使用的
+`wss://sidesis.iigea.org/socket.io/`。服务端连接 Socket.IO 根命名空间，按网页监听
+当前参考网页 `https://asmx1-8.bolt.host/` 的真实 `new_message`，并广播现有 SASMEX
+格式的 `source: "sasmex"` `update`。心跳优先分流，明确标记的模拟/回放包不进入实时频道。
+网页心跳和重复事件不会当成新的地震事件通知。`rss.sasmex.net` 只保留给
+CAP/正式警报原文归档；它的任何事件都不会进入这个客户端实时 WSS。
+
+网页实时事件的 `Data` 保持项目之前的字段格式。真实字段映射为：
+
+| 上游内容 | Data 输出 |
+| --- | --- |
+| identifier / id | id、eventId；缺失时只使用上游 sent / updated 作稳定键 |
+| sent，缺失有效值时 updated | epochMs；发送/更新时间原文同时保留 |
+| 顶层 circle | circle 原文以及中心 lat、lng；缺失时不造默认坐标 |
+| info[0].severity，其次顶层 severity | severity 原文；Severe 对应 isWarn=true |
+| info[0].description，其次 description、title | description 原文 |
+| 描述/标题中按网页列表匹配的州名 | region；否则只保留明确的上游地点 |
+| title、msgType、info[0].event | 同名元数据 |
+| 上游确实给出的 intensidad / intensity、grado、severidad | intensidad、grado、severidad；不自行估算 |
+
+`snapshot` 与 `query_response` 都只返回真实 IO 缓存；缓存为空时 Data=null，
+不会返回 CAP 归档。完整格式见 `../../docs/sasmex_relay_protocol.md`。
+
+只有上游实际提供 `severity` 时才会额外保留该原始字段；不根据 `grado` 或
+`severidad` 自行制造警报状态。原始 `severity` 为 `Severe` 时 `isWarn` 才为 `true`。
+
+连接建立时会发送 `heartbeat`；如果已有网页实时事件，则发送 `source: "sasmex"` 的
+`snapshot`。CAP 的 `Execute` 等正式警报只保存到归档，不通过这个 WSS 推送。
 
 线上使用时应由 IIS、Caddy 或 Nginx 终止 HTTPS/WSS，再反向代理到 `127.0.0.1:8765`。
 
@@ -130,15 +180,25 @@ SASMEX 参数：
 
 | 环境变量 | 默认值 | 说明 |
 | --- | ---: | --- |
-| `SASMEX_BASE_URL` | `https://rss.sasmex.net` | 公开 RSS/CAP 站点 |
+| `SASMEX_BASE_URL` | `https://rss.sasmex.net` | CAP/正式警报原文站点，不作为主实时事件源 |
 | `SASMEX_POLL_SECONDS` | `10` | `latest` 和正式警报索引的轮询间隔 |
 | `SASMEX_REQUEST_TIMEOUT_SECONDS` | `15` | 单次公开接口超时 |
-| `SASMEX_STALE_AFTER_SECONDS` | `90` | 健康检查允许的轮询间隔 |
+| `SASMEX_STALE_AFTER_SECONDS` | `90` | CAP 归档源健康检查允许的轮询间隔 |
 
-每轮同时检查 `/api/v1/alerts/latest/` 和
-`/api/v1/alerts/?type=alert`。服务启动时只记录正式警报索引作为基线，避免把历史警报全部重放；
-之后出现新警报或列表摘要发生变化时，才读取对应 CAP 并通过 SASMEX WebSocket 推送。
-检测事件和正式警报使用事件 ID、CAP 内容指纹以及有限大小的近期指纹缓存去重。
+网页实时 Socket.IO 事件参数：
+
+| 环境变量 | 默认值 | 说明 |
+| --- | ---: | --- |
+| `SIDESIS_SOCKET_URL` | `wss://sidesis.iigea.org/socket.io/` | 网页实际使用的 Socket.IO 地址 |
+| `SIDESIS_RECONNECT_SECONDS` | `3` | 断线后的重连间隔 |
+| `SIDESIS_SOCKET_TIMEOUT_SECONDS` | `20` | Socket.IO 建立连接超时 |
+| `SIDESIS_STALE_AFTER_SECONDS` | `90` | 实时源健康检查阈值 |
+
+服务端连接网页使用的 Engine.IO 4 根命名空间，响应传输层 `2` 心跳为 `3`，
+并监听参考网页真实使用的 `new_message` 事件。服务启动后不会发送未知订阅指令，
+只按网页已经确认的事件格式解析。检测事件和正式警报使用原始事件内容指纹去重。
+
+`rss.sasmex.net` 仍单独用于 CAP/正式警报原文归档，不参与客户端实时 WSS。
 
 ## Windows 防火墙
 
@@ -188,9 +248,13 @@ report.json             请求 URL、GET 状态、响应头、接收时间、耗
 raw/latest.json         本轮实际 GET 到的 latest 原始 JSON
 raw/alerts.json         本轮实际 GET 到的正式警报列表原始 JSON
 raw/cap-<id>.xml        对应事件实际 GET 到的原始 CAP XML
+raw/socketio-frame.txt  网页实时事件实际收到的原始 Socket.IO 帧
 parsed.json             服务端解析后准备发送的事件 JSON
 emitted.json            实际通过 SASMEX WebSocket 发出的完整 JSON
 ```
+
+网页 Socket.IO 实时事件和 CAP 归档使用同一个 TG 上传器与同一个
+`SASMEX原始归档/YYYY-MM-DD/` 目录。网页心跳、无法解析的帧和重复事件不会生成归档包。
 
 原始响应按 UTF-8/字节原样保存，不用二次请求覆盖；上传通过 TGFS WebDAV 回读校验，
 校验成功后才删除服务器本地临时 ZIP，失败则保留并重试。归档目录和 KMA 异常目录

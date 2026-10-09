@@ -24,6 +24,7 @@ const whewsCatalogSources = <String, QuakeSourceType>{
   'whews_iag': QuakeSourceType.iag,
   'whews_igp': QuakeSourceType.igp,
   'whews_nepal': QuakeSourceType.nepal,
+  'whews_funvisis': QuakeSourceType.funvisis,
 };
 
 /// Shared agency slots. Legacy WHEWS keys remain stable for saved filters/lists;

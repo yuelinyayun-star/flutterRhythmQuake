@@ -1,0 +1,27 @@
+{"action":"update","data":{
+  "type": "Feature",
+  "geometry": {
+    "type": "Point",
+    "coordinates": [
+      -119.5813,
+      40.6187,
+      -6.0
+    ]
+  },
+  "id": "20260916_0000104",
+  "properties": {
+    "source_id": "2061031",
+    "source_catalog": "EMSC-RTS",
+    "lastupdate": "2026-10-08T09:45:07.444108Z",
+    "time": "2026-09-16T07:17:25.088Z",
+    "flynn_region": "NEVADA",
+    "lat": 40.6187,
+    "lon": -119.5813,
+    "depth": 6.0,
+    "evtype": "ke",
+    "auth": "NEIC",
+    "mag": 3.8,
+    "magtype": "mw",
+    "unid": "20260916_0000104"
+  }
+}}

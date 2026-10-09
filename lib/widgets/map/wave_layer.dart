@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../../models/quake_message.dart';
+import '../../models/sasmex_map_geometry.dart';
 import '../../core/calculator.dart';
 import '../../core/travel_time_service.dart';
 import '../../core/utils/world_wrap.dart';
@@ -26,6 +27,9 @@ class QuakeWaveLayer extends StatefulWidget {
   final bool showCrosshair;
   final bool showEpicenterLabel;
 
+  /// Optional historical display clock; leaves the source event unchanged.
+  final DateTime Function()? displayClock;
+
   const QuakeWaveLayer({
     super.key,
     required this.event,
@@ -38,6 +42,7 @@ class QuakeWaveLayer extends StatefulWidget {
     this.sWaveColor,
     this.showCrosshair = true,
     this.showEpicenterLabel = true,
+    this.displayClock,
   });
 
   @override
@@ -77,6 +82,9 @@ class _QuakeWaveLayerState extends State<QuakeWaveLayer> {
   void _ensureTravelTimes() {
     final travelTimes = TravelTimeService();
     travelTimes.loadedListenable.removeListener(_onTravelTimesLoaded);
+    if (!widget.showWaves || widget.event.source == QuakeSourceType.sasmex) {
+      return;
+    }
     if (travelTimes.isLoaded) return;
     travelTimes.loadedListenable.addListener(_onTravelTimesLoaded);
     unawaited(travelTimes.ensureLoaded());
@@ -123,6 +131,7 @@ class _QuakeWaveLayerState extends State<QuakeWaveLayer> {
               sWaveColor: widget.sWaveColor,
               showCrosshair: widget.showCrosshair,
               showEpicenterLabel: widget.showEpicenterLabel,
+              displayClock: widget.displayClock,
               repaint: repaint,
             ),
             size: Size.infinite,
@@ -146,6 +155,7 @@ class WavePainter extends CustomPainter {
   final Color? sWaveColor;
   final bool showCrosshair;
   final bool showEpicenterLabel;
+  final DateTime Function()? displayClock;
 
   static const double _maxRadius1 = 2000;
   static const double _maxRadius2 = 10000;
@@ -161,10 +171,12 @@ class WavePainter extends CustomPainter {
     this.sWaveColor,
     this.showCrosshair = true,
     this.showEpicenterLabel = true,
+    this.displayClock,
     super.repaint,
   });
 
   double _calcMaxWaveRadius() {
+    if (event.source == QuakeSourceType.sasmex) return 2000;
     final m = event.magnitude;
     return min(max(50 * m * m, 200), 2000);
   }
@@ -190,7 +202,7 @@ class WavePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final normalizedOrigin = QuakeTime.normalizedOriginLocal(event);
-    final currentTime = NtpService().now;
+    final currentTime = displayClock?.call() ?? NtpService().now;
     final double elapsed = QuakeCalculator.getElapsedSeconds(
       normalizedOrigin,
       currentTime,
@@ -215,7 +227,7 @@ class WavePainter extends CustomPainter {
       return;
     }
 
-    if (elapsed < 0) {
+    if (!showWaves || elapsed < 0) {
       _drawEpicenter(canvas, centerPos);
       return;
     }
@@ -226,7 +238,17 @@ class WavePainter extends CustomPainter {
     double pRadiusKm = 0;
     double sRadiusKm = 0;
 
-    if (tts.isLoaded) {
+    if (event.source == QuakeSourceType.sasmex) {
+      if (event.isCanceled ||
+          SasmexMapAnimation.cameraRadiusKm(elapsed, severe: event.isWarn) <=
+              0) {
+        _drawEpicenter(canvas, centerPos);
+        return;
+      }
+      final animation = SasmexMapAnimation(centerLatLng, elapsed, event.isWarn);
+      pRadiusKm = animation.pRadiusMeters / 1000;
+      sRadiusKm = animation.sRadiusMeters / 1000;
+    } else if (tts.isLoaded) {
       var pInfo = tts.calcWaveDistance('jma2001', true, event.depth, elapsed);
       if (pInfo.radius > _maxRadius1) {
         pInfo = tts.calcWaveDistance('jb', true, event.depth, elapsed);
@@ -413,7 +435,10 @@ class WavePainter extends CustomPainter {
     double pArrivalTime;
     double sArrivalTime;
 
-    if (tts.isLoaded) {
+    if (event.source == QuakeSourceType.sasmex) {
+      pArrivalTime = max(0, distanceKm / 8 - 7);
+      sArrivalTime = SasmexMapAnimation.sArrivalSeconds(distanceKm);
+    } else if (tts.isLoaded) {
       final tableName = distanceKm <= _maxRadius1 ? 'jma2001' : 'jb';
       pArrivalTime = tts.calcReachTime(
         tableName,
@@ -604,13 +629,16 @@ class WavePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant WavePainter oldDelegate) {
     if (!showWaves && !oldDelegate.showWaves) {
-      return oldDelegate.event.eventId != event.eventId ||
+      return oldDelegate.event != event ||
           oldDelegate.camera != camera ||
           oldDelegate.userPosition != userPosition ||
-          oldDelegate.blinkOn != blinkOn;
+          oldDelegate.blinkOn != blinkOn ||
+          oldDelegate.showCrosshair != showCrosshair ||
+          oldDelegate.showEpicenterLabel != showEpicenterLabel;
     }
     return oldDelegate.event != event ||
         oldDelegate.camera != camera ||
+        oldDelegate.displayClock != displayClock ||
         oldDelegate.userPosition != userPosition ||
         oldDelegate.colorMode != colorMode ||
         oldDelegate.blinkOn != blinkOn ||

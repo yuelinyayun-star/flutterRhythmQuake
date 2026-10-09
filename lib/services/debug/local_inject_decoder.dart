@@ -308,6 +308,14 @@ class LocalInjectDecoder {
           TsunamiSource.incois,
           body,
         ),
+        'cat_tsunami' => TsunamiMessage.parseInternationalTsunami(
+          TsunamiSource.cat,
+          body,
+        ),
+        'cwa_tsunami' => TsunamiMessage.parseInternationalTsunami(
+          TsunamiSource.cwa,
+          body,
+        ),
         _ => null,
       };
       if (tsunami != null) {

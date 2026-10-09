@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import '../../../core/utils/quake_time.dart';
 import '../../../core/utils/catalog_event_identity.dart';
+import '../../../core/utils/information_report_order.dart';
 import '../../../models/quake_message.dart';
 import '../../../models/whews_catalog.dart';
 import 'jma_eqlist_service.dart';
@@ -29,7 +30,7 @@ import '../emsc_eqlist_service.dart';
 /// - JMA: 日本气象厅，通过HTTP轮询获取
 /// - CENC: 中国地震台网中心，通过FAN推送+Wolfx WS获取，HTTP轮询作为备用
 /// - USGS: 美国地质调查局，通过HTTP轮询获取
-/// - EMSC: 欧洲地中海地震中心，通过HTTP轮询获取
+/// - EMSC: 欧洲地中海地震中心，通过官方 WebSocket 推送，连接时补取历史
 /// - FSSN: 中国地震速报，通过FAN推送获取（列表订阅+实时推送）
 /// - KMA: 韩国气象厅，通过FAN实时推送获取
 /// - CWA: 台湾中央气象署，通过ExpTech v2 HTTP轮询获取，FAN推送作为备用
@@ -94,6 +95,8 @@ class EqlistManager {
   /// CENC CMT 震源机制解缓存
   final List<QuakeMessage> _cencCmtList = [];
 
+  final List<QuakeMessage> _fssnCmtList = [];
+
   /// USGS CMT 震源机制解缓存
   final List<QuakeMessage> _usgsCmtList = [];
 
@@ -155,6 +158,7 @@ class EqlistManager {
   /// CWA 官方源最新事件回调，用于进入统一 UI。
   void Function(Map<String, dynamic>)? onCwaCurrentUpdated;
   void Function(bool connected)? onHttpStatusChanged;
+  void Function(bool connected)? onEmscStatusChanged;
   void Function(bool connected)? onCmtStatusChanged;
 
   final Map<String, bool> _httpStatusByService = <String, bool>{};
@@ -173,15 +177,15 @@ class EqlistManager {
     onCmtStatusChanged?.call(anyConnected);
   }
 
-  /// 启动所有HTTP轮询服务
+  /// 启动官方列表服务
   ///
-  /// JMA、USGS、EMSC、CWA通过HTTP轮询获取数据
+  /// JMA、USGS、CWA通过HTTP轮询获取数据，EMSC通过官方WS推送
   /// CENC、FSSN、KMA通过FAN推送获取数据
   void start({
     bool jmaHttpEnabled = true,
     bool cencHttpEnabled = true,
     bool usgsHttpEnabled = true,
-    bool emscHttpEnabled = true,
+    bool emscWsEnabled = true,
     bool cwaHttpEnabled = true,
     bool cencCmtEnabled = true,
     bool usgsCmtEnabled = true,
@@ -193,13 +197,7 @@ class EqlistManager {
     _running = true;
     _httpStatusByService
       ..clear()
-      ..addAll({
-        'JMA': false,
-        'CENC': false,
-        'USGS': false,
-        'EMSC': false,
-        'CWA': false,
-      });
+      ..addAll({'JMA': false, 'CENC': false, 'USGS': false, 'CWA': false});
     _cmtStatusByService
       ..clear()
       ..addAll({
@@ -223,9 +221,9 @@ class EqlistManager {
       usgs.onStatusChanged = (connected) =>
           _setHttpServiceStatus('USGS', connected);
     }
-    if (emscHttpEnabled) {
+    if (emscWsEnabled) {
       emsc.onStatusChanged = (connected) =>
-          _setHttpServiceStatus('EMSC', connected);
+          onEmscStatusChanged?.call(connected);
     }
     if (cwaHttpEnabled) {
       cwa.onStatusChanged = (connected) =>
@@ -282,7 +280,7 @@ class EqlistManager {
     if (jmaHttpEnabled) jma.start();
     if (cencHttpEnabled) cenc.start();
     if (usgsHttpEnabled) usgs.start();
-    if (emscHttpEnabled) emsc.start();
+    if (emscWsEnabled) emsc.start();
     if (cwaHttpEnabled) cwa.start();
     if (cencCmtEnabled) cencCmt.start();
     if (usgsCmtEnabled) usgsCmt.start();
@@ -290,11 +288,11 @@ class EqlistManager {
     if (fnetCmtEnabled) fnetCmt.start();
     if (hinetAquaCmtEnabled) hinetAquaCmt.start();
     debugPrint(
-      'EqlistManager: JMA+USGS+EMSC+CWA HTTP poll, CENC+FSSN+KMA via FAN push, CENC CMT + USGS CMT + JMA CMT + F-net CMT + Hi-net AQUA CMT via HTTP poll',
+      'EqlistManager: JMA+USGS+CWA HTTP poll, EMSC official WS, CENC+FSSN+KMA via FAN push, CENC CMT + USGS CMT + JMA CMT + F-net CMT + Hi-net AQUA CMT via HTTP poll',
     );
   }
 
-  /// 停止所有HTTP轮询服务
+  /// 停止所有官方列表服务
   void stop() {
     if (!_running) return;
     _running = false;
@@ -327,15 +325,14 @@ class EqlistManager {
     hinetAquaCmt.onStatusChanged = null;
   }
 
-  /// Android 前台服务关闭后恢复主 isolate 的官方 HTTP 列表连接。
-  void startOfficialHttpServices() {
+  /// Android 前台服务关闭后恢复主 isolate 的官方列表连接。
+  void startOfficialServices() {
     if (!_running) return;
     jma.onStatusChanged = (connected) =>
         _setHttpServiceStatus('JMA', connected);
     usgs.onStatusChanged = (connected) =>
         _setHttpServiceStatus('USGS', connected);
-    emsc.onStatusChanged = (connected) =>
-        _setHttpServiceStatus('EMSC', connected);
+    emsc.onStatusChanged = (connected) => onEmscStatusChanged?.call(connected);
     cwa.onStatusChanged = (connected) =>
         _setHttpServiceStatus('CWA', connected);
     cenc.onStatusChanged = (connected) =>
@@ -347,8 +344,8 @@ class EqlistManager {
     cenc.start();
   }
 
-  /// Android 前台服务接管官方 HTTP 列表时停止主 isolate 的重复连接。
-  void stopOfficialHttpServices() {
+  /// Android 前台服务接管官方列表时停止主 isolate 的重复连接。
+  void stopOfficialServices() {
     if (!_running) return;
     jma.stop();
     usgs.stop();
@@ -357,7 +354,6 @@ class EqlistManager {
     cenc.stop();
     _setHttpServiceStatus('USGS', false);
     _setHttpServiceStatus('JMA', false);
-    _setHttpServiceStatus('EMSC', false);
     _setHttpServiceStatus('CWA', false);
     _setHttpServiceStatus('CENC', false);
   }
@@ -469,7 +465,11 @@ class EqlistManager {
     onAnyUpdated?.call();
   }
 
-  void upsertBucketItem(String bucket, QuakeMessage e, {bool replayOnly = false}) {
+  void upsertBucketItem(
+    String bucket,
+    QuakeMessage e, {
+    bool replayOnly = false,
+  }) {
     if (bucket == 'jmaEqlist') {
       jma.noteExternalUpdate();
     } else if (bucket == 'cencEqlist') {
@@ -486,28 +486,73 @@ class EqlistManager {
       'cwaEqlist' => _cwaList,
       'emscEqlist' => _emscList,
       'cencCmt' => _cencCmtList,
+      'fssnCmt' => _fssnCmtList,
       'usgsCmt' => _usgsCmtList,
       'jmaCmt' => _jmaCmtList,
       'fnetCmt' => _fnetCmtList,
       'hinetAquaCmt' => _hinetAquaCmtList,
-      _ => unifiedCatalogSources.containsKey(bucket)
-          ? _whewsCatalogLists.putIfAbsent(bucket, () => []) : null,
+      _ =>
+        unifiedCatalogSources.containsKey(bucket)
+            ? _whewsCatalogLists.putIfAbsent(bucket, () => [])
+            : null,
     };
     if (list == null) return;
     final aliases = internationalCatalogSource(bucket) != null
-        ? _catalogIdAliases.putIfAbsent(bucket, () => {}) : null;
+        ? _catalogIdAliases.putIfAbsent(bucket, () => {})
+        : null;
     String identity(QuakeMessage item) {
       final id = catalogEventId(bucket, item.eventId);
       return aliases?[id] ?? id;
     }
+
     bool sameEvent(QuakeMessage item) =>
         item.eventId == e.eventId ||
-        (aliases != null && identity(item).isNotEmpty && identity(item) == identity(e)) ||
+        (aliases != null &&
+            identity(item).isNotEmpty &&
+            identity(item) == identity(e)) ||
         sameCatalogHistoryEvent(bucket, item, e) ||
         (bucket == 'jmaEqlist' && _sameJmaHistoryEvent(item, e));
-    final oldIndex = list.indexWhere(sameEvent);
+    var oldIndex = list.indexWhere(sameEvent);
+    if ((bucket == 'earlyEst' || bucket == 'cencEqlist') && oldIndex >= 0) {
+      // Existing rows may predate cross-transport ID normalization. Compare
+      // every matching report before accepting or rejecting the incoming one.
+      for (var index = oldIndex + 1; index < list.length; index++) {
+        if (!sameEvent(list[index])) continue;
+        final old = list[oldIndex];
+        final candidate = list[index];
+        final order = bucket == 'cencEqlist'
+            ? compareCencHistoryOriginPrecision(old, candidate)
+            : compareInformationReportOrder(
+                currentNumber: informationReportNumber(old.reportNumText),
+                incomingNumber: informationReportNumber(
+                  candidate.reportNumText,
+                ),
+                currentTime: old.reportTime == null
+                    ? null
+                    : QuakeTime.eventInstantUtc(old, value: old.reportTime),
+                incomingTime: candidate.reportTime == null
+                    ? null
+                    : QuakeTime.eventInstantUtc(
+                        candidate,
+                        value: candidate.reportTime,
+                      ),
+              );
+        if (order == 1) {
+          oldIndex = index;
+        }
+      }
+      final retained = list[oldIndex];
+      final length = list.length;
+      list.removeWhere((item) => !identical(item, retained) && sameEvent(item));
+      oldIndex = list.indexOf(retained);
+      if (length != list.length) onAnyUpdated?.call();
+    }
     if (oldIndex >= 0) {
       final old = list[oldIndex];
+      final cencPrecisionOrder = bucket == 'cencEqlist'
+          ? compareCencHistoryOriginPrecision(old, e)
+          : null;
+      if (cencPrecisionOrder == -1) return;
       if (aliases != null) {
         // Retain both proven IDs so later parameter revisions still update
         // the same row, whichever transport supplies them.
@@ -517,18 +562,36 @@ class EqlistManager {
           aliases.updateAll((_, value) => value == incomingRoot ? root : value);
           aliases[catalogEventId(bucket, old.eventId)] = root;
           aliases[catalogEventId(bucket, e.eventId)] = root;
-          while (aliases.length > 1000) { aliases.remove(aliases.keys.first); }
+          while (aliases.length > 1000) {
+            aliases.remove(aliases.keys.first);
+          }
         }
       }
-      final oldReport = old.reportTime == null ? null
+      final oldReport = old.reportTime == null
+          ? null
           : QuakeTime.eventInstantUtc(old, value: old.reportTime);
-      final newReport = e.reportTime == null ? null
+      final newReport = e.reportTime == null
+          ? null
           : QuakeTime.eventInstantUtc(e, value: e.reportTime);
-      if (replayOnly && (newReport == null ||
-          (oldReport != null && !newReport.isAfter(oldReport)))) {
+      final numberedOrder = bucket == 'earlyEst'
+          ? compareInformationReportOrder(
+              currentNumber: informationReportNumber(old.reportNumText),
+              incomingNumber: informationReportNumber(e.reportNumText),
+              currentTime: oldReport,
+              incomingTime: newReport,
+            )
+          : null;
+      if (numberedOrder == -1) return;
+      if (numberedOrder != 1 &&
+          cencPrecisionOrder != 1 &&
+          replayOnly &&
+          (newReport == null ||
+              (oldReport != null && !newReport.isAfter(oldReport)))) {
         return;
       }
-      if (oldReport != null &&
+      if (numberedOrder != 1 &&
+          cencPrecisionOrder != 1 &&
+          oldReport != null &&
           (newReport == null || newReport.isBefore(oldReport))) {
         return;
       }
@@ -617,6 +680,7 @@ class EqlistManager {
     'cwaEqlist': _cwaList,
     'emscEqlist': _emscList,
     'cencCmt': _cencCmtList,
+    'fssnCmt': _fssnCmtList,
     'usgsCmt': _usgsCmtList,
     'jmaCmt': _jmaCmtList,
     'fnetCmt': _fnetCmtList,

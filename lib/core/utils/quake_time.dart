@@ -262,7 +262,7 @@ class QuakeTime {
 
   /// Current-card lifetime reference for a non-EEW unified event.
   ///
-  /// WHEWS EMSC can publish a recent directory revision for an earthquake that
+  /// EMSC feeds can publish a recent directory revision for an earthquake that
   /// occurred much earlier. Its updateTime remains useful for ordering
   /// revisions, but must not revive that old earthquake in the current UI or
   /// background notifications. Catalog snapshots use the earthquake time;
@@ -270,15 +270,20 @@ class QuakeTime {
   static DateTime? informationDisplayReference(UnifiedQuakeData event) {
     // Catalog maintenance must not turn an old earthquake into a new alert.
     if (unifiedCatalogSources.containsKey(event.source)) return event.originTime;
-    final isWhewsEmsc =
-        event.apiTypeLabel == 'WHEWS' &&
-        (event.source == 'emsc' || event.source == 'emscEqlist');
-    if (isWhewsEmsc && event.originTime != null) return event.originTime;
+    if (event.source == 'emsc' || event.source == 'emscEqlist') {
+      return event.originTime;
+    }
     return event.reportTime ?? event.originTime;
   }
 
   /// Product policy for delayed live catalogs, not a provider timestamp rule.
   static const catalogLiveAdmissionWindow = Duration(minutes: 30);
+
+  static bool usesCatalogInformationLifetime(UnifiedQuakeData event) =>
+      !event.isEew &&
+      (unifiedCatalogSources.containsKey(event.source) ||
+          event.source == 'emsc' ||
+          event.source == 'emscEqlist');
 
   /// Returns null for feeds whose existing lifetime rules must stay unchanged.
   /// Source age controls admission; local first arrival controls card lifetime.
@@ -289,7 +294,7 @@ class QuakeTime {
     DateTime? now,
     DateTime? sourceNow,
   }) {
-    if (event.isEew || !unifiedCatalogSources.containsKey(event.source)) {
+    if (!usesCatalogInformationLifetime(event)) {
       return null;
     }
     if (event.isHistory ||

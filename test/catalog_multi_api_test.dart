@@ -29,7 +29,7 @@ void main() {
       final rawText = File('test/fixtures/jian/all.json').readAsStringSync();
       final captured = jsonDecode(rawText) as Map;
       final mapped = jianEarthquakeSources.values.toSet();
-      expect(unifiedCatalogSources.length, 31);
+      expect(unifiedCatalogSources.length, 32);
       expect(whewsCatalogSources.keys.where(mapped.contains), hasLength(16));
       for (final source in unifiedCatalogSources.keys) {
         expect(

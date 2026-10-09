@@ -245,6 +245,8 @@ enum QuakeSourceType {
   igepn,
   earlyEst,
   icl,
+  sasmex,
+  funvisis,
 }
 
 /// QuakeSourceType 扩展方法
@@ -353,6 +355,8 @@ extension QuakeSourceTypeExtension on QuakeSourceType {
         return '秘鲁地球物理研究所';
       case QuakeSourceType.nepal:
         return '尼泊尔地震信息';
+      case QuakeSourceType.funvisis:
+        return '委内瑞拉地震研究基金会 (FUNVISIS)';
       case QuakeSourceType.ipgp:
         return '巴黎地球物理研究所';
       case QuakeSourceType.infp:
@@ -391,6 +395,8 @@ extension QuakeSourceTypeExtension on QuakeSourceType {
         return '地震信息';
       case QuakeSourceType.icl:
         return '成都高新减灾研究所 (ICL)';
+      case QuakeSourceType.sasmex:
+        return 'SASMEX (墨西哥)';
     }
   }
 
@@ -485,6 +491,7 @@ extension QuakeSourceTypeExtension on QuakeSourceType {
       case QuakeSourceType.iag:
       case QuakeSourceType.igp:
       case QuakeSourceType.nepal:
+      case QuakeSourceType.funvisis:
       case QuakeSourceType.ipgp:
       case QuakeSourceType.infp:
       case QuakeSourceType.isc:
@@ -514,6 +521,8 @@ extension QuakeSourceTypeExtension on QuakeSourceType {
         return '地震信息';
       case QuakeSourceType.icl:
         return 'ICL 地震预警';
+      case QuakeSourceType.sasmex:
+        return 'SASMEX 地震情报';
     }
   }
 }
@@ -733,6 +742,11 @@ class QuakeMessage {
   /// 机构来源可能同时由多个 API 提供，不能仅通过 [source] 推断。
   final String? apiTypeLabel;
 
+  /// Original USGS catalogue reference, retained across foreground handoffs.
+  final String? usgsDetailUrl;
+  final String? usgsProductTypes;
+  final int? usgsUpdated;
+
   /// 构造函数
   ///
   /// 创建一个地震消息实例。
@@ -771,6 +785,9 @@ class QuakeMessage {
     this.isAssumption = false,
     this.reportNumText,
     this.apiTypeLabel,
+    this.usgsDetailUrl,
+    this.usgsProductTypes,
+    this.usgsUpdated,
   });
 
   /// 创建一个副本并更新指定字段
@@ -810,6 +827,9 @@ class QuakeMessage {
     bool? isAssumption,
     String? reportNumText,
     String? apiTypeLabel,
+    String? usgsDetailUrl,
+    String? usgsProductTypes,
+    int? usgsUpdated,
   }) {
     return QuakeMessage(
       source: source,
@@ -845,6 +865,9 @@ class QuakeMessage {
       isAssumption: isAssumption ?? this.isAssumption,
       reportNumText: reportNumText ?? this.reportNumText,
       apiTypeLabel: apiTypeLabel ?? this.apiTypeLabel,
+      usgsDetailUrl: usgsDetailUrl ?? this.usgsDetailUrl,
+      usgsProductTypes: usgsProductTypes ?? this.usgsProductTypes,
+      usgsUpdated: usgsUpdated ?? this.usgsUpdated,
     );
   }
 
@@ -889,6 +912,9 @@ class QuakeMessage {
       'isAssumption': isAssumption ? 1 : 0,
       'reportNumText': reportNumText,
       'apiTypeLabel': apiTypeLabel,
+      'usgsDetailUrl': usgsDetailUrl,
+      'usgsProductTypes': usgsProductTypes,
+      'usgsUpdated': usgsUpdated,
     };
   }
 
@@ -945,6 +971,9 @@ class QuakeMessage {
       isAssumption: map['isAssumption'] == 1,
       reportNumText: map['reportNumText'],
       apiTypeLabel: map['apiTypeLabel'],
+      usgsDetailUrl: map['usgsDetailUrl'],
+      usgsProductTypes: map['usgsProductTypes'],
+      usgsUpdated: _optionalInt(map['usgsUpdated']),
     );
   }
 

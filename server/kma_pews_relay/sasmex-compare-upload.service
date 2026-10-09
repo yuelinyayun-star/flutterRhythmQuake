@@ -1,0 +1,23 @@
+[Unit]
+Description=Upload SASMEX dual connection comparison to Telegram with readback
+
+[Service]
+Type=oneshot
+User=rhythmquake
+Group=rhythmquake
+ExecStart=/opt/rhythmquake/kma-pews-relay/.venv/bin/python /opt/rhythmquake/sasmex-dual-monitor/upload_sasmex.py --directory /var/lib/rhythmquake-sasmex-compare --comparison
+TimeoutStartSec=20min
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadOnlyPaths=/etc/rhythmquake-kma-anomalies/telegram.conf
+ReadWritePaths=/var/lib/rhythmquake-sasmex-compare
+MemoryHigh=96M
+MemoryMax=128M
+CPUQuota=10%
+Nice=15
+IOSchedulingClass=idle
+TasksMax=32
+Environment=GOMEMLIMIT=48MiB

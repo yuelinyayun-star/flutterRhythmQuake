@@ -1,0 +1,15 @@
+{
+  "Data": {
+    "id": "funvisis_29038",
+    "shockTime": "2026-10-01 11:45:00",
+    "updateTime": "2026-10-01 11:45:00",
+    "latitude": 10.75,
+    "longitude": -69.15,
+    "depth": 6.2,
+    "magnitude": 1.8,
+    "placeName": "44. km al este de Churuguara",
+    "infoTypeName": "Mw"
+  },
+  "md5": "...",
+  "source": "funvisis"
+}

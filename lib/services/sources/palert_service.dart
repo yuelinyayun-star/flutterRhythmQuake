@@ -217,7 +217,6 @@ query (\$recordTime: Float!, \$token: String!) {
   List<PAlertStation> _stations = const [];
   List<PAlertStation> get stations => _stations;
 
-  Timer? _stationTimer;
   Timer? _realtimeTimer;
   Timer? _frameWatchdogTimer;
   bool _running = false;
@@ -242,10 +241,6 @@ query (\$recordTime: Float!, \$token: String!) {
     _failureReported = false;
     _lastFrameReceivedAt = null;
     unawaited(_bootstrap(generation));
-    _stationTimer = Timer.periodic(
-      const Duration(minutes: 10),
-      (_) => _fetchStationList(generation),
-    );
     _realtimeTimer = Timer.periodic(
       realtimePollInterval,
       (_) => _fetchRealtime(generation),
@@ -260,8 +255,6 @@ query (\$recordTime: Float!, \$token: String!) {
     _endShakeDetection();
     _running = false;
     _runGeneration++;
-    _stationTimer?.cancel();
-    _stationTimer = null;
     _realtimeTimer?.cancel();
     _realtimeTimer = null;
     _frameWatchdogTimer?.cancel();
@@ -380,7 +373,6 @@ query (\$recordTime: Float!, \$token: String!) {
       return;
     }
     if (_stationMap.isEmpty) {
-      unawaited(_fetchStationList(generation));
       return;
     }
     _fetchingRealtime = true;
@@ -445,7 +437,6 @@ query (\$recordTime: Float!, \$token: String!) {
         changed = true;
       }
       if (!changed) {
-        unawaited(_fetchStationList(generation));
         _handleFailure();
         return;
       }

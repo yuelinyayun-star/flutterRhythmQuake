@@ -1,0 +1,26 @@
+[Unit]
+Description=RhythmQuake SASMEX Socket.IO and Firestore comparison archive
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rhythmquake
+Group=rhythmquake
+WorkingDirectory=/opt/rhythmquake/sasmex-dual-monitor
+Environment=PYTHONUTF8=1
+ExecStart=/opt/rhythmquake/kma-pews-relay/.venv/bin/python /opt/rhythmquake/sasmex-dual-monitor/sasmex_dual_monitor.py
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/rhythmquake-sasmex-compare
+MemoryHigh=96M
+MemoryMax=128M
+CPUQuota=10%
+
+[Install]
+WantedBy=multi-user.target

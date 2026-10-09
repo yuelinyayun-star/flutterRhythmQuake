@@ -31,6 +31,44 @@ cheji, CAT tsunami and JMA offshore tsunami observations require their own
 product contracts; they are not reclassified as earthquakes here.
 Existing EEW, weather and tsunami processing is retained.
 
+## Early-est information integration (2026-10-08)
+
+WHEWS `/ws/early_est` is routed to the existing `earlyEst` information identity,
+per the application's display policy. It remains `isEew: false`, shares Jian's
+information UI, history bucket and filters, and retains `apiTypeLabel: WHEWS`.
+This application policy differs from the upstream documentation's warning category.
+
+Read the original `shockTime` and `createTime` as UTC+8, retain `id`, and display
+the supplied `updates` as report sequence. The common magnitude display selects
+the first available nonnegative finite value in `Mwp`, `Mwpd`, `mb` order;
+this is an application display preference, not an upstream precedence rule.
+All three original measurements remain in the untouched `sourcePayload`.
+Location uses the existing Chinese region conversion, and estimated intensity
+uses the existing information-card estimator when magnitude and depth permit it.
+
+`test/fixtures/whews_early_est_documented_20261008.json` is the unchanged public
+documentation example. Its published `createTime` predates `shockTime`; neither
+timestamp is corrected or injected as a current event during validation.
+
+For the same proven Early-est event, foreground cards, Android background
+processing and historical rows compare report sequence before publication time.
+A lower sequence cannot replace a higher one even if delivered later or carrying
+a later timestamp. Same-sequence corrections cannot roll back a known publication
+time; absent times retain the existing correction rules. A higher sequence may update unchanged parameters
+without being suppressed by cross-API observation deduplication. Different
+earthquakes retain the existing event-identity and chronological slot rules.
+
+The 2026-10-09 running APP capture also verifies Jian's
+`EARLY_event_1791522664003` and WHEWS's `1791522664003` as the same upstream
+identity. Jian report 6 and WHEWS report 9 differ in magnitude and longitude;
+matching coordinates must not be required for subsequent revisions. Comparison
+strips only Jian's known `EARLY_event_` prefix on a 13-digit ID, without changing
+the original event. Shared foreground/background identity comparison handles
+previously cached prefixed identities. History compares all already stored
+matching rows, keeps the highest report and removes legacy duplicates even when
+the next incoming row is an older replay. The unchanged APP records are captured
+in `test/fixtures/early_est_history_20261009.original.json`.
+
 ## Data and behavior
 
 - Preserve original input maps. Prefer documented id, shockTime and updateTime.

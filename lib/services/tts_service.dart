@@ -37,6 +37,8 @@ class _TtsJob {
   final Duration delay;
   final bool interrupt;
   final String? eewEventKey;
+  final String? eventKey;
+  final bool Function()? isCurrent;
   final EewSpeechKind? eewKind;
   final DateTime? expiresAt;
   bool obsolete = false;
@@ -47,6 +49,8 @@ class _TtsJob {
     this.delay = Duration.zero,
     this.interrupt = false,
     this.eewEventKey,
+    this.eventKey,
+    this.isCurrent,
     this.eewKind,
     this.expiresAt,
   });
@@ -265,6 +269,8 @@ class TtsService {
   Future<void> speakEvent(
     String text, {
     required String dedupeKey,
+    String? eventKey,
+    bool Function()? isCurrent,
     bool isUpdate = false,
     Duration delay = const Duration(milliseconds: 1150),
   }) {
@@ -273,6 +279,8 @@ class TtsService {
     return speak(
       text,
       dedupeKey: 'event:$dedupeKey',
+      eventKey: eventKey,
+      isCurrent: isCurrent,
       dedupeWindow: const Duration(seconds: 4),
       delay: delay,
       interrupt: false,
@@ -338,12 +346,14 @@ class TtsService {
     Duration delay = Duration.zero,
     bool interrupt = false,
     String? eewEventKey,
+    String? eventKey,
+    bool Function()? isCurrent,
     EewSpeechKind? eewKind,
     bool preserveCriticalEew = false,
   }) async {
     await _ensureInitialized();
     final cleaned = _cleanText(text);
-    if (!enabled || cleaned.isEmpty) return;
+    if (!enabled || cleaned.isEmpty || isCurrent?.call() == false) return;
 
     if (dedupeKey != null && dedupeWindow > Duration.zero) {
       final now = DateTime.now();
@@ -369,6 +379,8 @@ class TtsService {
       delay: delay,
       interrupt: interrupt,
       eewEventKey: eewEventKey,
+      eventKey: eventKey,
+      isCurrent: isCurrent,
       eewKind: eewKind,
       expiresAt: eewKind == null
           ? null
@@ -465,6 +477,14 @@ class TtsService {
   void discardEew(String eventKey) {
     _queue.removeWhere((job) => job.eewEventKey == eventKey);
     if (_activeJob?.eewEventKey != eventKey) return;
+    _activeJob!.obsolete = true;
+    _cancelActiveDelay();
+    unawaited(_stopActivePlayback());
+  }
+
+  void discardEvent(String eventKey) {
+    _queue.removeWhere((job) => job.eventKey == eventKey);
+    if (_activeJob?.eventKey != eventKey) return;
     _activeJob!.obsolete = true;
     _cancelActiveDelay();
     unawaited(_stopActivePlayback());
@@ -864,6 +884,7 @@ $s.Dispose()
           if (generation != _generation ||
               !enabled ||
               job.obsolete ||
+              job.isCurrent?.call() == false ||
               (job.expiresAt != null &&
                   DateTime.now().isAfter(job.expiresAt!))) {
             continue;

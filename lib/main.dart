@@ -44,6 +44,7 @@ import 'services/sources/mock_input_service.dart';
 import 'services/sources/global_quake_service.dart';
 import 'services/sources/jian_icl_service.dart';
 import 'services/sources/chinaeew_icl_service.dart';
+import 'services/sources/sasmex_service.dart';
 import 'services/sources/fdsn_motion_service.dart';
 import 'services/sources/fdsn_source_catalog.dart';
 import 'services/debug/local_inject_server.dart';
@@ -115,17 +116,20 @@ void _startDeferredServices(
         SourceManager().startAll();
       }
 
-      if (!kIsWeb && AppEdition.hasGlobalQuake &&
+      if (!kIsWeb &&
+          AppEdition.hasGlobalQuake &&
           !BackgroundService().isAndroidConnectionHostedByForegroundService &&
           (prefs.getBool(GlobalQuakeService.enabledPreferenceKey) ?? false)) {
         globalQuake.connect();
       }
-      if (!kIsWeb && AppEdition.hasIcl &&
+      if (!kIsWeb &&
+          AppEdition.hasIcl &&
           !BackgroundService().isAndroidConnectionHostedByForegroundService &&
           (prefs.getBool(JianIclService.enabledPreferenceKey) ?? false)) {
         jianIcl.connect();
       }
-      if (!kIsWeb && AppEdition.hasIcl &&
+      if (!kIsWeb &&
+          AppEdition.hasIcl &&
           !BackgroundService().isAndroidConnectionHostedByForegroundService &&
           (prefs.getBool(ChinaEewIclService.enabledPreferenceKey) ?? false)) {
         chinaEewIcl.connect();
@@ -275,6 +279,7 @@ void main() async {
   final globalQuake = GlobalQuakeService();
   final jianIcl = JianIclService();
   final chinaEewIcl = ChinaEewIclService();
+  final sasmex = SasmexService();
   globalQuake.configureServers(
     primaryHost:
         prefs.getString(GlobalQuakeService.primaryHostPreferenceKey) ??
@@ -306,6 +311,11 @@ void main() async {
   SourceManager().registerSource(nowQuakeCencIr);
   SourceManager().registerSource(p2p);
   SourceManager().registerSource(mock);
+  SourceManager().registerSource(sasmex);
+  SourceManager().setSourceEnabled(
+    SasmexService.sourceName,
+    prefs.getBool(SasmexService.enabledPreferenceKey) ?? true,
+  );
   if (AppEdition.hasGlobalQuake) SourceManager().registerSource(globalQuake);
   if (AppEdition.hasIcl) {
     SourceManager().registerSource(jianIcl);

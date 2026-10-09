@@ -4,6 +4,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/quake_message.dart';
+import '../models/sasmex_map_geometry.dart';
 import '../widgets/map/map_config.dart';
 import '../core/calculator.dart';
 import '../core/travel_time_service.dart';
@@ -297,7 +298,8 @@ class MapStateProvider with ChangeNotifier {
   }
 
   void selectHistoryEvent(QuakeMessage? event) {
-    if (_selectedHistoryEvent?.eventId == event?.eventId && event != null) {
+    if (_selectedHistoryEvent?.eventId == event?.eventId && event != null &&
+        _selectedHistoryEvent?.source == event.source) {
       return;
     }
     _selectedHistoryEvent = event;
@@ -1099,6 +1101,17 @@ class MapStateProvider with ChangeNotifier {
   }
 
   double _calcAutoZoomWaveRadiusKm(QuakeMessage event) {
+    // Fit the same website animation geometry, without JMA tables/default depth.
+    if (event.source == QuakeSourceType.sasmex) {
+      if (event.isCanceled) return 0;
+      final elapsed =
+          NtpService().now
+              .toUtc()
+              .difference(QuakeTime.eventInstantUtc(event))
+              .inMilliseconds /
+          1000;
+      return SasmexMapAnimation.cameraRadiusKm(elapsed, severe: event.isWarn);
+    }
     final normalizedOrigin = QuakeTime.normalizedOriginLocal(event);
     final elapsed = QuakeCalculator.getElapsedSeconds(
       normalizedOrigin,

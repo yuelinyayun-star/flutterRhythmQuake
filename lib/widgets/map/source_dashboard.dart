@@ -264,6 +264,10 @@ class _SourceDashboardState extends State<SourceDashboard> {
         ),
       if (SourceManager().isSourceEnabled('NowQuake')) ('NowQuake', 'NowQuake'),
       if (SourceManager().isSourceEnabled('P2P')) ('P2PQ', 'P2P'),
+      if (SourceManager().isSourceEnabled('SASMEX')) ('Rhythm', 'SASMEX'),
+      if ((provider.sourceStatuses['EMSC'] ?? SourceStatus.disconnected) !=
+          SourceStatus.disconnected)
+        ('EMSC', 'EMSC'),
       if (AppEdition.hasGlobalQuake && GlobalQuakeService().isEnabled)
         ('GQ', 'GlobalQuake'),
       if (AppEdition.hasIcl &&

@@ -1,265 +1,65 @@
-# SASMEX 地震预警 JSON 接口
+# SASMEX 地震预警接口说明
 
-本文档说明服务端从 SASMEX-CIRES CAP 报文中解析出的客户端 JSON。服务端内部读取
-CAP XML，但对 APP 只发送 JSON，不发送 XML 原文，也不补充 SASMEX 没有提供的震级、深度、烈度或测站数据。
+## 1. 这是什么
 
-服务端另外会把通过去重并实际发出的新事件归档到 TG 云盘的
-`SASMEX原始归档/YYYY-MM-DD/`。归档包保留本次实际 GET 的 `latest` JSON、正式警报列表
-JSON、对应 CAP XML、解析后的 JSON，以及完整的 WebSocket 输出 JSON；`report.json` 保存
-请求 URL、状态码、响应头、接收时间、耗时和各文件 SHA-256。上传回读校验成功后才删除
-服务器临时包，失败会保留并由 timer 重试。
+SASMEX 是墨西哥的地震预警系统。客户端 WebSocket 只转发网页正在使用的实时事件，
+并转换成 RhythmQuake 已使用的 JSON 格式，供桌面端、移动端和 Web 端使用。
 
-## 1. 连接地址
+公开 CAP 接口是独立的归档输入，只用于保存原始请求、CAP XML 和解析结果，不会把 CAP
+事件混入客户端实时 WebSocket。
 
-APP 只需要连接一个 WebSocket：
+这里的 `source: "sasmex"` 表示实时消息来源；警报展示按参考网页真实 IO 的
+`info[0].severity`（优先）或顶层 `severity` 判断。Severe 对应 `isWarn: true`，
+其余为检出，不附加测站范围条件。三档原始严重性全部保留，不从描述文字、
+`grado` 或 `severidad` 推算。CAP 归档中的 `sasmexAlertIssued` 是独立字段，
+不作为实时 IO 警报的额外门槛。
+
+接口只输出上游实际提供并且客户端需要的内容，不伪造震级、深度、测站、PGA、PGV、
+到达倒计时或官方警报等级。
+
+## 2. 连接方式
+
+### WebSocket
 
 ```text
 wss://ws.yuelinrhythm.top/sasmex-eew
 ```
 
-运维接口不是额外的数据源：
+客户端只需要连接这一个地址。
 
-| 地址 | 作用 |
+### 运维接口
+
+| 地址 | 用途 |
 | --- | --- |
-| `https://ws.yuelinrhythm.top/sasmex/health` | 查看中继服务状态 |
-| `https://ws.yuelinrhythm.top/sasmex/snapshot` | 查看当前缓存的最后一条消息 |
+| `https://ws.yuelinrhythm.top/sasmex/health` | 查看实时源和中继运行状态 |
+| `https://ws.yuelinrhythm.top/sasmex/snapshot` | 查看中继当前缓存的消息 |
 
-## 2. 是否发警报
+这两个 HTTP 地址不是额外的数据源，也不会产生新的地震事件。
 
-服务端只保留两个 SASMEX 专用字段，不判断官方警报属于 `Alerta Preventiva` 还是
-`Alerta Pública`：
+## 3. 消息外层格式
 
-| 字段 | 含义 |
-| --- | --- |
-| `sasmexAlertIssued` | 根据 CAP 动作字段判断当前报文是否确认发出警报。 |
-| `sasmexAlertAction` | 原始 `responseType`，例如 `Monitor` 或 `Execute`。 |
+### 地震事件
 
-判断规则只看 CAP 的动作语义：
+外层继续使用 `type: "update"`、`source: "sasmex"`、`Data: 事件对象`。
+`Data` 的字段映射见第 5 节。本地解析只接收当前参考网页
+`https://asmx1-8.bolt.host/` 的真实 Socket.IO `new_message`；不接收 DOM
+`simulated_alert`，明确标记为 `isSimulation` 或 `isReplay` 的包也不进入实时频道。
 
-| `responseType` | `sasmexAlertIssued` | 含义 |
-| --- | --- | --- |
-| `Monitor`、`None` | `false` | 继续监测，没有确认发出警报 |
-| `Prepare`、`Assess` | `false` | CAP 没有确认执行警报动作 |
-| `Execute`、`Shelter`、`Evacuate` | `true` | 已确认执行警报动作 |
+震中从上游顶层 `circle` 读取。原文格式为“纬度,经度 半径”，保留原始
+`circle`，只把第一个经纬度对转为我们的 `lat` / `lng`。不会使用网页的默认
+州坐标、默认墨西哥城坐标或 `[0, 0]` 占位来补造震中。
 
-`msgType` 只表示报文生命周期，不表示警报等级：
-
-| `msgType` | 含义 |
-| --- | --- |
-| `Alert` | 首次发布一条报文 |
-| `Update` | 更新报文，替代 `references` 指向的旧报文 |
-| `Cancel` | 取消 `references` 指向的旧报文 |
-
-当前公开样本中，`Monitor` 报文是“检测到地震但没有发出警报”；`Execute` 报文是“已执行警报动作”。
-当前 CAP 样本没有明确返回 `Alerta Preventiva` 或 `Alerta Pública` 这两个官方名称，因此服务端不判断具体官方等级。
-
-服务端轮询两个索引：`/api/v1/alerts/latest/` 用于获取最新检测或事件，
-`/api/v1/alerts/?type=alert` 用于补充发现正式警报。启动时正式警报列表只建立基线，
-不会把历史记录重新发送；新出现或摘要更新的警报才会读取 CAP 并推送。两个索引指向同一条报文时，
-服务端会用事件 ID、CAP 内容指纹和近期指纹缓存去重。
-
-## 3. Monitor 示例：检测到地震但未发警报
-
-这是 SASMEX 真实报文 `20260902031439` 的客户端格式：
-
-```json
-{
-  "type": "update",
-  "source": "sasmex",
-  "Data": {
-    "source": "sasmex",
-    "id": "20260902031439",
-    "eventId": "20260902031439",
-    "sasmexAlertIssued": false,
-    "sasmexAlertAction": "Monitor",
-    "msgType": "Alert",
-    "time": "2026-09-02T03:14:39",
-    "sent": "2026-09-02T03:14:39-06:00",
-    "effective": "2026-09-02T03:14:39-06:00",
-    "expires": "2026-09-02T03:15:39-06:00",
-    "event": "SASMEX: Sismo Moderado en Petatlan Gro",
-    "headline": "Sismo Moderado en Petatlan Gro",
-    "description": "Sismo Moderado en Petatlan Gro, a 25km de Guerrero",
-    "category": "Geo",
-    "urgency": "Immediate",
-    "severity": "Unknown",
-    "certainty": "Observed",
-    "region": 41202,
-    "states": [41],
-    "areas": [
-      {
-        "name": "Zona Probable Epicentro",
-        "circles": [
-          {
-            "raw": "17.22,-100.79 70.0",
-            "latitude": 17.22,
-            "longitude": -100.79,
-            "radiusKm": 70.0
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-这条消息的判断结果是：检测到地震，`Monitor`，没有发出警报。圆形区域是可能的震中区域，不是公众警报覆盖区。
-
-## 4. Execute 示例：已执行警报动作
-
-这是 SASMEX 真实报文 `20260504091933` 的客户端格式：
-
-```json
-{
-  "type": "update",
-  "source": "sasmex",
-  "Data": {
-    "source": "sasmex",
-    "id": "20260504091933",
-    "eventId": "20260504091933",
-    "sasmexAlertIssued": true,
-    "sasmexAlertAction": "Execute",
-    "msgType": "Update",
-    "time": "2026-05-04T09:19:33",
-    "sent": "2026-05-04T09:19:33-06:00",
-    "effective": "2026-05-04T09:19:33-06:00",
-    "expires": "2026-05-04T09:20:33-06:00",
-    "event": "SASMEX: ALERTA SISMICA en CDMX por sismo en Costa Oax-Gro",
-    "headline": "ALERTA SISMICA por sismo Severo en Costa Oax-Gro",
-    "description": "Sismo Severo en Costa Oax-Gro, a 347km de CDMX",
-    "category": "Geo",
-    "urgency": "Immediate",
-    "severity": "Severe",
-    "certainty": "Observed",
-    "region": 42201,
-    "states": [40],
-    "references": [
-      {
-        "id": "20260504091932",
-        "isEvent": true,
-        "region": 42201,
-        "states": [42]
-      }
-    ],
-    "areas": [
-      {
-        "name": "Region de Alertamiento",
-        "polygons": [
-          "15.48,-94.06 18.35,-93.87 18.55,-98.59 15.62,-98.70 15.48,-94.06",
-          "19.15,-98.95 19.60,-98.95 19.60,-99.35 19.15,-99.35 19.15,-98.95"
-        ]
-      }
-    ]
-  }
-}
-```
-
-这条消息的判断结果是：`Execute`，已执行警报动作；`areas` 中的两个多边形就是完整警报区域，不能只取第一个。
-
-## 5. 客户端字段说明
-
-### 外层
-
-| 字段 | 含义 |
-| --- | --- |
-| `type` | 中继消息类型，`update` 表示数据更新。 |
-| `source` | 数据源标识，固定为 `sasmex`。 |
-| `Data` | SASMEX 这条报文的内容。 |
-
-### 报文和警报判断
-
-| 字段 | 含义 |
-| --- | --- |
-| `id` | 当前 SASMEX 报文编号，用于去重。 |
-| `eventId` | 当前报文对应的事件编号。 |
-| `sasmexAlertIssued` | 是否已经确认执行警报动作。 |
-| `sasmexAlertAction` | 原始 CAP `responseType`，例如 `Monitor` 或 `Execute`。 |
-| `msgType` | CAP 报文生命周期，不是警报等级。 |
-| `references` | 当前报文关联的旧事件或旧报文。只有上游提供时才输出。 |
-
-### 时间
-
-| 字段 | 含义 |
-| --- | --- |
-| `time` | SASMEX 列表接口给出的事件时间。 |
-| `sent` | CAP 报文发送时间。 |
-| `effective` | CAP 信息开始生效时间。 |
-| `expires` | CAP 信息失效时间。 |
-
-时间原样保留。没有时区的 `time` 不由服务端擅自改成北京时间。
-
-### CAP 信息
-
-| 字段 | 含义 |
-| --- | --- |
-| `event` | SASMEX 事件名称。 |
-| `headline` | 给用户看的短标题。 |
-| `description` | SASMEX 原始描述。 |
-| `category` | CAP 信息类别，`Geo` 表示地球物理事件。 |
-| `urgency` | 需要多快响应，例如 `Immediate`。 |
-| `severity` | CAP 通用影响严重程度，例如 `Severe` 或 `Unknown`；不是震级、烈度或官方警报等级。 |
-| `certainty` | CAP 对信息的确定程度，例如 `Observed`。 |
-
-### SASMEX 地区和警报区域
-
-| 字段 | 含义 |
-| --- | --- |
-| `region` | SASMEX 区域编号。服务端不把数字硬翻成不存在的地点名称。 |
-| `states` | SASMEX 返回的州编号列表。 |
-| `areas` | CAP 的全部 `<area>` 区域列表。 |
-| `areas[].name` | `<areaDesc>`，区域的人类可读名称。 |
-| `areas[].circles` | 该区域中的所有圆形范围。 |
-| `circles[].raw` | 原始圆形字符串。 |
-| `circles[].latitude` | 圆形中心纬度。 |
-| `circles[].longitude` | 圆形中心经度。 |
-| `circles[].radiusKm` | 圆形半径，单位为公里。 |
-| `areas[].points` | 该区域中的点位置，只有上游提供时才输出。 |
-| `areas[].polygons` | 该区域中的全部多边形原始坐标字符串。 |
-
-`areas` 不是额外的假字段，而是 CAP 原文中的 `<area>` 列表。`Monitor` 通常有圆形的可能震中区域；
-正式警报通常有多边形警报区域。两者都必须保留。
-
-## 6. 明确不输出的内容
-
-SASMEX 当前公开报文没有提供以下内容，因此客户端 JSON 不输出这些字段：
-
-- 震级；
-- 震源深度；
-- 震中烈度或最大烈度；
-- 测站列表；
-- PGA、PGV；
-- 城市到达倒计时；
-- 服务端估算出的官方警报等级。
-
-`severity: Severe` 只表示 CAP 的通用严重性，不能直接改写成 `Alerta Preventiva` 或 `Alerta Pública`。
-
-## 7. 心跳和查询
-
-服务端心跳：
+### 心跳
 
 ```json
 {
   "type": "heartbeat",
   "source": "sasmex",
-  "timestamp": "2026-10-06T16:41:25.277553+00:00"
+  "timestamp": "2026-10-07T08:00:00.000000+00:00"
 }
 ```
 
-客户端可以发送：
-
-```json
-{"type":"ping"}
-```
-
-服务端返回：
-
-```json
-{
-  "type": "pong",
-  "source": "sasmex",
-  "timestamp": "2026-10-06T16:41:26.277553+00:00"
-}
-```
+### 查询当前缓存
 
 客户端可以发送：
 
@@ -267,7 +67,7 @@ SASMEX 当前公开报文没有提供以下内容，因此客户端 JSON 不输�
 {"type":"query"}
 ```
 
-服务端返回当前缓存数据：
+服务端返回：
 
 ```json
 {
@@ -277,9 +77,192 @@ SASMEX 当前公开报文没有提供以下内容，因此客户端 JSON 不输�
 }
 ```
 
-没有缓存时 `Data` 为 `null`。
+有缓存时，`Data` 是当前真实 IO 消息对象；没有缓存时为 `null`。
+连接时的 `snapshot` 和查询的 `query_response` 都只使用实时 IO 缓存，
+不会返回独立 CAP 归档数据。
 
-## 8. 当前实现依据
+### 心跳检测
 
-服务端只在内部解析 SASMEX 的 `latest` JSON、列表 JSON 和对应 CAP XML。对外输出使用上面的紧凑 JSON。
-同一条报文内容不会重复推送；心跳、健康检查和快照不属于地震事件数据。
+客户端可以发送字符串 `ping` 或：
+
+```json
+{"type":"ping"}
+```
+
+服务端返回 `type: "pong"`。
+
+## 4. 两类事件消息的区别
+
+### 4.1 网页实时事件
+
+这类消息来自真实 Socket.IO `new_message`，三档都已接入本项目统一 UI 的
+EEW 消息。Minor / Moderate 为检出展示，Severe 为警报展示，保留其原始档位。
+心跳先按 `type: "heartbeat"` 分流，不会因夹带 severity 而变成地震事件。
+
+地域名称复用网页的确定性文本匹配：先检查 `info[0].description`，再检查顶层
+`description`，最后检查 `title`，按网页固定州名列表查找。没有匹配时，仅保留
+上游明确提供的 region / place / location；不生成默认地点。
+
+### 4.2 正式警报报文（仅归档）
+
+这类消息来自独立归档的正式警报报文。只有上游明确给出已经执行警报动作的状态，
+才会出现 `sasmexAlertIssued: true`。这类 CAP 报文不会通过客户端实时 WebSocket
+发送；字段只保存在归档包中供追溯。
+
+`sasmexAlertIssued: false` 表示这条消息没有确认已经执行警报动作，不能当作公众警报。
+
+## 5. 字段说明
+
+### 5.1 通用字段
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `type` | string | 消息类型。`update` 是事件更新，`heartbeat` 是心跳，`pong` 是心跳响应。 |
+| `source` | string | 消息来源标识。SASMEX 消息固定为 `sasmex`。这不是警报状态。 |
+| `Data` | object/null | 地震事件内容。查询时没有缓存可以是 `null`。 |
+| `id` | string | 优先使用上游 identifier，其次 id；都没有时使用上游 sent / updated 原文作为稳定键，不生成本地时间编号。 |
+| `eventId` | string | 与 id 相同。 |
+| `epochMs` | number | 优先从上游 sent 解析 Unix 毫秒值，没有有效 sent 时使用 updated；不把接收时间写成事件时间。 |
+
+### 5.2 网页实时事件字段
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `region` | string | 依照网页描述/标题匹配出的州名，或上游明确给出的地点。缺失时不补值。 |
+| `circle` | string | 顶层 circle 原文，保留中心与半径文本。 |
+| `lat` | number | 由 circle 第一个经纬度对读取的纬度。无有效 circle 时省略。 |
+| `lng` | number | 由 circle 第一个经纬度对读取的经度。无有效 circle 时省略。 |
+| `title` / `event` | string | 上游标题 / 事件名称。 |
+| `description` | string | info[0].description 优先，其次顶层 description，最后 title；文字原样保留。 |
+| `sent` / `updated` / `msgType` | string | 上游发送时间、更新时间、消息类型原文。 |
+| `intensidad` | string | 上游实际提供的强度文字，仅原样保留，不从 severity 转换，也不是我们估算的烈度。 |
+| `grado` | number | 上游实际提供的数值原值；当前实时网页未确认其官方等级含义，不用于生成徽章或判断警报。 |
+| `severidad` | number | 上游实际提供的数值原值；不作为震级、烈度或是否发警报的依据。 |
+| `severity` | string | 上游明确提供的严重性原文，例如 `Minor`、`Moderate`、`Severe`。上游没有该字段时不输出。 |
+| `isWarn` | boolean | 按网页全局警报规则判断；选择后的原始 severity 为 Severe 时为 true，不附加测站距离条件。缺失或其他值为 false。 |
+
+`intensidad`、`grado`、`severidad` 只在上游实际提供时转发；不再借用其他网页或
+模拟分支的文字转换逻辑补值，也不能从它们反推警报状态。
+
+### 5.3 正式警报字段
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `sasmexAlertIssued` | boolean | 上游是否明确确认已经执行警报动作。`true` 才表示可以按正式警报处理。 |
+| `sasmexAlertAction` | string | 上游给出的动作状态。`Monitor` 表示继续监测；`Execute`、`Shelter` 或 `Evacuate` 表示已经进入警报动作流程。 |
+| `msgType` | string | 这条报文是首次发布、更新还是取消。它表示报文生命周期，不表示警报等级。 |
+| `time` | string | 事件发生或被记录的时间，原样保留。 |
+| `sent` | string | 上游发送这条报文的时间。 |
+| `effective` | string | 这条消息开始生效的时间。 |
+| `expires` | string | 这条消息预计失效的时间。 |
+| `event` | string | 面向用户的事件标题或事件名称。 |
+| `headline` | string | 警报卡片使用的简短标题。 |
+| `description` | string | 上游对事件或警报范围的说明。 |
+| `category` | string | 事件类别。地震预警消息通常属于地球物理事件。 |
+| `urgency` | string | 上游对响应速度的要求。它不是警报等级。 |
+| `severity` | string | 上游对影响严重程度的描述。它不是震级、烈度，也不能单独决定是否发警报。 |
+| `certainty` | string | 上游对信息可靠程度的描述。 |
+
+没有这些字段时，客户端不得自行补值。
+
+### 5.4 警报区域
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `region` | string/number | 上游地区标识或地点信息。保持上游类型，不强行翻译编号。 |
+| `states` | array | 上游涉及的州编号列表。编号只用于定位，不在中继中猜测州名。 |
+| `areas` | array | 上游给出的影响区域集合，必须全部保留。 |
+| `areas[].name` | string | 区域名称，供列表和地图提示使用。 |
+| `areas[].circles` | array | 圆形区域。通常表示可能震中或初始影响范围。 |
+| `circles[].latitude` | number | 圆形中心纬度。 |
+| `circles[].longitude` | number | 圆形中心经度。 |
+| `circles[].radiusKm` | number | 圆形半径，单位为公里。 |
+| `areas[].polygons` | array | 警报区域边界。地图必须绘制全部多边形，不能只取第一个。 |
+| `areas[].points` | array | 上游提供的点位置。没有提供时不输出。 |
+
+圆形区域和多边形区域含义不同：圆形更多用于表示震中附近的初始范围，
+多边形用于表示已经给出的警报覆盖区域。它们都不是中继自行计算出的范围。
+
+## 6. 正式警报判断方式
+
+如果读取归档中的 CAP JSON，客户端或分析工具可以使用 `sasmexAlertIssued` 判断是否进入正式警报流程：
+
+| `sasmexAlertIssued` | 客户端处理 |
+| --- | --- |
+| `true` | 按正式 SASMEX 警报显示，可进入声音、红色警报和警报区域流程。 |
+| `false` | 按普通检测或监测消息显示，不当作已经发出的公众警报。 |
+| 字段不存在 | 不自行判断，按普通网页实时事件处理。 |
+
+本节只说明 CAP 归档，不覆盖前述实时 IO 的 severity → isWarn 规则。
+分析 CAP 归档时，不要使用以下内容代替 `sasmexAlertIssued`：
+
+- `severity` 的文字；
+- `grado` 或 `severidad` 的数值；
+- `intensidad` 的文字；
+- 地点是否在某个州；
+- `areas` 是否存在；
+- 标题中是否出现 `ALERTA`。
+
+这些字段各自描述不同内容，不能互相替代。
+
+## 7. 不输出或不推断的内容
+
+当前接口不补充以下信息：
+
+- 震级；
+- 震源深度；
+- 震中烈度或最大烈度；
+- 测站实测数据；
+- PGA、PGV；
+- 城市到达倒计时；
+- 官方警报等级的本地估算；
+- 上游没有返回的地点、州名或警报区域。
+
+所有时间、文字、坐标和区域数据都以实际收到的上游内容为准。
+
+## 8. 去重、快照和归档
+
+APP 的报数是同一 `eventId` 的本地有效修订序号，当前上游没有提供报号。
+首次接收为第 1 报；震中坐标、源时间（`sent` / `epochMs`）、地点、圆形区域、
+类型、严重性、描述等原文内容变化时递增，检出升级为警报同样递增。
+仅 `updated` 变化、字段顺序变化、心跳、重复消息和相同缓存不递增。
+旧 `updated` 报文被拦截；没有更晚源时间的已见旧正文也不能顶掉后报。
+重连缓存若给出更晚 `updated` 且正文变化，作为断线期间漏接的有效更新计数一次，
+随后相同的实时包沿用该报数。报数和已见正文摘要在本地保存，重启后继续使用。
+统一 UI、地图、历史和 EEW 更新语音使用同一序号，语音仍遵守用户更新播报开关。
+`Data` 与 `sourcePayload` 的原始字段不写入报数，也不修改源时间。
+
+- 服务启动第一次读取只建立基线，不把已经存在的旧事件重新推送。
+- 同一事件内容没有变化时不重复推送。
+- 新事件或正式报文更新时发送 `type: "update"`。
+- `snapshot` 只返回当前缓存，不代表产生了一条新警报。
+- 正式进入发送流程的请求和结果会归档到 TG 云盘的 `SASMEX原始归档/YYYY-MM-DD/`。
+- 网页实时事件归档保留原始 Socket.IO 帧、解析 JSON 和实际发出的 JSON。
+- CAP 归档保留实际请求 JSON、正式警报列表、CAP 原文、解析 JSON 和实际发出的 JSON，便于追溯。
+- 两种归档都使用同一个自动上传器，上传回读校验成功后才删除服务器临时包。
+
+## 9. 实现说明
+
+服务端可以使用网页所使用的实时链路来获得最新事件，但只复用网页的字段提取和显示值转换逻辑。
+对外输出仍遵循本项目既有的 SASMEX JSON 结构，不把网页内部字段名直接暴露给客户端，
+也不把网页显示等级扩展成中继自己的警报判断。
+
+## 10. 双连接备份和对照（2026-10-08）
+
+测站 WS、地图测站圆点和测站订阅已按用户要求撤下。
+APP 仍只连接 `/sasmex-eew`，保持现有真实 Sidesis 事件通道。
+
+独立对照服务同时连接网页 Socket.IO 根命名空间与历史 Firestore `sasno-d79e1`
+`app/events`。Firestore 每秒轮询，原始响应先保存，再仅解码 REST Value；
+不执行旧显示等级映射，不参与 APP 广播，也不把启动时已有文档当作新预警。
+旧轮询代码和实际 Firestore 文档均备份到服务器并归档到 TG。
+
+TG 目录为 `SASMEX原始归档/双连接对照/YYYY-MM-DD/`。每个记录均标明
+`transport`、`recordKind`、`recordedAtUtc` 和 `publishedToApp: false`。
+Socket.IO 保留每个实际接收帧；Firestore 保留首个原文和后续变化原文、失败响应，
+相同响应只累计成功轮询数。每 60 秒记录双方连接状态、最后成功时刻、实际收包数、
+业务消息数、符合当前 APP 解析条件的帧数、FireStore 文档时间和变化数。
+上传后回读核验 SHA-256 与字节数，失败时保留本地原始包。
+
+这些指标用于分别判断传输可达和事件数据是否更新。文档返回 HTTP 200 或 Socket.IO
+握手成功不表示已有新事件；没有收到真实业务数据时不得推断哪一路更有效。

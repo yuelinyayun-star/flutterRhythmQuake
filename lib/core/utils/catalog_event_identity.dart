@@ -102,9 +102,10 @@ String _internationalCanonicalEventId(
         continue;
       }
       if (incoming['id'] != '' &&
-          known['id'] == incoming['id'] &&
-          known['api'] == incoming['api']) {
-        return known['identity'] as String;
+          catalogEventId(event.source, known['id'] as String? ?? '') ==
+              incoming['id'] &&
+          (known['api'] == incoming['api'] || event.source == 'earlyEst')) {
+        return catalogEventId(event.source, known['identity'] as String);
       }
       if (known['observation'] == incoming['observation']) {
         observationMatch ??= known['identity'] as String;
@@ -143,6 +144,17 @@ String? _internationalReportKey(
 
 /// Comparison keys only. Original IDs, timestamps and payloads stay untouched.
 String catalogEventId(String source, String id) {
+  // Captured Jian CENC history appends _M to the original CD/CC bulletin ID.
+  // Its minute-only origin cannot establish identity against the full clock.
+  if (source == 'cencEqlist' &&
+      RegExp(r'^C[CD]\.\d{14}\.\d+_M$').hasMatch(id)) {
+    return id.substring(0, id.length - 2);
+  }
+  // Captured Early-est: Jian adds EARLY_event_ to WHEWS's same upstream ID.
+  // Compare that stable ID even when later reports revise the hypocenter.
+  if (source == 'earlyEst' && RegExp(r'^EARLY_event_\d{13}$').hasMatch(id)) {
+    return id.substring('EARLY_event_'.length);
+  }
   if (source == 'whews_gsras' && RegExp(r'^gsras_\d{8}$').hasMatch(id)) {
     return id.substring('gsras_'.length);
   }
@@ -479,6 +491,10 @@ bool sameCatalogHistoryEvent(String bucket, QuakeMessage a, QuakeMessage b) {
   if (bucket == 'cencEqlist' &&
       a.source == QuakeSourceType.cenc &&
       b.source == QuakeSourceType.cenc) {
+    final firstId = catalogEventId(bucket, a.eventId);
+    if (firstId.isNotEmpty && firstId == catalogEventId(bucket, b.eventId)) {
+      return true;
+    }
     String? key(QuakeMessage event) => _cencObservationKey(
       instant: QuakeTime.eventInstantUtc(event),
       lat: event.latitude,
@@ -534,4 +550,49 @@ bool sameCatalogHistoryEvent(String bucket, QuakeMessage a, QuakeMessage b) {
   );
   final ga = gaKey(a);
   return ga != null && ga == gaKey(b);
+}
+
+/// Prefer the captured full-second CENC bulletin over Jian's minute-only copy.
+/// Apply only to the same native bulletin and otherwise equal source elements;
+/// no timestamps, IDs or source intensity estimates are rewritten.
+int? compareCencHistoryOriginPrecision(
+  QuakeMessage current,
+  QuakeMessage incoming,
+) {
+  if (current.source != QuakeSourceType.cenc ||
+      incoming.source != QuakeSourceType.cenc ||
+      current.magnitude != incoming.magnitude ||
+      current.depth != incoming.depth ||
+      current.latitude != incoming.latitude ||
+      current.longitude != incoming.longitude) {
+    return null;
+  }
+  final id = catalogEventId('cencEqlist', current.eventId);
+  if (!RegExp(r'^C[CD]\.\d{14}\.\d+$').hasMatch(id) ||
+      id != catalogEventId('cencEqlist', incoming.eventId)) {
+    return null;
+  }
+  String review(QuakeMessage e) {
+    final value = '${e.reviewType} ${e.infoTypeName}'.toLowerCase();
+    if (value.contains('正式') || value.contains('reviewed')) return 'reviewed';
+    if (value.contains('自动') || value.contains('automatic')) return 'automatic';
+    return '';
+  }
+
+  if (review(current) != review(incoming)) return null;
+  bool minuteCopy(QuakeMessage e) =>
+      e.apiTypeLabel == 'Jian Project' &&
+      e.eventId.endsWith('_M') &&
+      e.originTime.second == 0 &&
+      e.originTime.millisecond == 0 &&
+      e.originTime.microsecond == 0;
+  final a = QuakeTime.eventInstantUtc(current);
+  final b = QuakeTime.eventInstantUtc(incoming);
+  if (a.millisecondsSinceEpoch ~/ Duration.millisecondsPerMinute !=
+      b.millisecondsSinceEpoch ~/ Duration.millisecondsPerMinute) {
+    return null;
+  }
+  if (minuteCopy(current) && incoming.eventId == id && b.second != 0) return 1;
+  if (minuteCopy(incoming) && current.eventId == id && a.second != 0) return -1;
+  return null;
 }

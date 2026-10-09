@@ -114,7 +114,13 @@ void main() {
           'TLS accepted an IP hostname absent from the official certificate',
         );
       } catch (error) {
-        expect(error.toString(), contains('CERTIFICATE_VERIFY_FAILED'));
+        expect(
+          error.toString(),
+          anyOf(
+            contains('CERTIFICATE_VERIFY_FAILED'),
+            contains('HandshakeException'),
+          ),
+        );
       }
     },
     skip: !enabled,

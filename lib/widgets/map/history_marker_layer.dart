@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../../models/quake_message.dart';
+import '../../models/cmt_catalog.dart';
+import 'fssn_cmt_layer.dart';
 import '../../core/calculator.dart';
 import '../../core/utils/world_wrap.dart';
 
@@ -33,6 +35,10 @@ class HistoryMarkerLayer extends StatelessWidget {
       event!.longitude,
     )) {
       return const SizedBox.shrink();
+    }
+
+    if (cmtCatalogSources.containsValue(event!.source)) {
+      return FssnCmtLayer(markers: [FssnCmtMarker.fromQuakeMessage(event!)]);
     }
 
     return Builder(

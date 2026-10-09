@@ -5,8 +5,12 @@ import 'package:provider/provider.dart';
 import '../../providers/quake_provider.dart';
 import '../../providers/map_state_provider.dart';
 import '../../models/quake_message.dart';
+import '../../models/cmt_catalog.dart';
+import '../../services/quake_event_adapter.dart';
+import 'cmt_badge.dart';
 import '../../models/whews_catalog.dart';
 import '../../core/utils/quake_time.dart';
+import '../../core/utils/cenc_ir_binding.dart';
 import '../../utils/kma_location.dart';
 import '../../utils/catalog_location.dart';
 import 'package:intl/intl.dart';
@@ -223,6 +227,9 @@ class _EqlistPanelState extends State<EqlistPanel> {
       'kmaEqlist': 'KMA',
       'cwaEqlist': 'CWA',
       'emscEqlist': 'EMSC',
+      for (final entry in cmtCatalogSources.entries)
+        if (buckets[entry.key]?.isNotEmpty == true)
+          entry.key: cmtCatalogLabel(entry.value),
       for (final entry in unifiedCatalogSources.entries)
         if (buckets[entry.key]?.isNotEmpty == true)
           entry.key: whewsCatalogLabel(entry.value),
@@ -563,6 +570,7 @@ class _EqCardState extends State<_EqCard> {
   }
 
   static String _sourceLabelStatic(QuakeSourceType s) {
+    if (cmtCatalogSources.containsValue(s)) return cmtCatalogLabel(s);
     if (unifiedCatalogSources.containsValue(s)) return whewsCatalogLabel(s);
     switch (s) {
       case QuakeSourceType.cenc:
@@ -715,16 +723,7 @@ class _EqCardState extends State<_EqCard> {
         onExit: (_) => setState(() => _hovered = false),
         child: GestureDetector(
           onLongPress: _copyInfo,
-          onTap: () {
-            final mapState = context.read<MapStateProvider>();
-            if (mapState.isSelectedHistoryEvent(eq)) {
-              mapState.clearSelectedHistoryEvent();
-              mapState.resumeAutoZoom();
-              return;
-            }
-            mapState.selectHistoryEvent(eq);
-            mapState.resumeAutoZoom();
-          },
+          onTap: _showOnMap,
           child: Container(
             margin: EdgeInsets.symmetric(vertical: _s(2), horizontal: _s(4)),
             decoration: BoxDecoration(
@@ -795,6 +794,19 @@ class _EqCardState extends State<_EqCard> {
                                         alpha: 0.5,
                                       ),
                                     ),
+                                  ),
+                                if (eq.usgsProductTypes?.split(',').contains('shakemap') == true)
+                                  const Padding(padding: EdgeInsets.only(left: 6),
+                                    child: Tooltip(message: '点击查看 USGS ShakeMap（MMI）',
+                                      child: Icon(Icons.layers_outlined, color: Colors.white70, size: 14))),
+                                if (eq.source == QuakeSourceType.cenc)
+                                  Selector<QuakeProvider, bool>(
+                                    selector: (_, provider) => CencIrBinding.find(eq, provider.cencIrList) != null,
+                                    builder: (_, available, child) => available
+                                        ? const Padding(padding: EdgeInsets.only(left: 6),
+                                            child: Tooltip(message: '点击查看 CENC 烈度速报',
+                                              child: Icon(Icons.waves, color: Colors.white70, size: 14)))
+                                        : const SizedBox.shrink(),
                                   ),
                                 const Spacer(),
                                 if (((eq.source == QuakeSourceType.cenc ||
@@ -870,7 +882,7 @@ class _EqCardState extends State<_EqCard> {
                     ],
                   ),
                 ),
-                if (_hovered)
+                if (_hovered || isDisplayed)
                   Positioned.fill(
                     child: RepaintBoundary(
                       child: ClipRRect(
@@ -907,6 +919,15 @@ class _EqCardState extends State<_EqCard> {
   }
 
   Widget _buildIntBadge() {
+    if (cmtCatalogSources.containsValue(eq.source)) {
+      final source = cmtCatalogSources.entries
+          .firstWhere((entry) => entry.value == eq.source).key;
+      return CmtBadge(
+        event: QuakeEventAdapter.catalogInfo(eq, source),
+        size: _s(60),
+        color: _borderColor,
+      );
+    }
     final label = _isJma
         ? (eq.jmaShindo ?? _magShindoStatic(eq.magnitude))
         : _csisLabelStatic(eq);

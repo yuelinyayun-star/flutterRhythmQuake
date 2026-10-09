@@ -99,4 +99,43 @@ void main() {
     expect(text, contains('各地震度信息'));
     expect(text, contains('观测到震度2的地区：'));
   });
+
+  test('removing an information card drops its queued voice only', () async {
+    if (!Platform.isWindows) return;
+    final tts = TtsService();
+    await tts.init();
+    await tts.stop();
+    await tts.configure(enabled: true, eventEnabled: true, persist: false);
+    final blocked = Completer<void>();
+    final remainingStarted = Completer<void>();
+    final started = <String>[];
+    tts.windowsSpeechOverrideForTest = (text) async {
+      started.add(text);
+      if (text == 'blocker') await blocked.future;
+      if (text == 'remaining') remainingStarted.complete();
+    };
+    addTearDown(() async {
+      if (!blocked.isCompleted) blocked.complete();
+      await tts.stop();
+      tts.windowsSpeechOverrideForTest = null;
+    });
+    await tts.speak('blocker');
+    await Future<void>.delayed(Duration.zero);
+    await tts.speakEvent(
+      'removed',
+      dedupeKey: 'removed-info',
+      eventKey: 'emsc|removed',
+      delay: Duration.zero,
+    );
+    await tts.speakEvent(
+      'remaining',
+      dedupeKey: 'remaining-info',
+      eventKey: 'emsc|remaining',
+      delay: Duration.zero,
+    );
+    tts.discardEvent('emsc|removed');
+    blocked.complete();
+    await remainingStarted.future.timeout(const Duration(seconds: 2));
+    expect(started, ['blocker', 'remaining']);
+  });
 }

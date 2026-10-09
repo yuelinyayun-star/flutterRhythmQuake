@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.5+21
+version: 1.0.5+22
 
 environment:
   sdk: ^3.11.0
@@ -80,6 +80,11 @@ dependencies:
   euc: ^1.0.6+8
   iirjdart: ^0.1.0
 
+dependency_overrides:
+  # Project-owned Windows platform-thread fix; other platforms use upstream.
+  audioplayers_windows:
+    path: third_party/audioplayers_windows
+
 dev_dependencies:
   fake_async: ^1.3.3
   flutter_test:
@@ -111,6 +116,7 @@ flutter:
     - assets/maps/中华人民共和国.geojson
     - assets/maps/japan_prefectures.geojson
     - assets/maps/world_countries.geojson
+    - assets/maps/mexico_states.geojson
     - assets/maps/cn.eew.topo.json
     - assets/maps/cn.fault.modified.topo.json
     - assets/maps/cn.fault.topo.json

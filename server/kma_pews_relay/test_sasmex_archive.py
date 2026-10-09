@@ -27,6 +27,7 @@ class SasmexArchiveTest(unittest.TestCase):
                 "raw/latest.json": b'{"id":"20261007055958"}',
                 "raw/alerts.json": b'{"alerts":[]}',
                 "raw/cap-20261007055958.xml": b"<feed/>",
+                "raw/socketio-frame.txt": b'42["message",{"id":"web-1"}]',
                 "parsed.json": json.dumps({"id": "20261007055958"}).encode("utf-8"),
                 "emitted.json": json.dumps({"type": "update"}).encode("utf-8"),
             }

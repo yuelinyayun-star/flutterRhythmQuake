@@ -140,6 +140,9 @@ class UsgsEqlistService {
             maxIntensity: maxIntensity,
             reviewType: reviewType,
             isInfoEvent: true,
+            usgsDetailUrl: props['detail']?.toString(),
+            usgsProductTypes: props['types']?.toString(),
+            usgsUpdated: int.tryParse(props['updated']?.toString() ?? ''),
           ),
         );
       }

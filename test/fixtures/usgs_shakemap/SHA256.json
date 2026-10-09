@@ -1,0 +1,74 @@
+[
+  {
+    "sha256": "948c2a97dae02658b68ec3bfc98d439490a3da2e1cf2a34a5387ada175828dd0",
+    "file": "summary.original.geojson"
+  },
+  {
+    "sha256": "b381efadceed652eec943af69ffad941f42fb5982d1160ce55a42583cf094d0e",
+    "file": "us6000u0xi.detail.original.geojson"
+  },
+  {
+    "sha256": "ffdc929c4e90d5e750818bb2a4845387dc750452b8e2e6a800f8f60b597f39ad",
+    "file": "us6000u0xi.intensity.original.png"
+  },
+  {
+    "sha256": "f01533ba45c11e03cc472996a15ba3295c76d17dcca1bd9bfcb4ab3278754545",
+    "file": "us6000u0xi.legend.original.png"
+  },
+  {
+    "sha256": "ffdc929c4e90d5e750818bb2a4845387dc750452b8e2e6a800f8f60b597f39ad",
+    "file": "us6000u0xi.v1.intensity.original.png"
+  },
+  {
+    "sha256": "e937ec9dae66d0899c39dc70b2e09c1b70418b2cc78958b62d3167eb8362b188",
+    "file": "us6000u0xi.v1.legend.original.png"
+  },
+  {
+    "sha256": "ffdc929c4e90d5e750818bb2a4845387dc750452b8e2e6a800f8f60b597f39ad",
+    "file": "us6000u0xi.v2.intensity.original.png"
+  },
+  {
+    "sha256": "31847108b0253e91da0706dbb5833f2911f4e1cb11e0579afc727bb7d036b2ee",
+    "file": "us6000u0xi.v2.legend.original.png"
+  },
+  {
+    "sha256": "c82d28ac77f4755c79f30b1f71b9195cd4589997b47123ba59db933d01ba2d4c",
+    "file": "us6000u0xi.versions.original.geojson"
+  },
+  {
+    "file": "ci41345415.detail.original.geojson",
+    "sha256": "21efb3d4928520726675b2baa4e33656cc3e81b4afaede50d25bf06019007269"
+  },
+  {
+    "file": "ci41345415.intensity.original.png",
+    "sha256": "39d899679b38c3f139a1d5f5bb66a5e7faedab0ad3f0a3355cf6443f4f0d64fb"
+  },
+  {
+    "file": "aka2026tvzrwv.detail.original.geojson",
+    "sha256": "a5f0100c555c236b5b1c1a04ff37a3297c32075104b92a762cbcbd2f4d60bf6b"
+  },
+  {
+    "file": "aka2026tvzrwv.intensity.original.png",
+    "sha256": "35f8e8a9ca038c226135ca70550e1e74f18d7519fc6a64f61465ad15324a3eef"
+  },
+  {
+    "file": "aka2026tvzrwv.cont_mmi.original.json",
+    "sha256": "af614350604dcbd852ebcdedab073053b173855669d2b81585279f149532a24d"
+  },
+  {
+    "file": "ci41345415.cont_mmi.original.json",
+    "sha256": "a2f1a5e84517f0651a57c06d44adcce10d7398eb18318785125375a51354bece"
+  },
+  {
+    "file": "us6000u0xi.cont_mmi.original.json",
+    "sha256": "cb018e32099770875c53f449a1b53296d609083a265649e622b332f01500dd64"
+  },
+  {
+    "file": "us6000u0xi.v1.cont_mmi.original.json",
+    "sha256": "cb018e32099770875c53f449a1b53296d609083a265649e622b332f01500dd64"
+  },
+  {
+    "file": "us6000u0xi.v2.cont_mmi.original.json",
+    "sha256": "cb018e32099770875c53f449a1b53296d609083a265649e622b332f01500dd64"
+  }
+]

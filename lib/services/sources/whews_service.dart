@@ -40,6 +40,8 @@ class WhewsService extends BaseSourceService {
     'ptwc',
     'ntwc',
     'incois',
+    'cat_tsunami',
+    'cwa_tsunami',
   };
 
   String _apiToken;
@@ -173,6 +175,17 @@ class WhewsService extends BaseSourceService {
     Map<String, dynamic> candidate,
     Map<String, dynamic> current,
   ) {
+    final bulletinSource = switch (candidate['source']) {
+      'cat_tsunami' => TsunamiSource.cat,
+      'cwa_tsunami' => TsunamiSource.cwa,
+      _ => null,
+    };
+    if (bulletinSource != null && candidate['Data'] is Map && current['Data'] is Map) {
+      final next = TsunamiMessage.parseInternationalTsunami(bulletinSource, Map<String, dynamic>.from(candidate['Data'] as Map));
+      final previous = TsunamiMessage.parseInternationalTsunami(bulletinSource, Map<String, dynamic>.from(current['Data'] as Map));
+      final order = next.reportOrderComparedTo(previous);
+      if (order != null) return order >= 0;
+    }
     final candidateTime = _tsunamiFrameInstant(candidate);
     final currentTime = _tsunamiFrameInstant(current);
     if (candidateTime != null && currentTime != null) {
@@ -205,6 +218,8 @@ class WhewsService extends BaseSourceService {
           TsunamiSource.incois,
           data,
         ).reportInstantUtc,
+        'cat_tsunami' => TsunamiMessage.parseInternationalTsunami(TsunamiSource.cat, data).reportInstantUtc,
+        'cwa_tsunami' => TsunamiMessage.parseInternationalTsunami(TsunamiSource.cwa, data).reportInstantUtc,
         _ => null,
       };
     } catch (_) {
@@ -260,6 +275,8 @@ class WhewsService extends BaseSourceService {
       'ptwc' => TsunamiSource.ptwc,
       'ntwc' => TsunamiSource.ntwc,
       'incois' => TsunamiSource.incois,
+      'cat_tsunami' => TsunamiSource.cat,
+      'cwa_tsunami' => TsunamiSource.cwa,
       _ => null,
     };
     if (internationalSource != null) {

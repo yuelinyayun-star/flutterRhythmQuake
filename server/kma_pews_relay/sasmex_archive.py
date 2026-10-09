@@ -18,7 +18,9 @@ REPORT_NAME = re.compile(r"SASMEX_(\d{8}T\d{6}Z)_([a-f0-9]{64})\.zip\Z")
 MAX_INPUT_BYTES = 8 * 1024 * 1024
 ALLOWED_FILES = re.compile(
     r"(?:raw/(?:latest|alerts|cap-[A-Za-z0-9_.-]+)\.(?:json|xml)|"
-    r"parsed\.json|emitted\.json)\Z"
+    r"raw/socketio-frame\.txt|raw/firestore-document\.json|"
+    r"backup/sasno_realtime\.py|backup/firestore-original\.json|"
+    r"connection\.json|parsed\.json|emitted\.json)\Z"
 )
 
 

@@ -47,6 +47,7 @@ import '../services/obs_automation_input_service.dart';
 import '../services/sources/source_manager.dart';
 import '../services/sources/fan_service.dart';
 import '../services/sources/nowquake_cenc_intensity_service.dart';
+import '../services/sources/usgs_shakemap_service.dart';
 import '../core/local_weather_region.dart';
 import '../services/sources/china_weather_alert_service.dart';
 import '../services/sources/cma_local_weather_service.dart';
@@ -61,6 +62,7 @@ import '../services/sources/mock_input_service.dart';
 import '../services/sources/global_quake_service.dart';
 import '../services/sources/jian_icl_service.dart';
 import '../services/sources/chinaeew_icl_service.dart';
+import '../services/sources/sasmex_service.dart';
 import '../services/sources/eqlist/eqlist_manager.dart';
 import '../services/quake_event_adapter.dart';
 import '../core/intensity_calculator.dart';
@@ -68,7 +70,9 @@ import '../core/calculator.dart';
 import '../core/travel_time_service.dart';
 import '../models/quake_message.dart';
 import '../models/whews_catalog.dart';
+import '../core/utils/information_report_order.dart';
 import '../models/unified_quake_data.dart';
+import '../models/cmt_catalog.dart';
 import '../models/eew_event_group.dart';
 import '../models/eew_history_retention.dart';
 import '../models/eew_display_duration.dart';
@@ -84,6 +88,7 @@ import '../models/tsunami_message.dart';
 import '../models/jma_lpgm_bulletin.dart';
 import '../core/utils/alert_voice_helper.dart';
 import '../core/utils/quake_time.dart';
+import '../core/utils/cenc_ir_binding.dart';
 
 /// 活动预警事件
 ///
@@ -286,6 +291,8 @@ class QuakeProvider with ChangeNotifier {
 
   /// INCOIS 海啸情报
   TsunamiMessage? _incoisTsunami;
+  TsunamiMessage? _catTsunami;
+  TsunamiMessage? _cwaTsunami;
   final Map<TsunamiSource, Timer> _tsunamiInformationExpiryTimers = {};
 
   /// 统一事件列表（新统一管道）
@@ -377,6 +384,85 @@ class QuakeProvider with ChangeNotifier {
   final List<EewEventGroup> _eewHistory = [];
   int _eewHistoryRevision = 0;
   int _flatHistorySignature = 0;
+  late final UsgsShakeMapService usgsShakeMap;
+  QuakeMessage? _selectedMapHistoryEvent;
+  String? _selectedCencIrBinding;
+  UnifiedQuakeData? _selectedHistoryInfo;
+  UnifiedQuakeData? _shakeMapInfo;
+  String? _shakeMapInfoIdentity;
+
+  UnifiedQuakeData _catalogInfo(QuakeMessage event) {
+    final source = switch (event.source) {
+      QuakeSourceType.usgs => 'usgsEqlist',
+      QuakeSourceType.wolfx || QuakeSourceType.p2p || QuakeSourceType.jma_fan
+        => 'jmaEqlist',
+      _ => _unifiedToQst.entries
+          .where((entry) => entry.value == event.source)
+          .map((entry) => entry.key)
+          .firstOrNull ?? event.source.name,
+    };
+    return QuakeEventAdapter.catalogInfo(event, source);
+  }
+
+  /// Information cards may include a map selection or a product redisplay.
+  /// They never enter the live acceptance, expiry, audio or alert pipeline.
+  UnifiedQuakeData? get historyInfoDisplayEvent =>
+      _selectedMapHistoryEvent != null ? _selectedHistoryInfo : _shakeMapInfo;
+
+  List<UnifiedQuakeData> get unifiedDisplayEvents {
+    final info = historyInfoDisplayEvent;
+    if (info == null) return unifiedEvents;
+    final live = unifiedEvents;
+    final matching = live.where((event) => !event.isEew &&
+        _unifiedInfoSlotSource(event) == _unifiedInfoSlotSource(info) &&
+        ((info.eventId.isNotEmpty && _unifiedCanonicalEventId(event) ==
+            _unifiedCanonicalEventId(info)) ||
+         sameCatalogHistoryEvent(info.source,
+             _unifiedToListMessage(event), info.rawEvent!)));
+    final focused = matching.firstOrNull ?? info;
+    return List.unmodifiable([focused, ...live.where((e) => !matching.contains(e))]);
+  }
+
+  void _onShakeMapChanged() {
+    if (_disposed) return;
+    final frame = usgsShakeMap.frame;
+    final identity = frame?.product.identity;
+    if (_shakeMapInfoIdentity != identity ||
+        _shakeMapInfo?.rawEvent != frame?.event) {
+      _shakeMapInfoIdentity = identity;
+      _shakeMapInfo = frame == null ? null : _catalogInfo(frame.event);
+    }
+    notifyListeners();
+  }
+
+  /// One selection path for list taps, map buttons and subsequent products.
+  void selectHistoryMapProducts(QuakeMessage? event) {
+    _selectedMapHistoryEvent = event;
+    _selectedHistoryInfo = event == null ? null : _catalogInfo(event);
+    _selectedCencIrBinding = null;
+    _manualCencIrRequestSerial++;
+    _pendingManualCencIrId = null;
+    _fanCencIrDetailFallbackIds.clear();
+    _manualCencIrData = null;
+    _isManualCencIrActive = false;
+    unawaited(usgsShakeMap.select(event));
+    _loadBoundCencIr();
+    notifyListeners();
+  }
+
+  void _loadBoundCencIr() {
+    final event = _selectedMapHistoryEvent;
+    if (event == null) return;
+    final report = CencIrBinding.find(event, _cencIrList);
+    if (report == null) return;
+    final id = report['id']?.toString() ?? report['reportId']?.toString() ?? '';
+    if (id.isEmpty) return;
+    final source = report['_source']?.toString();
+    final binding = '$source:$id:${report['gmtCreate']}';
+    if (_selectedCencIrBinding == binding) return;
+    _selectedCencIrBinding = binding;
+    requestCencIrDetail(id, source: source);
+  }
   static const String _eewHistoryPreferenceKey = 'unified_eew_history';
   static String get _editionEewHistoryPreferenceKey => AppEdition.isPublic
       ? '${_eewHistoryPreferenceKey}_public'
@@ -649,7 +735,8 @@ class QuakeProvider with ChangeNotifier {
   static const int _maxIgnoredEewIds = 10;
   final Set<String> _eewCautionAnnouncementIds = {};
   final Set<String> _eewWarnAnnouncementIds = {};
-  final Map<String, ({String intensity, String areas})> _eewVoiceSnapshots = {};
+  final Map<String, ({String intensity, String areas, String report})>
+      _eewVoiceSnapshots = {};
   final Map<TsunamiSource, int> _lastTsunamiStatusForSound = {};
 
   /// 是否正在显示信息事件
@@ -739,6 +826,7 @@ class QuakeProvider with ChangeNotifier {
     'kmaEqlist',
     'cwaEqlist',
     'emscEqlist',
+    ...cmtCatalogSources.keys,
     ...unifiedCatalogSources.keys,
   };
 
@@ -815,6 +903,9 @@ class QuakeProvider with ChangeNotifier {
         _sourceInfoMagFilters[source] = threshold;
       }
     }
+    usgsShakeMap.setMagnitudeFilter(
+      _sourceInfoMagFilters[QuakeSourceType.usgs] ?? 0,
+    );
     notifyListeners();
   }
 
@@ -1201,6 +1292,7 @@ class QuakeProvider with ChangeNotifier {
     'KMA': SourceStatus.disconnected,
     'CENC': SourceStatus.disconnected,
     'HTTP': SourceStatus.disconnected,
+    'EMSC': SourceStatus.disconnected,
     'CMT': SourceStatus.disconnected,
     'S-net': SourceStatus.disconnected,
     'TREM': SourceStatus.disconnected,
@@ -1313,6 +1405,12 @@ class QuakeProvider with ChangeNotifier {
   TsunamiMessage? get ptwcTsunami => _ptwcTsunami;
   TsunamiMessage? get ntwcTsunami => _ntwcTsunami;
   TsunamiMessage? get incoisTsunami => _incoisTsunami;
+  TsunamiMessage? get catTsunami => _catTsunami;
+  TsunamiMessage? get cwaTsunami => _cwaTsunami;
+  List<TsunamiMessage> get additionalTsunamis => [
+    ?_catTsunami,
+    ?_cwaTsunami,
+  ];
 
   List<ActiveWarning> get activeWarnings => _legacyActiveQuakePipelineDisabled
       ? const <ActiveWarning>[]
@@ -1327,6 +1425,14 @@ class QuakeProvider with ChangeNotifier {
       ? const <ActiveInfoEvent>[]
       : List.unmodifiable(_activeInfoEvents);
   CencIrData? get cencIrData {
+    final selected = _selectedMapHistoryEvent;
+    if (selected != null) {
+      final manual = manualCencIrData;
+      if (manual != null && CencIrBinding.matchesData(selected, manual)) return manual;
+      final realtime = _realtimeCencIrData;
+      return realtime != null && CencIrBinding.matchesData(selected, realtime)
+          ? realtime : null;
+    }
     final realtime = _realtimeCencIrData;
     if (realtime != null) {
       if (realtime.source != CencIrDataSource.nowQuake ||
@@ -1473,7 +1579,9 @@ class QuakeProvider with ChangeNotifier {
   /// 构造函数
   ///
   /// 初始化事件监听和数据源状态订阅。
-  QuakeProvider({bool? jmaVolcanoPushEnabled}) {
+  QuakeProvider({bool? jmaVolcanoPushEnabled, UsgsShakeMapService? shakeMapService}) {
+    usgsShakeMap = shakeMapService ?? UsgsShakeMapService();
+    usgsShakeMap.addListener(_onShakeMapChanged);
     if (jmaVolcanoPushEnabled != null) {
       _jmaVolcanoPushEnabled = jmaVolcanoPushEnabled;
       _jmaVolcanoPushChanged = true;
@@ -1485,6 +1593,13 @@ class QuakeProvider with ChangeNotifier {
     _eqlist.onAnyUpdated = _rebuildFlat;
     _eqlist.onUsgsCurrentUpdated = _handleOfficialUsgsCurrent;
     _eqlist.onEmscCurrentUpdated = _handleOfficialEmscCurrent;
+    _eqlist.onEmscStatusChanged = (connected) {
+      updateSourceStatus(
+        'EMSC',
+        connected ? SourceStatus.connected :
+            _eqlist.emsc.isRunning ? SourceStatus.error : SourceStatus.disconnected,
+      );
+    };
     _eqlist.onCwaCurrentUpdated = _handleOfficialCwaCurrent;
     _eqlist.onHttpStatusChanged = (connected) {
       updateSourceStatus(
@@ -1810,7 +1925,7 @@ class QuakeProvider with ChangeNotifier {
             !BackgroundService().isAndroidConnectionHostedByForegroundService,
         usgsHttpEnabled:
             !BackgroundService().isAndroidConnectionHostedByForegroundService,
-        emscHttpEnabled:
+        emscWsEnabled:
             !BackgroundService().isAndroidConnectionHostedByForegroundService,
         cencHttpEnabled:
             !BackgroundService().isAndroidConnectionHostedByForegroundService,
@@ -1954,6 +2069,12 @@ class QuakeProvider with ChangeNotifier {
     if (globalQuakeService != null) {
       _unifiedSubscriptions.add(
         globalQuakeService.onUnifiedEvent.listen(_handleUnifiedEvent),
+      );
+    }
+    final sasmexService = SourceManager().getSource<SasmexService>();
+    if (sasmexService != null) {
+      _unifiedSubscriptions.add(
+        sasmexService.onUnifiedEvent.listen(_handleUnifiedEvent),
       );
     }
     final jianIclService = SourceManager().getSource<JianIclService>();
@@ -2183,7 +2304,9 @@ class QuakeProvider with ChangeNotifier {
     final next = accepted.message;
     if (next.isInitialSnapshot) {
       _lastTsunamiStatusForSound[next.source] = next.status;
-    } else if (accepted.shouldAlert && !next.isInformation) {
+    } else if (accepted.shouldAlert && !next.isInformation &&
+        ((next.source != TsunamiSource.cat && next.source != TsunamiSource.cwa) ||
+          next.isActive || next.isCancellation)) {
       final previousStatus = previous?.status;
       _playTsunamiSound(next);
       if (next.isActive ||
@@ -2199,7 +2322,7 @@ class QuakeProvider with ChangeNotifier {
 
   void _scheduleTsunamiInformationExpiry(TsunamiMessage tsunami) {
     _tsunamiInformationExpiryTimers.remove(tsunami.source)?.cancel();
-    final deadline = tsunami.informationDisplayUntilUtc;
+    final deadline = tsunami.displayUntilUtc;
     if (deadline == null) return;
     final delay = deadline.difference(DateTime.now().toUtc());
     if (delay <= Duration.zero) return;
@@ -2216,6 +2339,8 @@ class QuakeProvider with ChangeNotifier {
       TsunamiSource.ptwc => _ptwcTsunami,
       TsunamiSource.ntwc => _ntwcTsunami,
       TsunamiSource.incois => _incoisTsunami,
+      TsunamiSource.cat => _catTsunami,
+      TsunamiSource.cwa => _cwaTsunami,
     };
   }
 
@@ -2236,6 +2361,12 @@ class QuakeProvider with ChangeNotifier {
       case TsunamiSource.incois:
         _incoisTsunami = tsunami;
         break;
+      case TsunamiSource.cat:
+        _catTsunami = tsunami;
+        break;
+      case TsunamiSource.cwa:
+        _cwaTsunami = tsunami;
+        break;
     }
   }
 
@@ -2249,17 +2380,28 @@ class QuakeProvider with ChangeNotifier {
 
     final previousTime = previous.reportInstantUtc;
     final incomingTime = incoming.reportInstantUtc;
-    if (previousTime != null && incomingTime == null) return null;
-    if (previousTime != null &&
+    final numberedOrder = (incoming.source == TsunamiSource.cat || incoming.source == TsunamiSource.cwa)
+        ? incoming.reportOrderComparedTo(previous) : null;
+    if (numberedOrder == -1) return null;
+    if (numberedOrder != 1 && previousTime != null && incomingTime == null) {
+      return null;
+    }
+    if (numberedOrder != 1 && previousTime != null &&
         incomingTime != null &&
         incomingTime.isBefore(previousTime)) {
       return null;
     }
 
     final sameReportTime =
+        numberedOrder != 1 &&
         previousTime != null &&
         incomingTime != null &&
         incomingTime.isAtSameMomentAs(previousTime);
+    if ((incoming.source == TsunamiSource.cat || incoming.source == TsunamiSource.cwa) &&
+        incoming.eventId.isNotEmpty && previous.eventId.isNotEmpty &&
+        incoming.eventId != previous.eventId) {
+      return (message: incoming, shouldAlert: !incoming.isInformation);
+    }
     if (!sameReportTime) {
       if (previousTime == null &&
           incomingTime == null &&
@@ -2400,6 +2542,8 @@ class QuakeProvider with ChangeNotifier {
   String _tsunamiStateSignature(TsunamiMessage tsunami) {
     return jsonEncode({
       'id': tsunami.id,
+      'eventId': tsunami.eventId,
+      'reportNumber': tsunami.reportNumber,
       'reportTime': tsunami.reportTime,
       'title': tsunami.title,
       'titleText': tsunami.titleText,
@@ -2430,6 +2574,7 @@ class QuakeProvider with ChangeNotifier {
               'longitude': observation.longitude,
               'time': observation.time,
               'maxWaveHeight': observation.maxWaveHeight,
+              'condition': observation.condition,
             },
           )
           .toList(),
@@ -2453,8 +2598,7 @@ class QuakeProvider with ChangeNotifier {
     final previous = _lastTsunamiStatusForSound[tsunami.source];
     _lastTsunamiStatusForSound[tsunami.source] = status;
     if (status <= 0) {
-      final isCancel =
-          tsunami.title.contains('解除') || tsunami.titleText.contains('解除');
+      final isCancel = tsunami.isCancellation;
       if (isCancel && previous != null && previous > 0) {
         SoundEffectService().play('tsunami${previous}cancel');
       }
@@ -2480,6 +2624,7 @@ class QuakeProvider with ChangeNotifier {
     'fjEew': QuakeSourceType.fj_eew,
     'cqEew': QuakeSourceType.cq_eew,
     'kmaEew': QuakeSourceType.kma_eew_fan,
+    'sasmex': QuakeSourceType.sasmex,
     'sa': QuakeSourceType.sa,
     'globalQuakeEew': QuakeSourceType.usgs,
     'iclEew': QuakeSourceType.icl,
@@ -2848,6 +2993,7 @@ class QuakeProvider with ChangeNotifier {
       'kmaEqlist' => 'kmaEqlist',
       'cwaEqlist' => 'cwaEqlist',
       'emsc' => 'emscEqlist',
+      'fssnCmt' => 'fssnCmt',
       'cencCmt' => 'cencCmt',
       'usgsCmt' => 'usgsCmt',
       'jmaCmt' => 'jmaCmt',
@@ -3054,7 +3200,7 @@ class QuakeProvider with ChangeNotifier {
   }
 
   String? _emscInfoBodyKey(UnifiedQuakeData event) {
-    if (event.source != 'emsc') return null;
+    if (event.source != 'emsc' && event.source != 'emscEqlist') return null;
     return [
       event.eventId,
       event.titleText,
@@ -3624,6 +3770,51 @@ class QuakeProvider with ChangeNotifier {
     // Apply to direct API input and Android's already-accepted handoff alike.
     if (!AppEdition.allowsUnifiedSource(event.source)) return;
     if (event.isVolcanoEvent && !_jmaVolcanoPushEnabled) return;
+    if (!event.isEew && event.source == 'earlyEst') {
+      final id = _unifiedCanonicalEventId(event);
+      final incomingNumber = informationReportNumber(event.reportNumText);
+      final incomingTime = event.reportTime == null
+          ? null
+          : QuakeTime.unifiedInstantUtc(event, value: event.reportTime);
+      for (final old in _unifiedEvents.where(
+        (item) =>
+            !item.isEew &&
+            item.source == event.source &&
+            id.isNotEmpty &&
+            _unifiedCanonicalEventId(item) == id,
+      )) {
+        if (compareInformationReportOrder(
+              currentNumber: informationReportNumber(old.reportNumText),
+              incomingNumber: incomingNumber,
+              currentTime: old.reportTime == null
+                  ? null
+                  : QuakeTime.unifiedInstantUtc(old, value: old.reportTime),
+              incomingTime: incomingTime,
+            ) ==
+            -1) {
+          return;
+        }
+      }
+      final incomingHistory = _unifiedToQuakeMessage(event);
+      for (final old in historyBySource['earlyEst'] ?? <QuakeMessage>[]) {
+        if (id.isEmpty ||
+            (id != catalogEventId(event.source, old.eventId) &&
+                !sameCatalogHistoryEvent('earlyEst', old, incomingHistory))) {
+          continue;
+        }
+        if (compareInformationReportOrder(
+              currentNumber: informationReportNumber(old.reportNumText),
+              incomingNumber: incomingNumber,
+              currentTime: old.reportTime == null
+                  ? null
+                  : QuakeTime.eventInstantUtc(old, value: old.reportTime),
+              incomingTime: incomingTime,
+            ) ==
+            -1) {
+          return;
+        }
+      }
+    }
     // kanameishi: EEW 过期检查（安全网）
     // 初始加载恢复的 EEW 如果已经过期，不应该显示
     if (event.isEew) {
@@ -3666,7 +3857,18 @@ class QuakeProvider with ChangeNotifier {
         notifyListeners();
         return;
       }
-      if (hasSeenCatalogReport(event, _backgroundSeenUnifiedInfoEvents)) {
+      final newerNumberedInfo =
+          event.source == 'earlyEst' &&
+          _unifiedEvents.any(
+            (old) =>
+                _isSameUnifiedInfoEvent(old, event) &&
+                informationReportNumber(old.reportNumText) != null &&
+                informationReportNumber(event.reportNumText) != null &&
+                informationReportNumber(event.reportNumText)! >
+                    informationReportNumber(old.reportNumText)!,
+          );
+      if (!newerNumberedInfo &&
+          hasSeenCatalogReport(event, _backgroundSeenUnifiedInfoEvents)) {
         // Another transport may use its own ID, title or translated place name.
         // Identical observations must not announce again or renew the timer.
         _syncUnifiedToListBucket(event);
@@ -3696,14 +3898,6 @@ class QuakeProvider with ChangeNotifier {
       if (_shouldSuppressCachedCwaInfoBody(event)) {
         return;
       }
-      if (_usesReportTimeDisplayWindow(event) &&
-          _remainingUnifiedDisplaySeconds(event) <= 0) {
-        if (event.source != 'cencEqlist') {
-          _syncUnifiedToListBucket(event);
-        }
-        notifyListeners();
-        return;
-      }
     }
 
     // Background-accepted catalog replay still must never enter active slots.
@@ -3712,6 +3906,17 @@ class QuakeProvider with ChangeNotifier {
         _syncUnifiedToListBucket(event);
         notifyListeners();
       }
+      return;
+    }
+
+    // Android handoffs and every EMSC transport share the same admission gate.
+    // Never schedule a one-second card and a later voice for expired data.
+    if (!event.isEew &&
+        (!alreadyAccepted || QuakeTime.usesCatalogInformationLifetime(event)) &&
+        _usesReportTimeDisplayWindow(event) &&
+        _remainingUnifiedDisplaySeconds(event) <= 0) {
+      if (event.source != 'cencEqlist') _syncUnifiedToListBucket(event);
+      notifyListeners();
       return;
     }
 
@@ -3805,6 +4010,13 @@ class QuakeProvider with ChangeNotifier {
         }
         _ignoredEewIds[eewKey] = reportNum;
       } else {
+        if (_unifiedInfoSlotSource(event) == 'emsc' &&
+            !_isSameUnifiedInfoEvent(oldEvent, event) &&
+            !_isLaterUnifiedInfoEvent(oldEvent, event)) {
+          _syncUnifiedToListBucket(event);
+          notifyListeners();
+          return;
+        }
         // 信息事件按 source 匹配：参照 kanameishi 的 EqlistEvent.update()
         // 只有 reportTime 比旧的更新时才更新（防止重复推送触发声音/重置定时器）
         if (_isSameUsgsInfoBody(oldEvent, event)) {
@@ -3823,8 +4035,13 @@ class QuakeProvider with ChangeNotifier {
             _isSameInfoBody(oldEvent, event)) {
           return;
         }
-        final oldReportTime = oldEvent.reportTime;
-        final newReportTime = event.reportTime;
+        final isEmscSlot = _unifiedInfoSlotSource(event) == 'emsc';
+        final oldReportTime = isEmscSlot && oldEvent.reportTime != null
+            ? QuakeTime.unifiedInstantUtc(oldEvent, value: oldEvent.reportTime)
+            : oldEvent.reportTime;
+        final newReportTime = isEmscSlot && event.reportTime != null
+            ? QuakeTime.unifiedInstantUtc(event, value: event.reportTime)
+            : event.reportTime;
         if (oldReportTime != null && newReportTime != null) {
           if (_isCencRecentInfoUpdate(oldEvent, event)) {
             debugPrint(
@@ -3835,6 +4052,13 @@ class QuakeProvider with ChangeNotifier {
           final oldOriginTime = oldEvent.originTime;
           final newOriginTime = event.originTime;
           final isNewerReport = newReportTime.isAfter(oldReportTime);
+          final isNewerNumberedInfo =
+              event.source == 'earlyEst' &&
+              _isSameUnifiedInfoEvent(oldEvent, event) &&
+              informationReportNumber(oldEvent.reportNumText) != null &&
+              informationReportNumber(event.reportNumText) != null &&
+              informationReportNumber(event.reportNumText)! >
+                  informationReportNumber(oldEvent.reportNumText)!;
           final isNewerJmaLpgmReport = _isNewerJmaLpgmReport(oldEvent, event);
           final isNewerOrigin =
               newReportTime.isAtSameMomentAs(oldReportTime) &&
@@ -3852,6 +4076,7 @@ class QuakeProvider with ChangeNotifier {
               isWhewsSameReportBodyCorrection ||
               CwaReportIntensities.isObservedRevision(oldEvent, event);
           if (!isNewerReport &&
+              !isNewerNumberedInfo &&
               !isNewerJmaLpgmReport &&
               !isNewerOrigin &&
               !isSameEventBodyCorrection &&
@@ -3893,6 +4118,7 @@ class QuakeProvider with ChangeNotifier {
           _isNoUpdateTimeFanInfoSource(event.source)) {
         suppressInfoActions = true;
       }
+      if (isNewInfoEvent) TtsService().discardEvent(oldKey);
       final arrivedAt = isNewInfoEvent
           ? (event.arrivedAt ?? DateTime.now())
           : oldEvent.arrivedAt;
@@ -4244,6 +4470,10 @@ class QuakeProvider with ChangeNotifier {
     final oldOrigin = oldEvent.originTime;
     final newOrigin = event.originTime;
     if (oldOrigin != null && newOrigin != null) {
+      if (_unifiedInfoSlotSource(event) == 'emsc') {
+        return QuakeTime.unifiedInstantUtc(event)
+            .isAfter(QuakeTime.unifiedInstantUtc(oldEvent));
+      }
       return newOrigin.isAfter(oldOrigin);
     }
     final oldArrived = oldEvent.arrivedAt;
@@ -4297,6 +4527,9 @@ class QuakeProvider with ChangeNotifier {
       final snapshot = (
         intensity: event.maxIntensity.trim(),
         areas: event.isWarn ? _eewVoiceAreaSignature(event.warnArea) : '',
+        // SASMEX has no magnitude/intensity estimate. Its locally numbered
+        // parameter revisions must still reach the standard EEW update voice.
+        report: event.source == 'sasmex' ? event.reportNumText : '',
       );
       final previous = _eewVoiceSnapshots[eewKey];
       _eewVoiceSnapshots[eewKey] = snapshot;
@@ -4346,9 +4579,17 @@ class QuakeProvider with ChangeNotifier {
         kind: kind,
       );
     } else {
+      final isEmsc = _unifiedInfoSlotSource(event) == 'emsc';
       TtsService().speakEvent(
         text,
         dedupeKey: '${_unifiedEventKey(event)}:$reportKey',
+        eventKey: isEmsc ? _unifiedEventKey(event) : null,
+        isCurrent: isEmsc
+            ? () => !_disposed && _unifiedEvents.any(
+                (current) => _unifiedEventKey(current) == _unifiedEventKey(event) &&
+                    _remainingUnifiedDisplaySeconds(current) > 0,
+              )
+            : null,
         isUpdate: isUpdate,
         delay: const Duration(milliseconds: 1250),
       );
@@ -4703,7 +4944,8 @@ class QuakeProvider with ChangeNotifier {
   }
 
   bool _usesReportTimeDisplayWindow(UnifiedQuakeData event) {
-    return event.useSourceTimeForExpiry ||
+    return QuakeTime.usesCatalogInformationLifetime(event) ||
+        event.useSourceTimeForExpiry ||
         event.origin == WhewsService.adapterOrigin ||
         event.source == 'usgsEqlist' ||
         event.source == 'cwaEqlist' ||
@@ -4712,7 +4954,7 @@ class QuakeProvider with ChangeNotifier {
 
   int _remainingUnifiedDisplaySeconds(UnifiedQuakeData event) {
     DateTime? firstArrival;
-    if (!event.isEew && unifiedCatalogSources.containsKey(event.source)) {
+    if (QuakeTime.usesCatalogInformationLifetime(event)) {
       for (final current in _unifiedEvents) {
         if (_unifiedEventKey(current) == _unifiedEventKey(event)) {
           firstArrival = current.arrivedAt;
@@ -4806,6 +5048,7 @@ class QuakeProvider with ChangeNotifier {
     _unifiedDismissTimers[key]?.cancel();
     _unifiedDismissTimers.remove(key);
     _cancelPendingUnifiedUpdateEffects(key);
+    if (!event.isEew) TtsService().discardEvent(key);
     _unifiedCountdownLastSpokenSeconds.remove(key);
     _unifiedEvents.removeAt(index);
     _syncStationHistoryRecording();
@@ -4944,6 +5187,11 @@ class QuakeProvider with ChangeNotifier {
   ///
   /// 根据过滤条件从各数据源桶中合并历史记录。
   void _rebuildFlat() {
+    usgsShakeMap.setMagnitudeFilter(
+      _sourceInfoMagFilters[QuakeSourceType.usgs] ?? 0,
+    );
+    unawaited(usgsShakeMap.observe(_eqlist.usgs.latestList.isNotEmpty
+        ? _eqlist.usgs.latestList : _eqlist.usgsList));
     try {
       final merged = <QuakeMessage>[];
       final buckets = historyBySource;
@@ -4977,9 +5225,20 @@ class QuakeProvider with ChangeNotifier {
           merged.map(
             (item) => Object.hash(
               item.eventId,
+              item.source,
               item.magnitude,
               item.originTime.millisecondsSinceEpoch,
               item.location,
+              item.usgsUpdated,
+              item.usgsProductTypes,
+              item.reportTime,
+              item.reportNumText,
+              item.reviewType,
+              item.nodalPlane1,
+              item.nodalPlane2,
+              item.centroidDepth,
+              Object.hashAll(item.momentTensor?.toMap().values ?? const []),
+              item.cmtMetadata == null ? null : jsonEncode(item.cmtMetadata!.toMap()),
             ),
           ),
         ),
@@ -5826,6 +6085,7 @@ class QuakeProvider with ChangeNotifier {
         : _fanCencIrList;
     _cencIrList = selected.map(Map<String, dynamic>.from).toList()
       ..sort((a, b) => _cencIrListTime(b).compareTo(_cencIrListTime(a)));
+    _loadBoundCencIr();
     notifyListeners();
   }
 
@@ -6215,7 +6475,12 @@ class QuakeProvider with ChangeNotifier {
   /// 释放资源
   @override
   void dispose() {
+    usgsShakeMap.removeListener(_onShakeMapChanged);
+    usgsShakeMap.dispose();
     _disposed = true;
+    for (final event in _unifiedEvents.where((event) => !event.isEew)) {
+      TtsService().discardEvent(_unifiedEventKey(event));
+    }
     historyReplay.dispose();
     StationHistoryCapture.instance.removeListener(_recordStationHistoryFrame);
     _domesticEewEffects.clear();

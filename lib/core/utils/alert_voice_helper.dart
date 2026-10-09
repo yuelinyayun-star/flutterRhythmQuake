@@ -104,6 +104,7 @@ class AlertVoiceHelper {
     // 不再在语音中拼接“发布/更新”等动作词。
     final type = switch (true) {
       _ when isJmaEew => event.isWarn ? '紧急地震警报' : '紧急地震速报',
+      _ when event.source == 'sasmex' => event.isWarn ? '地震警报' : '地震检出',
       _ => '地震预警',
     };
     final location = _voiceLocation(event.hypocenter, isJma: isJmaEew);

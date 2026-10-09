@@ -136,6 +136,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   static const String _infoPagePtwcTsunami = 'ptwcTsunami';
   static const String _infoPageNtwcTsunami = 'ntwcTsunami';
   static const String _infoPageIncoisTsunami = 'incoisTsunami';
+  final Map<TsunamiSource, String> _lastAdditionalTsunamiInfoSignatures = {};
   static const String _infoPageCmt = 'cmt';
   static const String _infoPageVolcano = 'volcano';
   static const String _infoPageJmaLpgm = 'jmaLpgm';
@@ -196,7 +197,8 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         (provider.nmefcTsunami?.isActive == true) ||
         (provider.ptwcTsunami?.isActive == true) ||
         (provider.ntwcTsunami?.isActive == true) ||
-        (provider.incoisTsunami?.isActive == true);
+        (provider.incoisTsunami?.isActive == true) ||
+        provider.additionalTsunamis.any((e) => e.isActive && e.isDisplayableAt(DateTime.now()));
   }
 
   UnifiedQuakeData? _localEewEvent(QuakeProvider provider) =>
@@ -458,33 +460,6 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                       },
                     ),
                     SizedBox(height: _s(12, context)),
-                    Selector<QuakeProvider, bool>(
-                      selector: (context, provider) =>
-                          provider.isManualCencIrActive,
-                      builder: (context, isManualActive, _) {
-                        return _buildCircularButton(
-                          context: context,
-                          icon: isManualActive
-                              ? Icons.waves
-                              : Icons.waves_outlined,
-                          tooltip: isManualActive
-                              ? '关闭手动 CENC 烈度速报'
-                              : '手动查看 CENC 烈度速报',
-                          color: isManualActive
-                              ? const Color(0xFF2ECC71)
-                              : Colors.blueAccent,
-                          onPressed: () {
-                            final provider = context.read<QuakeProvider>();
-                            if (isManualActive) {
-                              provider.clearCencIrData();
-                            } else {
-                              _showCencIrSheet(context);
-                            }
-                          },
-                        );
-                      },
-                    ),
-                    SizedBox(height: _s(12, context)),
                     _buildCircularButton(
                       context: context,
                       icon: Icons.history,
@@ -698,23 +673,6 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
           tooltip: '查看历史',
           onPressed: () => _scaffoldKey.currentState?.openDrawer(),
         ),
-        const SizedBox(width: 7),
-        Selector<QuakeProvider, bool>(
-          selector: (context, provider) => provider.isManualCencIrActive,
-          builder: (context, active, _) => _buildPhoneActionButton(
-            context,
-            icon: active ? Icons.waves : Icons.waves_outlined,
-            tooltip: active ? '关闭手动 CENC 烈度速报' : '手动查看 CENC 烈度速报',
-            color: active ? const Color(0xFF2ECC71) : Colors.blueAccent,
-            onPressed: () {
-              if (active) {
-                context.read<QuakeProvider>().clearCencIrData();
-              } else {
-                _showCencIrSheet(context);
-              }
-            },
-          ),
-        ),
       ],
     );
   }
@@ -908,6 +866,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
           incois?.reportTime,
           incois?.isDisplayableAt(DateTime.now()),
           incois?.warnAreaJson,
+          ...qp.additionalTsunamis.map((e) => Object.hash(e, e.isDisplayableAt(DateTime.now()))),
           _cmtInfoSignature(cmt),
           _volcanoInfoSignature(volcano),
         ]);
@@ -1050,6 +1009,13 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
               child: _buildTsunamiSection(context, incois, 'INCOIS'),
             ),
           );
+        }
+        for (final tsunami in provider.additionalTsunamis) {
+          if (!tsunami.isDisplayableAt(DateTime.now())) continue;
+          mainPages.add(_InfoDrawerPage(
+            key: '${tsunami.source.name}Tsunami',
+            child: _buildTsunamiSection(context, tsunami, tsunami.source.displayLabel),
+          ));
         }
         _syncInfoCarouselPages(mainPages);
 
@@ -1266,7 +1232,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         if (tsunami.reportTime.isNotEmpty) ...[
           SizedBox(height: _s(3, context)),
           Text(
-            tsunami.reportTime,
+            tsunami.formatLocalTime(tsunami.reportTime),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
@@ -1290,14 +1256,22 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
             ),
           )
         else
-          ...areas.map((area) => _buildTsunamiAreaRow(context, area)),
+          ...areas.map((area) => _buildTsunamiAreaRow(context, area, tsunami: tsunami)),
+        for (final station in tsunami.observations.take(4))
+          _buildTsunamiAreaRow(context, TsunamiAreaInfo(
+            name: station.stationName.isNotEmpty ? station.stationName : station.stationId,
+            description: station.maxWaveHeight.isEmpty ? null : '波高：${station.maxWaveHeight}',
+            condition: station.condition,
+            arrivalTime: station.time.isEmpty ? null : tsunami.formatLocalTime(station.time),
+          )),
       ],
     );
   }
 
-  Widget _buildTsunamiAreaRow(BuildContext context, TsunamiAreaInfo area) {
+  Widget _buildTsunamiAreaRow(BuildContext context, TsunamiAreaInfo area, {TsunamiMessage? tsunami}) {
     final color = _tsunamiClassColor(area.className);
-    final timeText = area.arrivalTime?.trim();
+    final rawTime = area.arrivalTime?.trim();
+    final timeText = rawTime == null || rawTime.isEmpty ? rawTime : tsunami?.formatLocalTime(rawTime) ?? rawTime;
     final heightText = area.description?.trim();
     final meta = [
       if (area.condition?.trim().isNotEmpty == true) area.condition!.trim(),
@@ -1357,7 +1331,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   }
 
   String _tsunamiSideTitle(TsunamiMessage tsunami, String sourceLabel) {
-    if (tsunami.isInformation) return '$sourceLabel 海啸信息';
+    if (tsunami.isInformation) return '$sourceLabel 海啸信息${tsunami.reportNumber == null ? '' : ' 第${tsunami.reportNumber}报'}';
     final title = tsunami.title.trim().isNotEmpty
         ? tsunami.title.trim()
         : tsunami.titleText.trim();
@@ -2444,6 +2418,8 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   }
 
   QuakeMessage? _activeCmtMapEvent(QuakeProvider provider) {
+    final selected = provider.historyInfoDisplayEvent?.rawEvent;
+    if (selected != null && _isCmtSource(selected.source)) return selected;
     final unified = provider.unifiedEvents;
     final mapEvents = provider.unifiedMapEvents;
     if (unified.isEmpty || unified.length != mapEvents.length) return null;
@@ -2643,6 +2619,10 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     final ptwcTsunamiTriggered = ptwcTsunami?.isActive == true;
     final ntwcTsunamiTriggered = ntwcTsunami?.isActive == true;
     final incoisTsunamiTriggered = incoisTsunami?.isActive == true;
+    final additionalTsunamis = provider.additionalTsunamis
+        .where((e) => e.isActive && e.isDisplayableAt(DateTime.now())).toList();
+    String additionalSignature(TsunamiMessage e) => '${e.eventId}|${e.id}|${e.reportNumber}|${e.status}';
+    final additionalTsunamiSignature = additionalTsunamis.map(additionalSignature).join('|');
     final cmt = _activeCmtMapEvent(provider);
     final cmtSignature = _cmtInfoSignature(cmt);
     final cmtTriggered = cmt != null;
@@ -2667,6 +2647,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       _lastPtwcTsunamiInfoSignature = '-';
       _lastNtwcTsunamiInfoSignature = '-';
       _lastIncoisTsunamiInfoSignature = '-';
+      _lastAdditionalTsunamiInfoSignatures.clear();
       _lastCmtInfoSignature = '-';
       _lastVolcanoInfoSignature = '-';
       _lastJmaLpgmInfoSignature = '-';
@@ -2703,7 +2684,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         ? '${incoisTsunami!.id}|${incoisTsunami.status}|${incoisTsunami.grade.name}'
         : '-';
     final signature =
-        '$localEewSignature|$niedSignature|$snetSignature|$jmaTsunamiSignature|$nmefcTsunamiSignature|$ptwcTsunamiSignature|$ntwcTsunamiSignature|$incoisTsunamiSignature|$cmtSignature|$volcanoSignature|$jmaLpgmSignature|$megaquakeSignature';
+        '$localEewSignature|$niedSignature|$snetSignature|$jmaTsunamiSignature|$nmefcTsunamiSignature|$ptwcTsunamiSignature|$ntwcTsunamiSignature|$incoisTsunamiSignature|$additionalTsunamiSignature|$cmtSignature|$volcanoSignature|$jmaLpgmSignature|$megaquakeSignature';
     if (signature == _lastAutoTriggerSignature) {
       return;
     }
@@ -2736,6 +2717,11 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         incoisTsunamiSignature != _lastIncoisTsunamiInfoSignature) {
       focusPageKey = _infoPageIncoisTsunami;
     }
+    for (final tsunami in additionalTsunamis) {
+      if (additionalSignature(tsunami) != _lastAdditionalTsunamiInfoSignatures[tsunami.source]) {
+        focusPageKey = '${tsunami.source.name}Tsunami';
+      }
+    }
     if (cmtTriggered && cmtSignature != _lastCmtInfoSignature) {
       focusPageKey = _infoPageCmt;
     }
@@ -2760,6 +2746,9 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     _lastPtwcTsunamiInfoSignature = ptwcTsunamiSignature;
     _lastNtwcTsunamiInfoSignature = ntwcTsunamiSignature;
     _lastIncoisTsunamiInfoSignature = incoisTsunamiSignature;
+    _lastAdditionalTsunamiInfoSignatures
+      ..clear()
+      ..addEntries(additionalTsunamis.map((e) => MapEntry(e.source, additionalSignature(e))));
     _lastCmtInfoSignature = cmtSignature;
     _lastVolcanoInfoSignature = volcanoSignature;
     _lastJmaLpgmInfoSignature = jmaLpgmSignature;
@@ -2772,216 +2761,6 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     }
   }
 
-  void _showCencIrSheet(BuildContext context) {
-    final provider = context.read<QuakeProvider>();
-    final list = provider.cencIrList;
-    final scale = UiScale.isPhone(context)
-        ? UiScale.phone(context)
-        : UiScale.main(context);
-    double s(double value) => value * scale;
-
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: const Color(0xDD1A1A1A),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(s(16))),
-      ),
-      builder: (sheetContext) {
-        if (list.isEmpty) {
-          return Container(
-            height: s(200),
-            padding: EdgeInsets.all(s(24)),
-            child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.cloud_off, color: Colors.white38, size: s(48)),
-                  SizedBox(height: s(12)),
-                  Text(
-                    '暂无 CENC 烈度速报数据',
-                    style: TextStyle(color: Colors.white54, fontSize: s(14)),
-                  ),
-                  SizedBox(height: s(4)),
-                  Text(
-                    '可从 FAN / NowQuake 获取最近的烈度速报',
-                    style: TextStyle(color: Colors.white30, fontSize: s(12)),
-                  ),
-                ],
-              ),
-            ),
-          );
-        }
-
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: EdgeInsets.symmetric(horizontal: s(20), vertical: s(14)),
-              decoration: BoxDecoration(
-                border: Border(
-                  bottom: BorderSide(color: Colors.white12, width: s(0.5)),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.waves_outlined,
-                    color: const Color(0xFF2ECC71),
-                    size: s(20),
-                  ),
-                  SizedBox(width: s(8)),
-                  Text(
-                    '选择 CENC 烈度速报',
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.9),
-                      fontSize: s(15),
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const Spacer(),
-                  Text(
-                    '${list.length} items',
-                    style: TextStyle(color: Colors.white38, fontSize: s(12)),
-                  ),
-                ],
-              ),
-            ),
-            Flexible(
-              child: ListView.separated(
-                shrinkWrap: true,
-                padding: EdgeInsets.symmetric(vertical: s(8)),
-                itemCount: list.length,
-                separatorBuilder: (_, index) =>
-                    Divider(height: s(1), color: Colors.white10),
-                itemBuilder: (_, i) {
-                  final item = list[i];
-                  final name =
-                      item['nameByInfo']?.toString() ??
-                      item['locName']?.toString() ??
-                      item['placeName']?.toString() ??
-                      '未知地点';
-                  final time =
-                      item['shockTime']?.toString() ??
-                      item['oriTime']?.toString() ??
-                      '';
-                  final mag = item['magnitude']?.toString() ?? '';
-                  final id = item['id']?.toString() ?? '';
-                  final manualData = provider.manualCencIrData;
-                  final isActive =
-                      manualData != null &&
-                      (manualData.reportId == id ||
-                          manualData.uniEventId ==
-                              item['uniEventId']?.toString());
-
-                  return ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: s(20),
-                      vertical: s(2),
-                    ),
-                    leading: Container(
-                      width: s(36),
-                      height: s(36),
-                      decoration: BoxDecoration(
-                        color: isActive
-                            ? const Color(0xFF2ECC71).withValues(alpha: 0.2)
-                            : Colors.white.withValues(alpha: 0.06),
-                        borderRadius: BorderRadius.circular(s(8)),
-                      ),
-                      child: Icon(
-                        Icons.waves,
-                        color: isActive
-                            ? const Color(0xFF2ECC71)
-                            : Colors.white38,
-                        size: s(18),
-                      ),
-                    ),
-                    title: Text(
-                      name,
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.85),
-                        fontSize: s(13),
-                        fontWeight: FontWeight.w500,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    subtitle: Row(
-                      children: [
-                        if (time.isNotEmpty) ...[
-                          Text(
-                            time.length >= 16 ? time.substring(5, 16) : time,
-                            style: TextStyle(
-                              color: Colors.white38,
-                              fontSize: s(11),
-                            ),
-                          ),
-                          if (mag.isNotEmpty) SizedBox(width: s(8)),
-                        ],
-                        if (mag.isNotEmpty)
-                          Container(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: s(6),
-                              vertical: s(1),
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.08),
-                              borderRadius: BorderRadius.circular(s(4)),
-                            ),
-                            child: Text(
-                              'M$mag',
-                              style: TextStyle(
-                                color: const Color(0xFFE67E22),
-                                fontSize: s(11),
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        if (isActive) ...[
-                          SizedBox(width: s(6)),
-                          Container(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: s(5),
-                              vertical: s(1),
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(
-                                0xFF2ECC71,
-                              ).withValues(alpha: 0.15),
-                              borderRadius: BorderRadius.circular(s(3)),
-                            ),
-                            child: Text(
-                              'Active',
-                              style: TextStyle(
-                                color: const Color(0xFF2ECC71),
-                                fontSize: s(10),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                    trailing: Icon(
-                      Icons.chevron_right,
-                      color: Colors.white24,
-                      size: s(18),
-                    ),
-                    onTap: () {
-                      Navigator.pop(sheetContext);
-                      provider.requestCencIrDetail(
-                        id,
-                        source: item['_source']?.toString(),
-                      );
-                    },
-                  );
-                },
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
 }
 
 class _InfoDrawerPage {

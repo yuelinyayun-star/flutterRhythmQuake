@@ -22,6 +22,7 @@ import '../../services/tts_service.dart';
 import '../../services/sources/fan_service.dart';
 import '../../services/sources/whews_service.dart';
 import '../../services/sources/jian_service.dart';
+import '../../services/sources/sasmex_service.dart';
 import 'jian_auth_settings.dart';
 import 'settings_controls.dart';
 import 'eew_history_settings.dart';
@@ -96,6 +97,7 @@ class _SettingsPageState extends State<SettingsPage>
   bool _wolfxEnabled = true;
   bool _wolfxSeisJsEnabled = true;
   bool _p2pquakeEnabled = true;
+  bool _sasmexEnabled = true;
   bool _kmaPewsEnabled = true;
   bool _pAlertEnabled = AppEdition.hasPAlertStations;
   bool _niedMonitorEnabled = true;
@@ -175,10 +177,13 @@ class _SettingsPageState extends State<SettingsPage>
   static const String _overlayWindKey = 'map_overlay_windLayer';
   static const String _overlayRainKey = 'map_overlay_rainLayer';
   static const String _overlayRadarChinaKey = 'map_overlay_radarChinaLayer';
-  static const String _overlayPrecipitationChinaKey = 'map_overlay_precipitationChinaLayer';
+  static const String _overlayPrecipitationChinaKey =
+      'map_overlay_precipitationChinaLayer';
   static const String _overlayJmaRadarKey = 'map_overlay_jmaRadarLayer';
-  static const String _overlayJmaSatelliteCloudKey = 'map_overlay_jmaSatelliteCloudLayer';
-  static const String _overlayNsmcSatelliteCloudKey = 'map_overlay_nsmcSatelliteCloudLayer';
+  static const String _overlayJmaSatelliteCloudKey =
+      'map_overlay_jmaSatelliteCloudLayer';
+  static const String _overlayNsmcSatelliteCloudKey =
+      'map_overlay_nsmcSatelliteCloudLayer';
   static const String _overlaySatelliteCloudKey =
       'map_overlay_satelliteCloudLayer';
   static const String _overlayCnContourKey = 'map_overlay_cnContour';
@@ -505,14 +510,17 @@ class _SettingsPageState extends State<SettingsPage>
       _wolfxEnabled = prefs.getBool(_wolfxEnabledKey) ?? true;
       _wolfxSeisJsEnabled = prefs.getBool(_wolfxSeisJsEnabledKey) ?? true;
       _p2pquakeEnabled = prefs.getBool(_p2pquakeEnabledKey) ?? true;
+      _sasmexEnabled =
+          prefs.getBool(SasmexService.enabledPreferenceKey) ?? true;
       _kmaPewsEnabled = prefs.getBool(_kmaPewsEnabledKey) ?? true;
-      _pAlertEnabled = AppEdition.hasPAlertStations &&
+      _pAlertEnabled =
+          AppEdition.hasPAlertStations &&
           (prefs.getBool(_pAlertEnabledKey) ?? true);
       _niedMonitorEnabled = prefs.getBool(_niedMonitorEnabledKey) ?? true;
       _niedLpgmEnabled = prefs.getBool(_niedLpgmEnabledKey) ?? true;
       _snetEnabled = prefs.getBool(_snetEnabledKey) ?? true;
-      _fdsnSeedLinkEnabled = !kIsWeb &&
-          (prefs.getBool(_fdsnSeedLinkEnabledKey) ?? false);
+      _fdsnSeedLinkEnabled =
+          !kIsWeb && (prefs.getBool(_fdsnSeedLinkEnabledKey) ?? false);
       _fanApiKeyController.text =
           prefs.getString(FanService.apiKeyPreferenceKey) ?? '';
       _wauthApiToken = credentials.apiToken;
@@ -526,10 +534,13 @@ class _SettingsPageState extends State<SettingsPage>
       _overlayWind = prefs.getBool(_overlayWindKey) ?? false;
       _overlayRain = prefs.getBool(_overlayRainKey) ?? false;
       _overlayRadarChina = prefs.getBool(_overlayRadarChinaKey) ?? false;
-      _overlayPrecipitationChina = prefs.getBool(_overlayPrecipitationChinaKey) ?? false;
+      _overlayPrecipitationChina =
+          prefs.getBool(_overlayPrecipitationChinaKey) ?? false;
       _overlayJmaRadar = prefs.getBool(_overlayJmaRadarKey) ?? false;
-      _overlayJmaSatelliteCloud = prefs.getBool(_overlayJmaSatelliteCloudKey) ?? false;
-      _overlayNsmcSatelliteCloud = prefs.getBool(_overlayNsmcSatelliteCloudKey) ?? false;
+      _overlayJmaSatelliteCloud =
+          prefs.getBool(_overlayJmaSatelliteCloudKey) ?? false;
+      _overlayNsmcSatelliteCloud =
+          prefs.getBool(_overlayNsmcSatelliteCloudKey) ?? false;
       _overlaySatelliteCloud =
           prefs.getBool(_overlaySatelliteCloudKey) ?? false;
       _overlayCnContour = prefs.getBool(_overlayCnContourKey) ?? false;
@@ -645,9 +656,12 @@ class _SettingsPageState extends State<SettingsPage>
         credentials.hasApiToken && _whewsKmaEnabled;
     QuakeMapView.fdsnStationLimitNotifier.value = _fdsnStationLimit;
     SourceManager().setSourceEnabled('FAN', _fanEnabled);
-    SourceManager().getSource<WhewsService>()?.setApiToken(credentials.apiToken);
+    SourceManager().getSource<WhewsService>()?.setApiToken(
+      credentials.apiToken,
+    );
     SourceManager().setSourceEnabled(
-      'WHEWS', credentials.hasApiToken && _whewsEnabled,
+      'WHEWS',
+      credentials.hasApiToken && _whewsEnabled,
     );
     SourceManager().setSourceEnabled('NowQuake', _nowQuakeCencIrEnabled);
     SourceManager().setSourceEnabled(JianService.sourceName, _jianEnabled);
@@ -658,6 +672,7 @@ class _SettingsPageState extends State<SettingsPage>
     if (!_hinetAquaCmtEnabled) EqlistManager().hinetAquaCmt.stop();
     SourceManager().setSourceEnabled('Wolfx', _wolfxEnabled);
     SourceManager().setSourceEnabled('P2P', _p2pquakeEnabled);
+    SourceManager().setSourceEnabled(SasmexService.sourceName, _sasmexEnabled);
     UiRuntimeFlags.sideInfoAutoShowBetaNotifier.value = _sideInfoAutoShowBeta;
     UiRuntimeFlags.localEewDomesticNotifier.value = _localEewDomestic;
     UiRuntimeFlags.localEewForeignNotifier.value = _localEewForeign;
@@ -671,10 +686,19 @@ class _SettingsPageState extends State<SettingsPage>
     mapState.setOverlayEnabled('windLayer', _overlayWind);
     mapState.setOverlayEnabled('rainLayer', _overlayRain);
     mapState.setOverlayEnabled('radarChinaLayer', _overlayRadarChina);
-    mapState.setOverlayEnabled('precipitationChinaLayer', _overlayPrecipitationChina);
+    mapState.setOverlayEnabled(
+      'precipitationChinaLayer',
+      _overlayPrecipitationChina,
+    );
     mapState.setOverlayEnabled('jmaRadarLayer', _overlayJmaRadar);
-    mapState.setOverlayEnabled('jmaSatelliteCloudLayer', _overlayJmaSatelliteCloud);
-    mapState.setOverlayEnabled('nsmcSatelliteCloudLayer', _overlayNsmcSatelliteCloud);
+    mapState.setOverlayEnabled(
+      'jmaSatelliteCloudLayer',
+      _overlayJmaSatelliteCloud,
+    );
+    mapState.setOverlayEnabled(
+      'nsmcSatelliteCloudLayer',
+      _overlayNsmcSatelliteCloud,
+    );
     mapState.setOverlayEnabled('satelliteCloudLayer', _overlaySatelliteCloud);
     mapState.setOverlayEnabled('cnContour', _overlayCnContour);
     mapState.setOverlayEnabled('cnFault', _overlayCnFault);
@@ -795,7 +819,7 @@ class _SettingsPageState extends State<SettingsPage>
       await BackgroundService().startForegroundService();
       if (BackgroundService().isAndroidConnectionHostedByForegroundService) {
         SourceManager().stopAll();
-        EqlistManager().stopOfficialHttpServices();
+        EqlistManager().stopOfficialServices();
       }
     } else {
       // 先停止 Android 前台服务，再恢复主 isolate，避免两套连接同时运行。
@@ -807,7 +831,7 @@ class _SettingsPageState extends State<SettingsPage>
       }
       // 关闭前台连接后恢复桌面/前台的主 isolate 连接路径。
       SourceManager().startAll();
-      EqlistManager().startOfficialHttpServices();
+      EqlistManager().startOfficialServices();
     }
   }
 
@@ -1030,10 +1054,7 @@ class _SettingsPageState extends State<SettingsPage>
           mode: LaunchMode.externalApplication,
         );
         if (!launched) {
-          throw const WAuthApiException(
-            statusCode: 0,
-            message: '无法打开系统浏览器。',
-          );
+          throw const WAuthApiException(statusCode: 0, message: '无法打开系统浏览器。');
         }
       }
       browserOpened = true;
@@ -1355,9 +1376,7 @@ class _SettingsPageState extends State<SettingsPage>
 
   String _mapCenterText() {
     if (_mapViewLat == null || _mapViewLng == null) {
-      return kIsWeb
-          ? '当前：未设置（点击自动获取定位）'
-          : '当前：未设置（跟随系统定位）';
+      return kIsWeb ? '当前：未设置（点击自动获取定位）' : '当前：未设置（跟随系统定位）';
     }
     return '当前：${_mapViewLat!.toStringAsFixed(4)}, ${_mapViewLng!.toStringAsFixed(4)}';
   }
@@ -1453,10 +1472,14 @@ class _SettingsPageState extends State<SettingsPage>
     _overlayWind = map.isOverlayEnabled('windLayer');
     _overlayRain = map.isOverlayEnabled('rainLayer');
     _overlayRadarChina = map.isOverlayEnabled('radarChinaLayer');
-    _overlayPrecipitationChina = map.isOverlayEnabled('precipitationChinaLayer');
+    _overlayPrecipitationChina = map.isOverlayEnabled(
+      'precipitationChinaLayer',
+    );
     _overlayJmaRadar = map.isOverlayEnabled('jmaRadarLayer');
     _overlayJmaSatelliteCloud = map.isOverlayEnabled('jmaSatelliteCloudLayer');
-    _overlayNsmcSatelliteCloud = map.isOverlayEnabled('nsmcSatelliteCloudLayer');
+    _overlayNsmcSatelliteCloud = map.isOverlayEnabled(
+      'nsmcSatelliteCloudLayer',
+    );
     _overlaySatelliteCloud = map.isOverlayEnabled('satelliteCloudLayer');
     _overlayTyphoon = map.isOverlayEnabled('typhoonLayer');
     _overlayWeatherStation = map.isOverlayEnabled('weatherStationLayer');
@@ -2050,14 +2073,18 @@ class _SettingsPageState extends State<SettingsPage>
             icon: Icons.key_outlined,
             title: '账号与 API 授权',
             children: [
-              JianAuthSettings(onChanged: () async {
-                if (BackgroundService()
-                    .isAndroidConnectionHostedByForegroundService) {
-                  await BackgroundService().requestJianCredentialReload();
-                } else {
-                  SourceManager().getSource<JianService>()?.reloadCredentials();
-                }
-              }),
+              JianAuthSettings(
+                onChanged: () async {
+                  if (BackgroundService()
+                      .isAndroidConnectionHostedByForegroundService) {
+                    await BackgroundService().requestJianCredentialReload();
+                  } else {
+                    SourceManager()
+                        .getSource<JianService>()
+                        ?.reloadCredentials();
+                  }
+                },
+              ),
               const _SettingsDivider(),
               _buildFanApiKeySetting(),
               const _SettingsDivider(),
@@ -2475,6 +2502,16 @@ class _SettingsPageState extends State<SettingsPage>
         },
       ),
       _buildApiSwitch(
+        title: 'Rhythm（SASMEX）',
+        value: _sasmexEnabled,
+        onChanged: (val) {
+          setState(() => _sasmexEnabled = val);
+          _saveApiSourceEnabled(SasmexService.enabledPreferenceKey, val);
+          SourceManager().setSourceEnabled(SasmexService.sourceName, val);
+          _requestForegroundConnectionReload();
+        },
+      ),
+      _buildApiSwitch(
         title: 'KMA 实时测站',
         value: _kmaPewsEnabled,
         onChanged: (val) {
@@ -2483,15 +2520,16 @@ class _SettingsPageState extends State<SettingsPage>
           QuakeMapView.kmaPewsEnabledNotifier.value = val;
         },
       ),
-      if (AppEdition.hasPAlertStations) _buildApiSwitch(
-        title: 'P-Alert',
-        value: _pAlertEnabled,
-        onChanged: (val) {
-          setState(() => _pAlertEnabled = val);
-          _saveApiSourceEnabled(_pAlertEnabledKey, val);
-          QuakeMapView.pAlertEnabledNotifier.value = val;
-        },
-      ),
+      if (AppEdition.hasPAlertStations)
+        _buildApiSwitch(
+          title: 'P-Alert',
+          value: _pAlertEnabled,
+          onChanged: (val) {
+            setState(() => _pAlertEnabled = val);
+            _saveApiSourceEnabled(_pAlertEnabledKey, val);
+            QuakeMapView.pAlertEnabledNotifier.value = val;
+          },
+        ),
       _buildApiSwitch(
         title: 'TREM RTS',
         value: _tremStationEnabled,
@@ -2579,14 +2617,14 @@ class _SettingsPageState extends State<SettingsPage>
         )
       else
         _buildApiSwitch(
-        title: 'SeedLink全球测站连接',
-        value: _fdsnSeedLinkEnabled,
-        onChanged: (val) {
-          setState(() => _fdsnSeedLinkEnabled = val);
-          _saveApiSourceEnabled(_fdsnSeedLinkEnabledKey, val);
-          QuakeMapView.fdsnSeedLinkEnabledNotifier.value = val;
-        },
-      ),
+          title: 'SeedLink全球测站连接',
+          value: _fdsnSeedLinkEnabled,
+          onChanged: (val) {
+            setState(() => _fdsnSeedLinkEnabled = val);
+            _saveApiSourceEnabled(_fdsnSeedLinkEnabledKey, val);
+            QuakeMapView.fdsnSeedLinkEnabledNotifier.value = val;
+          },
+        ),
     ];
     return Column(
       children: [
@@ -2816,7 +2854,9 @@ class _SettingsPageState extends State<SettingsPage>
           inactiveTrackColor: Colors.white24,
           onChanged: (value) async {
             try {
-              await context.read<QuakeProvider>().setJmaVolcanoPushEnabled(value);
+              await context.read<QuakeProvider>().setJmaVolcanoPushEnabled(
+                value,
+              );
             } catch (_) {
               if (mounted) _showToast('火山推送设置保存失败，请重试');
             }
@@ -2894,10 +2934,7 @@ class _SettingsPageState extends State<SettingsPage>
           final mapState = context.read<MapStateProvider>();
           setState(() => _overlayJmaSatelliteCloud = val);
           await _saveOverlayState(_overlayJmaSatelliteCloudKey, val);
-          mapState.setOverlayEnabled(
-            'jmaSatelliteCloudLayer',
-            val,
-          );
+          mapState.setOverlayEnabled('jmaSatelliteCloudLayer', val);
         },
       ),
       _buildInfoLayerSwitch(
@@ -2909,10 +2946,7 @@ class _SettingsPageState extends State<SettingsPage>
           final mapState = context.read<MapStateProvider>();
           setState(() => _overlayNsmcSatelliteCloud = val);
           await _saveOverlayState(_overlayNsmcSatelliteCloudKey, val);
-          mapState.setOverlayEnabled(
-            'nsmcSatelliteCloudLayer',
-            val,
-          );
+          mapState.setOverlayEnabled('nsmcSatelliteCloudLayer', val);
         },
       ),
       _buildInfoLayerSwitch(
@@ -2923,10 +2957,7 @@ class _SettingsPageState extends State<SettingsPage>
           final mapState = context.read<MapStateProvider>();
           setState(() => _overlayPrecipitationChina = val);
           await _saveOverlayState(_overlayPrecipitationChinaKey, val);
-          mapState.setOverlayEnabled(
-            'precipitationChinaLayer',
-            val,
-          );
+          mapState.setOverlayEnabled('precipitationChinaLayer', val);
           _requestForegroundConnectionReload();
         },
       ),
@@ -3065,7 +3096,10 @@ class _SettingsPageState extends State<SettingsPage>
     bool busy = false,
     bool emphasized = false,
   }) => SettingsGlassAction(
-    label: label, onPressed: onPressed, icon: icon, busy: busy,
+    label: label,
+    onPressed: onPressed,
+    icon: icon,
+    busy: busy,
     emphasized: emphasized,
   );
 
@@ -3732,20 +3766,24 @@ class _SettingsPageState extends State<SettingsPage>
     leading: Icons.category_outlined,
     control: ValueListenableBuilder<SeedLinkShapeMode>(
       valueListenable: SeedLinkStationStyle.shape,
-      builder: (context, mode, child) => _buildSegmentedSelector<SeedLinkShapeMode>(
-        value: mode,
-        options: const [
-          _SelectOption(SeedLinkShapeMode.triangle, '三角形'),
-          _SelectOption(SeedLinkShapeMode.circle, '圆形'),
-          _SelectOption(SeedLinkShapeMode.sensorType, '按类别'),
-        ],
-        onChanged: (value) async {
-          if (value == null) return;
-          SeedLinkStationStyle.shape.value = value;
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString(SeedLinkStationStyle.preferenceKey, value.name);
-        },
-      ),
+      builder: (context, mode, child) =>
+          _buildSegmentedSelector<SeedLinkShapeMode>(
+            value: mode,
+            options: const [
+              _SelectOption(SeedLinkShapeMode.triangle, '三角形'),
+              _SelectOption(SeedLinkShapeMode.circle, '圆形'),
+              _SelectOption(SeedLinkShapeMode.sensorType, '按类别'),
+            ],
+            onChanged: (value) async {
+              if (value == null) return;
+              SeedLinkStationStyle.shape.value = value;
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setString(
+                SeedLinkStationStyle.preferenceKey,
+                value.name,
+              );
+            },
+          ),
     ),
   );
 
@@ -4174,9 +4212,7 @@ class _SettingsPageState extends State<SettingsPage>
   Widget _buildLocalEewSidebarSwitch({required bool domestic}) {
     return _buildSettingRow(
       title: domestic ? '本地烈度预估与倒计时' : '国外预警烈度预估与倒计时',
-      subtitle: domestic
-          ? '预警侧栏显示本地烈度、震中距离与 S 波倒计时'
-          : '国外地震预警也显示本地烈度与 S 波倒计时',
+      subtitle: domestic ? '预警侧栏显示本地烈度、震中距离与 S 波倒计时' : '国外地震预警也显示本地烈度与 S 波倒计时',
       leading: Icons.track_changes_outlined,
       control: Align(
         alignment: Alignment.centerRight,
@@ -4765,7 +4801,8 @@ class _SettingsPageState extends State<SettingsPage>
       if (kIsWeb) {
         final selected = result.files.single;
         final bytes = selected.bytes;
-        final ok = bytes != null &&
+        final ok =
+            bytes != null &&
             await context.read<PageBackgroundProvider>().setCustomImageBytes(
               bytes,
               selected.name,
@@ -4875,7 +4912,10 @@ class _SettingsPageState extends State<SettingsPage>
     required IconData leading,
     required Widget control,
   }) => SettingsControlRow(
-    title: title, subtitle: subtitle, leading: leading, control: control,
+    title: title,
+    subtitle: subtitle,
+    leading: leading,
+    control: control,
   );
 
   Widget _buildDropdown<T>({

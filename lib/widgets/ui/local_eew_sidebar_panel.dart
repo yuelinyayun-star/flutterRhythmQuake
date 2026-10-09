@@ -8,7 +8,9 @@ import '../../core/intensity_calculator.dart';
 import '../../core/travel_time_service.dart';
 import '../../core/utils/quake_time.dart';
 import '../../models/unified_quake_data.dart';
+import '../../models/sasmex_map_geometry.dart';
 import '../../services/location_service.dart';
+import '../../services/ntp_service.dart';
 
 const _domesticEewSources = {
   'ceaEew',
@@ -61,7 +63,7 @@ LocalEewEstimate calculateLocalEewEstimate(
   UnifiedQuakeData event, {
   required double? userLat,
   required double? userLng,
-  required int elapsedSeconds,
+  required num elapsedSeconds,
   TravelTimeService? travelTimes,
 }) {
   final lat = event.lat;
@@ -114,7 +116,10 @@ LocalEewEstimate calculateLocalEewEstimate(
 
   int? countdown;
   final tables = travelTimes ?? TravelTimeService();
-  if (event.originTime != null &&
+  if (event.source == 'sasmex' && event.originTime != null) {
+    final reach = SasmexMapAnimation.sArrivalSeconds(distance);
+    countdown = math.max((reach - elapsedSeconds).round(), 0);
+  } else if (event.originTime != null &&
       event.depth.isFinite &&
       event.depth >= 0 &&
       tables.isLoaded) {
@@ -183,7 +188,15 @@ class _LocalEewSidebarPanelState extends State<LocalEewSidebarPanel> {
       widget.event,
       userLat: position?.latitude,
       userLng: position?.longitude,
-      elapsedSeconds: QuakeTime.calcPassedSecondsUnified(widget.event),
+      elapsedSeconds:
+          widget.event.source == 'sasmex' && widget.event.originTime != null
+          ? NtpService().now
+                    .toUtc()
+                    .subtract(widget.event.replayClockOffset)
+                    .difference(QuakeTime.unifiedInstantUtc(widget.event))
+                    .inMilliseconds /
+                1000
+          : QuakeTime.calcPassedSecondsUnified(widget.event),
     );
     final countdown = estimate.secondsToSWave;
     final accent = countdown == null || countdown == 0
