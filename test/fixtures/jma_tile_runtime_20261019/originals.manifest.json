@@ -1,0 +1,30 @@
+[
+  {
+    "file": "radar.targetTimes.original.json",
+    "source": "https://www.jma.go.jp/bosai/jmatile/data/nowc/targetTimes_N1.json",
+    "bytes": 3667,
+    "sha256": "19b6912cc60feb4efdad9bc76aa46220e449a08971affb60732dadb846a171cb"
+  },
+  {
+    "file": "satellite.targetTimes.original.json",
+    "source": "https://www.jma.go.jp/bosai/himawari/data/satimg/targetTimes_fd.json",
+    "bytes": 14419,
+    "sha256": "333cc1f9e33fe5b7551e156124a9eccc1adcdf395d2a63a639261faf3964a9c9"
+  },
+  {
+    "kind": "radar",
+    "file": "radar.tile.original.png",
+    "path": "/bosai/jmatile/data/nowc/20261019094000/none/20261019094000/surf/hrpns/6/56/25.png",
+    "bytes": 3624,
+    "sha256": "6f10141f885e422153027d32887f9e64e1f9fa7591e67e36a95d02bff51164fa",
+    "source": "https://www.jma.go.jp/bosai/jmatile/data/nowc/20261019094000/none/20261019094000/surf/hrpns/6/56/25.png"
+  },
+  {
+    "kind": "satellite",
+    "file": "satellite.tile.original.jpg",
+    "path": "/bosai/himawari/data/satimg/20261019093000/fd/20261019093000/B13/TBB/3/7/3.jpg",
+    "bytes": 16579,
+    "sha256": "457689dd3db80273e9cd10ba2804d7534007af86893fda99c99ffca0f4a009ef",
+    "source": "https://www.jma.go.jp/bosai/himawari/data/satimg/20261019093000/fd/20261019093000/B13/TBB/3/7/3.jpg"
+  }
+]

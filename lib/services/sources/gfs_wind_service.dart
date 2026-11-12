@@ -1,4 +1,5 @@
-import 'dart:convert';
+import 'source_http_client.dart';
+import 'api_json_decoder.dart';
 import 'dart:math' as math;
 
 import 'package:http/http.dart' as http;
@@ -90,7 +91,7 @@ class GfsWindGrid {
 
 class GfsWindService {
   GfsWindService({http.Client? client})
-    : _client = client ?? http.Client(),
+    : _client = client ?? createSourceHttpClient(),
       _ownsClient = client == null;
 
   final http.Client _client;
@@ -151,7 +152,7 @@ class GfsWindService {
     if (response.statusCode != 200) {
       throw StateError('GFS wind request failed: HTTP ${response.statusCode}');
     }
-    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+    final decoded = decodeApiJsonBytes(response.bodyBytes);
     if (decoded is! List || decoded.length != rows * columns) {
       throw const FormatException(
         'GFS wind response has an unexpected grid size',
@@ -272,7 +273,7 @@ class GfsWindService {
     if (response.statusCode != 200) {
       throw StateError('Jian wind request failed: HTTP ${response.statusCode}');
     }
-    return _JianWindField.parse(jsonDecode(utf8.decode(response.bodyBytes)));
+    return _JianWindField.parse(decodeApiJsonBytes(response.bodyBytes));
   }
 
   void close() {

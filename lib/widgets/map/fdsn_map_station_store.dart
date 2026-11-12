@@ -3,6 +3,9 @@ import '../../services/sources/fdsn_station_service.dart';
 /// Metadata is indexed once. Motion updates replace one immutable station, not
 /// an entire catalogue; the map only scans stations with recent observations.
 class FdsnMapStationStore {
+  FdsnMapStationStore({DateTime Function()? clock})
+    : _clock = clock ?? DateTime.now;
+  final DateTime Function() _clock;
   final _catalogues = <String, Map<String, FdsnStation>>{};
   final _active = <String, Map<int, FdsnStation>>{};
   final _ranks = <String, Map<String, int>>{};
@@ -19,7 +22,7 @@ class FdsnMapStationStore {
     _ranks[source] = {
       for (var i = 0; i < stations.length; i++) stations[i].code: i,
     };
-    final now = DateTime.now().microsecondsSinceEpoch;
+    final now = _clock().microsecondsSinceEpoch;
     _active[source] = {
       for (var i = 0; i < stations.length; i++)
         if (_recent(stations[i], now)) i: stations[i],
@@ -42,7 +45,8 @@ class FdsnMapStationStore {
   }
 
   List<FdsnStation> displayStations(Set<String> sources) {
-    final now = DateTime.now().microsecondsSinceEpoch;
+    final capturedAt = _clock();
+    final now = capturedAt.microsecondsSinceEpoch;
     if (_snapshot != null &&
         (_expires == null || now <= _expires!) &&
         sources.length == _snapshotSources.length) {
@@ -82,7 +86,9 @@ class FdsnMapStationStore {
       }
     }
     _snapshotSources = sources.toList();
-    return _snapshot = List.unmodifiable(deduplicateFdsnStations(ordered));
+    return _snapshot = List.unmodifiable(
+      deduplicateFdsnStations(ordered, at: capturedAt),
+    );
   }
 
   bool removeSource(String source) {

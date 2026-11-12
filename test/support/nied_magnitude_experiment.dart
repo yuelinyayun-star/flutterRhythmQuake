@@ -124,14 +124,18 @@ class NiedMagnitudeExperiment {
     final quantizedLocked = state.quantizedPublication.update(
       reportNumber: reportNumber,
       stable: stable,
-      calculate: () => calculate(quantizedMaximum),
+      observedAt: time,
+      observedIntensity: quantizedMaximum,
+      calculate: calculate,
     );
     // Preserve the existing multiple-source conversion in this experiment.
     final continuousInput = multiple ? quantizedMaximum : rawMaximum;
     final continuousLocked = state.continuousPublication.update(
       reportNumber: reportNumber,
       stable: stable,
-      calculate: () => calculate(continuousInput),
+      observedAt: time,
+      observedIntensity: continuousInput,
+      calculate: calculate,
     );
     final refreshed = calculate(continuousInput);
     if (refreshed != null &&

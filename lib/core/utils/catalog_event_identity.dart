@@ -10,6 +10,7 @@ String? internationalCatalogSource(String source) {
   if (unifiedCatalogSources.containsKey(source)) return source;
   return switch (source) {
     'usgsEqlist' => 'usgsEqlist',
+    'cwaEqlist' => 'cwaEqlist',
     'kmaEqlist' => 'kmaEqlist',
     'emsc' || 'emscEqlist' => 'emsc',
     'hko' || 'hkoEqlist' => 'hko',
@@ -144,6 +145,23 @@ String? _internationalReportKey(
 
 /// Comparison keys only. Original IDs, timestamps and payloads stay untouched.
 String catalogEventId(String source, String id) {
+  if (source == 'cwaEqlist') {
+    // Captured CWA report IDs encode the same local origin clock in Jian
+    // and TREM. Use that agency identity even when report parameters change.
+    final jian = RegExp(r'^(\d{8})\.(\d{6})$').firstMatch(id);
+    final trem = RegExp(r'^\d{6}-(\d{4})-(\d{4})-(\d{6})$')
+        .firstMatch(id);
+    if (jian != null) return 'cwa|${jian[1]}${jian[2]}';
+    if (trem != null) return 'cwa|${trem[1]}${trem[2]}${trem[3]}';
+    final whews = RegExp(r'^cwa_(\d{13})$').firstMatch(id);
+    if (whews != null) {
+      final local = DateTime.fromMillisecondsSinceEpoch(
+        int.parse(whews[1]!),
+        isUtc: true,
+      ).add(const Duration(hours: 8));
+      return 'cwa|${local.toIso8601String().substring(0, 19).replaceAll(RegExp(r'[^0-9]'), '')}';
+    }
+  }
   // Captured Jian CENC history appends _M to the original CD/CC bulletin ID.
   // Its minute-only origin cannot establish identity against the full clock.
   if (source == 'cencEqlist' &&
@@ -272,18 +290,7 @@ String? catalogReportKey(UnifiedQuakeData event) {
 }
 
 String _catalogReview(UnifiedQuakeData event) {
-  final text = '${event.titleText} ${event.reportNumText}'.toLowerCase();
-  return text.contains('unverified') ||
-          text.contains('automatic') ||
-          text.contains('自动') ||
-          text.contains('待核实')
-      ? 'automatic'
-      : text.contains('reviewed') ||
-            text.contains('confirmed') ||
-            text.contains('正式') ||
-            text.contains('已核实')
-      ? 'reviewed'
-      : '';
+  return event.reviewType ?? '';
 }
 
 const _gaReportPrefix = 'whews_ga|cross-api-v1|';
@@ -298,6 +305,92 @@ Map<String, dynamic>? _cencIdentityFromKey(String key) {
     return null;
   }
 }
+
+/// Captured Wolfx reviewed data can retain its AU origin-based ID while Jian
+/// publishes the CD manual bulletin with its seconds omitted. This comparison
+/// requires the complete reviewed body and the observed wire ID/precision
+/// contracts; it is not a generic nearby-time or nearby-coordinate match.
+({String report, bool minute})? _cencPrecisionIdentity({
+  required String id,
+  required String api,
+  required DateTime instant,
+  required double latitude,
+  required double longitude,
+  required double magnitude,
+  required double depth,
+  required String location,
+  required String review,
+}) {
+  if (review != 'reviewed' ||
+      location.isEmpty ||
+      !latitude.isFinite ||
+      !longitude.isFinite ||
+      latitude.abs() > 90 ||
+      longitude.abs() > 180 ||
+      (latitude == 0 && longitude == 0) ||
+      !magnitude.isFinite ||
+      magnitude < 0 ||
+      !depth.isFinite ||
+      depth < 0) {
+    return null;
+  }
+  final utc = instant.toUtc();
+  final minute =
+      api == 'Jian Project' &&
+      RegExp(r'^CD\.\d{14}\.\d+_M$').hasMatch(id) &&
+      utc.second == 0 &&
+      utc.millisecond == 0 &&
+      utc.microsecond == 0;
+  if (!minute) {
+    final native = RegExp(r'^AU\.(\d{14})\.\d+$').firstMatch(id);
+    if (!{'Wolfx', 'FAN', 'WHEWS'}.contains(api) ||
+        native == null ||
+        utc.second == 0) {
+      return null;
+    }
+    final wall = utc.add(const Duration(hours: 8));
+    String two(int value) => value.toString().padLeft(2, '0');
+    final originIdTime =
+        '${wall.year}${two(wall.month)}${two(wall.day)}'
+        '${two(wall.hour)}${two(wall.minute)}${two(wall.second)}';
+    if (native.group(1) != originIdTime) return null;
+  }
+  return (
+    report: jsonEncode([
+      utc.microsecondsSinceEpoch ~/ Duration.microsecondsPerMinute,
+      latitude,
+      longitude,
+      magnitude,
+      depth,
+      location,
+      review,
+    ]),
+    minute: minute,
+  );
+}
+
+String _cencHistoryReview(QuakeMessage event) {
+  final value = '${event.reviewType} ${event.infoTypeName}'.toLowerCase();
+  if (value.contains('正式') || value.contains('reviewed')) return 'reviewed';
+  if (value.contains('自动') || value.contains('automatic')) return 'automatic';
+  return '';
+}
+
+({String report, bool minute})? _cencUnifiedPrecisionIdentity(
+  UnifiedQuakeData event,
+) => event.originTime == null
+    ? null
+    : _cencPrecisionIdentity(
+        id: event.eventId,
+        api: event.apiTypeLabel,
+        instant: QuakeTime.unifiedInstantUtc(event),
+        latitude: event.lat ?? double.nan,
+        longitude: event.lng ?? double.nan,
+        magnitude: event.magnitude,
+        depth: event.depth,
+        location: event.hypocenter,
+        review: _catalogReview(event),
+      );
 
 bool _gaTransportId(String id, String api) => switch (api) {
   'WHEWS' => RegExp(r'^ga\d{4}[a-z]+$').hasMatch(id),
@@ -373,18 +466,31 @@ String catalogCanonicalEventId(
     final observation = catalogObservationKey(event);
     if (observation != null) {
       String? matchingObservation;
+      final incomingPrecision = _cencUnifiedPrecisionIdentity(event);
+      final precisionMatches = <String>{};
       for (final key in seen.keys) {
         final known = _cencIdentityFromKey(key);
         if (known == null || known['identity'] is! String) continue;
-        if (known['id'] == event.eventId &&
-            known['api'] == event.apiTypeLabel) {
+        final incomingId = catalogEventId(event.source, event.eventId);
+        if (incomingId.isNotEmpty &&
+            catalogEventId(event.source, known['id'] as String? ?? '') ==
+                incomingId) {
           return known['identity'] as String;
         }
         if (known['observation'] == observation) {
           matchingObservation ??= known['identity'] as String;
         }
+        if (incomingPrecision != null &&
+            known['precisionReport'] == incomingPrecision.report &&
+            known['minutePrecision'] is bool &&
+            known['minutePrecision'] != incomingPrecision.minute) {
+          precisionMatches.add(known['identity'] as String);
+        }
       }
-      return matchingObservation ?? observation;
+      return matchingObservation ??
+          (precisionMatches.length == 1
+              ? precisionMatches.single
+              : observation);
     }
   }
   final incoming = _gaReport(event);
@@ -437,7 +543,8 @@ Iterable<String> catalogReportKeys(
   if (event.source == 'cencEqlist' && !event.isEew) {
     final observation = catalogObservationKey(event);
     if (observation != null && event.eventId.trim().isNotEmpty) {
-      yield '$_cencIdentityPrefix${jsonEncode({'id': event.eventId, 'api': event.apiTypeLabel, 'observation': observation, 'identity': catalogCanonicalEventId(event, seen)})}';
+      final precision = _cencUnifiedPrecisionIdentity(event);
+      yield '$_cencIdentityPrefix${jsonEncode({'id': event.eventId, 'api': event.apiTypeLabel, 'observation': observation, 'identity': catalogCanonicalEventId(event, seen), if (precision != null) 'precisionReport': precision.report, if (precision != null) 'minutePrecision': precision.minute})}';
     }
   }
   final ga = _gaReport(event);
@@ -487,6 +594,37 @@ bool hasSeenCatalogReport(UnifiedQuakeData event, Map<String, DateTime> seen) {
   return crossApiMatch;
 }
 
+/// A first reviewed bulletin may replace a previously seen automatic report,
+/// including after its card closed. Persisted reviewed state prevents reopening.
+bool isUnseenCatalogReviewUpgrade(
+  UnifiedQuakeData event,
+  Map<String, DateTime> seen,
+) {
+  if (event.reviewType != 'reviewed') return false;
+  final source = internationalCatalogSource(event.source);
+  if (source == null) return false;
+  final identity = catalogCanonicalEventId(event, seen);
+  var sawAutomatic = false;
+  for (final key in seen.keys) {
+    const prefix = 'catalog|agency-report-v1|';
+    if (!key.startsWith(prefix)) continue;
+    try {
+      final report = jsonDecode(key.substring(prefix.length));
+      if (report is! List ||
+          report.length < 9 ||
+          report[0] != source ||
+          report[1] != identity) {
+        continue;
+      }
+      if (report[8] == 'reviewed') return false;
+      if (report[8] == 'automatic') sawAutomatic = true;
+    } on FormatException {
+      continue;
+    }
+  }
+  return sawAutomatic;
+}
+
 bool sameCatalogHistoryEvent(String bucket, QuakeMessage a, QuakeMessage b) {
   if (bucket == 'cencEqlist' &&
       a.source == QuakeSourceType.cenc &&
@@ -495,6 +633,7 @@ bool sameCatalogHistoryEvent(String bucket, QuakeMessage a, QuakeMessage b) {
     if (firstId.isNotEmpty && firstId == catalogEventId(bucket, b.eventId)) {
       return true;
     }
+    if (compareCencHistoryOriginPrecision(a, b) != null) return true;
     String? key(QuakeMessage event) => _cencObservationKey(
       instant: QuakeTime.eventInstantUtc(event),
       lat: event.latitude,
@@ -507,6 +646,7 @@ bool sameCatalogHistoryEvent(String bucket, QuakeMessage a, QuakeMessage b) {
       unifiedCatalogSources[bucket] ??
       switch (bucket) {
         'usgsEqlist' => QuakeSourceType.usgs,
+        'cwaEqlist' => QuakeSourceType.cwa,
         'emscEqlist' => QuakeSourceType.emsc,
         'kmaEqlist' => QuakeSourceType.kma_eq,
         _ => null,
@@ -553,7 +693,8 @@ bool sameCatalogHistoryEvent(String bucket, QuakeMessage a, QuakeMessage b) {
 }
 
 /// Prefer the captured full-second CENC bulletin over Jian's minute-only copy.
-/// Apply only to the same native bulletin and otherwise equal source elements;
+/// Apply to the same native bulletin or the captured AU/CD reviewed precision
+/// pair, with otherwise equal source elements;
 /// no timestamps, IDs or source intensity estimates are rewritten.
 int? compareCencHistoryOriginPrecision(
   QuakeMessage current,
@@ -570,16 +711,28 @@ int? compareCencHistoryOriginPrecision(
   final id = catalogEventId('cencEqlist', current.eventId);
   if (!RegExp(r'^C[CD]\.\d{14}\.\d+$').hasMatch(id) ||
       id != catalogEventId('cencEqlist', incoming.eventId)) {
-    return null;
+    ({String report, bool minute})? precision(QuakeMessage event) =>
+        _cencPrecisionIdentity(
+          id: event.eventId,
+          api: event.apiTypeLabel ?? '',
+          instant: QuakeTime.eventInstantUtc(event),
+          latitude: event.latitude,
+          longitude: event.longitude,
+          magnitude: event.magnitude,
+          depth: event.depth,
+          location: event.location,
+          review: _cencHistoryReview(event),
+        );
+    final a = precision(current), b = precision(incoming);
+    if (a == null ||
+        b == null ||
+        a.report != b.report ||
+        a.minute == b.minute) {
+      return null;
+    }
+    return a.minute ? 1 : -1;
   }
-  String review(QuakeMessage e) {
-    final value = '${e.reviewType} ${e.infoTypeName}'.toLowerCase();
-    if (value.contains('正式') || value.contains('reviewed')) return 'reviewed';
-    if (value.contains('自动') || value.contains('automatic')) return 'automatic';
-    return '';
-  }
-
-  if (review(current) != review(incoming)) return null;
+  if (_cencHistoryReview(current) != _cencHistoryReview(incoming)) return null;
   bool minuteCopy(QuakeMessage e) =>
       e.apiTypeLabel == 'Jian Project' &&
       e.eventId.endsWith('_M') &&
@@ -595,4 +748,33 @@ int? compareCencHistoryOriginPrecision(
   if (minuteCopy(current) && incoming.eventId == id && b.second != 0) return 1;
   if (minuteCopy(incoming) && current.eventId == id && a.second != 0) return -1;
   return null;
+}
+
+/// Apply the same proven bulletin-precision rule to active cards and Android.
+int? compareCencUnifiedOriginPrecision(
+  UnifiedQuakeData current,
+  UnifiedQuakeData incoming,
+) {
+  if (current.source != 'cencEqlist' ||
+      incoming.source != 'cencEqlist' ||
+      current.isEew ||
+      incoming.isEew ||
+      current.originTime == null ||
+      incoming.originTime == null) {
+    return null;
+  }
+  QuakeMessage message(UnifiedQuakeData event) => QuakeMessage(
+    source: QuakeSourceType.cenc,
+    eventId: event.eventId,
+    location: event.hypocenter,
+    magnitude: event.magnitude,
+    latitude: event.lat ?? double.nan,
+    longitude: event.lng ?? double.nan,
+    depth: event.depth,
+    originTime: event.originTime!,
+    timeZone: event.timeZone,
+    apiTypeLabel: event.apiTypeLabel,
+    reviewType: event.reviewType,
+  );
+  return compareCencHistoryOriginPrecision(message(current), message(incoming));
 }

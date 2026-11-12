@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<alert xmlns="urn:oasis:names:tc:emergency:cap:1.2">
+    <identifier>BOLETIN_SEGUIMIENTO_007_20250730_070828</identifier>
+    <sent>2025-07-30T07:08:28.350-06:00</sent>
+    <status>Actual</status>
+    <msgType>Update</msgType>
+    <scope>Public</scope>
+    <info>
+        <language>es-MX</language>
+        <category>Geo</category>
+        <event>Tsunami</event>
+        <urgency>Immediate</urgency>
+        <severity>Moderate</severity>
+        <certainty>Observed</certainty>
+        <senderName>CENTRO DE ALERTA DE TSUNAMIS (CAT-SEMAR)</senderName>
+        <description>De acuerdo a la actualizacion de la informacion de seguimiento de la propagacion del tsunami generado, para las costas nacionales se registro una altura de 0.70 metros en Ensenada, B.C., 0.25 metros en Isla Clarion, Manzanillo 1.15 metros, Colima y Salina Cruz 0.25 metros. Se continuara monitoreando el nivel del mar.</description>
+        <instruction>Mantener a la poblacion alejada de las playas hasta la cancelacion de la alerta;
+Se esperan corrientes fuertes e inusuales en la entrada de los puertos.
+Extremar precauciones para las operaciones portuarias.</instruction>
+        <web>https://digaohm.semar.gob.mx/cat/Boletines/BOLETIN_SEGUIMIENTO_007_20250730_070828.txt</web>
+        <parameter>
+            <valueName>TIEMPO DE ORIGEN DEL SISMO</valueName>
+            <value>2025-07-29T18:56:00</value>
+        </parameter>
+        <parameter>
+            <valueName>MAGNITUD</valueName>
+            <value>8.8</value>
+        </parameter>
+        <parameter>
+            <valueName>LOCALIZACION</valueName>
+            <value>52.53,160.165</value>
+        </parameter>
+        <parameter>
+            <valueName>PROFUNDIDAD</valueName>
+            <value>20 km</value>
+        </parameter>
+        <area>
+            <areaDesc>115 km al AL ESTE SURESTE DE PETROPAVLOSVKY-KAMCHATSKIY, RUSIA</areaDesc>
+            <polygon>POLYGON ((-114.1975958261256 33.115229910840476, -114.19757086896902 33.1149925134381, -104.41667977445933 21.92278989146245, -104.34796423263289 20.65062444102998, -96.50312621497325 16.231375050146628, -94.67168931479684 16.826618750651647, -91.78224918572735 15.307088732590119, -91.96880779371988 14.085412839173472, -96.7175664325402 14.940390054114594, -103.07703482889889 17.642989192062476, -107.73154233829392 17.6623501703848, -114.66131593071546 16.087401626652632, -120.58312245514846 25.489844432733683, -117.6212686457952 32.82576119045236, -114.1975958261256 33.115229910840476))</polygon>
+        </area>
+    </info>
+</alert>

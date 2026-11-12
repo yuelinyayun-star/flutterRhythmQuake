@@ -1,0 +1,62 @@
+{
+  "key": "nmefc_20240403_2",
+  "source": "tsunami",
+  "Data": {
+    "id": "202404030758_2",
+    "code": "202404030758",
+    "warningInfo": {
+      "level": "橙色",
+      "title": "海啸Ⅱ级警报（橙色）",
+      "subtitle": "自然资源部海啸预警中心根据《海洋灾害应急预案》，发布海啸Ⅱ级警报（橙色）。 2024年4月3日7时58分（北京时间），中国台湾海域（23.81°N,121.74°E）发生7.3级地震，震源深度为12.0千米（震源参数修订）。自然资源部海啸预警中心综合分析判断，地震可能会在震源周围引发局地海啸，预计对我国沿岸局部区域造成灾害性影响。 "
+    },
+    "timeInfo": {
+      "alarmDate": "2024-04-03 08:52:00"
+    },
+    "details": {
+      "batch": 2,
+      "htmlUrl": "https://obs.nmefc.cn/Warning/TsunamiAdvice/202404030758_2_file/202404030758_2.html",
+      "maps": {
+        "amplitudeMapUrl": "https://obs.nmefc.cn/Warning/TsunamiAdvice/202404030758_2_file/Tsunami_Maximum_Amplitude.jpg",
+        "coastalMapUrl": "https://obs.nmefc.cn/Warning/TsunamiAdvice/202404030758_2_file/Coastal_Forecast_Point.jpg"
+      }
+    },
+    "shockInfo": {
+      "latitude": 23.81,
+      "longitude": 121.74,
+      "magnitude": 7.3,
+      "depth": 12,
+      "placeName": "中国台湾海域",
+      "shockTime": "2024-04-03 07:58:00"
+    },
+    "forecasts": [
+      {
+        "province": "台湾",
+        "forecastArea": "花莲",
+        "forecastPoint": "花莲",
+        "estimatedArrivalTime": "08:01",
+        "maxWaveHeight": "100-300",
+        "warningLevel": "橙色"
+      },
+      {
+        "province": "台湾",
+        "forecastArea": "宜兰",
+        "forecastPoint": "宜兰县",
+        "estimatedArrivalTime": "08:17",
+        "maxWaveHeight": "30-100",
+        "warningLevel": "黄色"
+      },
+      {
+        "province": "台湾",
+        "forecastArea": "台东北",
+        "forecastPoint": "富冈",
+        "estimatedArrivalTime": "08:20",
+        "maxWaveHeight": "30-100",
+        "warningLevel": "黄色"
+      }
+    ],
+    "waterLevelMonitoring": []
+  },
+  "original": "test/fixtures/tsunami_presentation_20261023/raw/84cab39c67d530a4.original",
+  "url": "https://obs.nmefc.cn/Warning/TsunamiAdvice/202404030758_2_file/202404030758_2.html",
+  "sha256": "84cab39c67d530a41fa0bc7dd6116bb636cf336f8e222a4d60199b0162488750"
+}

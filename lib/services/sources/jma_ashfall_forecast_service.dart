@@ -1,3 +1,4 @@
+import 'source_http_client.dart';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
@@ -27,7 +28,7 @@ class JmaAshfallForecastService {
       return const [];
     }
 
-    final client = _client ?? http.Client();
+    final client = _client ?? createSourceHttpClient();
     try {
       final response = await client
           .get(Uri.parse(_feedUrl), headers: _headers)

@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'api_json_decoder.dart';
+import 'source_socket.dart';
 import 'dart:convert';
 
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -15,7 +17,15 @@ class SidesisSocketIoClient {
     this.onMessage,
     this.onRawFrame,
     this.onStateChanged,
-  });
+    WebSocketChannel Function(Uri)? socketFactory,
+  }) : _socketFactory = socketFactory ?? _openSocket;
+
+  // Socket.IO's raw callback consumes text; binary frames remain ignored.
+  static WebSocketChannel _openSocket(Uri uri) => connectSourceSocket(
+    uri,
+    connectTimeout: connectTimeout,
+    textAsBytes: false,
+  );
 
   static const String defaultUrl = 'wss://sidesis.iigea.org/socket.io/';
   static const Duration connectTimeout = Duration(seconds: 12);
@@ -27,6 +37,7 @@ class SidesisSocketIoClient {
   final void Function(SidesisSocketIoMessage message)? onMessage;
   final void Function(String frame)? onRawFrame;
   final void Function(SidesisSocketIoState state)? onStateChanged;
+  final WebSocketChannel Function(Uri) _socketFactory;
 
   WebSocketChannel? _channel;
   StreamSubscription<dynamic>? _subscription;
@@ -77,17 +88,13 @@ class SidesisSocketIoClient {
     _closeCurrent();
     _namespaceConnected = false;
     _setState(SidesisSocketIoState.connecting);
+    if (!_running || generation != _generation) return;
 
     final uri = _buildUri(url);
     WebSocketChannel? channel;
     try {
-      channel = WebSocketChannel.connect(uri);
+      channel = _socketFactory(uri);
       _channel = channel;
-      await channel.ready.timeout(connectTimeout);
-      if (!_isCurrent(channel, generation)) {
-        await channel.sink.close();
-        return;
-      }
       _subscription = channel.stream.listen(
         (raw) => _handleFrame(channel!, generation, raw),
         onError: (Object error, StackTrace stackTrace) {
@@ -100,7 +107,10 @@ class SidesisSocketIoClient {
         },
         cancelOnError: true,
       );
+      await channel.ready.timeout(connectTimeout);
+      if (!_isCurrent(channel, generation)) return;
     } catch (error) {
+      if (!_running || generation != _generation) return;
       if (channel != null && !_isCurrent(channel, generation)) return;
       _handleFailure(error);
     }
@@ -110,6 +120,7 @@ class SidesisSocketIoClient {
     if (!_isCurrent(channel, generation)) return;
     if (raw is! String) return;
     onRawFrame?.call(raw);
+    if (!_isCurrent(channel, generation)) return;
     if (raw.isEmpty) return;
 
     final engineType = raw.codeUnitAt(0) - 48;
@@ -162,7 +173,7 @@ class SidesisSocketIoClient {
   void _handleEvent(String payload) {
     dynamic decoded;
     try {
-      decoded = jsonDecode(payload);
+      decoded = decodeApiJson(payload);
     } catch (_) {
       return;
     }
@@ -181,9 +192,11 @@ class SidesisSocketIoClient {
       _setState(SidesisSocketIoState.disconnected);
       return;
     }
+    ++_generation;
     _namespaceConnected = false;
     _closeCurrent();
     _setState(SidesisSocketIoState.error);
+    if (!_running) return;
     _reconnectTimer?.cancel();
     final delay = Duration(seconds: _reconnectSeconds);
     _reconnectSeconds = (_reconnectSeconds * 2).clamp(
@@ -214,12 +227,19 @@ class SidesisSocketIoClient {
   }
 
   void _closeCurrent() {
-    _subscription?.cancel();
+    unawaited(_subscription?.cancel());
     _subscription = null;
     final channel = _channel;
     _channel = null;
     try {
-      channel?.sink.close();
+      if (channel != null) {
+        unawaited(
+          channel.sink
+              .close()
+              .timeout(const Duration(seconds: 5))
+              .catchError((Object _) {}),
+        );
+      }
     } catch (_) {
       // The channel may already be closed.
     }

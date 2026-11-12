@@ -1,0 +1,22 @@
+[
+  {
+    "file": "kenai.dyfi_geo.kmz",
+    "url": "https://earthquake.usgs.gov/product/dyfi/aka2026vqjriv/us/1793589678712/dyfi_geo.kmz",
+    "sha256": "5bd838da70822e14a8545d48cf22f36961fcd1590259657d12c07a855dd2f8cd"
+  },
+  {
+    "file": "kenai.detail.original.geojson",
+    "sha256": "02b49cd07d9669d09c16f9746cc051e356ba42da9ee27d45ea4f2e9d90acbfb8",
+    "eventId": "aka2026vqjriv"
+  },
+  {
+    "file": "california.dyfi_geo.kmz",
+    "url": "https://earthquake.usgs.gov/product/dyfi/nc75461147/us/1793591197499/dyfi_geo.kmz",
+    "sha256": "cc0a7d874ae9563955a2450abb32cca07889af5fe3311096bef55e005ecc71d8"
+  },
+  {
+    "file": "california.detail.original.geojson",
+    "sha256": "d6be25d7ee9bf143f22f5faaef40ab3282d99d6e991880323ee663518296865d",
+    "eventId": "nc75461147"
+  }
+]

@@ -1,10 +1,10 @@
 import 'dart:async';
-import 'dart:convert';
+import 'api_json_decoder.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'package:web_socket_channel/io.dart';
+import 'source_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../../core/intensity_calculator.dart';
@@ -38,7 +38,7 @@ class EmscEqlistService {
 
   static WebSocketChannel _openSocket(Uri uri) => kIsWeb
       ? WebSocketChannel.connect(uri)
-      : IOWebSocketChannel.connect(
+      : connectSourceSocket(
           uri,
           pingInterval: const Duration(seconds: 15),
           connectTimeout: const Duration(seconds: 15),
@@ -51,7 +51,7 @@ class EmscEqlistService {
     if (response.statusCode != 200) {
       throw StateError('EMSC history HTTP ${response.statusCode}');
     }
-    final body = jsonDecode(utf8.decode(response.bodyBytes));
+    final body = decodeApiJsonBytes(response.bodyBytes);
     if (body is! Map || body['features'] is! List) {
       throw const FormatException('EMSC history has no features');
     }
@@ -172,8 +172,9 @@ class EmscEqlistService {
 
   void _onFrame(dynamic frame) {
     try {
-      final text = frame is List<int> ? utf8.decode(frame) : frame as String;
-      final message = jsonDecode(text);
+      final message = frame is List<int>
+          ? decodeApiJsonBytes(frame)
+          : decodeApiJson(frame as String);
       if (message is! Map || message['data'] is! Map) return;
       // The official protocol supplies {action, data: GeoJSON Feature}.
       final action = message['action']?.toString().toLowerCase();

@@ -5,6 +5,7 @@ import 'dart:isolate';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutterrhythmquake/services/sources/fdsn_network_io.dart';
+import 'package:flutterrhythmquake/services/sources/source_tcp_socket.dart';
 import 'package:flutterrhythmquake/services/sources/fdsn_proxy.dart';
 import 'package:flutterrhythmquake/services/sources/fdsn_motion_service_io.dart';
 import 'package:flutterrhythmquake/services/sources/fdsn_windows_proxy.dart';
@@ -433,7 +434,7 @@ void main() {
         }
       }, onError: (_) {});
     });
-    Socket? client;
+    SourceTcpSocket? client;
     try {
       final network = FdsnNetwork(
         resolve: (_) async => FdsnProxyRoute.proxy('127.0.0.1', server.port),

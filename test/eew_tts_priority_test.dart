@@ -13,6 +13,16 @@ Future<void> _waitForCount(List<String> spoken, int count) async {
   fail('Expected $count spoken messages, got $spoken');
 }
 
+// A different critical event keeps these messages pending. Ordinary speech is
+// interruptible and must not be used as an uninterruptible queue barrier.
+Future<void> _holdAnotherEew(TtsService tts, String name) => tts.speakEew(
+  'blocker',
+  eventKey: 'OTHER|$name',
+  dedupeKey: 'OTHER|$name:first',
+  kind: EewSpeechKind.first,
+  delay: Duration.zero,
+);
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -78,7 +88,7 @@ void main() {
         if (!blocker.isCompleted) blocker.complete();
       });
 
-      await tts.speak('blocker');
+      await _holdAnotherEew(tts, 'critical-order');
       await _waitForCount(spoken, 1);
       await tts.speakEew(
         'A update',
@@ -152,7 +162,7 @@ void main() {
         if (!blocker.isCompleted) blocker.complete();
       });
 
-      await tts.speak('blocker');
+      await _holdAnotherEew(tts, 'pending-refresh');
       await _waitForCount(spoken, 1);
       await tts.speakEew(
         'first report',
@@ -186,7 +196,7 @@ void main() {
       if (!blocker.isCompleted) blocker.complete();
     });
 
-    await tts.speak('blocker');
+    await _holdAnotherEew(tts, 'countdown-protection');
     await _waitForCount(spoken, 1);
     await tts.speakEew(
       'critical warning',
@@ -213,7 +223,7 @@ void main() {
       if (!blocker.isCompleted) blocker.complete();
     });
 
-    await tts.speak('blocker');
+    await _holdAnotherEew(tts, 'arrival-protection');
     await _waitForCount(spoken, 1);
     await tts.speakEew(
       'critical warning',
@@ -292,7 +302,7 @@ void main() {
       if (!blocker.isCompleted) blocker.complete();
     });
 
-    await tts.speak('blocker');
+    await _holdAnotherEew(tts, 'disabled-pending-refresh');
     await _waitForCount(spoken, 1);
     await tts.speakEew(
       'first report',

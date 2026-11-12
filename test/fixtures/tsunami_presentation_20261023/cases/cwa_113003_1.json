@@ -1,0 +1,56 @@
+{
+  "key": "cwa_113003_1",
+  "source": "cwa_tsunami",
+  "Data": {
+    "id": "11300301",
+    "eventId": "113003",
+    "updates": 1,
+    "level": "Warning",
+    "reportType": "海嘯警報",
+    "issueTime": "2024-04-03 08:11:00",
+    "shockTime": "2024-04-03 07:58:00",
+    "placeName": "臺灣東部海域",
+    "latitude": 23.8,
+    "longitude": 121.7,
+    "magnitude": 7.3,
+    "depth": 15.5,
+    "headline": "海嘯警報",
+    "description": "發布時間：民國113年04月03日08時11分 １１３年０４月０３日０７時５８分（臺灣時間），臺灣東部海 域發生規模７﹒３地震，震央位於東經１２１﹒６７度、北緯２ ３﹒７７度。該地震可能引發海嘯影響臺灣，特此發布海嘯警報 ，提醒沿海地區民眾提高警覺嚴加防範，注意海浪突然湧升所造 成的危害。 ",
+    "warningAreas": [
+      {
+        "areaName": "東部沿海地區",
+        "arrivalTime": "2024-04-03 07:59:00",
+        "waveHeight": "小於1公尺"
+      },
+      {
+        "areaName": "東南沿海地區",
+        "arrivalTime": "2024-04-03 08:10:00",
+        "waveHeight": "小於1公尺"
+      },
+      {
+        "areaName": "東北沿海地區",
+        "arrivalTime": "2024-04-03 08:13:00",
+        "waveHeight": "小於1公尺"
+      },
+      {
+        "areaName": "北部沿海地區",
+        "arrivalTime": "2024-04-03 08:39:00",
+        "waveHeight": "小於1公尺"
+      },
+      {
+        "areaName": "西南沿海地區",
+        "arrivalTime": "2024-04-03 08:54:00",
+        "waveHeight": "小於1公尺"
+      },
+      {
+        "areaName": "海峽沿海地區",
+        "arrivalTime": "2024-04-03 09:58:00",
+        "waveHeight": "小於1公尺"
+      }
+    ],
+    "bulletinUrl": "https://scweb.cwa.gov.tw/zh-tw/tsunami/details?fileString=11300301"
+  },
+  "original": "test/fixtures/tsunami_presentation_20261023/raw/4af4050942f44487.original",
+  "url": "https://scweb.cwa.gov.tw/zh-tw/tsunami/details?fileString=11300301",
+  "sha256": "4af4050942f44487338064ef6a83d28bd267d6db25aeab9dda6ee5144935d4e6"
+}

@@ -122,39 +122,44 @@ void main() {
     },
   );
 
-  test('unchanged EEW reports do not fill the voice queue', () async {
-    if (!Platform.isWindows) return;
-    final tts = TtsService();
-    await tts.init();
-    await tts.stop();
-    await tts.configure(
-      enabled: true,
-      eventEnabled: true,
-      updateEnabled: true,
-      gptSovitsEnabled: false,
-      persist: false,
-    );
-    final spoken = <String>[];
-    tts.windowsSpeechOverrideForTest = (text) async => spoken.add(text);
-    addTearDown(() async {
+  test(
+    'numbered EEW updates refresh pending speech to the UI latest report',
+    () async {
+      if (!Platform.isWindows) return;
+      final tts = TtsService();
+      await tts.init();
       await tts.stop();
-      tts.windowsSpeechOverrideForTest = null;
-    });
-    final provider = QuakeProvider();
-    addTearDown(provider.dispose);
+      await tts.configure(
+        enabled: true,
+        eventEnabled: true,
+        updateEnabled: true,
+        gptSovitsEnabled: false,
+        persist: false,
+      );
+      final spoken = <String>[];
+      tts.windowsSpeechOverrideForTest = (text) async => spoken.add(text);
+      addTearDown(() async {
+        await tts.stop();
+        tts.windowsSpeechOverrideForTest = null;
+      });
+      final provider = QuakeProvider();
+      addTearDown(provider.dispose);
 
-    for (var report = 1; report <= 20; report++) {
-      provider.handleUnifiedEventForTest(_jmaEew(report));
-    }
-    await Future<void>.delayed(const Duration(milliseconds: 1600));
-    expect(spoken, hasLength(1));
-    expect(spoken.single, contains('第1报'));
+      for (var report = 1; report <= 20; report++) {
+        provider.handleUnifiedEventForTest(_jmaEew(report));
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 1600));
+      expect(spoken, hasLength(1));
+      expect(spoken.single, contains('第20报'));
 
-    provider.handleUnifiedEventForTest(_jmaEew(21).copyWith(maxIntensity: '6'));
-    await Future<void>.delayed(const Duration(milliseconds: 1700));
-    expect(spoken, hasLength(2));
-    expect(spoken.last, contains('第21报'));
-  });
+      provider.handleUnifiedEventForTest(
+        _jmaEew(21).copyWith(maxIntensity: '6'),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 1700));
+      expect(spoken, hasLength(2));
+      expect(spoken.last, contains('第21报'));
+    },
+  );
 
   test(
     'warning upgrade speaks even when ordinary updates are disabled',

@@ -1,0 +1,227 @@
+[
+  {
+    "path": "lib/services/jian_auth_service.dart",
+    "utf8_bytes": 1,
+    "http_charset": 0,
+    "binary_ws": 0,
+    "original_sha256": "502a4afad45e0955a179b6dbedb178f6d345af9ce56f91b0079d9ed02de0eaad"
+  },
+  {
+    "path": "lib/services/location_service.dart",
+    "utf8_bytes": 1,
+    "http_charset": 2,
+    "binary_ws": 0,
+    "original_sha256": "2ce1d502c2914b1ce019ac16f5dbf5cc592088879fe4f3fe9bb4236173c40b3d"
+  },
+  {
+    "path": "lib/services/ntp_service.dart",
+    "utf8_bytes": 0,
+    "http_charset": 1,
+    "binary_ws": 0,
+    "original_sha256": "c8561ad8003051cfb908528a3bf4704fd2a799c4bf00edf41e4467e63640a946"
+  },
+  {
+    "path": "lib/services/obs_websocket_service.dart",
+    "utf8_bytes": 0,
+    "http_charset": 0,
+    "binary_ws": 1,
+    "original_sha256": "417fc234e8a2e88a82ba09a83aa3f315450a261e28de8eddf3c7ea149899f7da"
+  },
+  {
+    "path": "lib/services/sources/chinaeew_icl_service.dart",
+    "utf8_bytes": 2,
+    "http_charset": 0,
+    "binary_ws": 0,
+    "original_sha256": "73ea5a0359ced020c1b8576d438d3e3100f5de4bcfef6c04443474cd0fea8313"
+  },
+  {
+    "path": "lib/services/sources/cma_local_weather_service.dart",
+    "utf8_bytes": 4,
+    "http_charset": 0,
+    "binary_ws": 0,
+    "original_sha256": "b916be743357c95b20025f5b647a7c5b634ce34dbc25079581c9da53c76ed8c6"
+  },
+  {
+    "path": "lib/services/sources/cwa_station_service.dart",
+    "utf8_bytes": 0,
+    "http_charset": 2,
+    "binary_ws": 0,
+    "streamed_http": 5,
+    "original_sha256": "b29131eee4a21155907550ba57106bb5ff87b7f27937338b86421b6eed3f7941"
+  },
+  {
+    "path": "lib/services/sources/emsc_eqlist_service.dart",
+    "utf8_bytes": 1,
+    "http_charset": 0,
+    "binary_ws": 1,
+    "original_sha256": "8b153edb890f9acc6194d26146e912a94607397ab83f7c28e5b5fe44cb304499"
+  },
+  {
+    "path": "lib/services/sources/eqlist/cenc_eqlist_service.dart",
+    "utf8_bytes": 0,
+    "http_charset": 1,
+    "binary_ws": 0,
+    "original_sha256": "ceeb851684eea7443e6b48bfed24fe06ec221f67c7a46688538d93df6d8b296e"
+  },
+  {
+    "path": "lib/services/sources/eqlist/cwa_eqlist_service.dart",
+    "utf8_bytes": 1,
+    "http_charset": 0,
+    "binary_ws": 0,
+    "original_sha256": "3bec29cb55251de6d868c633d85e2ec06918235a5ddc9c4583da9c16d392b7f6"
+  },
+  {
+    "path": "lib/services/sources/eqlist/jma_eqlist_service.dart",
+    "utf8_bytes": 0,
+    "http_charset": 1,
+    "binary_ws": 0,
+    "original_sha256": "ef92ac9191bc891c3c380e3643391aab502bd605230197d00c53a48e3cc66811"
+  },
+  {
+    "path": "lib/services/sources/fan_satellite_cloud_service.dart",
+    "utf8_bytes": 1,
+    "http_charset": 0,
+    "binary_ws": 0,
+    "original_sha256": "4e3914e395b00d0ea6d60c76d9f8ea67c5e893c81c1086afd33fffe8706e7bc5"
+  },
+  {
+    "path": "lib/services/sources/gfs_wind_service.dart",
+    "utf8_bytes": 2,
+    "http_charset": 0,
+    "binary_ws": 0,
+    "original_sha256": "7e47b5ccc00159e4ab4a3f6ad6c17181edd51634aad7fdebaa61fc7c87bae624"
+  },
+  {
+    "path": "lib/services/sources/jian_icl_service.dart",
+    "utf8_bytes": 0,
+    "http_charset": 0,
+    "binary_ws": 1,
+    "original_sha256": "1b4f3154af899b433b52e352440308035df59b9853661f8cd5135a93625b1447"
+  },
+  {
+    "path": "lib/services/sources/jian_service.dart",
+    "utf8_bytes": 0,
+    "http_charset": 0,
+    "binary_ws": 1,
+    "original_sha256": "ceaa6497db1ba3135a3623c214264b3ba18bd19c24be1e72b0cc7eb22deb76fa"
+  },
+  {
+    "path": "lib/services/sources/jian_station_service.dart",
+    "utf8_bytes": 0,
+    "http_charset": 0,
+    "binary_ws": 1,
+    "original_sha256": "aff3b1a94bb60ae859c0a8e5b2f3423329de4cdf0c0561a1df96902f16cd544c"
+  },
+  {
+    "path": "lib/services/sources/jma_local_weather_service.dart",
+    "utf8_bytes": 1,
+    "http_charset": 0,
+    "binary_ws": 0,
+    "original_sha256": "f03572f524d65795c3cbba3691002246887a26155feaf61c873e7ddd64651efc"
+  },
+  {
+    "path": "lib/services/sources/jma_radar_service.dart",
+    "utf8_bytes": 1,
+    "http_charset": 0,
+    "binary_ws": 0,
+    "original_sha256": "672b7a0867637e2913a791ed94ec72f0a77662cfae2ec4314acbd4ad62a2c9a2"
+  },
+  {
+    "path": "lib/services/sources/jma_satellite_cloud_service.dart",
+    "utf8_bytes": 1,
+    "http_charset": 0,
+    "binary_ws": 0,
+    "original_sha256": "791cc74a135e071b69d51e0f72feff8d9b1e4b142b548e2fe6a7eb56ca6ab387"
+  },
+  {
+    "path": "lib/services/sources/nied_yahoo_service.dart",
+    "utf8_bytes": 0,
+    "http_charset": 3,
+    "binary_ws": 0,
+    "original_sha256": "4d8d11d7dbbd02c91df8bd0f7d11af3de0a26876a88a8c5b72c9a7328d7535d8"
+  },
+  {
+    "path": "lib/services/sources/noaa_tsunami_area_service.dart",
+    "utf8_bytes": 1,
+    "http_charset": 0,
+    "binary_ws": 0,
+    "original_sha256": "5d6aca61e3db0dea5dba034a809304cc190afa4c7df54f5a48a06f16655e3479"
+  },
+  {
+    "path": "lib/services/sources/nowquake_cenc_intensity_service.dart",
+    "utf8_bytes": 2,
+    "http_charset": 0,
+    "binary_ws": 1,
+    "original_sha256": "9a66f4a3c923b96a71252d90f6a79326990d9a0fc98e9cac44282fdb00b1fb60"
+  },
+  {
+    "path": "lib/services/sources/nsmc_satellite_cloud_service.dart",
+    "utf8_bytes": 1,
+    "http_charset": 0,
+    "binary_ws": 0,
+    "original_sha256": "52d9194b27a7cb3a013bfcd173dcaf0dd2f39339b3218ed41f560db034d0f847"
+  },
+  {
+    "path": "lib/services/sources/palert_service.dart",
+    "utf8_bytes": 1,
+    "http_charset": 0,
+    "binary_ws": 0,
+    "original_sha256": "65e28daaae20f26961d01dc09f3a4caecc33336c7be5a09856242bf8d6daf76c"
+  },
+  {
+    "path": "lib/services/sources/sasmex_service.dart",
+    "utf8_bytes": 0,
+    "http_charset": 0,
+    "binary_ws": 1,
+    "original_sha256": "94ffa340c2c39951ff0fc6bba1970a40e5b79aba13347131bc731d7d2dbae73c"
+  },
+  {
+    "path": "lib/services/sources/snet_service.dart",
+    "utf8_bytes": 0,
+    "http_charset": 1,
+    "binary_ws": 0,
+    "original_sha256": "01941cacd1741a717500c4a8d1d301cf1002e0ed6169f508303517aea3cda977"
+  },
+  {
+    "path": "lib/services/sources/typhoon_service.dart",
+    "utf8_bytes": 2,
+    "http_charset": 0,
+    "binary_ws": 0,
+    "original_sha256": "9951c4b5b0d943b3a01cf50e788fbb1d5dd27719c1fc184c583edbaa4f8968e0"
+  },
+  {
+    "path": "lib/services/sources/usgs_cmt_service.dart",
+    "utf8_bytes": 0,
+    "http_charset": 2,
+    "binary_ws": 0,
+    "original_sha256": "900de6f160fd5cbdef592bca6c7604f59a6f841faf95821baf389b7938ec0861"
+  },
+  {
+    "path": "lib/services/sources/usgs_dyfi_service.dart",
+    "utf8_bytes": 1,
+    "http_charset": 0,
+    "binary_ws": 0,
+    "original_sha256": "ec4a2da281492f2f2e2814fc83f6dee173b6ebdb0fdadd518fb007f8e7d7e146"
+  },
+  {
+    "path": "lib/services/sources/usgs_eqlist_service.dart",
+    "utf8_bytes": 0,
+    "http_charset": 1,
+    "binary_ws": 0,
+    "original_sha256": "2f168912b66955828b7ff247e0262fd2d1ce9ecaeb64d53863567d59eb624e17"
+  },
+  {
+    "path": "lib/services/sources/usgs_shakemap_service.dart",
+    "utf8_bytes": 2,
+    "http_charset": 0,
+    "binary_ws": 0,
+    "original_sha256": "cb583fb9da16f92cdbe755ed9502b73912d1cc96a575a31f3ff9f5217e802d4d"
+  },
+  {
+    "path": "lib/services/wauth_service.dart",
+    "utf8_bytes": 0,
+    "http_charset": 1,
+    "binary_ws": 0,
+    "original_sha256": "4811d83f686235819e0f24c80cfd86bd7f70500b539ea69b0d4b0684937e17ec"
+  }
+]

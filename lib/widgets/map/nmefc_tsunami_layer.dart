@@ -12,7 +12,8 @@ class NmefcTsunamiLayer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final data = tsunami;
-    if (data == null || data.source != TsunamiSource.nmefc || !data.isActive) {
+    if (data == null || data.source != TsunamiSource.nmefc ||
+        !data.isActive || !data.isDisplayableAt(DateTime.now())) {
       return const SizedBox.shrink();
     }
 
@@ -32,7 +33,7 @@ class NmefcTsunamiLayer extends StatelessWidget {
     final size = (zoom * 1.9).clamp(9.5, 17.0);
     final showLabel = zoom >= 6.2;
 
-    return data.observations.map((station) {
+    return data.observations.where((station) => station.hasValidPosition).map((station) {
       final color = _waveHeightColor(station.maxWaveHeightMeters);
       return Marker(
         point: LatLng(station.latitude, station.longitude),
@@ -54,7 +55,7 @@ class NmefcTsunamiLayer extends StatelessWidget {
     final lines = <String>[
       station.stationName.isEmpty ? '水位监测站' : station.stationName,
       if (station.location.isNotEmpty) station.location,
-      if (station.maxWaveHeight.isNotEmpty) '最大波高: ${station.maxWaveHeight}cm',
+      if (station.maxWaveHeight.isNotEmpty) '最大波幅: ${station.maxWaveHeight}',
       if (station.time.isNotEmpty) '观测时刻: ${station.time}',
     ];
     return lines.join('\n');
@@ -62,8 +63,8 @@ class NmefcTsunamiLayer extends StatelessWidget {
 
   static Color _waveHeightColor(double? meters) {
     if (meters == null || meters <= 0) return const Color(0xFF97A6B9);
-    if (meters >= 3.0) return const Color(0xFFB56AFF);
-    if (meters >= 1.0) return const Color(0xFFFF4F4F);
+    if (meters >= 3.0) return const Color(0xFFFF4F4F);
+    if (meters >= 1.0) return const Color(0xFFFF9A35);
     if (meters >= 0.3) return const Color(0xFFF4D44D);
     return const Color(0xFF4AA3FF);
   }

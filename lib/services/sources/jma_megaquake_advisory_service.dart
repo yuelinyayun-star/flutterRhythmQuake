@@ -1,3 +1,4 @@
+import 'source_http_client.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -16,7 +17,7 @@ import '../../models/jma_megaquake_advisory.dart';
 /// - VYSE60 北海道・三陸沖後発地震注意情報
 class JmaMegaquakeAdvisoryService {
   JmaMegaquakeAdvisoryService({http.Client? client, DateTime Function()? now})
-    : _client = client ?? http.Client(),
+    : _client = client ?? createSourceHttpClient(),
       _ownsClient = client == null,
       _now = now ?? DateTime.now;
 

@@ -1,0 +1,15 @@
+{
+  "source": "unmodified stdout from the same Windows System.Speech probe script",
+  "files": [
+    {
+      "path": "cloud-no-voices.original.json",
+      "sha256": "544203bc5f61a147a215e25659f63263fe95d35c78752c00bd9a6d7e9fd88f9a",
+      "bytes": 154
+    },
+    {
+      "path": "local-voices.original.json",
+      "sha256": "db32f5ffbe468fc6c128f2222c802a9fb42cc3a5f166679b5fbf8bb55ccfdfd5",
+      "bytes": 170
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:http/http.dart' as http;
 
 /// JMA CMT 解（精査後）サービス
@@ -89,6 +90,11 @@ class JmaCmtService {
       onStatusChanged?.call(false);
     }
   }
+
+  /// Exposes the unchanged HTML parser for captured-official-response tests.
+  /// It performs no request and shares the production field mapping.
+  @visibleForTesting
+  List<Map<String, dynamic>> parseHtmlForTest(String html) => _parseHtml(html);
 
   /// 解析 JMA CMT HTML 表格
   List<Map<String, dynamic>> _parseHtml(String html) {

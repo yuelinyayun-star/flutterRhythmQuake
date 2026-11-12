@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'api_json_decoder.dart';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -34,6 +35,7 @@ class TyphoonService {
   void Function(List<TyphoonData> typhoons)? onActiveTyphoonsChanged;
 
   bool get isRunning => _running;
+  List<TyphoonData> get latestSnapshot => List.unmodifiable(_lastTyphoons);
 
   void start({Duration interval = fallbackRefreshInterval}) {
     stop();
@@ -198,9 +200,7 @@ class TyphoonService {
         uri,
       );
     }
-    final items = parseJianTyphoons(
-      jsonDecode(utf8.decode(response.bodyBytes)),
-    );
+    final items = parseJianTyphoons(decodeApiJsonBytes(response.bodyBytes));
     return _TyphoonSnapshot(items, const [], true, fromJian: true);
   }
 
@@ -321,7 +321,7 @@ class TyphoonService {
     if (response.statusCode != 200) {
       throw http.ClientException('Typhoon HTTP ${response.statusCode}', uri);
     }
-    return jsonDecode(utf8.decode(response.bodyBytes));
+    return decodeApiJsonBytes(response.bodyBytes);
   }
 
   Future<void> _emitCachedActive(int generation, int revision) async {
@@ -329,7 +329,7 @@ class TyphoonService {
       final prefs = await SharedPreferences.getInstance();
       final body = prefs.getString(_cacheKey);
       if (body == null) return;
-      final cached = jsonDecode(body) as Map;
+      final cached = decodeApiJson(body) as Map;
       final savedAt = DateTime.fromMillisecondsSinceEpoch(
         cached['savedAt'] as int,
       );

@@ -9,6 +9,9 @@ import 'nied_gif_value_decoder.dart';
 import 'nied_monitor.dart';
 import 'nied_background_worker.dart';
 import 'shindo_color_util.dart';
+import 'jp_shindo_scale.dart';
+import 'native_ka_history.dart';
+import 'native_station_image_decoder.dart';
 
 class NiedGifFrame {
   final DateTime dataTime;
@@ -31,19 +34,45 @@ class LmoniImageService {
   NiedGifFrame? _lastGifFrame;
   NiedGifFrame? get lastGifFrame => _lastGifFrame;
 
+  /// UI/debug image transport from the persistent data owner; no KA work.
+  void acceptPreparedGif(NiedGifFrame frame) {
+    _lastGifFrame = frame;
+    _lastFrameTime = frame.dataTime;
+    _gifFrameController.add(frame);
+  }
+
   final _stationController = StreamController<List<NiedStation>?>.broadcast();
+  final _displayStationController =
+      StreamController<List<NiedStation>?>.broadcast();
+  final _externalStationController =
+      StreamController<List<NiedStation>?>.broadcast();
   final _gifFrameController = StreamController<NiedGifFrame>.broadcast();
   final _statusController = StreamController<bool>.broadcast();
 
   static final Map<String, String> _scanClusterIds = _buildScanClusterIds();
 
   Stream<List<NiedStation>?> get stationStream => _stationController.stream;
+  Stream<List<NiedStation>?> get displayStationStream =>
+      _displayStationController.stream;
+  Stream<List<NiedStation>?> get externalStationStream =>
+      _externalStationController.stream;
+
+  /// Prepared views are for consumers such as the debug page. Never feed them
+  /// back into the observation/calculation stream.
+  void acceptPreparedStations(List<NiedStation> stations) {
+    _displayStationController.add(stations);
+  }
+
   Stream<NiedGifFrame> get gifFrameStream => _gifFrameController.stream;
   Stream<bool> get statusStream => _statusController.stream;
 
   void Function(bool connected)? onStatusChanged;
 
   List<NiedStation>? _stations;
+  NativeKaHistorySession? _kaHistory;
+  NativeStationImageDecoder? _nativeGifSampler;
+  @visibleForTesting
+  bool useNativeKaHistory = true;
   List<NiedScanConfig> _backgroundScanConfigs = const [];
   String _backgroundScanConfigSignature = '';
 
@@ -61,6 +90,10 @@ class LmoniImageService {
     for (final station in _stations ?? const <NiedStation>[]) {
       station.terminate();
     }
+    _kaHistory?.dispose();
+    _kaHistory = null;
+    _nativeGifSampler?.dispose();
+    _nativeGifSampler = null;
     _lastFrameTime = null;
     _lastGifFrame = null;
     _stations = null;
@@ -71,6 +104,8 @@ class LmoniImageService {
   void dispose() {
     stop();
     _stationController.close();
+    _displayStationController.close();
+    _externalStationController.close();
     _gifFrameController.close();
     _statusController.close();
   }
@@ -111,6 +146,13 @@ class LmoniImageService {
     }
 
     _stations = list;
+    if (useNativeKaHistory && NativeKaHistorySession.supported) {
+      final history = NativeKaHistorySession(list.length);
+      _kaHistory = history;
+      for (var i = 0; i < list.length; i++) {
+        list[i].recentLevel = history.histories[i];
+      }
+    }
     _backgroundScanConfigs = List<NiedScanConfig>.unmodifiable([
       for (final station in list)
         NiedScanConfig(pixelX: station.pixelX, pixelY: station.pixelY),
@@ -130,12 +172,49 @@ class LmoniImageService {
     List<int>? boreholePackedRgb,
     Uint8List? surfaceGifBytes,
     Uint8List? boreholeGifBytes,
+    Uint8List? rgbaPixels,
     DateTime? dataTime,
     DateTime? receivedAt,
     bool publish = true,
   }) {
     if (!_isRunning || _stations == null || _stations!.isEmpty) return;
     if (packedRgb.length != _imgW * _imgH) return;
+
+    if (surfaceGifBytes != null && NativeStationImageDecoder.supported) {
+      final sampler = _nativeGifSampler ??= NativeStationImageDecoder([
+        for (final s in _stations!) ...[s.pixelX, s.pixelY],
+      ]);
+      final native = sampler.sampleNied(surfaceGifBytes);
+      processSampledFrame(
+        NiedFrameScanResult(
+          width: native.width,
+          height: native.height,
+          backend: 'rust-abi-1',
+          samples: [
+            for (var i = 0; i < _stations!.length; i++)
+              NiedPixelSample(
+                surfacePosition: native.values[i * 3].isFinite
+                    ? native.values[i * 3]
+                    : null,
+                surfaceShindo: native.values[i * 3 + 1].isFinite
+                    ? native.values[i * 3 + 1]
+                    : null,
+                missingReason: switch (native.values[i * 3 + 2].toInt()) {
+                  1 => 'pixel_transparent',
+                  2 => 'pixel_undecodable',
+                  3 => 'pixel_out_of_bounds',
+                  _ => null,
+                },
+              ),
+          ],
+        ),
+        surfaceGifBytes: surfaceGifBytes,
+        dataTime: dataTime,
+        receivedAt: receivedAt,
+        publish: publish,
+      );
+      return;
+    }
 
     final stamp = dataTime ?? DateTime.now();
     final frameReceivedAt = receivedAt ?? DateTime.now();
@@ -148,14 +227,18 @@ class LmoniImageService {
         ..lastDataTime = stamp
         ..lastReceivedAt = frameReceivedAt;
 
-      final shindo = _sampleRealtimeShindo(packedRgb, s);
-      if (shindo == null) {
-        s.updateFromContinuousShindo(null);
-        continue;
+      final pixelOffset = (s.pixelY * _imgW + s.pixelX) * 4;
+      final missing = rgbaPixels != null && rgbaPixels[pixelOffset + 3] == 0;
+      if (missing) {
+        s.clearGifObservation(
+          NiedGifLayer.realtimeShindo,
+          qualityFlag: 'pixel_transparent',
+        );
       }
-
-      s.updateFromContinuousShindo(shindo);
+      final shindo = missing ? null : _sampleRealtimeShindo(packedRgb, s);
+      _updateKaStation(s, i, shindo);
     }
+    _finishKaFrame();
 
     if (surfaceGifBytes != null) {
       final gifFrame = NiedGifFrame(
@@ -197,20 +280,26 @@ class LmoniImageService {
         ..lastReceivedAt = frameReceivedAt;
 
       if (position == null) {
-        station.clearGifObservation(
-          NiedGifLayer.realtimeShindo,
-          qualityFlag: 'pixel_undecodable',
-        );
-        station.updateFromContinuousShindo(null);
+        if (sample.surfaceShindo case final shindo?) {
+          station.updateGifObservation(NiedGifObservation(shindo: shindo));
+          _updateKaStation(station, i, shindo);
+        } else {
+          station.clearGifObservation(
+            NiedGifLayer.realtimeShindo,
+            qualityFlag: sample.missingReason ?? 'pixel_undecodable',
+          );
+          _updateKaStation(station, i, null);
+        }
       } else {
         final observation = NiedGifValueDecoder.decodeObservationFromPosition(
           position,
           layer: NiedGifLayer.realtimeShindo,
         );
         station.updateGifObservation(observation);
-        station.updateFromContinuousShindo(observation.shindo);
+        _updateKaStation(station, i, observation.shindo);
       }
     }
+    _finishKaFrame();
 
     final gifFrame = NiedGifFrame(
       dataTime: stamp,
@@ -266,19 +355,99 @@ class LmoniImageService {
     }
   }
 
+  void processPhysicalLayerSamples({
+    required NiedGifLayer layer,
+    required DateTime dataTime,
+    required DateTime receivedAt,
+    NiedFrameScanResult? sampled,
+  }) {
+    if (!_isRunning || _stations == null || _stations!.isEmpty) return;
+    if (layer == NiedGifLayer.realtimeShindo) {
+      throw ArgumentError('Use the realtime shindo path');
+    }
+    final valid =
+        sampled != null &&
+        sampled.width == _imgW &&
+        sampled.height == _imgH &&
+        sampled.samples.length == _stations!.length;
+    for (var i = 0; i < _stations!.length; i++) {
+      final station = _stations![i];
+      final currentTime = station.lastDataTime;
+      if (currentTime != null && dataTime.isBefore(currentTime)) continue;
+      if (!valid) {
+        station.clearGifObservation(layer, qualityFlag: 'layer_missing');
+        continue;
+      }
+      final position = sampled.samples[i].surfacePosition;
+      if (position == null) {
+        station.clearGifObservation(layer, qualityFlag: 'pixel_undecodable');
+        continue;
+      }
+      station.updateGifObservation(
+        NiedGifValueDecoder.decodeObservationFromPosition(
+          position,
+          layer: layer,
+        ),
+      );
+      station
+        ..lastDataTime = dataTime
+        ..lastReceivedAt = receivedAt;
+    }
+  }
+
   void publishStations() {
     if (!_isRunning || _stations == null) return;
-    _stationController.add(List.unmodifiable(_stations!));
+    final views = List<NiedStation>.unmodifiable(_stations!);
+    _stationController.add(views);
+    _displayStationController.add(views);
     _statusController.add(true);
     onStatusChanged?.call(true);
   }
 
   /// 广播外部注入的测站数据（如 K-NET ASCII 导入）
   void broadcastStations(List<NiedStation> stations) {
+    _nativeGifSampler?.dispose();
+    _nativeGifSampler = null;
+    _kaHistory?.dispose();
+    _kaHistory = null;
     _stations = stations;
-    _stationController.add(List.unmodifiable(stations));
+    final views = List<NiedStation>.unmodifiable(stations);
+    _stationController.add(views);
+    _displayStationController.add(views);
+    _externalStationController.add(views);
     _statusController.add(true);
     onStatusChanged?.call(true);
+  }
+
+  void _updateKaStation(NiedStation station, int index, double? shindo) {
+    final history = _kaHistory;
+    if (history == null) {
+      station.updateFromContinuousShindo(shindo);
+      return;
+    }
+    if (shindo != null && shindo.isFinite) station.continuousShindo = shindo;
+    history.writeInput(
+      index,
+      level: shindo == null || !shindo.isFinite
+          ? -1
+          : JpShindoScale.kanameishiLevelFromShindo(shindo),
+      expireSeconds: station.expireSeconds,
+      baseTimeMilliseconds:
+          station.lastDataTime?.millisecondsSinceEpoch ??
+          station.lastUpdate?.millisecondsSinceEpoch ??
+          0,
+      isActive: station.isActive,
+      abnormalUpdateCount: station.abnormalUpdateCount,
+    );
+  }
+
+  void _finishKaFrame() {
+    final history = _kaHistory;
+    if (history == null) return;
+    history.process();
+    for (var i = 0; i < _stations!.length; i++) {
+      _stations![i].applyKaHistoryResult(history.result(i));
+    }
   }
 
   double? _sampleRealtimeShindo(List<int> sourcePixels, NiedStation station) {

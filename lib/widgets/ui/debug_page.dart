@@ -18,6 +18,7 @@ import '../../providers/quake_provider.dart';
 import '../../services/sources/jp_shindo_scale.dart';
 import '../../services/sources/lmoni_image_service.dart';
 import '../../services/sources/nied_monitor.dart';
+import '../../services/sources/nied_realtime_pipeline.dart';
 import '../../services/sources/lpgm_monitor_service.dart';
 import '../../services/sources/snet_service.dart';
 import '../../services/sources/global_quake_service.dart';
@@ -703,6 +704,7 @@ class _DebugPageState extends State<DebugPage> {
 
   Future<void> _initNiedDebugState() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     NiedReplayLogger.instance.loadPreferencesFrom(prefs);
     _niedDataSource = prefs.getString('nied_data_source') ?? 'lmoni';
     QuakeMapView.niedSourceNotifier.addListener(_onNiedSourceChanged);
@@ -712,11 +714,13 @@ class _DebugPageState extends State<DebugPage> {
       _niedGifStamp = lastFrame.dataTime;
       _niedSurfaceGifBytes = lastFrame.surfaceGifBytes;
     }
-    _niedStationSub = _lmoniImageService.stationStream.listen((stations) {
+    _niedStationSub = _lmoniImageService.displayStationStream.listen((stations) {
       if (!mounted || !_isNiedGifSource(_niedDataSource) || stations == null) {
         return;
       }
-      final frameTime = _lmoniImageService.lastFrameTime;
+      final frameTime = stations.isNotEmpty
+          ? stations.first.lastDataTime
+          : _lmoniImageService.lastFrameTime;
       if (frameTime == null) return;
       var maxShindo = -3.0;
       var maxPga = 0.0;
@@ -1043,6 +1047,12 @@ class _DebugPageState extends State<DebugPage> {
 
   void _ensureNiedGifMonitorRunning(String source) {
     if (!_isNiedGifSource(source)) return;
+    // The map's data owner already supplies prepared GIFs and station views.
+    // Starting a second producer here interleaves independent KA histories.
+    if (NiedRealtimePipeline.supported &&
+        !BackgroundService().isAndroidConnectionHostedByForegroundService) {
+      return;
+    }
     _lmoniImageService.start();
     NiedMonitorService().configureEndpoint(source);
     NiedMonitorService().start();

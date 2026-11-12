@@ -32,6 +32,7 @@ from anomaly_archive import AnomalyArchive
 from sasmex_archive import SasmexArchive
 from sasmex_relay import SasmexConfig, SasmexFeed
 from sidesis_realtime import SidesisRealtimeConfig, SidesisRealtimeFeed
+from sasno_realtime import SasnoRealtimeConfig, SasnoRealtimeFeed
 
 
 KST = timezone(timedelta(hours=9), "KST")
@@ -40,6 +41,9 @@ LOGGER = logging.getLogger("kma_pews_relay")
 
 @dataclass(frozen=True)
 class Config:
+    sasno_primary_source: str = os.environ.get("SASMEX_PRIMARY_SOURCE", "firestore")
+    sasno_project_id: str = os.environ.get("SASNO_PROJECT_ID", "sasno-d79e1")
+    sasno_poll_seconds: float = float(os.environ.get("SASNO_POLL_SECONDS", "5"))
     host: str = os.environ.get("KMA_RELAY_HOST", "0.0.0.0")
     port: int = int(os.environ.get("KMA_RELAY_PORT", "8765"))
     official_base_url: str = os.environ.get(
@@ -284,8 +288,9 @@ def frame_level_capacity(frame: bytes) -> int:
 def fan_compatible_mmi(raw_level: int) -> int:
     """Convert the PEWS 4-bit station code to the existing client scale.
 
-    The ordering is the one used by the current KMA station relay. The relay
-    also publishes rawMmi so the source value is always retained.
+    Normal intensity codes 2..11 retain their source value. The low-motion
+    and status codes use the existing client scale. Original rawMmi remains
+    available in snapshot diagnostics.
     """
 
     if raw_level == 0:
@@ -295,7 +300,7 @@ def fan_compatible_mmi(raw_level: int) -> int:
     if 12 <= raw_level <= 15:
         return raw_level - 13
     if 2 <= raw_level <= 11:
-        return min(raw_level + 1, 11)
+        return raw_level
     raise ValueError(f"KMA raw level is outside 0..15: {raw_level}")
 
 
@@ -382,7 +387,13 @@ class KmaRelay:
             self._ignore_sasmex_update,
             self._archive_sasmex_update,
         )
-        self.sasno_realtime = SidesisRealtimeFeed(
+        if config.sasno_primary_source not in {"firestore", "socket-io"}:
+            raise ValueError("SASMEX_PRIMARY_SOURCE must be firestore or socket-io")
+        self.sasno_realtime = SasnoRealtimeFeed(
+            SasnoRealtimeConfig(config.sasno_project_id, config.sasno_poll_seconds,
+                                config.sasmex_timeout_seconds, config.sasmex_stale_after_seconds),
+            self._handle_firestore_update,
+        ) if config.sasno_primary_source == "firestore" else SidesisRealtimeFeed(
             SidesisRealtimeConfig(
                 url=config.sidesis_url,
                 reconnect_seconds=config.sidesis_reconnect_seconds,
@@ -464,7 +475,8 @@ class KmaRelay:
                 self.config.sidesis_stale_after_seconds
             )
             health = dict(realtime_health)
-            health["primarySource"] = "sidesis.iigea.org/socket.io"
+            health["primarySource"] = self._sasno_primary_endpoint()
+            health["primaryTransport"] = self.config.sasno_primary_source
             health["sasmexCap"] = cap_health
             health["sasnoRealtime"] = realtime_health
             return self._json_response(
@@ -477,7 +489,8 @@ class KmaRelay:
                 connection,
                 HTTPStatus.OK,
                 {
-                    "primarySource": "sidesis.iigea.org/socket.io",
+                    "primarySource": self._sasno_primary_endpoint(),
+                    "primaryTransport": self.config.sasno_primary_source,
                     "sasnoRealtime": self.sasno_realtime.state.snapshot(),
                     "sasmexCap": self.sasmex.state.snapshot(),
                 },
@@ -494,7 +507,7 @@ class KmaRelay:
                     "sasmexWebSocket": "/sasmex-eew",
                     "sasmexHealth": "/sasmex/health",
                     "sasmexSnapshot": "/sasmex/snapshot",
-                    "sasnoRealtime": "Sidesis Socket.IO wss://sidesis.iigea.org/socket.io/",
+                    "sasnoRealtime": self._sasno_primary_endpoint(),
                     "timeSource": "KMA ST response header",
                 },
             )
@@ -575,11 +588,11 @@ class KmaRelay:
         )
         try:
             await self._send_sasmex(websocket, self._sasmex_heartbeat_message())
-            if self.sasno_realtime.state.latest_event is not None:
+            if self._latest_sasno_client_event() is not None:
                 await self._send_sasmex(
                     websocket,
                     self._sasno_event_message(
-                        self.sasno_realtime.state.latest_event,
+                        self._latest_sasno_client_event(),
                         message_type="snapshot",
                     ),
                 )
@@ -607,7 +620,7 @@ class KmaRelay:
                     await self._send_sasmex(
                         websocket,
                         self._sasno_event_message(
-                            self.sasno_realtime.state.latest_event,
+                            self._latest_sasno_client_event(),
                             message_type="query_response",
                         ),
                     )
@@ -674,6 +687,38 @@ class KmaRelay:
         emitted = self._sasno_event_message(event)
         await self.broadcast_sasmex(emitted)
         self._archive_sasno_update(event, raw_frame, event_name, emitted)
+
+    def _sasno_primary_endpoint(self) -> str:
+        if isinstance(self.sasno_realtime, SasnoRealtimeFeed):
+            return self.sasno_realtime.config.document_url
+        return self.config.sidesis_url
+
+    def _latest_sasno_client_event(self) -> dict[str, Any] | None:
+        if isinstance(self.sasno_realtime, SasnoRealtimeFeed):
+            return self.sasno_realtime.client_event()
+        return self.sasno_realtime.state.latest_event
+
+    async def _handle_firestore_update(self, event: dict[str, Any]) -> None:
+        fetched = self.sasno_realtime.last_fetched
+        if fetched is None:
+            raise RuntimeError("Firestore update has no original response")
+        emitted = self._sasno_event_message(event)
+        await self.broadcast_sasmex(emitted)
+        self.sasmex_archive.submit({
+            "schemaVersion": 1, "source": "sasmex", "transport": "firestore",
+            "publishedToApp": True, "endpoint": fetched.url,
+            "eventTimeUtc": datetime.fromtimestamp(event["epochMs"] / 1000, UTC).isoformat(),
+            "eventDateBasis": "SASNOEVENTDATA.unix",
+            "recordedAtUtc": fetched.received_at_utc, "eventId": event["eventId"],
+            "rawDocument": "raw/firestore-document.json",
+            "parsedJson": "parsed.json", "emittedJson": "emitted.json",
+        }, {
+            "raw/firestore-document.json": fetched.body,
+            "parsed.json": json.dumps(event, ensure_ascii=False, indent=2).encode("utf-8"),
+            "emitted.json": json.dumps(emitted, ensure_ascii=False, indent=2).encode("utf-8"),
+        })
+        LOGGER.info("SASNO Firestore event forwarded: id=%s severity=%s clients=%d",
+                    event["eventId"], event.get("severity"), len(self.sasmex_clients))
 
     def _archive_sasno_update(
         self,

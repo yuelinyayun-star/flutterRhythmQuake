@@ -183,12 +183,13 @@ void main() {
       final received = service.frameStream.first;
       service.start();
       final value = await received.timeout(const Duration(seconds: 30));
-      expect(value!.imageBytes, projectedBytes);
+      expect(value!.isTiled, isTrue);
+      expect(value.imageBytes, isEmpty);
       await service.fetchNow();
       expect(
         requests,
-        3,
-      ); // Same time checks the list but does not download again.
+        2,
+      ); // Each refresh checks only metadata; viewport tiles load separately.
     },
     skip: sourcePath == null,
     timeout: const Timeout(Duration(minutes: 2)),

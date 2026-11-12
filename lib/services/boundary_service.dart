@@ -1,5 +1,5 @@
+import 'sources/api_json_decoder.dart';
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:latlong2/latlong.dart';
@@ -492,7 +492,7 @@ class BoundaryService {
   /// - LineString: 单条线
   /// - MultiLineString: 多条线
   void parseGeoJson(String jsonStr, BoundaryLayer layer) {
-    final data = json.decode(jsonStr);
+    final data = decodeApiJsonDocument(jsonStr);
     if (data['type'] != 'FeatureCollection') {
       debugPrint('${layer.name}: 不是GeoJSON FeatureCollection格式');
       return;
@@ -614,7 +614,7 @@ class BoundaryService {
   /// TopoJSON是一种拓扑编码的GeoJSON扩展格式
   /// 通过共享弧段来减小文件大小
   void parseTopoJson(String jsonStr, BoundaryLayer layer) {
-    final data = json.decode(jsonStr);
+    final data = decodeApiJsonDocument(jsonStr);
     if (data['type'] != 'Topology') {
       debugPrint('${layer.name}: 不是TopoJSON格式');
       return;

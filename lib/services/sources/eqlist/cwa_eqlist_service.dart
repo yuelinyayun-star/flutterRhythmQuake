@@ -1,11 +1,15 @@
 import 'dart:async';
+import '../api_json_decoder.dart';
 import 'dart:convert';
 import 'dart:math' show min;
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../../../core/intensity_calculator.dart';
 import '../../../core/cwa_report_intensities.dart';
+import '../../../utils/cwa_location.dart';
 import '../../../models/quake_message.dart';
+import '../../../models/information_map_data.dart';
+import '../../../models/source_payload.dart';
 import 'eqlist_http_poll_gate.dart';
 
 /// CWA地震列表服务
@@ -104,9 +108,10 @@ class CwaEqlistService {
         return;
       }
 
-      final raw = utf8.decode(resp.bodyBytes);
-      final data = json.decode(raw);
+      final data = decodeApiJsonBytes(resp.bodyBytes);
       if (data is! List) {
+        // Preserve the diagnostic excerpt, only decode text on an invalid shape.
+        final raw = utf8.decode(resp.bodyBytes);
         debugPrint(
           'CWA Eqlist unexpected format: ${raw.substring(0, min(200, raw.length))}',
         );
@@ -162,7 +167,7 @@ class CwaEqlistService {
         const Duration(seconds: 6),
       );
       if (resp.statusCode != 200) return null;
-      final decoded = jsonDecode(utf8.decode(resp.bodyBytes));
+      final decoded = decodeApiJsonBytes(resp.bodyBytes);
       if (decoded is! Map) return null;
       final detail = Map<String, dynamic>.from(decoded);
       // Bind the original detail to this exact summary, never the nearest quake.
@@ -217,7 +222,7 @@ class CwaEqlistService {
       // 地点处理 - 提取 "(位於...)" 部分
       String location =
           item['loc']?.toString() ?? item['placeName']?.toString() ?? '';
-      location = _extractCwaLocation(location);
+      location = cwaDisplayLocation(location);
 
       // 震度转换 - CWA int (0-9) 转换为日文汉字格式
       final int intensityNum =
@@ -247,27 +252,17 @@ class CwaEqlistService {
         isHistory: true,
         isInfoEvent: true,
         infoTypeName: '中央氣象署地震報告',
+        informationMap: InformationMapData(
+          source: 'cwaEqlist',
+          origin: 0,
+          titleText: '中央氣象署 地震報告',
+          warnArea: CwaReportIntensities.toWarnArea(item),
+          cwaSourcePayload: snapshotSourcePayload(item),
+        ),
       );
     } catch (e) {
       return null;
     }
-  }
-
-  /// 提取 CWA 地点名称
-  ///
-  /// CWA地点格式: "花蓮縣政府南偏西方 25.0 公里 (位於花蓮縣秀林鄉)"
-  /// 提取后: "花蓮縣秀林鄉"
-  String _extractCwaLocation(String loc) {
-    if (loc.isEmpty) return '未知地点';
-
-    final start = loc.indexOf('(位於');
-    final end = loc.indexOf(')');
-
-    if (start == -1 || end == -1 || start + 3 >= end) {
-      return loc;
-    }
-
-    return loc.substring(start + 3, end);
   }
 
   /// 将 CWA 震度数值转换为符号格式

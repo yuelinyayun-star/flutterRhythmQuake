@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:flutterrhythmquake/models/jma_lpgm_bulletin.dart';
 import 'package:flutterrhythmquake/models/unified_event_presentation.dart';
@@ -6,6 +7,7 @@ import 'package:flutterrhythmquake/providers/quake_provider.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() => SharedPreferences.setMockInitialValues({}));
 
   test('JMA LPGM enters unified UI, replaces by event id, and clears', () {
     final provider = QuakeProvider();

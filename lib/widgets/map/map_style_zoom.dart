@@ -1,4 +1,5 @@
 import 'package:flutter/widgets.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
@@ -8,11 +9,10 @@ import '../../providers/map_state_provider.dart';
 /// [MapCamera] InheritedWidget (which rebuilds on every continuous follow tick).
 double mapStyleZoomOf(BuildContext context, {double fallback = 4.0}) {
   try {
-    return context.read<MapStateProvider>().mapController?.camera.zoom ??
-        fallback;
-  } catch (_) {
-    return fallback;
-  }
+    final zoom = context.read<MapStateProvider>().mapController?.camera.zoom;
+    if (zoom != null) return zoom;
+  } catch (_) {}
+  return MapCamera.maybeOf(context)?.zoom ?? fallback;
 }
 
 /// Emit grid centers only when the set actually changes.

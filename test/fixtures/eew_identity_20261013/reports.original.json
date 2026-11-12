@@ -1,0 +1,909 @@
+[
+  {
+    "api": "jian-icl",
+    "route": "direct",
+    "source": "icl",
+    "capturedAtUtc": "2026-10-13T11:12:32.097560+00:00",
+    "file": "jian-icl-direct-409c775b04dc.original.json",
+    "raw": {
+      "eventId": 98943021,
+      "updates": 4,
+      "latitude": 28.50418,
+      "longitude": 104.670685,
+      "depth": 11.629565,
+      "epicenter": "四川高县",
+      "startAt": 1790370086968,
+      "updateAt": 1790370092647,
+      "magnitude": 4.300001,
+      "sations": 6
+    }
+  },
+  {
+    "api": "whews-domestic",
+    "route": "direct",
+    "source": "cea-pr",
+    "capturedAtUtc": "2026-10-13T11:12:32.158313+00:00",
+    "file": "whews-domestic-direct-5f91cb1c91b1.original.json",
+    "raw": {
+      "id": "b4drxfwmbnwyy",
+      "updates": 2,
+      "shockTime": "2026-08-28 13:13:34",
+      "createTime": "2026-08-28 13:13:34",
+      "latitude": 29.239,
+      "longitude": 105.227,
+      "depth": 6,
+      "magnitude": 5.2,
+      "placeName": "四川内江市隆昌市",
+      "epiIntensity": 7.1,
+      "province": "四川"
+    }
+  },
+  {
+    "api": "chinaeew-icl",
+    "route": "direct",
+    "source": "icl",
+    "file": "chinaeew-icl.original.json",
+    "raw": {
+      "eventId": 98943021,
+      "updates": 4,
+      "latitude": 28.50418,
+      "longitude": 104.670685,
+      "depth": 11.629565,
+      "epicenter": "四川高县",
+      "startAt": 1790370086968,
+      "updateAt": 1790370092647,
+      "magnitude": 4.300001,
+      "sations": 6
+    }
+  },
+  {
+    "api": "chinaeew-icl",
+    "route": "direct",
+    "source": "icl",
+    "file": "chinaeew-icl.original.json",
+    "raw": {
+      "eventId": 98395394,
+      "updates": 5,
+      "latitude": 28.303818,
+      "longitude": 104.98669,
+      "depth": 8.156873,
+      "epicenter": "四川长宁",
+      "startAt": 1787531181614,
+      "updateAt": 1787531186850,
+      "magnitude": 3.900001,
+      "sations": 6
+    }
+  },
+  {
+    "api": "chinaeew-icl",
+    "route": "direct",
+    "source": "icl",
+    "file": "chinaeew-icl.original.json",
+    "raw": {
+      "eventId": 98335378,
+      "updates": 3,
+      "latitude": 35.78642,
+      "longitude": 115.66047,
+      "depth": 15,
+      "epicenter": "河南范县",
+      "startAt": 1787194858407,
+      "updateAt": 1787194875018,
+      "magnitude": 4.300001,
+      "sations": 6
+    }
+  },
+  {
+    "api": "chinaeew-icl",
+    "route": "direct",
+    "source": "icl",
+    "file": "chinaeew-icl.original.json",
+    "raw": {
+      "eventId": 1785810007,
+      "updates": 1,
+      "latitude": 42.178,
+      "longitude": 84.118,
+      "depth": 19,
+      "epicenter": "新疆巴音郭楞州轮台县",
+      "startAt": 1786513337200,
+      "updateAt": 1786513348678,
+      "magnitude": 4,
+      "sourceType": 2,
+      "epiIntensity": 5
+    }
+  },
+  {
+    "api": "chinaeew-icl",
+    "route": "direct",
+    "source": "icl",
+    "file": "chinaeew-icl.original.json",
+    "raw": {
+      "eventId": 98171350,
+      "updates": 4,
+      "latitude": 28.505922,
+      "longitude": 104.65976,
+      "depth": 15,
+      "epicenter": "四川高县",
+      "startAt": 1786397497467,
+      "updateAt": 1786397503572,
+      "magnitude": 3.500001,
+      "sations": 8
+    }
+  },
+  {
+    "api": "chinaeew-icl",
+    "route": "direct",
+    "source": "icl",
+    "file": "chinaeew-icl.original.json",
+    "raw": {
+      "eventId": 98114890,
+      "updates": 7,
+      "latitude": 28.49617,
+      "longitude": 104.65247,
+      "depth": 14.424181,
+      "epicenter": "四川高县",
+      "startAt": 1786079310575,
+      "updateAt": 1786079316204,
+      "magnitude": 5.000001,
+      "sations": 8
+    }
+  },
+  {
+    "api": "chinaeew-icl",
+    "route": "direct",
+    "source": "icl",
+    "file": "chinaeew-icl.original.json",
+    "raw": {
+      "eventId": 98089956,
+      "updates": 3,
+      "latitude": 29.047338,
+      "longitude": 94.71482,
+      "depth": 8,
+      "epicenter": "西藏墨脱",
+      "startAt": 1785975319958,
+      "updateAt": 1785975337318,
+      "magnitude": 4.500001,
+      "sations": 7
+    }
+  },
+  {
+    "api": "chinaeew-icl",
+    "route": "direct",
+    "source": "icl",
+    "file": "chinaeew-icl.original.json",
+    "raw": {
+      "eventId": 98083629,
+      "updates": 1,
+      "latitude": 29.046333,
+      "longitude": 94.733864,
+      "depth": 15,
+      "epicenter": "西藏墨脱",
+      "startAt": 1785924372140,
+      "updateAt": 1785924404467,
+      "magnitude": 4.700001,
+      "sations": 5
+    }
+  },
+  {
+    "api": "chinaeew-icl",
+    "route": "direct",
+    "source": "icl",
+    "file": "chinaeew-icl.original.json",
+    "raw": {
+      "eventId": 1784356492,
+      "updates": 2,
+      "latitude": 28.538,
+      "longitude": 104.679,
+      "depth": 5,
+      "epicenter": "四川宜宾市高县",
+      "startAt": 1785694905000,
+      "updateAt": 1785694910286,
+      "magnitude": 5.1,
+      "sourceType": 1,
+      "epiIntensity": 7
+    }
+  },
+  {
+    "api": "chinaeew-icl",
+    "route": "direct",
+    "source": "icl",
+    "file": "chinaeew-icl.original.json",
+    "raw": {
+      "eventId": 98003290,
+      "updates": 5,
+      "latitude": 23.193117,
+      "longitude": 101.44995,
+      "depth": 8,
+      "epicenter": "云南墨江",
+      "startAt": 1785533049360,
+      "updateAt": 1785533056743,
+      "magnitude": 4.600001,
+      "sations": 7
+    }
+  },
+  {
+    "api": "chinaeew-icl",
+    "route": "direct",
+    "source": "icl",
+    "file": "chinaeew-icl.original.json",
+    "raw": {
+      "eventId": 1784356491,
+      "updates": 3,
+      "latitude": 41.31,
+      "longitude": 78.896,
+      "epicenter": "新疆阿克苏地区乌什县",
+      "startAt": 1785305399100,
+      "updateAt": 1785305408038,
+      "magnitude": 4.6,
+      "sourceType": 2,
+      "epiIntensity": 6
+    }
+  },
+  {
+    "api": "chinaeew-icl",
+    "route": "direct",
+    "source": "icl",
+    "file": "chinaeew-icl.original.json",
+    "raw": {
+      "eventId": 1784343985,
+      "updates": 2,
+      "latitude": 38.738,
+      "longitude": 75.102,
+      "epicenter": "新疆克孜勒苏州阿克陶县",
+      "startAt": 1784353639800,
+      "updateAt": 1784353653622,
+      "magnitude": 4.4,
+      "sourceType": 2,
+      "epiIntensity": 5.6
+    }
+  },
+  {
+    "api": "chinaeew-icl",
+    "route": "direct",
+    "source": "icl",
+    "file": "chinaeew-icl.original.json",
+    "raw": {
+      "eventId": 1782125194,
+      "updates": 1,
+      "latitude": 28.517,
+      "longitude": 104.666,
+      "depth": 2,
+      "epicenter": "四川宜宾市高县",
+      "startAt": 1783898868600,
+      "updateAt": 1783898873794,
+      "magnitude": 4.3,
+      "sourceType": 1,
+      "epiIntensity": 6
+    }
+  },
+  {
+    "api": "chinaeew-icl",
+    "route": "direct",
+    "source": "icl",
+    "file": "chinaeew-icl.original.json",
+    "raw": {
+      "eventId": 1782125193,
+      "updates": 2,
+      "latitude": 28.526,
+      "longitude": 104.676,
+      "depth": 2,
+      "epicenter": "四川宜宾市高县",
+      "startAt": 1783890128300,
+      "updateAt": 1783890133213,
+      "magnitude": 4.1,
+      "sourceType": 1,
+      "epiIntensity": 5.7
+    }
+  },
+  {
+    "api": "chinaeew-icl",
+    "route": "direct",
+    "source": "icl",
+    "file": "chinaeew-icl.original.json",
+    "raw": {
+      "eventId": 1782125192,
+      "updates": 2,
+      "latitude": 31.524,
+      "longitude": 102.406,
+      "depth": 8,
+      "epicenter": "四川阿坝州小金县",
+      "startAt": 1783875808700,
+      "updateAt": 1783875815574,
+      "magnitude": 4.3,
+      "sourceType": 1,
+      "epiIntensity": 6
+    }
+  },
+  {
+    "api": "chinaeew-icl",
+    "route": "direct",
+    "source": "icl",
+    "file": "chinaeew-icl.original.json",
+    "raw": {
+      "eventId": 1782125191,
+      "updates": 1,
+      "latitude": 41.737,
+      "longitude": 81.189,
+      "depth": 5,
+      "epicenter": "新疆阿克苏地区拜城县",
+      "startAt": 1783784453500,
+      "updateAt": 1783784463437,
+      "magnitude": 4.1,
+      "sourceType": 2,
+      "epiIntensity": 5.3
+    }
+  },
+  {
+    "api": "chinaeew-icl",
+    "route": "direct",
+    "source": "icl",
+    "file": "chinaeew-icl.original.json",
+    "raw": {
+      "eventId": 97634843,
+      "updates": 5,
+      "latitude": 26.13492,
+      "longitude": 99.84363,
+      "depth": 9.243752,
+      "epicenter": "云南洱源",
+      "startAt": 1783768168201,
+      "updateAt": 1783768175075,
+      "magnitude": 4.100001,
+      "sations": 6
+    }
+  },
+  {
+    "api": "chinaeew-icl",
+    "route": "direct",
+    "source": "icl",
+    "file": "chinaeew-icl.original.json",
+    "raw": {
+      "eventId": 1782125190,
+      "updates": 1,
+      "latitude": 28.526,
+      "longitude": 104.672,
+      "depth": 3,
+      "epicenter": "四川宜宾市高县",
+      "startAt": 1783684129900,
+      "updateAt": 1783684136261,
+      "magnitude": 4.3,
+      "sourceType": 1,
+      "epiIntensity": 6
+    }
+  },
+  {
+    "api": "chinaeew-icl",
+    "route": "direct",
+    "source": "icl",
+    "file": "chinaeew-icl.original.json",
+    "raw": {
+      "eventId": 1782125189,
+      "updates": 1,
+      "latitude": 28.509,
+      "longitude": 104.687,
+      "depth": 5,
+      "epicenter": "四川宜宾市高县",
+      "startAt": 1783554252900,
+      "updateAt": 1783554258590,
+      "magnitude": 5.1,
+      "sourceType": 1,
+      "epiIntensity": 7.1
+    }
+  },
+  {
+    "api": "chinaeew-icl",
+    "route": "direct",
+    "source": "icl",
+    "file": "chinaeew-icl.original.json",
+    "raw": {
+      "eventId": 1782125188,
+      "updates": 2,
+      "latitude": 28.514,
+      "longitude": 104.675,
+      "depth": 5,
+      "epicenter": "四川宜宾市高县",
+      "startAt": 1783476528100,
+      "updateAt": 1783476533400,
+      "magnitude": 5.2,
+      "sourceType": 1,
+      "epiIntensity": 7.1
+    }
+  },
+  {
+    "api": "jian",
+    "route": "direct",
+    "source": "cea",
+    "capturedAtUtc": "2026-10-13T11:12:33.424131+00:00",
+    "file": "jian-direct-e595525be7e1.original.json",
+    "raw": {
+      "id": "202610131615.0001",
+      "number": 2,
+      "originTime": 1791879302000,
+      "latitude": 38.705,
+      "longitude": 104.652,
+      "depth": 0,
+      "magnitude": 5.2,
+      "placeName": "内蒙古阿拉善盟阿拉善左旗"
+    }
+  },
+  {
+    "api": "jian",
+    "route": "direct",
+    "source": "cea-pr",
+    "capturedAtUtc": "2026-10-13T11:12:33.424155+00:00",
+    "file": "jian-direct-e595525be7e1.original.json",
+    "raw": {
+      "id": "b4t9t7uxnzhyy",
+      "number": 2,
+      "originTime": 1791879302000,
+      "longitude": 104.652,
+      "latitude": 38.705,
+      "depth": 0,
+      "magnitude": 5.2,
+      "placeName": "内蒙古阿拉善盟阿拉善左旗",
+      "province": "甘肃"
+    }
+  },
+  {
+    "api": "jian",
+    "route": "direct",
+    "source": "cwa-eew",
+    "capturedAtUtc": "2026-10-13T11:12:33.424163+00:00",
+    "file": "jian-direct-e595525be7e1.original.json",
+    "raw": {
+      "id": "1150076",
+      "number": 3,
+      "originTime": 1791883809000,
+      "latitude": 23.54,
+      "longitude": 121.59,
+      "depth": 30,
+      "magnitude": 4.6,
+      "placeName": "花蓮縣近海"
+    }
+  },
+  {
+    "api": "jian",
+    "route": "direct",
+    "source": "jma-eew",
+    "capturedAtUtc": "2026-10-13T11:12:33.424169+00:00",
+    "file": "jian-direct-e595525be7e1.original.json",
+    "raw": {
+      "id": "20261013112730",
+      "originTime": "2026-10-13T11:27:27+09:00",
+      "latitude": 32.4,
+      "longitude": 130.4,
+      "depth": 10,
+      "magnitude": 3.3,
+      "placeName": "熊本県天草・芦北地方",
+      "infoTypeName": "予報",
+      "intensity": "3",
+      "serial": 4,
+      "isWarn": false,
+      "isFinal": true,
+      "isCancel": false,
+      "isTraining": false,
+      "isPLUM": false,
+      "warnArea": []
+    }
+  },
+  {
+    "api": "jian",
+    "route": "direct",
+    "source": "sa",
+    "capturedAtUtc": "2026-10-13T11:12:33.424174+00:00",
+    "file": "jian-direct-e595525be7e1.original.json",
+    "raw": {
+      "id": "ew1790715960",
+      "number": 1,
+      "originTime": 1790715956290,
+      "latitude": 47.4047,
+      "longitude": -122.7057,
+      "depth": 27,
+      "magnitude": 4.3,
+      "placeName": "华盛顿州"
+    }
+  },
+  {
+    "api": "jian",
+    "route": "direct",
+    "source": "kma-eew",
+    "capturedAtUtc": "2026-10-13T11:12:33.424179+00:00",
+    "file": "jian-direct-e595525be7e1.original.json",
+    "raw": {
+      "id": "2021007178",
+      "originTime": 1639469956000,
+      "latitude": 33.15,
+      "longitude": 126.24,
+      "depth": 0,
+      "magnitude": 5.3,
+      "placeName": "济州近海岛屿",
+      "infoTypeName": "지진조기경보",
+      "isWarn": true,
+      "maxMMI": 6,
+      "intensity": "Ⅵ",
+      "maxIntensityArea": [
+        "제주"
+      ],
+      "phase": 2,
+      "placename_zh": "济州近海岛屿"
+    }
+  },
+  {
+    "api": "wolfx",
+    "route": "direct",
+    "source": "jma_eew",
+    "capturedAtUtc": "2026-10-13T11:12:33.736600+00:00",
+    "file": "wolfx-direct-6eb35c2a401a.original.json",
+    "raw": {
+      "type": "jma_eew",
+      "Title": "緊急地震速報（予報）",
+      "CodeType": "Ｍ、最大予測震度及び主要動到達予測時刻の緊急地震速報",
+      "Issue": {
+        "Source": "東京",
+        "Status": "通常"
+      },
+      "EventID": "20261013112730",
+      "Serial": 4,
+      "AnnouncedTime": "2026/10/13 11:28:11",
+      "OriginTime": "2026/10/13 11:27:27",
+      "Hypocenter": "熊本県天草・芦北地方",
+      "Latitude": 32.4,
+      "Longitude": 130.4,
+      "Magunitude": 3.3,
+      "Magnitude": 3.3,
+      "Depth": 10,
+      "MaxIntensity": "3",
+      "Accuracy": {
+        "Epicenter": "IPF 法（5 点以上）",
+        "Depth": "IPF 法（5 点以上）",
+        "Magnitude": "防災科研システム"
+      },
+      "MaxIntChange": {
+        "String": "ほとんど変化なし",
+        "Reason": "不明、未設定時、キャンセル時"
+      },
+      "WarnArea": [],
+      "isSea": false,
+      "isTraining": false,
+      "isAssumption": false,
+      "isWarn": false,
+      "isFinal": true,
+      "isCancel": false,
+      "OriginalText": "37 03 00 261013112811 C11 261013112727 ND20261013112730 NCN904 JD////////////// JN/// 743 N324 E1304 010 33 03 RK44209 RT00/// RC0//// 9999=",
+      "Pond": "0729"
+    }
+  },
+  {
+    "api": "fan",
+    "route": "direct",
+    "source": "cea",
+    "capturedAtUtc": "2026-10-13T11:12:34.046639+00:00",
+    "file": "fan-direct-345cfb3e25ad.original.json",
+    "raw": {
+      "id": "b4t9t7upkzhyy",
+      "eventId": "202610131615.0001",
+      "shockTime": "2026-10-13 16:15:02",
+      "longitude": 104.652,
+      "latitude": 38.705,
+      "placeName": "内蒙古阿拉善盟阿拉善左旗",
+      "magnitude": 5.2,
+      "epiIntensity": 6.8,
+      "depth": null,
+      "updates": 2
+    }
+  },
+  {
+    "api": "fan",
+    "route": "direct",
+    "source": "cea-pr",
+    "capturedAtUtc": "2026-10-13T11:12:34.046663+00:00",
+    "file": "fan-direct-345cfb3e25ad.original.json",
+    "raw": {
+      "id": "b4t9t7u16zhyy",
+      "eventId": "202610131615.0001",
+      "shockTime": "2026-10-13 16:15:02",
+      "longitude": 104.652,
+      "latitude": 38.705,
+      "placeName": "内蒙古阿拉善盟阿拉善左旗",
+      "magnitude": 5.2,
+      "epiIntensity": 6.8,
+      "depth": null,
+      "updates": 2,
+      "province": "内蒙古"
+    }
+  },
+  {
+    "api": "fan",
+    "route": "direct",
+    "source": "cwa-eew",
+    "capturedAtUtc": "2026-10-13T11:12:34.046669+00:00",
+    "file": "fan-direct-345cfb3e25ad.original.json",
+    "raw": {
+      "id": "cwa.gov.tw_earthquakeEW_1150076",
+      "updates": 1,
+      "shockTime": "2026-10-13 17:30:10",
+      "latitude": 23.61,
+      "longitude": 121.33,
+      "depth": 40,
+      "magnitude": 4.5,
+      "placeName": "花蓮縣萬榮鄉",
+      "locationDesc": [
+        "花蓮縣"
+      ]
+    }
+  },
+  {
+    "api": "fan",
+    "route": "direct",
+    "source": "kma-eew",
+    "capturedAtUtc": "2026-10-13T11:12:34.046674+00:00",
+    "file": "fan-direct-345cfb3e25ad.original.json",
+    "raw": {
+      "id": "2021007178",
+      "updates": 1,
+      "shockTime": "2021-12-14 17:19:16",
+      "createTime": "2021-12-14 17:20:27",
+      "latitude": 33.15,
+      "longitude": 126.24,
+      "magnitude": 5.3,
+      "depth": 0,
+      "epiIntensity": 6,
+      "placeName": "제주 서귀포시 서남서쪽 32km 해역",
+      "affectedAreas": [
+        "제주"
+      ]
+    }
+  },
+  {
+    "api": "whews-overseas",
+    "route": "direct",
+    "source": "jma_eew",
+    "capturedAtUtc": "2026-10-13T11:12:35.524366+00:00",
+    "file": "whews-overseas-direct-5ef600e95e1e.original.json",
+    "raw": {
+      "id": "20261013112730",
+      "updates": 4,
+      "shockTime": "2026-10-13 11:27:27",
+      "createTime": "2026-10-13 11:28:11",
+      "latitude": 32.4,
+      "longitude": 130.4,
+      "depth": 10,
+      "magnitude": 3.3,
+      "placeName": "熊本県天草・芦北地方",
+      "epiIntensity": "3",
+      "cancel": false,
+      "editorialOffice": "気象庁本庁",
+      "final": true,
+      "infoTypeName": "予報",
+      "isIPF": false,
+      "isPLUM": false,
+      "isSea": false,
+      "isTraining": false,
+      "landOrSea": "内陸",
+      "maxLgInt": "0",
+      "warningAreas": []
+    }
+  },
+  {
+    "api": "whews-overseas",
+    "route": "direct",
+    "source": "cwa_eew",
+    "capturedAtUtc": "2026-10-13T11:12:35.524390+00:00",
+    "file": "whews-overseas-direct-5ef600e95e1e.original.json",
+    "raw": {
+      "id": "1150076",
+      "updates": 3,
+      "shockTime": "2026-10-13 17:30:09",
+      "createTime": "2026-10-13 17:30:37",
+      "latitude": 23.54,
+      "longitude": 121.59,
+      "depth": 30,
+      "magnitude": 4.6,
+      "placeName": "臺灣東部海域",
+      "epiIntensity": "3",
+      "cancel": false,
+      "final": false
+    }
+  },
+  {
+    "api": "whews-overseas",
+    "route": "direct",
+    "source": "sa_eew",
+    "capturedAtUtc": "2026-10-13T11:12:35.524396+00:00",
+    "file": "whews-overseas-direct-5ef600e95e1e.original.json",
+    "raw": {
+      "id": "ew1790715960",
+      "shockTime": "2026-09-30 05:05:56",
+      "createTime": "2026-09-30 07:05:26",
+      "latitude": 47.4003,
+      "longitude": -122.722,
+      "depth": 27.9,
+      "magnitude": 4.2,
+      "placeName": "华盛顿州",
+      "epiIntensity": "4.9"
+    }
+  },
+  {
+    "api": "whews-overseas",
+    "route": "direct",
+    "source": "kma_eew",
+    "capturedAtUtc": "2026-10-13T11:12:35.524402+00:00",
+    "file": "whews-overseas-direct-5ef600e95e1e.original.json",
+    "raw": {
+      "id": "2021007178",
+      "shockTime": "2021-12-14 07:19:16",
+      "createTime": "2021-12-14 16:20:09",
+      "latitude": 33.15,
+      "longitude": 126.24,
+      "depth": 0,
+      "magnitude": 5.3,
+      "placeName": "제주 서귀포시 서남서쪽 32km 해역",
+      "infoTypeName": "지진조기경보",
+      "intensity": "Ⅵ",
+      "isWarn": true,
+      "maxIntensityArea": [
+        "제주"
+      ],
+      "maxMMI": 6,
+      "originTime": 1639437556000,
+      "phase": 2,
+      "placename_zh": "济州近海岛屿"
+    }
+  },
+  {
+    "api": "whews-overseas",
+    "route": "direct",
+    "source": "cea",
+    "capturedAtUtc": "2026-10-13T11:12:35.524407+00:00",
+    "file": "whews-overseas-direct-5ef600e95e1e.original.json",
+    "raw": {
+      "id": "b3s956fngqayy",
+      "updates": 1,
+      "shockTime": "2026-07-21 19:43:06",
+      "createTime": "2026-07-21 19:43:06",
+      "latitude": 23.199,
+      "longitude": 101.457,
+      "depth": 2,
+      "magnitude": 5.3,
+      "placeName": "云南普洱市墨江县",
+      "epiIntensity": 7.7
+    }
+  },
+  {
+    "api": "whews-overseas",
+    "route": "direct",
+    "source": "cea-pr",
+    "capturedAtUtc": "2026-10-13T11:12:35.524411+00:00",
+    "file": "whews-overseas-direct-5ef600e95e1e.original.json",
+    "raw": {
+      "id": "b3s956fnkqayy",
+      "updates": 1,
+      "shockTime": "2026-07-21 19:43:06",
+      "createTime": "2026-07-21 19:43:06",
+      "latitude": 23.199,
+      "longitude": 101.457,
+      "depth": 2,
+      "magnitude": 5.3,
+      "placeName": "云南普洱市墨江县",
+      "epiIntensity": 7.7,
+      "province": "云南"
+    }
+  },
+  {
+    "api": "wolfx-http",
+    "source": "sc_eew",
+    "route": "direct",
+    "file": "wolfx-http-sc.original.json",
+    "raw": {
+      "ID": 8201,
+      "EventID": "202610091221.0001_2",
+      "ReportTime": "2026-10-09 12:22:08",
+      "ReportNum": 2,
+      "OriginTime": "2026-10-09 12:21:53",
+      "HypoCenter": "四川雅安市宝兴县",
+      "Latitude": 30.27,
+      "Longitude": 102.855,
+      "Magunitude": 4.0,
+      "Magnitude": 4.0,
+      "Depth": 0.0,
+      "MaxIntensity": 5.6
+    }
+  },
+  {
+    "api": "wolfx-http",
+    "source": "jma_eew",
+    "route": "direct",
+    "file": "wolfx-http-jma.original.json",
+    "raw": {
+      "Title": "緊急地震速報（予報）",
+      "CodeType": "Ｍ、最大予測震度及び主要動到達予測時刻の緊急地震速報",
+      "Issue": {
+        "Source": "東京",
+        "Status": "通常"
+      },
+      "EventID": "20261013112730",
+      "Serial": 4,
+      "AnnouncedTime": "2026/10/13 11:28:11",
+      "OriginTime": "2026/10/13 11:27:27",
+      "Hypocenter": "熊本県天草・芦北地方",
+      "Latitude": 32.4,
+      "Longitude": 130.4,
+      "Magunitude": 3.3,
+      "Magnitude": 3.3,
+      "Depth": 10,
+      "MaxIntensity": "3",
+      "Accuracy": {
+        "Epicenter": "IPF 法（5 点以上）",
+        "Depth": "IPF 法（5 点以上）",
+        "Magnitude": "防災科研システム"
+      },
+      "MaxIntChange": {
+        "String": "ほとんど変化なし",
+        "Reason": "不明、未設定時、キャンセル時"
+      },
+      "WarnArea": [],
+      "isSea": false,
+      "isTraining": false,
+      "isAssumption": false,
+      "isWarn": false,
+      "isFinal": true,
+      "isCancel": false,
+      "OriginalText": "37 03 00 261013112811 C11 261013112727 ND20261013112730 NCN904 JD////////////// JN/// 743 N324 E1304 010 33 03 RK44209 RT00/// RC0//// 9999=",
+      "Pond": "0729"
+    }
+  },
+  {
+    "api": "wolfx-http",
+    "source": "cq_eew",
+    "route": "direct",
+    "file": "wolfx-http-cq.original.json",
+    "raw": {
+      "ID": "b4cch611kacyy",
+      "EventID": "202609260757.0001",
+      "ReportTime": "2026-09-26 07:57:32",
+      "ReportNum": 2,
+      "OriginTime": "2026-09-26 07:57:32",
+      "HypoCenter": "四川宜宾市高县",
+      "Latitude": 28.494,
+      "Longitude": 104.652,
+      "Magnitude": 4.8,
+      "Depth": 2,
+      "MaxIntensity": 6.6
+    }
+  },
+  {
+    "api": "wolfx-http",
+    "source": "fj_eew",
+    "route": "direct",
+    "file": "wolfx-http-fj.original.json",
+    "raw": {
+      "ID": 10061,
+      "EventID": "202609150258_1",
+      "ReportTime": "2026-09-15 02:58:33",
+      "ReportNum": 1,
+      "OriginTime": "2026-09-15 02:58:20",
+      "HypoCenter": "福建莆田市秀屿区",
+      "Latitude": 25.18,
+      "Longitude": 119.39,
+      "Magunitude": 3.1,
+      "Magnitude": 3.1
+    }
+  },
+  {
+    "api": "wolfx-http",
+    "source": "cenc_eew",
+    "route": "direct",
+    "file": "wolfx-http-cenc.original.json",
+    "raw": {
+      "ID": "b4t9t7upkzhyy",
+      "EventID": "202610131615.0001",
+      "ReportTime": "2026-10-13 16:15:02",
+      "ReportNum": 1,
+      "OriginTime": "2026-10-13 16:15:02",
+      "HypoCenter": "内蒙古阿拉善盟阿拉善左旗",
+      "Latitude": 38.706,
+      "Longitude": 104.652,
+      "Magnitude": 4.9,
+      "Depth": null,
+      "MaxIntensity": 6.4
+    }
+  }
+]

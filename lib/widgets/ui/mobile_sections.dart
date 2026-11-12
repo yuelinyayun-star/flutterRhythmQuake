@@ -12,12 +12,16 @@ class MobileSectionHost extends StatefulWidget {
     required this.settingsBuilder,
     this.weather,
     this.onSectionChanged,
+    this.weatherMapVisible = true,
+    this.onWeatherMapBack,
   });
 
   final Widget seismic;
   final Widget Function(VoidCallback onBack) settingsBuilder;
   final Widget? weather;
   final ValueChanged<MobileSection>? onSectionChanged;
+  final bool weatherMapVisible;
+  final VoidCallback? onWeatherMapBack;
 
   @override
   State<MobileSectionHost> createState() => _MobileSectionHostState();
@@ -42,7 +46,15 @@ class _MobileSectionHostState extends State<MobileSectionHost> {
     return PopScope(
       canPop: _section == MobileSection.seismic,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) _select(MobileSection.seismic);
+        if (!didPop) {
+          if (_section == MobileSection.weather &&
+              widget.weatherMapVisible &&
+              widget.onWeatherMapBack != null) {
+            widget.onWeatherMapBack!();
+          } else {
+            _select(MobileSection.seismic);
+          }
+        }
       },
       child: Stack(
         fit: StackFit.expand,
@@ -50,10 +62,15 @@ class _MobileSectionHostState extends State<MobileSectionHost> {
           Offstage(
             offstage:
                 _section == MobileSection.settings ||
-                (_section == MobileSection.weather && widget.weather == null),
-            child: ExcludeFocus(
-              excluding: _section == MobileSection.settings,
-              child: widget.seismic,
+                (_section == MobileSection.weather &&
+                    (widget.weather == null || !widget.weatherMapVisible)),
+            child: TickerMode(
+              enabled:
+                  _section != MobileSection.weather || widget.weatherMapVisible,
+              child: ExcludeFocus(
+                excluding: _section == MobileSection.settings,
+                child: widget.seismic,
+              ),
             ),
           ),
           if (_section == MobileSection.weather)
@@ -72,71 +89,76 @@ class _MobileSectionHostState extends State<MobileSectionHost> {
                 ),
               ),
             ),
-          Positioned(
-            top: MediaQuery.paddingOf(context).top + 12,
-            left: 12,
-            right: 12,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(24),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-                child: Container(
-                  height: 46,
-                  padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    color: const Color(0x8016191D),
-                    borderRadius: BorderRadius.circular(24),
-                    border: Border.all(color: const Color(0x38FFFFFF)),
-                  ),
-                  child: Row(
-                    children: [
-                      for (final (section, label) in const [
-                        (MobileSection.seismic, '地震·火山'),
-                        (MobileSection.weather, '气象'),
-                        (MobileSection.settings, '设置'),
-                      ])
-                        Expanded(
-                          child: Semantics(
-                            selected: _section == section,
-                            child: TextButton(
-                              key: ValueKey('mobile-section-${section.name}'),
-                              onPressed: () => _select(section),
-                              style: TextButton.styleFrom(
-                                padding: EdgeInsets.zero,
-                                foregroundColor: _section == section
-                                    ? const Color(0xFFE6F4FF)
-                                    : Colors.white70,
-                                backgroundColor: _section == section
-                                    ? const Color(0x2082B1FF)
-                                    : Colors.transparent,
-                                side: _section == section
-                                    ? const BorderSide(color: Color(0x5CB5DCFF))
-                                    : BorderSide.none,
-                                shape: const StadiumBorder(),
-                              ),
-                              child: Text(
-                                label,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  shadows: _section == section
-                                      ? const [
-                                          Shadow(
-                                            color: Color(0x70A2D2FF),
-                                            blurRadius: 8,
-                                          ),
-                                        ]
-                                      : null,
+          if (!(_section == MobileSection.weather &&
+              widget.weatherMapVisible &&
+              widget.onWeatherMapBack != null))
+            Positioned(
+              top: MediaQuery.paddingOf(context).top + 12,
+              left: 12,
+              right: 12,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(24),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+                  child: Container(
+                    height: 46,
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: const Color(0x8016191D),
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(color: const Color(0x38FFFFFF)),
+                    ),
+                    child: Row(
+                      children: [
+                        for (final (section, label) in const [
+                          (MobileSection.seismic, '地震·火山'),
+                          (MobileSection.weather, '气象'),
+                          (MobileSection.settings, '设置'),
+                        ])
+                          Expanded(
+                            child: Semantics(
+                              selected: _section == section,
+                              child: TextButton(
+                                key: ValueKey('mobile-section-${section.name}'),
+                                onPressed: () => _select(section),
+                                style: TextButton.styleFrom(
+                                  padding: EdgeInsets.zero,
+                                  foregroundColor: _section == section
+                                      ? const Color(0xFFE6F4FF)
+                                      : Colors.white70,
+                                  backgroundColor: _section == section
+                                      ? const Color(0x2082B1FF)
+                                      : Colors.transparent,
+                                  side: _section == section
+                                      ? const BorderSide(
+                                          color: Color(0x5CB5DCFF),
+                                        )
+                                      : BorderSide.none,
+                                  shape: const StadiumBorder(),
+                                ),
+                                child: Text(
+                                  label,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    shadows: _section == section
+                                        ? const [
+                                            Shadow(
+                                              color: Color(0x70A2D2FF),
+                                              blurRadius: 8,
+                                            ),
+                                          ]
+                                        : null,
+                                  ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
         ],
       ),
     );

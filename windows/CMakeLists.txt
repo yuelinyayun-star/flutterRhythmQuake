@@ -60,6 +60,10 @@ add_subdirectory("runner")
 # them to the application.
 include(flutter/generated_plugins.cmake)
 
+# Windows JVM header compatibility, applied to a build-local source copy.
+include(cmake/jni_env_pointer_fix.cmake)
+
+
 
 # === Installation ===
 # Support files are copied into place next to the executable, so that it can
@@ -74,6 +78,10 @@ endif()
 
 set(INSTALL_BUNDLE_DATA_DIR "${CMAKE_INSTALL_PREFIX}/data")
 set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}")
+
+# Versioned Rust C ABI for background station image decoding and sampling.
+add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../native/station_core"
+  "${CMAKE_CURRENT_BINARY_DIR}/rq_station_core")
 
 install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
   COMPONENT Runtime)

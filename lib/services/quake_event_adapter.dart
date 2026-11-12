@@ -3,15 +3,22 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../models/source_payload.dart';
+import 'native_jma_eew.dart';
 import '../models/unified_quake_data.dart';
+import 'sources/jma_lpgm_api_adapter.dart';
+import '../models/usgs_shakemap.dart';
+import '../models/usgs_dyfi.dart';
 import '../models/cmt_moment_tensor.dart';
 import '../models/cmt_solution_metadata.dart';
 import '../models/quake_message.dart';
+import '../models/catalog_information_title.dart';
 import '../models/whews_catalog.dart';
 import '../models/jian_sources.dart';
 import '../utils/catalog_location.dart';
+import '../utils/cwa_location.dart';
 import '../models/volcano_event_data.dart';
 import '../core/intensity_calculator.dart';
+import '../core/intensity_class.dart';
 import '../core/cwa_intensity_prediction.dart';
 import '../core/cwa_report_intensities.dart';
 import '../core/utils/jma_seis_int_loc.dart';
@@ -31,34 +38,32 @@ class QuakeEventAdapter {
   static UnifiedQuakeData catalogInfo(QuakeMessage event, String source) {
     final zone = event.timeZone ?? QuakeTime.wallClockOffsetHours(event.source);
     final useShindo = const {
-      QuakeSourceType.wolfx, QuakeSourceType.p2p,
-      QuakeSourceType.jma_fan, QuakeSourceType.cwa,
+      QuakeSourceType.wolfx,
+      QuakeSourceType.p2p,
+      QuakeSourceType.jma_fan,
+      QuakeSourceType.cwa,
     }.contains(event.source);
     final intensity = useShindo
         ? event.jmaShindo ?? '-'
         : event.maxIntensity?.toString() ?? '-';
-    final title = switch (event.source) {
-      QuakeSourceType.cenc => '中国地震台网地震信息',
-      QuakeSourceType.usgs => 'USGS 地震情报',
-      QuakeSourceType.wolfx || QuakeSourceType.jma_fan || QuakeSourceType.p2p
-        => '日本气象厅地震信息',
-      QuakeSourceType.cwa => '中央氣象署 地震報告',
-      _ => event.infoTypeName ?? event.source.warningLabel,
-    };
     return UnifiedQuakeData(
       source: source,
       origin: -2,
       eventId: event.eventId,
       isEew: false,
       timeZone: zone,
-      titleText: title,
-      reportNumText: event.reportNumText ??
-          (event.reportNumber != null ? '第${event.reportNumber}报' :
-            event.reviewType ?? ''),
+      titleText: catalogInformationTitle(event),
+      reportNumText:
+          event.reportNumText ??
+          (event.reportNumber != null
+              ? '第${event.reportNumber}报'
+              : ''),
       useShindo: useShindo,
       maxIntensity: intensity,
       className: _setClassName(intensity, useShindo, event.isCanceled),
-      hypocenter: event.source == QuakeSourceType.kma_eq
+      hypocenter: event.source == QuakeSourceType.cwa
+          ? cwaDisplayLocation(event.location)
+          : event.source == QuakeSourceType.kma_eq
           ? kmaDisplayLocation(event.location, event.latitude, event.longitude)
           : event.location,
       originTime: event.originTime,
@@ -79,8 +84,41 @@ class QuakeEventAdapter {
       cmtMetadata: event.cmtMetadata,
       rawEvent: event,
       isHistory: true,
-      hasReportSequence: event.reportNumber != null ||
+      hasReportSequence:
+          event.reportNumber != null ||
           (event.reportNumText?.isNotEmpty ?? false),
+    );
+  }
+
+  /// A product has its own display identity but stays bound to its USGS row.
+  /// It never enters earthquake admission, notifications or source-slot dedupe.
+  static UnifiedQuakeData shakeMapInfo(UsgsShakeMapFrame frame) {
+    final product = frame.product;
+    final intensity = product.maxMmi;
+    return catalogInfo(frame.event, 'usgsShakeMap').copyWith(
+      titleText: 'USGS ShakeMap 烈度速报',
+      reportNumText: product.version.isEmpty ? '' : '第${product.version}版',
+      maxIntensity: intensity?.toString() ?? '未知',
+      className: intensity == null ? 'gray' : intensityClassName(intensity),
+      reportTime: product.updated,
+      hasReportSequence: false,
+      apiTypeLabel: 'USGS',
+    );
+  }
+
+  static UnifiedQuakeData dyfiInfo(UsgsDyfiFrame frame) {
+    final product = frame.product;
+    return catalogInfo(frame.event, 'usgsDyfi').copyWith(
+      titleText: 'USGS DYFI 公众体感报告',
+      reportNumText: '',
+      maxIntensity: product.maxCdiText,
+      className: product.maxCdi == null
+          ? 'gray'
+          : intensityClassName(product.maxCdi!),
+      reportTime: product.updated,
+      hasReportSequence: false,
+      apiTypeLabel: 'USGS-DYFI',
+      sourcePayload: product.original,
     );
   }
 
@@ -280,6 +318,8 @@ class QuakeEventAdapter {
     final location = korean
         ? (_stringValue(raw['placename_zh']) ??
               kmaDisplayLocation(originalLocation, lat, lng))
+        : type == 'cwa'
+        ? cwaDisplayLocation(originalLocation)
         : japanese
         ? originalLocation
         : catalogDisplayLocation(originalLocation, lat, lng);
@@ -310,6 +350,12 @@ class QuakeEventAdapter {
       'cenc' => '中国地震台网地震信息',
       _ => '${sourceType.displayName}地震信息',
     };
+    final observedLpgm = type == 'jma'
+        ? JmaLpgmApiAdapter.parse(
+            raw,
+            (raw['telegram'] ?? raw['telegramType'] ?? '').toString(),
+          )
+        : null;
     final areaData = raw[eew ? 'warnArea' : 'intensityAreas'];
     final areas = <Map<String, dynamic>>[];
     if (areaData is List) {
@@ -325,16 +371,21 @@ class QuakeEventAdapter {
       }
     }
     return UnifiedQuakeData(
-      source: source,
+      source: observedLpgm != null ? 'jmaLpgm' : source,
       origin: jianOrigin,
-      eventId: id,
+      eventId: observedLpgm?.eventId ?? id,
       isEew: eew,
       timeZone: zone,
       titleText: title,
       reportNumText: type == 'cenc'
           ? review
+          : type == 'jma'
+          ? _whewsJmaReportText(
+              raw,
+              canceled ? '取消' : _stringValue(raw['infoType']) ?? '',
+            )
           : serial == null
-          ? ''
+          ? (eew ? '' : whewsCatalogReportText(raw))
           : '第$serial報${raw['isFinal'] == true ? '（最終）' : ''}',
       useShindo: useShindo,
       maxIntensity: canceled ? '-' : intensity,
@@ -352,7 +403,14 @@ class QuakeEventAdapter {
       isWarn: raw['isWarn'] == true,
       isFinal: raw['isFinal'] == true,
       isCanceled: canceled,
-      isAssumption: raw['isPLUM'] == true,
+      isAssumption: type == 'jma-eew'
+          ? NativeJmaEew.isPlum(
+              source: source,
+              isEew: eew,
+              isAssumption: false,
+              wireIsPlum: raw['isPLUM'] == true,
+            )
+          : raw['isPLUM'] == true,
       warnArea: canceled
           ? ''
           : type == 'cwa'
@@ -361,10 +419,13 @@ class QuakeEventAdapter {
           ? ''
           : jsonEncode(areas),
       apiTypeLabel: 'Jian Project',
-      isJmaLpgm: type == 'jma' && raw['telegram'] == 'VXSE62',
+      isJmaLpgm: observedLpgm != null,
+      jmaLpgmBulletin: observedLpgm,
       isHistory: isHistory,
       isSnapshot: isSnapshot,
-      hasReportSequence: serial != null,
+      // Jian SA exposes number=1 for every revision, not an increasing sequence.
+      // Preserve that display number while accepting ordered live body changes.
+      hasReportSequence: serial != null && type != 'sa',
       useSourceTimeForExpiry: true,
       sourcePayload: snapshotSourcePayload(raw),
     );
@@ -723,14 +784,21 @@ class QuakeEventAdapter {
     final depth = _parseJmaDepth(data['depth']);
     final infoTypeName = _stringValue(data['infoTypeName']) ?? '';
     final isCanceled = data['cancel'] == true || infoTypeName == '取消';
+    final observedLpgm = JmaLpgmApiAdapter.parse(
+      data,
+      (data['telegramType'] ?? data['telegram'] ?? '').toString(),
+    );
+
     final reportTime =
         _parseTime(data['createTime'], 9) ??
         _parseTime(data['reportTime'], 9) ??
         _parseTime(data['updateTime'], 9);
     return UnifiedQuakeData(
-      source: 'jmaEqlist',
+      source: observedLpgm != null ? 'jmaLpgm' : 'jmaEqlist',
       origin: _originWhews,
-      eventId: _stringValue(data['eventId'] ?? data['id']) ?? '',
+      eventId:
+          observedLpgm?.eventId ??
+          (_stringValue(data['eventId'] ?? data['id']) ?? ''),
       isEew: false,
       timeZone: 9,
       titleText: _stringValue(data['title']) ?? '地震情報',
@@ -751,6 +819,8 @@ class QuakeEventAdapter {
       isCanceled: isCanceled,
       warnArea: isCanceled ? '' : intensityDetails.warnArea,
       apiTypeLabel: 'WHEWS',
+      isJmaLpgm: observedLpgm != null,
+      jmaLpgmBulletin: observedLpgm,
     );
   }
 
@@ -1063,7 +1133,7 @@ class QuakeEventAdapter {
     final magnitude =
         _catalogNumber(data['magnitude']) ?? _catalogNumber(data['mag']) ?? -1;
     final reportedIntensity = parseReportedIntensity(data['maxIntensity']);
-    final maxIntensity = reportedIntensity != null
+    final maxIntensity = reportedIntensity != null && reportedIntensity > 0
         ? (reportedIntensity == reportedIntensity.roundToDouble()
               ? reportedIntensity.toInt().toString()
               : reportedIntensity.toString())
@@ -1224,12 +1294,19 @@ class QuakeEventAdapter {
         reportTime: _parseTime(
           data['ReportTime'] ??
               data['reportTime'] ??
-              data['createTime'] ??
-              data['updateTime'],
+              data['AnnouncedTime'] ??
+              data['updateTime'] ??
+              data['createTime'],
           9,
         ),
         magnitude: _parseDouble(data['Magunitude'] ?? data['magnitude']) ?? -1,
         isCanceled: true,
+        isAssumption: NativeJmaEew.isPlum(
+          source: source,
+          isEew: true,
+          isAssumption: data['isAssumption'] == true,
+          wireIsPlum: data['isPLUM'] == true,
+        ),
       );
     }
 
@@ -1270,6 +1347,14 @@ class QuakeEventAdapter {
         (data['OriginTime'] ?? data['originTime']) as String?,
         9,
       ),
+      reportTime: _parseTime(
+        data['ReportTime'] ??
+            data['reportTime'] ??
+            data['AnnouncedTime'] ??
+            data['updateTime'] ??
+            data['createTime'],
+        9,
+      ),
       magnitude: _parseDouble(data['Magunitude'] ?? data['magnitude']) ?? -1,
       depth: _parseDouble(data['Depth'] ?? data['depth']) ?? -1,
       depthText: _formatDepthText(
@@ -1281,7 +1366,12 @@ class QuakeEventAdapter {
       isWarn: isWarn,
       isFinal: data['isFinal'] == true,
       isCanceled: false,
-      isAssumption: data['isAssumption'] == true,
+      isAssumption: NativeJmaEew.isPlum(
+        source: source,
+        isEew: true,
+        isAssumption: data['isAssumption'] == true,
+        wireIsPlum: data['isPLUM'] == true,
+      ),
       warnArea: _parseJmaWarnArea(data, origin),
     );
   }
@@ -1993,10 +2083,9 @@ class QuakeEventAdapter {
             ].any((key) => _catalogNumber(data[key]) == null))) {
       return null;
     }
-    final rawLocation = '${data['location'] ?? data['loc'] ?? ''}';
-    final location = expTech
-        ? RegExp(r'\(位於(.+)\)').firstMatch(rawLocation)?.group(1) ?? rawLocation
-        : rawLocation;
+    final rawLocation =
+        '${data['location'] ?? data['loc'] ?? data['placeName'] ?? ''}';
+    final location = cwaDisplayLocation(rawLocation);
     final useShindo = true;
 
     return UnifiedQuakeData(
@@ -2210,9 +2299,15 @@ class QuakeEventAdapter {
     String className;
     final rawIntensityText = _stringValue(data['maxIntensity']);
     if (origin == _originWhews) {
-      maxIntensityStr = rawIntensityText?.isNotEmpty == true
+      // USGS can send zero when there is no usable maximum MMI. It must not
+      // become Roman I. Apply the existing information-card CSIS estimate,
+      // exactly as for a missing intensity; keep the original source payload.
+      final reportedIntensity = parseReportedIntensity(data['maxIntensity']);
+      maxIntensityStr = reportedIntensity != null && reportedIntensity > 0
           ? rawIntensityText!
-          : _whewsFallbackIntensity(magnitude, depth);
+          : magnitude.isFinite && depth.isFinite
+          ? _whewsFallbackIntensity(magnitude, depth)
+          : '-';
       className = _setClassName(maxIntensityStr, false, false);
     } else if (intensityRaw != null && intensityRaw > 0) {
       maxIntensityStr = intensityRaw.toStringAsFixed(1);
@@ -2476,7 +2571,7 @@ class QuakeEventAdapter {
   ///
   /// 数据来源：data.earthquake.cn 大震震源机制 CMT 产品（HTML 表格，由
   /// [CencCmtService] 轮询并解析为 Map）。包含断层面参数、矩心深度、
-  /// Mw 矩震级等字段。自动产出与人工复核两套目录由 Service 合并，
+  /// 速报震级等字段。自动产出与人工复核两套目录由 Service 合并，
   /// 人工复核优先；通过 [reviewType] 区分，[reportNumText] 显示
   /// "自动测定"/"正式测定"。
   ///
@@ -2819,32 +2914,7 @@ class QuakeEventAdapter {
   static String _intensityToClassName(
     double intensity, {
     bool useShindo = false,
-  }) {
-    if (useShindo) {
-      if (intensity >= 7.0) return 'purple';
-      if (intensity >= 6.5) return 'dark-red';
-      if (intensity >= 6.0) return 'red';
-      if (intensity >= 5.5) return 'dark-orange';
-      if (intensity >= 5.0) return 'orange';
-      if (intensity >= 4.0) return 'yellow';
-      if (intensity >= 3.0) return 'green';
-      if (intensity >= 2.0) return 'blue';
-      if (intensity >= 1.0) return 'gray';
-      return 'dark-gray';
-    }
-    final level = intensity.round();
-    if (level >= 10) return 'purple';
-    if (level == 9) return 'red';
-    if (level == 8) return 'dark-orange';
-    if (level == 7) return 'orange';
-    if (level == 6) return 'yellow';
-    if (level == 5) return 'green';
-    if (level == 4) return 'blue';
-    if (level == 3) return 'sky-blue';
-    if (level == 2) return 'gray';
-    if (level == 1) return 'dark-gray';
-    return 'gray';
-  }
+  }) => intensityClassName(intensity, useShindo: useShindo);
 
   static double _jmaShindoToNum(String shindo) {
     final trimmed = shindo.trim();
@@ -3087,6 +3157,7 @@ class QuakeEventAdapter {
     return _parseTime(
       body['ReportTime'] ??
           body['reportTime'] ??
+          body['AnnouncedTime'] ??
           body['createTime'] ??
           body['updateTime'] ??
           (issue is Map ? issue['time'] : null),

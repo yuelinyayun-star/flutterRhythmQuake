@@ -1,0 +1,492 @@
+{
+  "files": 56,
+  "call_sites": 86,
+  "entries": [
+    {
+      "path": "lib/core/cwa_intensity_prediction.dart",
+      "call_sites": 1,
+      "original_sha256": "cb205682478cc0a2ac5b9d8722f18905fc2101a06733f80e748e68ef8ca51649",
+      "original_lines": [
+        192
+      ]
+    },
+    {
+      "path": "lib/core/cwa_report_intensities.dart",
+      "call_sites": 1,
+      "original_sha256": "b67d9d62d755a7e5941feadb841b23efe94caafa35ec270f4e4f12354449acbe",
+      "original_lines": [
+        113
+      ]
+    },
+    {
+      "path": "lib/core/source_estimation/jshis_surface_structure_api.dart",
+      "call_sites": 1,
+      "original_sha256": "269d78a06f1806b7b35e03c916875e0503b1b808ab54928e222fadf4ccfa2485",
+      "original_lines": [
+        55
+      ]
+    },
+    {
+      "path": "lib/core/utils/alert_voice_helper.dart",
+      "call_sites": 1,
+      "original_sha256": "ba1ee02ac6b70ff07726e3242bd819f8a732e2c9c7bbb2d172082e2067b8982e",
+      "original_lines": [
+        348
+      ]
+    },
+    {
+      "path": "lib/models/cenc_ir_data.dart",
+      "call_sites": 2,
+      "original_sha256": "a596484fac322fe9e03408a199db41324d9b3ab09e2d00c3e9d8dd41a01c6184",
+      "original_lines": [
+        188,
+        206
+      ]
+    },
+    {
+      "path": "lib/models/weather_alert_map_item.dart",
+      "call_sites": 1,
+      "original_sha256": "101084ee6ffd2981d7c78273def2539f48e508a486ee94fa66f0d3e0a654d660",
+      "original_lines": [
+        390
+      ]
+    },
+    {
+      "path": "lib/services/collector/jian_collector_feed.dart",
+      "call_sites": 1,
+      "original_sha256": "e747f83a8a3e43b3475b45426e69c8c5f24f9963712c4953e6b4d69639aa9e7b",
+      "original_lines": [
+        69
+      ]
+    },
+    {
+      "path": "lib/services/jian_auth_service.dart",
+      "call_sites": 2,
+      "original_sha256": "fb3d4fe7d08edce25373013838d92246141d30e09c415465fb148cc91372ea40",
+      "original_lines": [
+        42,
+        190
+      ]
+    },
+    {
+      "path": "lib/services/location_service.dart",
+      "call_sites": 3,
+      "original_sha256": "9e39db4c9471067a3688b62794751ecba8a9697380d223a831880e1c675b1371",
+      "original_lines": [
+        235,
+        280,
+        304
+      ]
+    },
+    {
+      "path": "lib/services/ntp_service.dart",
+      "call_sites": 1,
+      "original_sha256": "71dd4035a877a13df66a1dae2d81c9a528645dc8044e7ed8804d0ab5b56e7087",
+      "original_lines": [
+        164
+      ]
+    },
+    {
+      "path": "lib/services/obs_websocket_service.dart",
+      "call_sites": 2,
+      "original_sha256": "a3efc6020cb3d9afbd235eb1ae194bc92b169ee0056bc55ba7f744a4f36e62f9",
+      "original_lines": [
+        462,
+        463
+      ]
+    },
+    {
+      "path": "lib/services/sources/china_weather_alert_map_service.dart",
+      "call_sites": 1,
+      "original_sha256": "7219be330de74c25d7d4448e969df901af333f508fe9a5dcbac03844c162a22e",
+      "original_lines": [
+        137
+      ]
+    },
+    {
+      "path": "lib/services/sources/china_weather_alert_service.dart",
+      "call_sites": 2,
+      "original_sha256": "81122ebce02b104bc2b1c7640111dcf6e8f1ce7c925332aa5e99795c285ecddd",
+      "original_lines": [
+        132,
+        389
+      ]
+    },
+    {
+      "path": "lib/services/sources/china_weather_hourly_service.dart",
+      "call_sites": 2,
+      "original_sha256": "f36f1ee2069d3725ab2acaabea1f2007f4fe51da7fe516c3f71fe46ae650c450",
+      "original_lines": [
+        101,
+        344
+      ]
+    },
+    {
+      "path": "lib/services/sources/chinaeew_icl_service.dart",
+      "call_sites": 2,
+      "original_sha256": "44fc77158c427fb8115dd050f37e09557a9cb522e8e3ee118d5aea66c9da1e30",
+      "original_lines": [
+        84,
+        145
+      ]
+    },
+    {
+      "path": "lib/services/sources/cma_local_weather_service.dart",
+      "call_sites": 4,
+      "original_sha256": "a04fe86635b39fed491fc6f37e22b36b15aca7f9e2283fc2eaae07090002926c",
+      "original_lines": [
+        524,
+        609,
+        767,
+        850
+      ]
+    },
+    {
+      "path": "lib/services/sources/cwa_station_service.dart",
+      "call_sites": 8,
+      "original_sha256": "076d6e2fe2b1419b560c62fa24696002ff8a8deb3016062cf5778d6a57027c5c",
+      "original_lines": [
+        200,
+        256,
+        311,
+        362,
+        497,
+        592,
+        683,
+        800
+      ]
+    },
+    {
+      "path": "lib/services/sources/emsc_eqlist_service.dart",
+      "call_sites": 2,
+      "original_sha256": "8a72bd23c1bf72c5cd14253bcf3bce8ac581f0bb05310bc739256835bcaeaafb",
+      "original_lines": [
+        54,
+        176
+      ]
+    },
+    {
+      "path": "lib/services/sources/eqlist/cenc_eqlist_service.dart",
+      "call_sites": 1,
+      "original_sha256": "3781103dfed479f481cd9dc4af330737baa4a88614520216ee0b7482874a35f8",
+      "original_lines": [
+        50
+      ]
+    },
+    {
+      "path": "lib/services/sources/eqlist/cwa_eqlist_service.dart",
+      "call_sites": 2,
+      "original_sha256": "b16e43478484d7d08d7d434e6c4a2936e014d5d7c09d551ef590342f4edaafe5",
+      "original_lines": [
+        108,
+        165
+      ]
+    },
+    {
+      "path": "lib/services/sources/eqlist/jma_eqlist_service.dart",
+      "call_sites": 1,
+      "original_sha256": "566d06a7ad799ebcf25e59fd9d3428221b531945a7038b5e614213e1cce0e2d2",
+      "original_lines": [
+        85
+      ]
+    },
+    {
+      "path": "lib/services/sources/fan_browser_socket_io.dart",
+      "call_sites": 1,
+      "original_sha256": "2773bd3eac8f718e0bb95b83368744602f0c2bc995e81c7d49950802c366d619",
+      "original_lines": [
+        208
+      ]
+    },
+    {
+      "path": "lib/services/sources/fan_radar_service.dart",
+      "call_sites": 1,
+      "original_sha256": "9586a04e340a714de22becce54f1db3545ee3eaf8ac00947dea50588735a0159",
+      "original_lines": [
+        241
+      ]
+    },
+    {
+      "path": "lib/services/sources/fan_satellite_cloud_service.dart",
+      "call_sites": 1,
+      "original_sha256": "a356a25c13058b5447bb020a497afc9c1053b8671f65c7009e37081bf4424565",
+      "original_lines": [
+        121
+      ]
+    },
+    {
+      "path": "lib/services/sources/fan_service.dart",
+      "call_sites": 1,
+      "original_sha256": "8ed6cc5bf701c88f5265c26aa7e364b36177551c7d160e57a05e813acfc03c02",
+      "original_lines": [
+        589
+      ]
+    },
+    {
+      "path": "lib/services/sources/gfs_wind_service.dart",
+      "call_sites": 2,
+      "original_sha256": "2214d7a974dc8c3c54c46fecee6673e590d84fdabdbe2cce8f625265089b7cbd",
+      "original_lines": [
+        154,
+        275
+      ]
+    },
+    {
+      "path": "lib/services/sources/jian_icl_service.dart",
+      "call_sites": 1,
+      "original_sha256": "a09d908452ab63bffc78f9409e69393e37563b7016680a963b977c7b13026625",
+      "original_lines": [
+        128
+      ]
+    },
+    {
+      "path": "lib/services/sources/jian_service.dart",
+      "call_sites": 1,
+      "original_sha256": "b1875a07a7a19daf547592af10e3a8a0a01ddc5049e89802792c7ba8d61a3e02",
+      "original_lines": [
+        200
+      ]
+    },
+    {
+      "path": "lib/services/sources/jian_station_service.dart",
+      "call_sites": 1,
+      "original_sha256": "944f6be652ef1019eaeeb4058d3577474defe0222ec11b311d307f2a0c3604bd",
+      "original_lines": [
+        127
+      ]
+    },
+    {
+      "path": "lib/services/sources/jma_local_weather_service.dart",
+      "call_sites": 1,
+      "original_sha256": "8b607c83594ea15c3d3aa39a6a305ea1f01f421c5f44934a26f221080dec378f",
+      "original_lines": [
+        924
+      ]
+    },
+    {
+      "path": "lib/services/sources/jma_radar_service.dart",
+      "call_sites": 1,
+      "original_sha256": "09f78f7e4d6fdd849ea59477107bbd51609248917e812f252a24fb2d49e9ca62",
+      "original_lines": [
+        122
+      ]
+    },
+    {
+      "path": "lib/services/sources/jma_satellite_cloud_service.dart",
+      "call_sites": 1,
+      "original_sha256": "0c4f8d9a03e3c5336ffd106667ba5555ec13f72cb7a49315ec8ec82cad9fa623",
+      "original_lines": [
+        98
+      ]
+    },
+    {
+      "path": "lib/services/sources/jma_volcano_map_service.dart",
+      "call_sites": 1,
+      "original_sha256": "fa2e08bd51bd53a001d0616112b096caf52dd8bc3bcf64c8997882b27d24d004",
+      "original_lines": [
+        280
+      ]
+    },
+    {
+      "path": "lib/services/sources/jma_volcano_service.dart",
+      "call_sites": 1,
+      "original_sha256": "ce1f41a3f12c49a5aca10e5d7e8bc0234f276cfcf9295d8941b14f40e1cfa3cc",
+      "original_lines": [
+        227
+      ]
+    },
+    {
+      "path": "lib/services/sources/kma_monitor.dart",
+      "call_sites": 1,
+      "original_sha256": "310b6cbf05bb83d0cc640c2e9c145f87775c88d5864702f1371fe8a2b1f19f0f",
+      "original_lines": [
+        218
+      ]
+    },
+    {
+      "path": "lib/services/sources/lpgm_monitor_service.dart",
+      "call_sites": 1,
+      "original_sha256": "6cf0e0e668106514ad6cd31676199c79d6ebd5a9765f0c336226732ab230a37f",
+      "original_lines": [
+        316
+      ]
+    },
+    {
+      "path": "lib/services/sources/nied_monitor.dart",
+      "call_sites": 1,
+      "original_sha256": "b0e6cc25fa116bdb161b33ab7e3ee3382e2d1f0cae7c806100021c2e6f1ad578",
+      "original_lines": [
+        1084
+      ]
+    },
+    {
+      "path": "lib/services/sources/nied_yahoo_service.dart",
+      "call_sites": 3,
+      "original_sha256": "41a063d4c981cb4526114ff87dd5baeab15c52e13586f040035a8df243d10cdf",
+      "original_lines": [
+        130,
+        329,
+        428
+      ]
+    },
+    {
+      "path": "lib/services/sources/noaa_tsunami_area_service.dart",
+      "call_sites": 1,
+      "original_sha256": "c3db7d8730dff79c026d21ac1154c600780e26ce68559f72c2ca93a8c88e7347",
+      "original_lines": [
+        27
+      ]
+    },
+    {
+      "path": "lib/services/sources/nowquake_cenc_intensity_service.dart",
+      "call_sites": 3,
+      "original_sha256": "e373ff40099662c15e177ca15a34c6c790ec0b847db5db8119beafdc683eb003",
+      "original_lines": [
+        124,
+        180,
+        235
+      ]
+    },
+    {
+      "path": "lib/services/sources/nsmc_satellite_cloud_service.dart",
+      "call_sites": 1,
+      "original_sha256": "d87ce02940ab4b281dbcaca282d86007544901286df68b69ba47b24323568985",
+      "original_lines": [
+        87
+      ]
+    },
+    {
+      "path": "lib/services/sources/p2pquake_service.dart",
+      "call_sites": 2,
+      "original_sha256": "8f9264a0011e34acb859349f2609f060eb8720ab0b84540c0e4fffec11d0f5be",
+      "original_lines": [
+        221,
+        456
+      ]
+    },
+    {
+      "path": "lib/services/sources/palert_service.dart",
+      "call_sites": 1,
+      "original_sha256": "e1329d2a4d22c253707c3ef6a17f0d3a8f79eb7917ba51cc78946f640fd93278",
+      "original_lines": [
+        526
+      ]
+    },
+    {
+      "path": "lib/services/sources/sasmex_service.dart",
+      "call_sites": 1,
+      "original_sha256": "1ef4a9ef00e0cb18b3bd063786507c81723b327f08b2715bdf50a4633475551a",
+      "original_lines": [
+        87
+      ]
+    },
+    {
+      "path": "lib/services/sources/seisjs_service.dart",
+      "call_sites": 1,
+      "original_sha256": "c12ff21bc01457cf7e3bb4c341d1ec784cb2a0b2f41a31772e7939e58072e2b6",
+      "original_lines": [
+        145
+      ]
+    },
+    {
+      "path": "lib/services/sources/sidesis_socket_io_client.dart",
+      "call_sites": 1,
+      "original_sha256": "86f09704085505c8a41c77e0fbae0d3d281fb2412139b9cdfaea3e40ac3eaa8d",
+      "original_lines": [
+        165
+      ]
+    },
+    {
+      "path": "lib/services/sources/snet_service.dart",
+      "call_sites": 1,
+      "original_sha256": "d5b6ba21bdcff39df9ba1e80690a57e53e2ab5e4fb14f7a58a74b90b7078eb06",
+      "original_lines": [
+        324
+      ]
+    },
+    {
+      "path": "lib/services/sources/typhoon_service.dart",
+      "call_sites": 3,
+      "original_sha256": "a8c245161cbd00bf1e4b788017f1af42ed4b06737670dab0e7590e1e717b7758",
+      "original_lines": [
+        202,
+        324,
+        332
+      ]
+    },
+    {
+      "path": "lib/services/sources/usgs_cmt_service.dart",
+      "call_sites": 2,
+      "original_sha256": "a8f243debb8d37fbfe00a3fc02cd2d56e47adce44561ee07de27468ee943cc76",
+      "original_lines": [
+        74,
+        112
+      ]
+    },
+    {
+      "path": "lib/services/sources/usgs_dyfi_service.dart",
+      "call_sites": 1,
+      "original_sha256": "cf89f510170de8a3683a64f8fdd934f0f6335f3a26179cb96cb6f1a6dcb4d0c7",
+      "original_lines": [
+        282
+      ]
+    },
+    {
+      "path": "lib/services/sources/usgs_eqlist_service.dart",
+      "call_sites": 1,
+      "original_sha256": "aa5f8079f397d973385ef49ba5fae16156cf9073418b009e5e978c150974317f",
+      "original_lines": [
+        78
+      ]
+    },
+    {
+      "path": "lib/services/sources/usgs_shakemap_service.dart",
+      "call_sites": 2,
+      "original_sha256": "731ea00a4e7a37ee7353a5b9050e200271c426149129b4fbc5f91fba9096d682",
+      "original_lines": [
+        310,
+        352
+      ]
+    },
+    {
+      "path": "lib/services/sources/whews_socket_client.dart",
+      "call_sites": 1,
+      "original_sha256": "a5f1caed4006bf6b26fe66dcafac7b155f402a6215f0e45fe2054ed85fff524b",
+      "original_lines": [
+        21
+      ]
+    },
+    {
+      "path": "lib/services/sources/whews_station_service.dart",
+      "call_sites": 1,
+      "original_sha256": "ffab085ace54520db82110985d36f18c823bf638fd61fd0afe9d5bc8dc5a5809",
+      "original_lines": [
+        249
+      ]
+    },
+    {
+      "path": "lib/services/sources/wolfx_service.dart",
+      "call_sites": 1,
+      "original_sha256": "392a15e007663c5dd87ccd59455a1fc8aef309f8125eaad2d40cbb63108249af",
+      "original_lines": [
+        210
+      ]
+    },
+    {
+      "path": "lib/services/wauth_service.dart",
+      "call_sites": 1,
+      "original_sha256": "0614977ad4caf12c41bad17fe9db8bddd20401b2db1a7e351ca326b651eff6f1",
+      "original_lines": [
+        438
+      ]
+    }
+  ],
+  "intentional_exclusions": {
+    "api_json_decoder.dart": "shared native adapter and non-native implementation",
+    "station_json_decoder_io.dart": "native FFI adapter and explicit non-native implementation",
+    "station_json_decoder_stub.dart": "non-IO platform implementation",
+    "mock_input_service.dart": "local debug/replay import, not upstream API",
+    "sasmex_report_sequence.dart": "local stored sequence snapshot decode, not ingress",
+    "whews_nied_station_metadata.dart": "bundled station metadata asset, not ingress"
+  }
+}

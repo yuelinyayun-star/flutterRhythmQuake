@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutterrhythmquake/services/epicenter_region_service.dart';
+import 'package:flutterrhythmquake/services/native_korea_land_regions.dart';
 import 'package:flutterrhythmquake/services/quake_event_adapter.dart';
 import 'package:flutterrhythmquake/utils/kma_location.dart';
 
@@ -24,6 +25,8 @@ void main() {
   test(
     'FAN and WHEWS KMA use the same coordinate name without changing raw data',
     () async {
+      // Sources start after the existing offline region preload in main.dart.
+      await EpicenterRegionService.instance.load();
       final before = jsonEncode(whews);
       final event = QuakeEventAdapter.convertWhews('kma', whews)!;
       final fan = QuakeEventAdapter.convert('kmaEqlist', {
@@ -37,7 +40,10 @@ void main() {
         'createTime': '2026-07-23 03:48:05',
         'maxIntensity': 4,
       }, 1)!;
-      expect(event.hypocenter, '韩国附近');
+      expect(
+        event.hypocenter,
+        NativeKoreaLandRegions.supported ? '韩国庆尚北道附近' : '朝鲜半岛南部附近',
+      );
       expect(event.hypocenter, fan.hypocenter);
       expect(event.apiTypeLabel, 'WHEWS');
       expect(fan.apiTypeLabel, 'FAN');

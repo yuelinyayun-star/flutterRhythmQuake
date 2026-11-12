@@ -1,97 +1,16 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
-
 import 'package:crypto/crypto.dart';
 
 import '../../models/eew_event_group.dart';
+import '../../models/station_history_frame.dart';
+import '../../models/unified_quake_data.dart';
 import '../debug/history_replay.dart';
+import '../debug/history_replay_directory_io.dart';
+import '../debug/station_json_archive.dart';
 import '../debug/station_replay_blocks.dart';
 import '../debug/station_archive_storage_io.dart' as compression;
-
-/// Returns a durable temporary path and digest, never a second whole-file string.
-Future<(String, String, int)> exportCaptureFile(
-  (String, String) request,
-) async {
-  final (path, temporaryPath) = request;
-  final manifest =
-      jsonDecode(await File('$path/event.json').readAsString()) as Map;
-  final group = EewEventGroup.fromMap(
-    manifest['group'] as Map,
-  ).copyWith(captureEndedAt: DateTime.parse(manifest['end'] as String));
-  final legacy = await Directory(path)
-      .list(followLinks: false)
-      .where((e) => e is File && e.path.endsWith('.stations.json'))
-      .cast<File>()
-      .toList();
-  legacy.sort((a, b) => a.path.compareTo(b.path));
-  final shared = (manifest['chunks'] as List? ?? const []).cast<String>();
-  final chunks = [
-    ...legacy,
-    for (final name in shared)
-      File('${Directory(path).parent.path}/chunks/${validateChunkName(name)}'),
-  ];
-  final replay = HistoryReplayPackage.fromGroup(
-    group,
-    hasArchivedStations: chunks.isNotEmpty,
-  );
-  final destination = File(temporaryPath);
-  await destination.parent.create(recursive: true);
-  final handle = destination.openSync(mode: FileMode.write);
-  final sink = _ReplayBytes(handle);
-  var complete = false;
-  try {
-    final metadata = jsonEncode(replay.exportMetadata());
-    sink.add(utf8.encode(metadata.substring(0, metadata.length - 1)));
-    if (chunks.isNotEmpty) {
-      sink.add(
-        utf8.encode(
-          ',"stationArchive":{"format":${jsonEncode(StationReplayFrames.format)},"blocks":[',
-        ),
-      );
-    }
-    var first = true;
-    for (final chunk in chunks) {
-      if (await chunk.length() > HistoryReplayPackage.maxBytes) {
-        throw const FormatException('Station chunk exceeds size limit');
-      }
-      final bytes = await chunk.readAsBytes();
-      final compressed = chunk.path.endsWith('.gz')
-          ? bytes
-          : compression.compress(bytes);
-      final table =
-          jsonDecode(
-                utf8.decode(
-                  chunk.path.endsWith('.gz')
-                      ? compression.expand(bytes, HistoryReplayPackage.maxBytes)
-                      : bytes,
-                ),
-              )
-              as Map;
-      final block = StationReplayFrames.encodeBlock(table, compressed);
-      for (final item in block['frames'] as List) {
-        if (DateTime.parse(
-              item[0] as String,
-            ).difference(replay.times.first).abs() >
-            HistoryReplayPackage.maxDuration) {
-          throw const FormatException('Invalid station replay time span');
-        }
-      }
-      if (!first) sink.add(const [44]);
-      sink.add(JsonUtf8Encoder().convert(block));
-      first = false;
-    }
-    if (chunks.isNotEmpty) sink.add(utf8.encode(']}'));
-    sink.add(const [125]);
-    sink.close();
-    handle.flushSync();
-    complete = true;
-    return (destination.path, sink.digest.toString(), sink.length);
-  } finally {
-    handle.closeSync();
-    if (!complete && destination.existsSync()) destination.deleteSync();
-  }
-}
+import '../replay_history_files.dart';
 
 String validateChunkName(String name) {
   if (!RegExp(r'^\d+_[a-f0-9]{64}\.stations\.json\.gz$').hasMatch(name)) {
@@ -100,44 +19,235 @@ String validateChunkName(String name) {
   return name;
 }
 
-class _DigestSink implements Sink<Digest> {
-  Digest? value;
-  @override
-  void add(Digest data) => value = data;
-  @override
-  void close() {}
+String validateFrameName(String name) {
+  if (!RegExp(
+    r'^\d+_(nied|snet|kma|cwa|seisjs|palert|lpgm)_[a-f0-9]{64}\.json(?:\.gz)?$',
+  ).hasMatch(name)) {
+    throw const FormatException('Invalid station frame file name');
+  }
+  return name;
 }
 
-class _ReplayBytes implements Sink<List<int>> {
-  _ReplayBytes(this.handle) {
-    hashing = sha256.startChunkedConversion(result);
+Future<UnifiedQuakeData> _report(
+  String path,
+  String digest,
+  String signature,
+) async {
+  if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(digest)) {
+    throw const FormatException('Invalid report file digest');
   }
-  final RandomAccessFile handle;
-  final _DigestSink result = _DigestSink();
-  late final ByteConversionSink hashing;
-  final BytesBuilder _buffer = BytesBuilder(copy: false);
-  int length = 0;
-  Digest get digest => result.value!;
-  @override
-  void add(List<int> bytes) {
-    length += bytes.length;
-    if (length > HistoryReplayPackage.maxBytes) {
-      throw const FormatException('Replay exceeds 128 MiB; capture retained');
+  final bytes = await File('$path/reports/$digest.json').readAsBytes();
+  if (sha256.convert(bytes).toString() != digest) {
+    throw const FormatException('Collector report checksum mismatch');
+  }
+  final report = UnifiedQuakeData.fromMap(
+    Map<String, dynamic>.from(jsonDecode(utf8.decode(bytes)) as Map),
+  );
+  if (historyReportSignature(report) != signature) {
+    throw const FormatException('Collector report summary mismatch');
+  }
+  return report;
+}
+
+List<Map<String, dynamic>> captureReportIndex(EewEventGroup group) => [
+  for (final report in group.reports)
+    {
+      'fileId': group.storedReports!.payloads[report]!.fileId,
+      'signature': group.storedReports!.payloads[report]!.signature,
+      'reportInstant': group.storedReports!.payloads[report]!.reportInstant
+          ?.toIso8601String(),
+    },
+];
+
+Future<UnifiedQuakeData> Function() _reportReader(
+  String path,
+  String digest,
+  String signature,
+) =>
+    () => _report(path, digest, signature);
+
+EewEventGroup restoreCaptureReports(
+  EewEventGroup group,
+  Map manifest,
+  String path,
+) {
+  if (manifest['folderVersion'] != 1) {
+    return group;
+  }
+  final entries = manifest['reports'] as List;
+  if (entries.length != group.reports.length) {
+    throw const FormatException('Collector report file count mismatch');
+  }
+  final refs = <UnifiedQuakeData, StoredReportPayload>{};
+  for (var i = 0; i < entries.length; i++) {
+    final entry = entries[i] as Map;
+    final digest = entry['fileId'] as String;
+    final signature = entry['signature'] as String;
+    if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(digest) ||
+        historyReportSignature(group.reports[i]) != signature) {
+      throw const FormatException('Invalid collector report reference');
     }
-    _buffer.add(bytes);
-    if (_buffer.length >= 64 * 1024) _flush();
+    refs[group.reports[i]] = StoredReportPayload(
+      signature: signature,
+      isNotEmpty: true,
+      fileId: digest,
+      filePath: '$path/reports/$digest.json',
+      reportInstant: entry['reportInstant'] == null
+          ? null
+          : DateTime.parse(entry['reportInstant'] as String),
+      load: _reportReader(path, digest, signature),
+    );
   }
+  return group.copyWith(
+    storedReports: StoredReportHistory(recordKey: path, payloads: refs),
+  );
+}
 
-  @override
-  void close() {
-    _flush();
-    hashing.close();
+EewEventGroup saveCaptureReports(
+  EewEventGroup group,
+  String path,
+  ReplayHistoryFiles writer,
+  String relativeDirectory,
+) {
+  final reports = <UnifiedQuakeData>[];
+  final refs = <UnifiedQuakeData, StoredReportPayload>{};
+  for (final report in group.reports) {
+    final previous = group.storedReports?.payloads[report];
+    if (previous != null) {
+      reports.add(report);
+      refs[report] = previous;
+      continue;
+    }
+    final name = writer.acceptCollectorJson(
+      '$relativeDirectory/reports',
+      '',
+      report.toMap(),
+    );
+    final digest = name.substring(0, 64);
+    final signature = historyReportSignature(report);
+    final file = File('$path/reports/$digest.json');
+    final summary = report.copyWith(clearSourcePayload: true);
+    reports.add(summary);
+    refs[summary] = StoredReportPayload(
+      signature: signature,
+      isNotEmpty: report.sourcePayload?.isNotEmpty == true,
+      fileId: digest,
+      filePath: file.path,
+      reportInstant: HistoryReplayPackage.reportInstant(report),
+      load: _reportReader(path, digest, signature),
+    );
   }
+  return group.copyWith(
+    reports: reports,
+    storedReports: StoredReportHistory(recordKey: path, payloads: refs),
+  );
+}
 
-  void _flush() {
-    if (_buffer.isEmpty) return;
-    final bytes = _buffer.takeBytes();
-    handle.writeFromSync(bytes);
-    hashing.add(bytes);
+StationReplayEntry _frameEntry(File file, String name) {
+  validateFrameName(name);
+  final parts = name.split('_');
+  final receipt = DateTime.fromMicrosecondsSinceEpoch(
+    int.parse(parts[0]),
+    isUtc: true,
+  );
+  final kind = parts[1];
+  final hash = parts[2].substring(0, 64);
+  return StationReplayEntry.file(
+    receipt,
+    kind,
+    hash,
+    filePath: file.path,
+    load: () async {
+      final bytes = await file.readAsBytes();
+      if (sha256.convert(bytes).toString() != hash) {
+        throw const FormatException('Collector frame checksum mismatch');
+      }
+      final expanded = file.path.endsWith('.gz')
+          ? compression.expand(bytes, HistoryReplayPackage.maxBytes)
+          : bytes;
+      final frame = StationHistoryFrame.fromMap(
+        jsonDecode(utf8.decode(expanded)) as Map,
+      );
+      if (frame.kind != kind || frame.receivedAt != receipt) {
+        throw const FormatException('Collector frame index mismatch');
+      }
+      return frame;
+    },
+  );
+}
+
+/// One file per report/frame, compressed only for the final portable export.
+Future<(String, String, int)> exportCaptureFile(
+  (String, String) request,
+) async {
+  final (path, destination) = request;
+  final manifest =
+      jsonDecode(await File('$path/event.json').readAsString(encoding: utf8))
+          as Map;
+  var group = restoreCaptureReports(
+    EewEventGroup.fromMap(manifest['group'] as Map),
+    manifest,
+    path,
+  ).copyWith(captureEndedAt: DateTime.parse(manifest['end'] as String));
+  final frames = <StationReplayEntry>[];
+  for (final name in (manifest['frames'] as List? ?? const []).cast<String>()) {
+    frames.add(
+      _frameEntry(
+        File(
+          '${Directory(path).parent.path}/frames/${validateFrameName(name)}',
+        ),
+        name,
+      ),
+    );
   }
+  // Old collector checkpoints are converted one legacy chunk at a time.
+  final legacy = await Directory(path)
+      .list(followLinks: false)
+      .where((e) => e is File && e.path.endsWith('.stations.json'))
+      .cast<File>()
+      .toList();
+  for (final name in (manifest['chunks'] as List? ?? const []).cast<String>()) {
+    legacy.add(
+      File('${Directory(path).parent.path}/chunks/${validateChunkName(name)}'),
+    );
+  }
+  for (final file in legacy) {
+    final bytes = await file.readAsBytes();
+    final table =
+        jsonDecode(
+              utf8.decode(
+                file.path.endsWith('.gz')
+                    ? compression.expand(bytes, HistoryReplayPackage.maxBytes)
+                    : bytes,
+              ),
+            )
+            as Map;
+    for (final frame in StationJsonArchive.decode(table)) {
+      final raw = JsonUtf8Encoder().convert(frame.toMap());
+      final digest = sha256.convert(raw).toString();
+      final name =
+          '${frame.receivedAt.microsecondsSinceEpoch}_${frame.kind}_$digest.json';
+      final converted = File('$path/converted-frames/$name');
+      await converted.parent.create(recursive: true);
+      if (!await converted.exists()) {
+        await converted.writeAsBytes(raw, flush: true);
+      }
+      frames.add(_frameEntry(converted, name));
+    }
+  }
+  group = group.copyWith(
+    stationFrames: StationReplayFrames(
+      frames..sort((a, b) => a.receivedAt.compareTo(b.receivedAt)),
+    ),
+  );
+  await exportReplayDirectory(
+    HistoryReplayPackage.fromGroup(group),
+    destination,
+  );
+  final file = File(destination);
+  return (
+    destination,
+    (await sha256.bind(file.openRead()).first).toString(),
+    await file.length(),
+  );
 }

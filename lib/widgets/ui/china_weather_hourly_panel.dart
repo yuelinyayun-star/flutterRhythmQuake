@@ -85,12 +85,14 @@ class ChinaWeatherHourlyPanel extends StatefulWidget {
     this.now,
     this.showChart = false,
     this.showSource = true,
+    this.showTopDivider = true,
   });
   final ChinaWeatherHourlyState state;
   final double scale;
   final DateTime? now;
   final bool showChart;
   final bool showSource;
+  final bool showTopDivider;
 
   @override
   State<ChinaWeatherHourlyPanel> createState() =>
@@ -154,7 +156,8 @@ class _ChinaWeatherHourlyPanelState extends State<ChinaWeatherHourlyPanel> {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Divider(color: Colors.white24, height: 16 * s),
+          if (widget.showTopDivider)
+            Divider(color: Colors.white24, height: 16 * s),
           Row(
             children: [
               Expanded(

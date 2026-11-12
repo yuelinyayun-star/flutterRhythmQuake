@@ -1,10 +1,17 @@
+import 'map_backdrop_cache.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:ui';
+import 'dart:convert';
 import 'package:provider/provider.dart';
 import '../../providers/quake_provider.dart';
 import '../../providers/map_state_provider.dart';
 import '../../models/quake_message.dart';
+import '../../models/jma_tsunami_list.dart';
+import '../../services/native_jma_tsunami.dart';
+import '../../models/history_map_product.dart';
+import 'usgs_dyfi_list_card.dart';
+import 'jma_tsunami_list_card.dart';
 import '../../models/cmt_catalog.dart';
 import '../../services/quake_event_adapter.dart';
 import 'cmt_badge.dart';
@@ -13,8 +20,10 @@ import '../../core/utils/quake_time.dart';
 import '../../core/utils/cenc_ir_binding.dart';
 import '../../utils/kma_location.dart';
 import '../../utils/catalog_location.dart';
+import '../../utils/cwa_location.dart';
 import 'package:intl/intl.dart';
 import 'ui_scale.dart';
+import 'event_render_page.dart';
 
 /// 地震列表面板组件
 ///
@@ -44,7 +53,82 @@ class EqlistPanel extends StatefulWidget {
 class _EqlistPanelState extends State<EqlistPanel> {
   /// 滚动控制器
   final ScrollController _scrollController = ScrollController();
+  final BackdropKey _backgroundBackdropKey = BackdropKey();
   bool _isCollapsed = false;
+  Object? _timelineKey;
+  Future<Map<String, dynamic>>? _timeline;
+  List<String> _timelineRows = const [];
+  String _eventKey(QuakeMessage e) => 'catalog_${e.source.name}_${e.eventId}';
+
+  Future<Map<String, dynamic>>? _prepareTimeline(
+    List<JmaTsunamiListGroup> groups,
+    List<QuakeMessage> events,
+  ) {
+    final provider = context.read<QuakeProvider>();
+    if (!groups.any((g) => !g.pinned)) {
+      _timelineKey = null;
+      _timelineRows = const [];
+      return null;
+    }
+    // An updated bulletin body or catalog object does not change chronology.
+    final key = jsonEncode([
+      [
+        for (final g in groups)
+          [
+            g.key,
+            g.pinned,
+            g.reportTime,
+            g.timeZone,
+            provider.tsunamiReceiptOrder(g),
+          ],
+      ],
+      [
+        for (final e in events)
+          [
+            _eventKey(e),
+            (e.reportTime ?? e.originTime).toIso8601String(),
+            e.timeZone,
+            provider.catalogReceiptOrder(e),
+          ],
+      ],
+    ]);
+    if (_timelineKey != key) {
+      _timelineKey = key;
+      _timeline =
+          NativeJmaTsunami.prepareAsync({
+            'op': 'internationalListOrder',
+            'groups': [
+              for (final g in groups)
+                {
+                  'pinned': g.pinned,
+                  'reportTime': g.reportTime,
+                  'timeZone': g.timeZone,
+                  'receiptOrder': provider.tsunamiReceiptOrder(g),
+                },
+            ],
+            'events': [
+              for (final e in events)
+                {
+                  'time': (e.reportTime ?? e.originTime).toIso8601String(),
+                  'receiptOrder': provider.catalogReceiptOrder(e),
+                  'timeZone':
+                      e.timeZone ?? QuakeTime.wallClockOffsetHours(e.source),
+                },
+            ],
+          }).then((view) {
+            if (mounted && _timelineKey == key) {
+              _timelineRows = [
+                for (final row in view['rows'] as List)
+                  row['group'] != null
+                      ? 'jma_tsunami_${groups[row['group'] as int].key}'
+                      : _eventKey(events[row['event'] as int]),
+              ];
+            }
+            return view;
+          });
+    }
+    return _timeline;
+  }
 
   /// 参考宽度，用于响应式缩放计算
   static const double _refWidth = 1700.0;
@@ -84,78 +168,262 @@ class _EqlistPanelState extends State<EqlistPanel> {
             final items = provider.historyList;
             final sourceBuckets = provider.historyBySource;
 
-            return AnimatedContainer(
-              duration: const Duration(milliseconds: 260),
-              curve: Curves.easeOutCubic,
-              width: _isCollapsed && !widget.embedded ? tabSize : expandedWidth,
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  AnimatedPositioned(
-                    duration: const Duration(milliseconds: 260),
-                    curve: Curves.easeOutCubic,
-                    left: _isCollapsed && !widget.embedded ? -panelWidth : 0,
-                    top: 0,
-                    bottom: 0,
-                    width: panelWidth,
-                    child: IgnorePointer(
-                      ignoring: _isCollapsed && !widget.embedded,
-                      child: AnimatedOpacity(
-                        duration: const Duration(milliseconds: 180),
-                        opacity: _isCollapsed && !widget.embedded ? 0 : 1,
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            _buildFilterBar(
-                              context,
-                              provider,
-                              sourceBuckets,
-                              scale,
-                            ),
-                            if (items.isEmpty)
-                              _buildEmpty(context, scale, panelWidth)
-                            else
-                              Flexible(
-                                child: RepaintBoundary(
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.vertical(
-                                      bottom: Radius.circular(_s(10, context)),
-                                    ),
-                                    child: BackdropFilter(
-                                      filter: ImageFilter.blur(
-                                        sigmaX: 10,
-                                        sigmaY: 10,
+            return ListenableBuilder(
+              listenable: Listenable.merge([
+                provider.jmaTsunamiListenable,
+                provider.internationalTsunamiListenable,
+              ]),
+              builder: (context, _) {
+                final tsunami = <JmaTsunamiListGroup>[
+                  if (provider.sourceFilter.contains('jmaEqlist'))
+                    ...provider.jmaTsunamiListenable.value.where(
+                      (group) =>
+                          group.grade != 'stationForecast' &&
+                          group.grade != 'observation',
+                    ),
+                  ...provider.internationalTsunamiListenable.value,
+                ];
+                return FutureBuilder<Map<String, dynamic>>(
+                  future: _prepareTimeline(tsunami, items),
+                  builder: (context, snapshot) {
+                    final fallback = [
+                      for (var i = 0; i < tsunami.length; i++)
+                        if (tsunami[i].pinned) {'group': i},
+                      for (var i = 0; i < items.length; i++) {'event': i},
+                      for (var i = 0; i < tsunami.length; i++)
+                        if (!tsunami[i].pinned) {'group': i},
+                    ];
+                    final byKey = <String, Map<String, int>>{
+                      for (var i = 0; i < tsunami.length; i++)
+                        'jma_tsunami_${tsunami[i].key}': {'group': i},
+                      for (var i = 0; i < items.length; i++)
+                        _eventKey(items[i]): {'event': i},
+                    };
+                    final remaining = Map.of(byKey);
+                    final rows = <Map<String, int>>[];
+                    void bindRow(String key) {
+                      final row = remaining.remove(key);
+                      if (row != null) rows.add(row);
+                    }
+
+                    for (final group in tsunami.where((g) => g.pinned)) {
+                      bindRow('jma_tsunami_${group.key}');
+                    }
+                    for (final key in _timelineRows) {
+                      bindRow(key);
+                    }
+                    for (final row in fallback) {
+                      bindRow(
+                        row['group'] != null
+                            ? 'jma_tsunami_${tsunami[row['group']!].key}'
+                            : _eventKey(items[row['event']!]),
+                      );
+                    }
+                    final indices = <Key, int>{};
+                    for (var i = 0; i < rows.length; i++) {
+                      final group = rows[i]['group'];
+                      final event = rows[i]['event'];
+                      if (group != null) {
+                        indices[ValueKey('jma_tsunami_${tsunami[group].key}')] =
+                            i;
+                      } else if (event != null) {
+                        indices[ValueKey(_eventKey(items[event]))] = i;
+                        indices[ValueKey(
+                              'usgs_group_${items[event].eventId}',
+                            )] =
+                            i;
+                      }
+                    }
+                    return AnimatedContainer(
+                      duration: const Duration(milliseconds: 260),
+                      curve: Curves.easeOutCubic,
+                      width: _isCollapsed && !widget.embedded
+                          ? tabSize
+                          : expandedWidth,
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          AnimatedPositioned(
+                            duration: const Duration(milliseconds: 260),
+                            curve: Curves.easeOutCubic,
+                            left: _isCollapsed && !widget.embedded
+                                ? -panelWidth
+                                : 0,
+                            top: 0,
+                            bottom: 0,
+                            width: panelWidth,
+                            child: IgnorePointer(
+                              ignoring: _isCollapsed && !widget.embedded,
+                              child: AnimatedOpacity(
+                                duration: const Duration(milliseconds: 180),
+                                opacity: _isCollapsed && !widget.embedded
+                                    ? 0
+                                    : 1,
+                                child: BackdropGroup(
+                                  backdropKey: _backgroundBackdropKey,
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      _buildFilterBar(
+                                        context,
+                                        provider,
+                                        sourceBuckets,
+                                        scale,
                                       ),
-                                      child: Container(
-                                        decoration: _listBg(context),
-                                        child: ListView.builder(
-                                          controller: _scrollController,
-                                          padding: EdgeInsets.zero,
-                                          itemCount: items.length,
-                                          itemBuilder: (_, i) => _EqCard(
-                                            eq: items[i],
-                                            scale: scale,
-                                            scaleFn: _s,
+                                      if (items.isEmpty && tsunami.isEmpty)
+                                        _buildEmpty(context, scale, panelWidth)
+                                      else
+                                        Flexible(
+                                          child: RepaintBoundary(
+                                            child: ClipRRect(
+                                              borderRadius:
+                                                  BorderRadius.vertical(
+                                                    bottom: Radius.circular(
+                                                      _s(10, context),
+                                                    ),
+                                                  ),
+                                              child: CachedMapBackdropFilter.grouped(
+                                                filter: ImageFilter.blur(
+                                                  sigmaX: 10,
+                                                  sigmaY: 10,
+                                                ),
+                                                child: Container(
+                                                  decoration: _listBg(context),
+                                                  child: ListView.builder(
+                                                    controller:
+                                                        _scrollController,
+                                                    padding: EdgeInsets.zero,
+                                                    itemCount: rows.length,
+                                                    findChildIndexCallback:
+                                                        (key) => indices[key],
+                                                    itemBuilder: (_, i) {
+                                                      final groupIndex =
+                                                          rows[i]['group'];
+                                                      if (groupIndex != null) {
+                                                        final group =
+                                                            tsunami[groupIndex];
+                                                        return JmaTsunamiListCard(
+                                                          key: ValueKey(
+                                                            'jma_tsunami_${group.key}',
+                                                          ),
+                                                          group: group,
+                                                          scale: scale,
+                                                        );
+                                                      }
+                                                      final event =
+                                                          items[rows[i]['event']
+                                                              as int];
+                                                      final quake = _EqCard(
+                                                        key: ValueKey(
+                                                          'catalog_${event.source.name}_${event.eventId}',
+                                                        ),
+                                                        eq: event,
+                                                        scale: scale,
+                                                        scaleFn: _s,
+                                                      );
+                                                      if (event.source !=
+                                                          QuakeSourceType
+                                                              .usgs) {
+                                                        return quake;
+                                                      }
+                                                      return ListenableBuilder(
+                                                        listenable:
+                                                            provider.usgsDyfi,
+                                                        builder: (context, _) {
+                                                          final frame = provider
+                                                              .usgsDyfi
+                                                              .frameFor(event);
+                                                          if (frame == null &&
+                                                              event.usgsProductTypes
+                                                                      ?.split(
+                                                                        ',',
+                                                                      )
+                                                                      .contains(
+                                                                        'dyfi',
+                                                                      ) !=
+                                                                  true) {
+                                                            return quake;
+                                                          }
+                                                          final mapState = context
+                                                              .watch<
+                                                                MapStateProvider
+                                                              >();
+                                                          final selected = mapState
+                                                              .isSelectedHistoryEvent(
+                                                                event,
+                                                                product:
+                                                                    HistoryMapProduct
+                                                                        .dyfi,
+                                                              );
+                                                          return RepaintBoundary(
+                                                            key: ValueKey(
+                                                              'usgs_group_${event.eventId}',
+                                                            ),
+                                                            child: Column(
+                                                              mainAxisSize:
+                                                                  MainAxisSize
+                                                                      .min,
+                                                              children: [
+                                                                quake,
+                                                                UsgsDyfiListCard(
+                                                                  key: ValueKey(
+                                                                    'dyfi_list_${event.eventId}',
+                                                                  ),
+                                                                  event: event,
+                                                                  frame: frame,
+                                                                  scale: scale,
+                                                                  selected:
+                                                                      selected,
+                                                                  status: provider
+                                                                      .usgsDyfi
+                                                                      .errorFor(
+                                                                        event,
+                                                                      ),
+                                                                  onToggle: () {
+                                                                    if (selected) {
+                                                                      mapState
+                                                                          .clearSelectedHistoryEvent();
+                                                                    } else {
+                                                                      mapState.selectHistoryEvent(
+                                                                        event,
+                                                                        product:
+                                                                            HistoryMapProduct.dyfi,
+                                                                      );
+                                                                    }
+                                                                    mapState
+                                                                        .resumeAutoZoom();
+                                                                  },
+                                                                ),
+                                                              ],
+                                                            ),
+                                                          );
+                                                        },
+                                                      );
+                                                    },
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                    ),
+                                    ],
                                   ),
                                 ),
                               ),
-                          ],
-                        ),
+                            ),
+                          ),
+                          if (!widget.embedded)
+                            Positioned(
+                              top: _s(6, context),
+                              right: _isCollapsed ? 0 : _s(6, context),
+                              child: _buildCollapseButton(context),
+                            ),
+                        ],
                       ),
-                    ),
-                  ),
-                  if (!widget.embedded)
-                    Positioned(
-                      top: _s(6, context),
-                      right: _isCollapsed ? 0 : _s(6, context),
-                      child: _buildCollapseButton(context),
-                    ),
-                ],
-              ),
+                    );
+                  },
+                );
+              },
             );
           },
         );
@@ -176,7 +444,7 @@ class _EqlistPanelState extends State<EqlistPanel> {
           child: RepaintBoundary(
             child: ClipRRect(
               borderRadius: BorderRadius.circular(_s(8, context)),
-              child: BackdropFilter(
+              child: CachedMapBackdropFilter(
                 filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
                 child: Container(
                   width: _s(20, context),
@@ -265,7 +533,7 @@ class _EqlistPanelState extends State<EqlistPanel> {
         borderRadius: BorderRadius.vertical(
           top: Radius.circular(_s(10, context)),
         ),
-        child: BackdropFilter(
+        child: CachedMapBackdropFilter.grouped(
           filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
           child: Container(
             padding: EdgeInsets.symmetric(
@@ -466,7 +734,12 @@ class _EqCard extends StatefulWidget {
   final double scale;
   final double Function(double, BuildContext) scaleFn;
 
-  const _EqCard({required this.eq, required this.scale, required this.scaleFn});
+  const _EqCard({
+    super.key,
+    required this.eq,
+    required this.scale,
+    required this.scaleFn,
+  });
 
   @override
   State<_EqCard> createState() => _EqCardState();
@@ -502,6 +775,9 @@ class _EqCardState extends State<_EqCard> {
 
   String get _locationText {
     if (_isJmaHypocenterInvestigating) return '震源 調査中';
+    if (eq.source == QuakeSourceType.cwa) {
+      return cwaDisplayLocation(eq.location);
+    }
     if (eq.source == QuakeSourceType.kma_eq) {
       return kmaDisplayLocation(eq.location, eq.latitude, eq.longitude);
     }
@@ -704,6 +980,24 @@ class _EqCardState extends State<_EqCard> {
     mapState.resumeAutoZoom();
   }
 
+  void _renderEvent() {
+    final provider = context.read<QuakeProvider>();
+    final event = provider.associatedJmaInformationFor(
+      provider.informationMapEventFor(eq),
+    );
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => EventRenderPage(
+          event: event,
+          usgsEvent: eq.source == QuakeSourceType.usgs ? eq : null,
+          eventMatcher: provider.matchesInformationRenderEvent,
+          cencIrMatcher: provider.informationRenderCencIrBinding,
+          retainedCencIr: provider.retainedInformationRenderCencIr(event),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDisplayed = context
@@ -795,17 +1089,41 @@ class _EqCardState extends State<_EqCard> {
                                       ),
                                     ),
                                   ),
-                                if (eq.usgsProductTypes?.split(',').contains('shakemap') == true)
-                                  const Padding(padding: EdgeInsets.only(left: 6),
-                                    child: Tooltip(message: '点击查看 USGS ShakeMap（MMI）',
-                                      child: Icon(Icons.layers_outlined, color: Colors.white70, size: 14))),
+                                if (eq.usgsProductTypes
+                                        ?.split(',')
+                                        .contains('shakemap') ==
+                                    true)
+                                  const Padding(
+                                    padding: EdgeInsets.only(left: 6),
+                                    child: Tooltip(
+                                      message: '点击查看 USGS ShakeMap（MMI）',
+                                      child: Icon(
+                                        Icons.layers_outlined,
+                                        color: Colors.white70,
+                                        size: 14,
+                                      ),
+                                    ),
+                                  ),
                                 if (eq.source == QuakeSourceType.cenc)
                                   Selector<QuakeProvider, bool>(
-                                    selector: (_, provider) => CencIrBinding.find(eq, provider.cencIrList) != null,
+                                    selector: (_, provider) =>
+                                        CencIrBinding.find(
+                                          eq,
+                                          provider.cencIrList,
+                                        ) !=
+                                        null,
                                     builder: (_, available, child) => available
-                                        ? const Padding(padding: EdgeInsets.only(left: 6),
-                                            child: Tooltip(message: '点击查看 CENC 烈度速报',
-                                              child: Icon(Icons.waves, color: Colors.white70, size: 14)))
+                                        ? const Padding(
+                                            padding: EdgeInsets.only(left: 6),
+                                            child: Tooltip(
+                                              message: '点击查看 CENC 烈度速报',
+                                              child: Icon(
+                                                Icons.waves,
+                                                color: Colors.white70,
+                                                size: 14,
+                                              ),
+                                            ),
+                                          )
                                         : const SizedBox.shrink(),
                                   ),
                                 const Spacer(),
@@ -903,6 +1221,11 @@ class _EqCardState extends State<_EqCard> {
                                   onTap: _showOnMap,
                                   highlight: isDisplayed,
                                 ),
+                                SizedBox(width: _s(8)),
+                                _actionButton(
+                                  label: '渲染事件',
+                                  onTap: _renderEvent,
+                                ),
                               ],
                             ),
                           ),
@@ -921,7 +1244,8 @@ class _EqCardState extends State<_EqCard> {
   Widget _buildIntBadge() {
     if (cmtCatalogSources.containsValue(eq.source)) {
       final source = cmtCatalogSources.entries
-          .firstWhere((entry) => entry.value == eq.source).key;
+          .firstWhere((entry) => entry.value == eq.source)
+          .key;
       return CmtBadge(
         event: QuakeEventAdapter.catalogInfo(eq, source),
         size: _s(60),

@@ -12,11 +12,6 @@ abstract interface class FanSocketConnection {
   Future<void> close();
 }
 
-class FanBrowserSocketUnavailableException implements Exception {
-  const FanBrowserSocketUnavailableException(this.message);
-
-  final String message;
-
-  @override
-  String toString() => 'FanBrowserSocketUnavailableException: $message';
+abstract interface class FanSocketCloseDetails {
+  int? get closeCode;
 }

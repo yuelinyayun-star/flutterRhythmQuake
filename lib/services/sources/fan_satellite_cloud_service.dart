@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'api_json_decoder.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -118,7 +119,7 @@ class FanSatelliteCloudService {
         debugPrint('[ZhejiangSatelliteCloud] HTTP ${response.statusCode}');
         return false;
       }
-      final json = jsonDecode(utf8.decode(response.bodyBytes));
+      final json = decodeApiJsonBytes(response.bodyBytes);
       if (json is! Map) {
         debugPrint('[ZhejiangSatelliteCloud] response is not an object');
         return false;

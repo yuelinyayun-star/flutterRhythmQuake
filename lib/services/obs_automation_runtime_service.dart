@@ -1,3 +1,4 @@
+import 'sources/api_json_decoder.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -63,7 +64,7 @@ class ObsAutomationRuntimeService {
       return;
     }
     try {
-      final decoded = jsonDecode(raw);
+      final decoded = decodeApiJson(raw);
       if (decoded is! Map) throw const FormatException('invalid root');
       final document = ObsAutomationPresetDocument.fromJson(
         Map<String, dynamic>.from(decoded),

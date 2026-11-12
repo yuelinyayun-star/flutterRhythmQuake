@@ -105,14 +105,19 @@ void AudioPlayer::SetSourceBytes(std::vector<uint8_t> bytes) {
 
     winrt::com_ptr<IMFMediaSource> mediaSource;
 
-    IStream* pstm =
-        SHCreateMemStream(bytes.data(), static_cast<unsigned int>(size));
-    IMFByteStream* stream = NULL;
-    MFCreateMFByteStreamOnStream(pstm, &stream);
+    // Both factories return an owned COM reference. Release our references on
+    // success and every failure path; the media source retains what it needs.
+    winrt::com_ptr<IStream> memoryStream;
+    memoryStream.attach(
+        SHCreateMemStream(bytes.data(), static_cast<unsigned int>(size)));
+    THROW_HR_IF(E_OUTOFMEMORY, !memoryStream);
+    winrt::com_ptr<IMFByteStream> stream;
+    THROW_IF_FAILED(
+        MFCreateMFByteStreamOnStream(memoryStream.get(), stream.put()));
 
-    sourceResolver->CreateObjectFromByteStream(
-        stream, nullptr, sourceResolutionFlags, nullptr, &objectType,
-        reinterpret_cast<IUnknown**>(mediaSource.put_void()));
+    THROW_IF_FAILED(sourceResolver->CreateObjectFromByteStream(
+        stream.get(), nullptr, sourceResolutionFlags, nullptr, &objectType,
+        reinterpret_cast<IUnknown**>(mediaSource.put_void())));
     m_mediaEngineWrapper->SetMediaSource(mediaSource.get());
   } catch (...) {
     // Forward errors to event stream, as this is called asynchronously

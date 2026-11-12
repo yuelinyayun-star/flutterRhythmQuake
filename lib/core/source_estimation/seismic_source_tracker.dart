@@ -7,6 +7,7 @@ import 'source_candidate_region_tracker.dart';
 import 'source_estimation_models.dart';
 import 'source_estimator.dart';
 import 'station_observation_history.dart';
+import 'native_station_record_owner.dart';
 
 class SourceEstimateStabilityConfig {
   final Duration warmupDuration;
@@ -33,6 +34,34 @@ class _PhaseBestFitEstimate {
 }
 
 class SeismicSourceTracker {
+  final _nativeRecordSources = <String>{};
+  final _nativeRecordOwners = <String, NativeStationRecordOwner>{};
+  void setNativeRecordProcessing(String sourceId, bool enabled) {
+    if (enabled && sourceId == 'nied' && NativeStationRecordOwner.supported) {
+      _nativeRecordSources.add(sourceId);
+    } else {
+      _nativeRecordSources.remove(sourceId);
+      _nativeRecordOwners.remove(sourceId)?.dispose();
+    }
+  }
+
+  final Map<String, StationObservationHistory Function()>
+  _observationFactories = {};
+  void setObservationHistoryFactory(
+    String sourceId,
+    StationObservationHistory Function() factory,
+  ) {
+    _observationFactories[sourceId] = factory;
+  }
+
+  void _releaseObservationStorage(SeismicActiveEvent? event) {
+    if (event == null) return;
+    _nativeRecordOwners.remove(event.sourceId)?.dispose();
+    for (final record in event.stationRecords.values) {
+      record.observationHistory.disposeStorage();
+    }
+  }
+
   final Map<String, ValueNotifier<SeismicActiveEvent?>> _currentBySource = {};
   final Map<String, ValueNotifier<List<SeismicActiveEvent>>> _historyBySource =
       {};
@@ -84,6 +113,8 @@ class SeismicSourceTracker {
   }
 
   void resetSource(String sourceId) {
+    _releaseObservationStorage(currentEvent(sourceId));
+    _nativeRecordOwners.remove(sourceId)?.dispose();
     currentEventNotifier(sourceId).value = null;
     historyNotifier(sourceId).value = const [];
     _sequenceBySource[sourceId] = 0;
@@ -181,118 +212,153 @@ class SeismicSourceTracker {
       activeEvent.metadata,
     ).toSet();
 
-    for (final sample in samples) {
-      final isSourceTriggerMember = sourceTriggerMemberIds.contains(
-        sample.descriptor.code,
-      );
-      final hasMeaningfulSample =
-          sample.rawLevel != null ||
-          sample.detectLevel != null ||
-          sample.activity > 0 ||
-          sample.ascend > 0 ||
-          sample.isTriggered ||
-          isSourceTriggerMember;
-
-      if (!hasMeaningfulSample) {
-        final existing = activeEvent.stationRecords[sample.descriptor.code];
-        if (existing != null) {
-          _appendObservation(
-            existing,
-            sample,
-            observedAt,
-            extraQualityFlags: const {'missing_observation'},
-          );
-          if (existing.isActiveLike &&
-              existing.endAt == null &&
-              _stationStateFromSample(sample) == StationLifecycleState.idle) {
-            existing
-              ..state = StationLifecycleState.ended
-              ..endAt = observedAt
-              ..lastObservedAt = observedAt;
-          }
-        }
-        continue;
-      }
-
-      final record = activeEvent.stationRecords.putIfAbsent(
-        sample.descriptor.code,
-        () => SeismicStationEventRecord(
-          descriptor: sample.descriptor,
-          firstObservedAt: observedAt,
+    final recordEvent = activeEvent;
+    // Existing sessions keep their current owner. Enabling the native owner
+    // during an event applies to the next event, without resetting evidence.
+    final nativeRecords =
+        _nativeRecordSources.contains(sourceId) &&
+            (_nativeRecordOwners.containsKey(sourceId) ||
+                recordEvent.stationRecords.isEmpty)
+        ? _nativeRecordOwners.putIfAbsent(
+            sourceId,
+            () => NativeStationRecordOwner(recordEvent.startedAt),
+          )
+        : null;
+    if (nativeRecords != null) {
+      nativeRecords.update(
+        event: recordEvent,
+        samples: samples,
+        observedAt: observedAt,
+        members: sourceTriggerMemberIds,
+        historyFactory: _observationFactories[sourceId],
+        append: (record, sample, missing) => _appendObservation(
+          record,
+          sample,
+          observedAt,
+          extraQualityFlags: missing ? const {'missing_observation'} : const {},
         ),
       );
-
-      _appendObservation(record, sample, observedAt);
-
-      record
-        ..lastObservedAt = observedAt
-        ..lastRawLevel = sample.rawLevel
-        ..lastDetectLevel = sample.detectLevel
-        ..lastActivity = sample.activity
-        ..lastAscend = sample.ascend
-        ..sampleCount += 1
-        ..state = _stationStateFromSample(sample);
-
-      if (sample.value != null && sample.value!.isFinite) {
-        record.lastValue = sample.value;
-        if (record.peakValue == null || sample.value! > record.peakValue!) {
-          record
-            ..peakValue = sample.value
-            ..peakAt = observedAt;
-        }
-      }
-      if (sample.observedPga != null &&
-          sample.observedPga!.isFinite &&
-          _hasIndependentProvenance(sample, StationValueType.pga)) {
-        record.lastPga = sample.observedPga;
-      }
-      if (sample.observedPgv != null &&
-          sample.observedPgv!.isFinite &&
-          _hasIndependentProvenance(sample, StationValueType.pgv)) {
-        record.lastPgv = sample.observedPgv;
-      }
-      if (sample.observedPgd != null &&
-          sample.observedPgd!.isFinite &&
-          _hasIndependentProvenance(sample, StationValueType.pgd)) {
-        record.lastPgd = sample.observedPgd;
-      }
-
-      if (sample.ascend > 0 || sample.activity > 0) {
-        if (sample.firstRiseInterval != null) {
-          record.firstRiseInterval ??= sample.firstRiseInterval;
-        } else if (!strictStationTiming) {
-          record.firstRiseInterval ??= _latestObservationInterval(record);
-        }
-      }
-      if (isSourceTriggerMember) {
-        if (sample.firstRiseInterval != null) {
-          record.firstRiseInterval ??= sample.firstRiseInterval;
-        } else if (!strictStationTiming) {
-          record.firstRiseInterval ??= ObservationTimeInterval(
-            start: observedAt,
-            end: observedAt,
+    } else {
+      StationObservationHistory.batchUpdates(() {
+        for (final sample in samples) {
+          final isSourceTriggerMember = sourceTriggerMemberIds.contains(
+            sample.descriptor.code,
           );
-        }
-      }
-      if (sample.isTriggered) {
-        if (sample.firstTriggerInterval != null) {
-          record.firstTriggerInterval ??= sample.firstTriggerInterval;
-        } else if (!strictStationTiming) {
-          record.firstTriggerInterval ??= _latestObservationInterval(record);
-        }
-        record.endAt = null;
-      } else if (record.hasTriggered && record.endAt == null) {
-        record.endAt = observedAt;
-      }
+          final hasMeaningfulSample =
+              sample.rawLevel != null ||
+              sample.detectLevel != null ||
+              sample.activity > 0 ||
+              sample.ascend > 0 ||
+              sample.isTriggered ||
+              isSourceTriggerMember;
 
-      _updateEventPhysicalPeaks(
-        record: record,
-        eventStartedAt: activeEvent.startedAt,
-        sample: sample,
-      );
+          if (!hasMeaningfulSample) {
+            final existing = recordEvent.stationRecords[sample.descriptor.code];
+            if (existing != null) {
+              _appendObservation(
+                existing,
+                sample,
+                observedAt,
+                extraQualityFlags: const {'missing_observation'},
+              );
+              if (existing.isActiveLike &&
+                  existing.endAt == null &&
+                  _stationStateFromSample(sample) ==
+                      StationLifecycleState.idle) {
+                existing
+                  ..state = StationLifecycleState.ended
+                  ..endAt = observedAt
+                  ..lastObservedAt = observedAt;
+              }
+            }
+            continue;
+          }
 
-      record.qualityFlags.addAll(sample.qualityFlags);
-      record.provenance.addAll(sample.provenance);
+          var record = recordEvent.stationRecords[sample.descriptor.code];
+          if (record == null) {
+            record = SeismicStationEventRecord(
+              descriptor: sample.descriptor,
+              firstObservedAt: observedAt,
+              observationHistory: _observationFactories[sourceId]?.call(),
+            );
+            recordEvent.stationRecords[sample.descriptor.code] = record;
+          }
+
+          _appendObservation(record, sample, observedAt);
+
+          record
+            ..lastObservedAt = observedAt
+            ..lastRawLevel = sample.rawLevel
+            ..lastDetectLevel = sample.detectLevel
+            ..lastActivity = sample.activity
+            ..lastAscend = sample.ascend
+            ..sampleCount += 1
+            ..state = _stationStateFromSample(sample);
+
+          if (sample.value != null && sample.value!.isFinite) {
+            record.lastValue = sample.value;
+            if (record.peakValue == null || sample.value! > record.peakValue!) {
+              record
+                ..peakValue = sample.value
+                ..peakAt = observedAt;
+            }
+          }
+          if (sample.observedPga != null &&
+              sample.observedPga!.isFinite &&
+              _hasIndependentProvenance(sample, StationValueType.pga)) {
+            record.lastPga = sample.observedPga;
+          }
+          if (sample.observedPgv != null &&
+              sample.observedPgv!.isFinite &&
+              _hasIndependentProvenance(sample, StationValueType.pgv)) {
+            record.lastPgv = sample.observedPgv;
+          }
+          if (sample.observedPgd != null &&
+              sample.observedPgd!.isFinite &&
+              _hasIndependentProvenance(sample, StationValueType.pgd)) {
+            record.lastPgd = sample.observedPgd;
+          }
+
+          if (sample.ascend > 0 || sample.activity > 0) {
+            if (sample.firstRiseInterval != null) {
+              record.firstRiseInterval ??= sample.firstRiseInterval;
+            } else if (!strictStationTiming) {
+              record.firstRiseInterval ??= _latestObservationInterval(record);
+            }
+          }
+          if (isSourceTriggerMember) {
+            if (sample.firstRiseInterval != null) {
+              record.firstRiseInterval ??= sample.firstRiseInterval;
+            } else if (!strictStationTiming) {
+              record.firstRiseInterval ??= ObservationTimeInterval(
+                start: observedAt,
+                end: observedAt,
+              );
+            }
+          }
+          if (sample.isTriggered) {
+            if (sample.firstTriggerInterval != null) {
+              record.firstTriggerInterval ??= sample.firstTriggerInterval;
+            } else if (!strictStationTiming) {
+              record.firstTriggerInterval ??= _latestObservationInterval(
+                record,
+              );
+            }
+            record.endAt = null;
+          } else if (record.hasTriggered && record.endAt == null) {
+            record.endAt = observedAt;
+          }
+
+          _updateEventPhysicalPeaks(
+            record: record,
+            eventStartedAt: recordEvent.startedAt,
+            sample: sample,
+          );
+
+          record.qualityFlags.addAll(sample.qualityFlags);
+          record.provenance.addAll(sample.provenance);
+        }
+      });
     }
     if (sourceTriggerMemberIds.isNotEmpty) {
       var memberRecordCount = 0;
@@ -315,13 +381,14 @@ class SeismicSourceTracker {
     }
 
     final estimator = _estimatorsBySource[sourceId];
+    final stationRecords = activeEvent.records;
     final request = SourceEstimationRequest(
       sourceId: sourceId,
       eventId: activeEvent.eventId,
       observedAt: observedAt,
       stageName: stageName,
       maxShindo: maxShindo,
-      stations: activeEvent.records,
+      stations: stationRecords,
       metadata: activeEvent.metadata,
       sensorSelection: const SensorSelection(),
     );
@@ -376,6 +443,7 @@ class SeismicSourceTracker {
               event: activeEvent,
               observedAt: observedAt,
               estimate: acceptedEstimate,
+              stationRecords: stationRecords,
             );
           }
           if (identical(acceptedEstimate, estimate)) {
@@ -428,11 +496,12 @@ class SeismicSourceTracker {
     required SeismicActiveEvent event,
     required DateTime observedAt,
     required SourceEstimate estimate,
+    required List<SeismicStationEventRecord> stationRecords,
   }) {
     final localSupportSnapshot = _candidateLocalSupportGate.snapshotForEstimate(
       estimate: estimate,
       memberIds: _sourceTriggerMemberIds(event.metadata),
-      stationRecords: event.records,
+      stationRecords: stationRecords,
     );
     final result = _candidateResidualGate.evaluate(estimate);
     final existingTracker = _candidateRegionBySource[sourceId];
@@ -700,6 +769,7 @@ class SeismicSourceTracker {
   }
 
   SeismicActiveEvent _archivedEventView(SeismicActiveEvent event) {
+    _releaseObservationStorage(event);
     return SeismicActiveEvent(
       eventId: event.eventId,
       sourceId: event.sourceId,
@@ -752,15 +822,42 @@ class SeismicSourceTracker {
         rawLevel: sample.rawLevel,
         detectLevel: sample.detectLevel,
         isTriggered: sample.isTriggered,
-        qualityFlags: Set.unmodifiable({
-          ...sample.qualityFlags,
-          ...extraQualityFlags,
-          if (clampedNonChronological)
-            'observation_time_clamped_nonchronological',
-        }),
-        physicalObservations: Map.unmodifiable(sample.physicalObservations),
+        qualityFlags: _observationQualityFlags(
+          latest?.qualityFlags,
+          sample.qualityFlags,
+          extraQualityFlags,
+          clampedNonChronological,
+        ),
+        physicalObservations: sample.physicalObservations.isEmpty
+            ? const <StationValueType, SeismicPhysicalObservation>{}
+            : Map.unmodifiable(sample.physicalObservations),
       ),
     );
+  }
+
+  Set<String> _observationQualityFlags(
+    Set<String>? previous,
+    Set<String> current,
+    Set<String> extra,
+    bool clamped,
+  ) {
+    const clampedFlag = 'observation_time_clamped_nonchronological';
+    // Previous frames own immutable sets. Reuse only when the complete union
+    // matches, including flags that disappear, missing data and time clamps.
+    // No global interning cache is retained as stations/events come and go.
+    if (previous != null &&
+        current.every(previous.contains) &&
+        extra.every(previous.contains) &&
+        (!clamped || previous.contains(clampedFlag)) &&
+        previous.every(
+          (flag) =>
+              current.contains(flag) ||
+              extra.contains(flag) ||
+              (clamped && flag == clampedFlag),
+        )) {
+      return previous;
+    }
+    return Set.unmodifiable({...current, ...extra, if (clamped) clampedFlag});
   }
 
   void _updateEventPhysicalPeaks({

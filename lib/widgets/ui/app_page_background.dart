@@ -32,13 +32,7 @@ class AppPageBackground extends StatefulWidget {
 }
 
 class _AppPageBackgroundState extends State<AppPageBackground> {
-  late final Future<Uint8List> _bytesFuture;
-
-  @override
-  void initState() {
-    super.initState();
-    _bytesFuture = AppPageBackground.cachedBytes();
-  }
+  Future<Uint8List>? _bytesFuture;
 
   @override
   Widget build(BuildContext context) {
@@ -57,7 +51,7 @@ class _AppPageBackgroundState extends State<AppPageBackground> {
           child: useCustom
               ? _buildCustomImage(customBytes, pageBg.revision)
               : FutureBuilder<Uint8List>(
-                  future: _bytesFuture,
+                  future: _bytesFuture ??= AppPageBackground.cachedBytes(),
                   builder: (context, snapshot) {
                     if (!snapshot.hasData) {
                       return const _FallbackBackground();

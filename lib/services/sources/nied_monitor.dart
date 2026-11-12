@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'api_json_decoder.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -6,7 +7,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
-import '../../../core/nied_replay_logger.dart';
+import '../../core/nied_replay_logger.dart';
 import '../ntp_service.dart';
 import '../../core/source_estimation/kotoho7_js_receiver_bridge.dart';
 import 'lmoni_image_service.dart';
@@ -15,6 +16,8 @@ import 'nied_gif_observation.dart';
 import 'nied_background_worker.dart';
 import 'http_response_bytes.dart';
 import 'station_image_decoder.dart';
+import 'ka_station_history.dart';
+import 'native_ka_history.dart';
 
 class NiedReplayConfig {
   final bool enabled;
@@ -48,6 +51,8 @@ class NiedStation {
   final Map<NiedGifLayer, Set<String>> gifLayerQualityFlags;
   NiedGifObservation? get gifObservation =>
       gifObservations[NiedGifLayer.realtimeShindo];
+  bool get isRealtimeObservationMissing =>
+      gifLayerQualityFlags[NiedGifLayer.realtimeShindo]?.isNotEmpty == true;
   NiedGifObservation? get pgaObservation =>
       gifObservations[NiedGifLayer.peakAcceleration];
   NiedGifObservation? get pgvObservation =>
@@ -67,7 +72,16 @@ class NiedStation {
   set detectState(int value) => _detectState = value;
   String get detectReason => _detectReason ?? '';
   set detectReason(String value) => _detectReason = value;
-  List<int> recentLevel;
+  List<int> _recentLevel;
+  List<int> get recentLevel => _recentLevel;
+  set recentLevel(List<int> values) {
+    final history = _recentLevel;
+    if (history is KaStationHistory && !identical(history, values)) {
+      history.replace(values);
+    } else {
+      _recentLevel = values;
+    }
+  }
 
   int expireSeconds;
   int defaultExpireSeconds;
@@ -108,7 +122,7 @@ class NiedStation {
        abnormalUpdateCount = null,
        _detectState = 0,
        _detectReason = '',
-       recentLevel = [];
+       _recentLevel = [];
 
   /// Capture mutable observations without copying timers or allocating defaults
   /// that would immediately be replaced by the captured values.
@@ -135,7 +149,9 @@ class NiedStation {
       abnormalUpdateCount = source.abnormalUpdateCount,
       _detectState = source.detectState,
       _detectReason = source.detectReason,
-      recentLevel = List.of(source.recentLevel),
+      _recentLevel = source.recentLevel is KaStationHistory
+          ? (source.recentLevel as KaStationHistory).detachedCopy()
+          : List.of(source.recentLevel),
       lastUpdate = source.lastUpdate,
       lastDataTime = source.lastDataTime,
       lastReceivedAt = source.lastReceivedAt,
@@ -154,6 +170,7 @@ class NiedStation {
     final current =
         gifObservation ??
         const NiedGifObservation(layer: NiedGifLayer.realtimeShindo);
+    if (identical(current.shindo, value)) return;
     gifObservations[NiedGifLayer.realtimeShindo] = current.copyWith(
       layer: NiedGifLayer.realtimeShindo,
       shindo: value,
@@ -172,6 +189,22 @@ class NiedStation {
   }
 
   void update(int newLevel, {bool render = true}) {
+    final history = _recentLevel;
+    if (history is KaStationHistory && history.isNative) {
+      applyKaHistoryResult(
+        history.update(
+          level: newLevel,
+          expireSeconds: expireSeconds,
+          baseTimeMilliseconds:
+              lastDataTime?.millisecondsSinceEpoch ??
+              lastUpdate?.millisecondsSinceEpoch ??
+              0,
+          isActive: isActive,
+          abnormalUpdateCount: abnormalUpdateCount,
+        ),
+      );
+      return;
+    }
     final originLevel = newLevel.clamp(-1, 20).toInt();
     final effectiveLevel = _effectiveLevel(originLevel, recentLevel);
 
@@ -202,6 +235,14 @@ class NiedStation {
     ascend = newAscend;
     triggerStamp = newAscend > 0 ? newTriggerStamp : 0;
     activity = _calcActivity(kaLevel, ascend);
+  }
+
+  void applyKaHistoryResult(KaHistoryResult result) {
+    level = result.level;
+    ascend = result.ascend;
+    triggerStamp = result.triggerStamp;
+    activity = result.activity;
+    abnormalUpdateCount = result.abnormalUpdateCount;
   }
 
   void updateFromContinuousShindo(
@@ -237,10 +278,9 @@ class NiedStation {
 
     // Fill short missing runs with the next valid value. Long or trailing
     // missing runs end the usable history, exactly as in KA.
-    final arr = recentLevels.contains(-1)
-        ? List<int>.from(recentLevels)
-        : recentLevels;
-    var index = 0;
+    final firstMissing = recentLevels.indexOf(-1);
+    final arr = firstMissing >= 0 ? List<int>.from(recentLevels) : recentLevels;
+    var index = firstMissing >= 0 ? firstMissing : arr.length;
     while (index < arr.length) {
       if (arr[index] != -1) {
         index++;
@@ -300,34 +340,45 @@ class NiedStation {
   /// Equivalent to reference isAbnormalStation: detects 3+ peaks with
   /// amplitude >= 3 in KA level history.
   bool _isAbnormalStation(List<int> recentLevels) {
-    final recentFilter = recentLevels.contains(-1)
-        ? recentLevels.where((v) => v != -1).toList()
-        : recentLevels;
-    if (recentFilter.length < 3) return false;
-
+    // Read valid levels in order without allocating a filtered history.
+    // Phases match the reference's search, ascent, and descent loops.
+    var phase = 0;
+    var hasPrevious = false;
+    var previous = 0;
+    var leftBottom = 0;
+    var top = 0;
+    var rightBottom = 0;
     var peakCount = 0;
-    var i = 1;
-    final n = recentFilter.length;
-    while (i < n) {
-      while (i < n && recentFilter[i] <= recentFilter[i - 1]) {
-        i++;
+    for (var index = 0; index < recentLevels.length; index++) {
+      final current = recentLevels[index];
+      if (current == -1) continue;
+      if (!hasPrevious) {
+        previous = current;
+        hasPrevious = true;
+        continue;
       }
-      if (i >= n) break;
-      var leftBottom = recentFilter[i - 1];
-      var top = recentFilter[i];
-      while (i < n && recentFilter[i] >= recentFilter[i - 1]) {
-        top = recentFilter[i];
-        i++;
+      if (phase == 1) {
+        if (current >= previous) {
+          top = current;
+        } else {
+          rightBottom = current;
+          phase = 2;
+        }
+      } else if (current <= previous) {
+        if (phase == 2) rightBottom = current;
+      } else {
+        if (phase == 2 && top - leftBottom >= 3 && top - rightBottom >= 3) {
+          peakCount++;
+          if (peakCount >= 3) return true;
+        }
+        leftBottom = previous;
+        top = current;
+        phase = 1;
       }
-      if (i >= n) break;
-      var rightBottom = recentFilter[i];
-      while (i < n && recentFilter[i] <= recentFilter[i - 1]) {
-        rightBottom = recentFilter[i];
-        i++;
-      }
-      if (top - leftBottom >= 3 && top - rightBottom >= 3) {
-        peakCount++;
-      }
+      previous = current;
+    }
+    if (phase == 2 && top - leftBottom >= 3 && top - rightBottom >= 3) {
+      peakCount++;
     }
     return peakCount >= 3;
   }
@@ -576,6 +627,14 @@ class NiedMonitorService extends ChangeNotifier {
         final stamp = candidates[i];
         final stampKey = _stampKey(stamp);
         if (stampKey == _lastFetchedStampKey) continue;
+        // A reconnect's metadata may trail an already accepted live frame.
+        // Reprocessing it resets KA history as if a replay had moved back.
+        final previousFrame = _lastFetchedFrameTime;
+        if (!_replayConfig.enabled &&
+            previousFrame != null &&
+            !stamp.isAfter(previousFrame)) {
+          continue;
+        }
 
         attempted = true;
         final surfaceBytes = prefetchedSurfaceBytes == null
@@ -632,6 +691,7 @@ class NiedMonitorService extends ChangeNotifier {
           }
           imageService.processPixels(
             surface.packedRgb,
+            rgbaPixels: surface.rgba,
             surfaceGifBytes: surfaceBytes,
             dataTime: stamp,
             receivedAt: frameReceivedAt,
@@ -721,6 +781,25 @@ class NiedMonitorService extends ChangeNotifier {
         NiedGifLayer.peakDisplacement,
       ]) {
         final bytes = layerBundle[layer];
+        if (NativeKaHistorySession.supported) {
+          final surfaceBytes = bytes?.surface;
+          final sampled = surfaceBytes == null
+              ? null
+              : await NiedBackgroundWorker.instance.scanFrame(
+                  surfaceBytes: surfaceBytes,
+                  configs: imageService.backgroundScanConfigs,
+                  configSignature: imageService.backgroundScanConfigSignature,
+                  physicalValues: true,
+                );
+          if (!_isCurrentRun(generation)) return;
+          imageService.processPhysicalLayerSamples(
+            layer: layer,
+            dataTime: stamp,
+            receivedAt: receivedAt,
+            sampled: sampled,
+          );
+          continue;
+        }
         final surface = bytes?.surface == null
             ? null
             : await _decodeBytes(bytes!.surface!);
@@ -878,6 +957,7 @@ class NiedMonitorService extends ChangeNotifier {
         if (decoded == null) return null;
         return _DecodedGifFrame(
           packedRgb: decoded.packedRgb,
+          rgba: decoded.rgba,
           gifBytes: bytes,
           width: decoded.width,
           height: decoded.height,
@@ -907,6 +987,10 @@ class NiedMonitorService extends ChangeNotifier {
       codec.dispose();
       return _DecodedGifFrame(
         packedRgb: packedRgb,
+        rgba: byteData.buffer.asUint8List(
+          byteData.offsetInBytes,
+          byteData.lengthInBytes,
+        ),
         gifBytes: bytes,
         width: width,
         height: height,
@@ -1040,7 +1124,7 @@ class NiedMonitorService extends ChangeNotifier {
     );
     if (text == null) return null;
     try {
-      final decoded = jsonDecode(text);
+      final decoded = decodeApiJson(text);
       if (decoded is! Map<String, dynamic>) return null;
       final latest = decoded['latest_time'];
       if (latest is! String) return null;
@@ -1439,12 +1523,14 @@ class NiedMonitorService extends ChangeNotifier {
 
 class _DecodedGifFrame {
   final List<int> packedRgb;
+  final Uint8List rgba;
   final Uint8List gifBytes;
   final int width;
   final int height;
 
   const _DecodedGifFrame({
     required this.packedRgb,
+    required this.rgba,
     required this.gifBytes,
     required this.width,
     required this.height,

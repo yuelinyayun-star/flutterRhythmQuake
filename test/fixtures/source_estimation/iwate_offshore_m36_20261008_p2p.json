@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "caseId": "20261008_iwate_offshore_m36_p2p",
+  "caseType": "event",
+  "captureDirectory": "tmp/captures/iwate_offshore_m36_20261008_jma_p2p",
+  "timeZone": "Asia/Tokyo",
+  "gifNamePattern": "{stamp}.{layer}.gif",
+  "startTimeJst": "2026-10-08T18:13:30",
+  "endTimeJst": "2026-10-08T18:16:00",
+  "sensitivity": 2,
+  "truth": {
+    "originTimeJst": "2026-10-08T18:14:00+09:00",
+    "latitude": 39.9,
+    "longitude": 142.4,
+    "depthKm": 40,
+    "magnitude": 3.6,
+    "maxJmaIntensity": 1,
+    "region": "岩手県沖",
+    "source": "P2PQuake API v2 JMA DetailScale id 6ac75f8ce88ee598246bf3c"
+  },
+  "eventLabels": {
+    "catalogEvent": true,
+    "catalogTruthVerified": false,
+    "observableEvent": true,
+    "detectableEvent": true,
+    "includeInDetectionMetrics": false
+  },
+  "classification": {
+    "region": "Iwate offshore",
+    "captureSource": "Original NIED jma_s GIFs fetched from KMoni; matching P2PQuake API v2 JMA DetailScale record.",
+    "truthQuality": "p2pquake_jma_detailscale_reference_pending_final_catalog",
+    "notes": "岩手県沖 M3.6, depth 40 km, origin 2026-10-08 18:14 JST, epicenter 39.9N 142.4E, maximum JMA intensity 1. This JMA DetailScale reference is not a versioned final catalog record. GIF window is 18:13:30 through 18:16:00 JST, surface jma_s only. Keep excluded from frozen metrics until final catalog linkage and split assignment are available."
+  },
+  "splitStatus": "unassigned_reference"
+}

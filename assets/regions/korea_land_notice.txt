@@ -1,0 +1,22 @@
+Official SGIS land place-name index (2025 website boundary data)
+
+Source publisher: Korean statistical geographic information service (SGIS)
+Source: https://sgis.mods.go.kr/js/data/geo_sido_2025.js
+Public data index: https://link.mods.go.kr/view/pss/openDataIntrcn
+Website usage evidence: https://sgis.mods.go.kr/js/common/map.js
+Retrieved: 2026-10-20
+Source SHA256: ebf9456e7f6d53a14088b1bfe56fd1be4c5c1b8c15ac44f4b59b75e42e897b17
+
+17 provincial/municipal units. The original downloaded source is retained
+byte-for-byte. UTM-K (KGD2002, EPSG:5179) coordinates are converted to EPSG:4326
+with offline pyproj 3.7.2, always_xy. All source rings and vertices are used,
+with no simplification or buffers; existing CWR1 stores Float32 coordinates.
+Chinese display aliases are separate from original Korean fields.
+
+Two original Gyeongbuk polygon parts describing Dokdo/Takeshima are preserved
+as one separate geographic-name feature, without Korean/Japanese ownership.
+No marine, territorial sea or EEZ boundaries are generated from land polygons.
+KMA's reference-place/direction/distance descriptions do not provide such
+polygon boundaries; the existing FE sea-name query remains in use.
+
+See korea_land_regions.provenance.json and tool/region_data/README.md.

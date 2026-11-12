@@ -27,6 +27,26 @@ void main() {
       throwsArgumentError,
     );
   });
+
+  test('cached snapshots remain immutable across appends and clear', () {
+    final history = StationObservationHistory();
+    final start = DateTime.utc(2026, 6, 21);
+    history.add(_frame(start));
+    final first = history.frames;
+    expect(history.frames, same(first));
+    expect(() => first.clear(), throwsUnsupportedError);
+    history.add(_frame(start.add(const Duration(seconds: 1))));
+    final second = history.frames;
+    expect(second, hasLength(2));
+    expect(first, hasLength(1));
+    history.add(_frame(start.add(const Duration(seconds: 62))));
+    expect(history.frames, hasLength(1));
+    expect(second, hasLength(2));
+    history.clear();
+    expect(history.frames, isEmpty);
+    expect(history.latest, isNull);
+    expect(first.single.dataTime, start);
+  });
 }
 
 SeismicStationObservationFrame _frame(DateTime time) =>

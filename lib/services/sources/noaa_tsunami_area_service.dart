@@ -1,4 +1,7 @@
+import 'api_json_decoder.dart';
 import 'dart:convert';
+import 'source_http_client.dart';
+import '../native_jma_tsunami.dart';
 
 import 'package:http/http.dart' as http;
 
@@ -9,26 +12,45 @@ class NoaaTsunamiAreaService {
 
   final http.Client? _client;
 
-  Future<List<TsunamiAreaInfo>> fetch(String rawUrl) async {
+  Future<List<TsunamiAreaInfo>> fetch(String rawUrl) async =>
+      (await fetchDetail(rawUrl))?.areas ?? const [];
+
+  /// Fetch all source fields, including forecast/observed station amplitudes.
+  Future<NoaaTsunamiDetail?> fetchDetail(String rawUrl) async {
     final parsed = Uri.tryParse(rawUrl);
     if (parsed == null ||
         !{'www.tsunami.gov', 'tsunami.gov'}.contains(parsed.host) ||
         !parsed.path.startsWith('/events/') ||
         !parsed.path.endsWith('.json')) {
-      return const [];
+      return null;
     }
     final url = parsed.replace(scheme: 'https', port: 443);
-    final client = _client ?? http.Client();
+    final client = _client ?? createSourceHttpClient();
     try {
       final response = await client
           .get(url)
           .timeout(const Duration(seconds: 10));
-      if (response.statusCode != 200) return const [];
-      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
-      if (decoded is! Map) return const [];
-      return parseAreas(Map<String, dynamic>.from(decoded));
+      if (response.statusCode != 200) return null;
+      if (NativeJmaTsunami.supported) {
+        final result = await NativeJmaTsunami.prepareAsync({
+          'op': 'noaaDetail',
+          'json': utf8.decode(response.bodyBytes),
+          'requestedPath': url.path,
+        });
+        return NoaaTsunamiDetail(
+          Map<String, dynamic>.from(result['detail'] as Map),
+          [
+            for (final area in result['areas'] as List)
+              TsunamiAreaInfo.fromJson(Map<String, dynamic>.from(area as Map)),
+          ],
+        );
+      }
+      final decoded = decodeApiJsonBytes(response.bodyBytes);
+      if (decoded is! Map) return null;
+      final detail = Map<String, dynamic>.from(decoded);
+      return NoaaTsunamiDetail(detail, parseAreas(detail));
     } catch (_) {
-      return const [];
+      return null;
     } finally {
       if (_client == null) client.close();
     }
@@ -63,4 +85,10 @@ class NoaaTsunamiAreaService {
     }
     return areas;
   }
+}
+
+class NoaaTsunamiDetail {
+  const NoaaTsunamiDetail(this.raw, this.areas);
+  final Map<String, dynamic> raw;
+  final List<TsunamiAreaInfo> areas;
 }

@@ -1,6 +1,8 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutterrhythmquake/models/nied_scan_positions.dart';
+import 'package:flutterrhythmquake/models/nied_station_db.dart';
 import 'package:flutterrhythmquake/services/sources/lmoni_image_service.dart';
 import 'package:flutterrhythmquake/services/sources/nied_gif_observation.dart';
 import 'package:flutterrhythmquake/services/sources/nied_monitor.dart';
@@ -21,6 +23,11 @@ void main() {
       }
       final service = LmoniImageService()..start();
       addTearDown(service.stop);
+      final expectedCodes = [
+        for (final station in NiedStationDb.stations)
+          if (NiedScanPositions.positions.containsKey(station['code']))
+            station['code'],
+      ];
       var frames = 0;
       for (var second = 20; second <= 70; second++) {
         final stamp = DateTime(2026, 6, 10, 18, 1, second);
@@ -38,7 +45,7 @@ void main() {
           receivedAt: stamp,
         );
         final stations = (await next)!;
-        expect(stations.length, 1630);
+        expect(stations.map((station) => station.code), expectedCodes);
         for (final station in stations) {
           final before = stationSnapshotValues(station);
           final snapshot = NiedStation.detachedSnapshot(station);

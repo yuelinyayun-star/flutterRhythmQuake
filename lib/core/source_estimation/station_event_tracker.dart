@@ -6,6 +6,7 @@ import '../../services/sources/nied_monitor.dart';
 import 'seismic_source_tracker.dart';
 import 'source_estimation_models.dart';
 import 'source_estimator.dart';
+import 'station_observation_history.dart';
 import '../event_detection/event_detection_models.dart';
 
 class StationEventTracker {
@@ -25,6 +26,17 @@ class StationEventTracker {
       .currentEventNotifier(niedSourceId);
   late final ValueNotifier<List<SeismicActiveEvent>> niedEventHistory = _tracker
       .historyNotifier(niedSourceId);
+
+  /// Native storage is enabled only in the persistent inference owner.
+  void useNativeObservationHistories({bool nativeRecordProcessing = true}) {
+    if (StationObservationHistory.nativeSupported) {
+      _tracker.setNativeRecordProcessing(niedSourceId, nativeRecordProcessing);
+      _tracker.setObservationHistoryFactory(
+        niedSourceId,
+        StationObservationHistory.native,
+      );
+    }
+  }
 
   void setNiedEstimator(SourceEstimator estimator) {
     _tracker.setEstimator(niedSourceId, estimator);

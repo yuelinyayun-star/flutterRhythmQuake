@@ -15,6 +15,13 @@ The global emitError method replies once.
 The root pubspec overrides only this Windows implementation. Dart playback,
 the upstream Media Foundation engine and other platforms remain upstream.
 
+Byte-source loading also uses scoped COM pointers for the memory stream and
+Media Foundation byte stream, and checks both source-creation HRESULTs. This
+releases the caller's references after loading or failure instead of retaining
+the original audio buffer on every load. The media source keeps its own required
+references. See `docs/memory_native_20261010.md` for original-audio measurements
+and native playback validation.
+
 `windows/tests/platform_event_test.cpp` verifies worker-to-platform delivery,
 ordering, errors, cancellation, resubscription and destruction with queued
 events using the actual dispatcher and event-stream handler.

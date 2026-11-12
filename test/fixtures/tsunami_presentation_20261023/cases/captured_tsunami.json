@@ -1,0 +1,41 @@
+{
+  "key": "captured_tsunami",
+  "source": "tsunami",
+  "Data": {
+    "id": "40c3c3c43a844517802c46e6481ab888",
+    "code": "202608251500",
+    "details": {
+      "batch": "2",
+      "htmlUrl": "https://obs.nmefc.cn/Warning/TsunamiAdvice/202608251500_2_file/202608251500_2.html",
+      "logoUrl": "http://obs.nmefc.cn/CMS/warnLogo/海啸消息灰.png",
+      "maps": {
+        "amplitudeMapUrl": "",
+        "coastalMapUrl": "",
+        "earthquakeMapUrl": "https://obs.nmefc.cn/Warning/TsunamiAdvice/202608251500_2_file/Earthquake_Pos.jpg"
+      }
+    },
+    "forecasts": [],
+    "shockInfo": {
+      "magnitude": 5.5,
+      "placeName": "台湾台东县海域",
+      "shockTime": "2026-08-25 15:00",
+      "longitude": 121.63,
+      "latitude": 22.61,
+      "depth": 10
+    },
+    "timeInfo": {
+      "alarmDate": "2026-08-25 15:46:46",
+      "updateDate": "2026-08-25 15:14:30"
+    },
+    "warningInfo": {
+      "title": "海啸信息",
+      "level": "信息",
+      "orgUnit": "自然资源部海啸预警中心",
+      "subtitle": "台湾台东县海域"
+    },
+    "waterLevelMonitoring": []
+  },
+  "original": "test/fixtures/tsunami_presentation_20261023/raw/f69c83e0ed636684.original",
+  "url": "",
+  "sha256": "f69c83e0ed636684264840061ffa6873aecf769db5bd2a2146ba3c4799cda5db"
+}

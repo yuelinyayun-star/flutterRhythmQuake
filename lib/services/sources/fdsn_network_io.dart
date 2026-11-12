@@ -1,3 +1,4 @@
+import '../debug/network_diagnostic.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -5,12 +6,14 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
 import 'fdsn_proxy.dart';
+import 'native_tcp_socket.dart';
+import 'source_tcp_socket.dart';
 
 http.Client createFdsnHttpClient() => FdsnNetwork.instance.createHttpClient();
 
 class FdsnSocket {
   const FdsnSocket(this.socket, this.route);
-  final Socket socket;
+  final SourceTcpSocket socket;
   final FdsnProxyRoute route;
 }
 
@@ -31,14 +34,34 @@ class FdsnNetwork {
     Duration timeout = const Duration(seconds: 12),
   }) async {
     final route = await resolve(socketUri(host, port));
-    if (route.isDirect) {
-      final socket = await (secure ? SecureSocket.connect : Socket.connect)(
-        host,
-        port,
-        timeout: timeout,
-      );
-      unawaited(socket.done.catchError((Object _) {}));
+    if (!secure &&
+        NativeTcpSocket.supported &&
+        !host.contains('%') &&
+        !(route.host?.contains('%') ?? false)) {
+      final authority = host.contains(':') ? '[$host]:$port' : '$host:$port';
+      final socket = route.isDirect
+          ? await connectSourceTcpSocket(host, port, timeout: timeout)
+          : await connectNativeTcpSocket(
+              route.host!,
+              route.port,
+              authority: authority,
+              timeout: timeout,
+            );
       return FdsnSocket(socket, route);
+    }
+    if (route.isDirect) {
+      final socket = secure
+          ? await SecureSocket.connect(
+              host,
+              port,
+              timeout: timeout,
+              keyLog: NetworkDiagnostic.active
+                  ? NetworkDiagnostic.keyLog
+                  : null,
+            )
+          : await Socket.connect(host, port, timeout: timeout);
+      unawaited(socket.done.catchError((Object _) {}));
+      return FdsnSocket(DartSourceTcpSocket(socket), route);
     }
     // Dart's CONNECT parser preserves bytes coalesced after the response header.
     // For plaintext SeedLink we can use its detached socket directly.
@@ -68,7 +91,7 @@ class FdsnNetwork {
             throw TimeoutException('SeedLink proxy CONNECT');
           }
           detached = socket;
-          return FdsnSocket(socket, route);
+          return FdsnSocket(DartSourceTcpSocket(socket), route);
         }();
         return await operation.timeout(timeout);
       } catch (_) {
@@ -133,7 +156,11 @@ class FdsnNetwork {
     socket.write('CONNECT $authority HTTP/1.1\r\nHost: $authority\r\n\r\n');
     try {
       await ready.future.timeout(timeout);
-      final pending = SecureSocket.secure(socket, host: host);
+      final pending = SecureSocket.secure(
+        socket,
+        host: host,
+        keyLog: NetworkDiagnostic.active ? NetworkDiagnostic.keyLog : null,
+      );
       var expired = false;
       final secured = await pending
           .then((value) {
@@ -149,7 +176,7 @@ class FdsnNetwork {
             },
           );
       unawaited(secured.done.catchError((Object _) {}));
-      return FdsnSocket(secured, route);
+      return FdsnSocket(DartSourceTcpSocket(secured), route);
     } catch (_) {
       socket.destroy();
       await subscription.cancel();

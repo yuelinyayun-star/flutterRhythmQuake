@@ -4,6 +4,7 @@ import '../models/obs_automation_preset.dart';
 import 'obs_automation_condition_evaluator.dart';
 import 'obs_automation_input_service.dart';
 import 'obs_websocket_service.dart';
+import 'native_obs_automation_policy.dart';
 
 abstract interface class ObsAutomationActionExecutor {
   Future<void> execute(ObsAutomationBlock block);
@@ -104,9 +105,16 @@ class ObsAutomationRunner {
 
   void configure(List<ObsAutomationPreset> presets) {
     if (_disposed) return;
-    _presets = presets
-        .where((preset) => preset.enabled)
-        .toList(growable: false);
+    final selection = NativeObsAutomationPolicy.select(presets);
+    _presets = [
+      for (final entry in selection)
+        presets[entry.presetIndex].copyWith(
+          stacks: [
+            for (final index in entry.stackIndices)
+              presets[entry.presetIndex].stacks[index],
+          ],
+        ),
+    ];
     if (_presets.isEmpty) {
       unawaited(_stopListening());
       return;
@@ -148,6 +156,10 @@ class ObsAutomationRunner {
       unawaited(_advance(waiter.execution, waiter.resumeIndex));
     }
     if (matchingWaiters.isNotEmpty) _scheduleWaiterExpiry();
+
+    // Tsunami receipts are wired only to existing ending waits. They must not
+    // create new recordings through generic information-trigger rules.
+    if (event.tsunamiEvent != null) return;
 
     for (final preset in _presets) {
       for (final stack in preset.stacks) {

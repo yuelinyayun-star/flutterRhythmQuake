@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'api_json_decoder.dart';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -224,7 +225,7 @@ class JmaVolcanoService {
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(_cacheKey);
       if (raw == null || raw.isEmpty) return;
-      final decoded = jsonDecode(raw);
+      final decoded = decodeApiJson(raw);
       if (decoded is! List) return;
       final items = <VolcanoBulletin>[];
       for (final item in decoded) {

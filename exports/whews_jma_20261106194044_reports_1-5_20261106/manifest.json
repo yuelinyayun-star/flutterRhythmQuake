@@ -1,0 +1,47 @@
+[
+  {
+    "report": 1,
+    "eventId": "20261106194044",
+    "reportTime": "2026-11-06 19:40:51",
+    "dataFile": "WHEWS_JMA_20261106194044_report_01.Data.original.json",
+    "dataSha256": "6cf08fece10058b16696bfa659722dc636cccc291e6acde92bc46d1165f17e26",
+    "savedRecordFile": "WHEWS_JMA_20261106194044_report_01.saved-record.json",
+    "savedRecordSha256": "79b34b3fc39fb1128f7b83f58cebef838a25dea9c93c85c96ae7a9d866d97ebf"
+  },
+  {
+    "report": 2,
+    "eventId": "20261106194044",
+    "reportTime": "2026-11-06 19:40:51",
+    "dataFile": "WHEWS_JMA_20261106194044_report_02.Data.original.json",
+    "dataSha256": "0211b8a039b1652fde013506bfe61016108f07be03b6b4f4251333853340609a",
+    "savedRecordFile": "WHEWS_JMA_20261106194044_report_02.saved-record.json",
+    "savedRecordSha256": "22b6220f7d8108ec46cd390da3d749e94764ea81a8dedba3907f8998d0c2ed3f"
+  },
+  {
+    "report": 3,
+    "eventId": "20261106194044",
+    "reportTime": "2026-11-06 19:40:54",
+    "dataFile": "WHEWS_JMA_20261106194044_report_03.Data.original.json",
+    "dataSha256": "6ff8f9366765169ac35f546cc59da43610bb126bf6c6dd61b841631d0dea0aa5",
+    "savedRecordFile": "WHEWS_JMA_20261106194044_report_03.saved-record.json",
+    "savedRecordSha256": "68a3d33deda82d5dacb8122797b1aff2c442f773484807e6ccb85520d8caa002"
+  },
+  {
+    "report": 4,
+    "eventId": "20261106194044",
+    "reportTime": "2026-11-06 19:41:14",
+    "dataFile": "WHEWS_JMA_20261106194044_report_04.Data.original.json",
+    "dataSha256": "be81ab86f2e205220faf0a5b2a7b229a820a222251e0d9ead470d321be942c40",
+    "savedRecordFile": "WHEWS_JMA_20261106194044_report_04.saved-record.json",
+    "savedRecordSha256": "ad5a74ab8bc3fb647013b70bd0cfdd3da60e56e28231b74eddec446280433320"
+  },
+  {
+    "report": 5,
+    "eventId": "20261106194044",
+    "reportTime": "2026-11-06 19:41:18",
+    "dataFile": "WHEWS_JMA_20261106194044_report_05.Data.original.json",
+    "dataSha256": "e46cdf533d472a75c4c79fcb2e7c503cac0a4e7040cf94afd738a1b380feb4b1",
+    "savedRecordFile": "WHEWS_JMA_20261106194044_report_05.saved-record.json",
+    "savedRecordSha256": "1bafdc119adf52beb557d67305875b5c5c6bc62caae0c7083f39e702939109f4"
+  }
+]

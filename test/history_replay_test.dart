@@ -38,6 +38,89 @@ EewEventGroup group(List<UnifiedQuakeData> reports) => EewEventGroup(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test(
+    'all 18 captured GlobalQuake reports survive replay decode and provider admission',
+    () {
+      final text = File(
+        'test/fixtures/global_quake/captured_report_only_20261018.json',
+      ).readAsStringSync();
+      final replayPackage = HistoryReplayPackage.decode(text);
+      expect(replayPackage.reports, hasLength(18));
+      for (final (i, report) in replayPackage.reports.indexed) {
+        expect(report.source, 'globalQuakeEew');
+        expect(report.originTime, isNotNull, reason: 'report ${i + 1}');
+        expect(report.lat, isNotNull, reason: 'report ${i + 1}');
+        expect(report.lng, isNotNull, reason: 'report ${i + 1}');
+        expect(report.depth, greaterThanOrEqualTo(0));
+        expect(report.isCanceled, isFalse);
+      }
+      SharedPreferences.setMockInitialValues({});
+      final provider = QuakeProvider(startCatalogServices: false);
+      addTearDown(provider.dispose);
+      provider.historyReplay.load(replayPackage);
+      provider.historyReplay.play();
+      expect(provider.unifiedEvents, isNotEmpty);
+      final uiEvent = provider.unifiedEvents.first;
+      expect(uiEvent.isReplay, isTrue);
+      expect(uiEvent.source, 'globalQuakeEew');
+      expect(uiEvent.originTime, replayPackage.reports.first.originTime);
+      expect(uiEvent.replayClockOffset, isNot(Duration.zero));
+      expect(
+        QuakeTime.calcPassedSecondsUnified(uiEvent),
+        inInclusiveRange(160, 195),
+      );
+      provider.historyReplay.stop();
+    },
+  );
+
+  test(
+    'captured GlobalQuake replay retains UI countdown inputs through provider',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final provider = QuakeProvider(startCatalogServices: false);
+      addTearDown(provider.dispose);
+      final captured = UnifiedQuakeData(
+        source: 'globalQuakeEew',
+        origin: 3,
+        eventId: '3ef60ee6-b157-4deb-bd6a-c8b426937d49',
+        isEew: true,
+        timeZone: 8,
+        titleText: 'GlobalQuake 地震预警',
+        reportNumText: '第1报',
+        useShindo: false,
+        maxIntensity: '7',
+        className: 'orange',
+        hypocenter: '印尼弗洛勒斯岛地区附近',
+        originTime: DateTime(2026, 10, 18, 16, 0, 6, 55),
+        reportTime: DateTime(2026, 10, 18, 16, 2, 56, 425),
+        arrivedAt: DateTime.utc(2026, 10, 18, 8, 2, 58, 676),
+        magnitude: 5.227834224700928,
+        depth: 10,
+        lat: -8.098663330078125,
+        lng: 120.38573455810547,
+        sourcePayload: const {'format': 'java-object-stream-decoded-v1'},
+      );
+      provider.historyReplay.load(
+        HistoryReplayPackage.fromGroup(group([captured])),
+      );
+      provider.historyReplay.play();
+      expect(provider.unifiedEvents.where((e) => e.isReplay), hasLength(1));
+      final replay = provider.unifiedEvents.single;
+      expect(replay.source, 'globalQuakeEew');
+      expect(replay.isEew, isTrue);
+      expect(replay.isHistory, isFalse);
+      expect(replay.isCanceled, isFalse);
+      expect(replay.originTime, captured.originTime);
+      expect(replay.depth, captured.depth);
+      expect(replay.lat, captured.lat);
+      expect(replay.lng, captured.lng);
+      expect(
+        QuakeTime.calcPassedSecondsUnified(replay),
+        inInclusiveRange(165, 190),
+      );
+      provider.historyReplay.stop();
+    },
+  );
   test('replay reaches sound service and respects the sound switch', () async {
     SharedPreferences.setMockInitialValues({});
     final provider = QuakeProvider();
@@ -310,7 +393,7 @@ void main() {
       expect(provider.unifiedEvents.length, 1);
       final active = provider.unifiedEvents.single;
       expect(active.isReplay, isTrue);
-      expect(active.apiTypeLabel, '本地注入 · 回放');
+      expect(active.apiTypeLabel, 'Mock · 回放');
       expect(active.originTime, event.originTime);
       expect(active.sourcePayload, event.sourcePayload);
       expect(

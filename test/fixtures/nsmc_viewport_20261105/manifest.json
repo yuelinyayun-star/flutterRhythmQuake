@@ -1,0 +1,65 @@
+[
+  {
+    "x": 5,
+    "y": 2,
+    "url": "https://data.nsmc.org.cn/NSMCAPI/v1/nsmc/image/wms/compose?layers=GEOS_IRX&datetime=202611050400&request=GetMap&bbox=45.0%2C40.97989806962013%2C90.0%2C66.51326044311185&width=256&height=256&version=1.1.0&format=png",
+    "bytes": 37796,
+    "sha256": "4415e90ab8a92f006898d3d96f2ecb22de9ca3e2c02cda5c2667fe624403703c"
+  },
+  {
+    "x": 5,
+    "y": 3,
+    "url": "https://data.nsmc.org.cn/NSMCAPI/v1/nsmc/image/wms/compose?layers=GEOS_IRX&datetime=202611050400&request=GetMap&bbox=45.0%2C0.0%2C90.0%2C40.97989806962013&width=256&height=256&version=1.1.0&format=png",
+    "bytes": 33420,
+    "sha256": "0ded2cb3f7dc11096d4fec1bfc57ba0d11e648aff10eee19d2d768209e41727e"
+  },
+  {
+    "x": 5,
+    "y": 4,
+    "url": "https://data.nsmc.org.cn/NSMCAPI/v1/nsmc/image/wms/compose?layers=GEOS_IRX&datetime=202611050400&request=GetMap&bbox=45.0%2C-40.97989806962013%2C90.0%2C0.0&width=256&height=256&version=1.1.0&format=png",
+    "bytes": 49108,
+    "sha256": "e76fbaefdc9993c7bdb6d2bf3636dcc812e10e9f1ee0e7529df2031a0a961e8f"
+  },
+  {
+    "x": 6,
+    "y": 2,
+    "url": "https://data.nsmc.org.cn/NSMCAPI/v1/nsmc/image/wms/compose?layers=GEOS_IRX&datetime=202611050400&request=GetMap&bbox=90.0%2C40.97989806962013%2C135.0%2C66.51326044311185&width=256&height=256&version=1.1.0&format=png",
+    "bytes": 33708,
+    "sha256": "55341411a930f613a2c327484f1a37d20ab6a88d7dca64da4084534fd1a1cf52"
+  },
+  {
+    "x": 6,
+    "y": 3,
+    "url": "https://data.nsmc.org.cn/NSMCAPI/v1/nsmc/image/wms/compose?layers=GEOS_IRX&datetime=202611050400&request=GetMap&bbox=90.0%2C0.0%2C135.0%2C40.97989806962013&width=256&height=256&version=1.1.0&format=png",
+    "bytes": 33226,
+    "sha256": "4a958f8bd7f3ced6bb34e96bca57b8641f3dda4dd8f7ddf418a2e30f48f19ad6"
+  },
+  {
+    "x": 6,
+    "y": 4,
+    "url": "https://data.nsmc.org.cn/NSMCAPI/v1/nsmc/image/wms/compose?layers=GEOS_IRX&datetime=202611050400&request=GetMap&bbox=90.0%2C-40.97989806962013%2C135.0%2C0.0&width=256&height=256&version=1.1.0&format=png",
+    "bytes": 30199,
+    "sha256": "47c04e0e698d7e806ed79ffe8c2b137769aa59c9d47316470e6ab19e62260af2"
+  },
+  {
+    "x": 7,
+    "y": 2,
+    "url": "https://data.nsmc.org.cn/NSMCAPI/v1/nsmc/image/wms/compose?layers=GEOS_IRX&datetime=202611050400&request=GetMap&bbox=135.0%2C40.97989806962013%2C180.0%2C66.51326044311185&width=256&height=256&version=1.1.0&format=png",
+    "bytes": 39584,
+    "sha256": "dd2bc0bd700372e1cb531df88984995c19b14940ab34c5d84528b857783bd54b"
+  },
+  {
+    "x": 7,
+    "y": 3,
+    "url": "https://data.nsmc.org.cn/NSMCAPI/v1/nsmc/image/wms/compose?layers=GEOS_IRX&datetime=202611050400&request=GetMap&bbox=135.0%2C0.0%2C180.0%2C40.97989806962013&width=256&height=256&version=1.1.0&format=png",
+    "bytes": 45954,
+    "sha256": "d496382dc114ad31009da1c8954f95c526e54b0646675aaf2ba8c5b358c32097"
+  },
+  {
+    "x": 7,
+    "y": 4,
+    "url": "https://data.nsmc.org.cn/NSMCAPI/v1/nsmc/image/wms/compose?layers=GEOS_IRX&datetime=202611050400&request=GetMap&bbox=135.0%2C-40.97989806962013%2C180.0%2C0.0&width=256&height=256&version=1.1.0&format=png",
+    "bytes": 39646,
+    "sha256": "4f0796bdbfd9ac5f95e30b7f256873f3ce92767f5f2169b18f8406489f1af44c"
+  }
+]

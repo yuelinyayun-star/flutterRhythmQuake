@@ -16,7 +16,7 @@ String kmaDisplayLocation(
       longitude < -180 ||
       longitude > 180 ||
       (latitude == 0 && longitude == 0)) {
-    return original;
+    return original.trim() == '韩国附近' ? '未知' : original;
   }
   final mapped = getFEName(latitude, longitude);
   return mapped.isNotEmpty ? mapped : original;

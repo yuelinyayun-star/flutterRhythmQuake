@@ -1,0 +1,24 @@
+{
+  "key": "ntwc_t2ssp5_1",
+  "source": "ntwc",
+  "Data": {
+    "id": "t2ssp5-1",
+    "eventId": "t2ssp5",
+    "updates": 1,
+    "level": "Advisory",
+    "issueTime": "2025-09-18T19:07:03Z",
+    "shockTime": "2025-09-18T18:58:17 UTC",
+    "latitude": 53.0,
+    "longitude": 160.8,
+    "magnitude": 7.8,
+    "depth": 10,
+    "placeName": "255 miles SW of Bering I., Komandorski",
+    "headline": "NTWC Advisory",
+    "description": "",
+    "jsonUrl": "https://www.tsunami.gov/events/PAAQ/2025/09/18/t2ssp5/1/WEAK51/PAAQ.json",
+    "bulletinUrl": "https://www.tsunami.gov/events/PAAQ/2025/09/18/t2ssp5/1/WEAK51/PAAQ.json"
+  },
+  "original": "test/fixtures/tsunami_presentation_20261023/raw/84b5ddea9628a4fa.original",
+  "url": "https://www.tsunami.gov/events/PAAQ/2025/09/18/t2ssp5/1/WEAK51/PAAQ.json",
+  "sha256": "84b5ddea9628a4fa077350e5c7fc82e6463aa18278b759087161f6e1dfd6916d"
+}

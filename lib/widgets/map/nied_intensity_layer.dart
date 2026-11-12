@@ -13,6 +13,9 @@ class NiedIntensityLayer extends StatefulWidget {
   final bool hideGrid;
   final bool blinkOn;
   final bool displayShindo0;
+
+  /// Presentation only, while an EEW yields to a JMA/P2P information report.
+  final bool informationFocusDotsOnly;
   final Map<String, NiedDetectionGridCell>? detectionGridCells;
   final void Function(List<LatLng> centers)? onGridCellsChanged;
 
@@ -22,6 +25,7 @@ class NiedIntensityLayer extends StatefulWidget {
     this.hideGrid = false,
     this.blinkOn = true,
     this.displayShindo0 = false,
+    this.informationFocusDotsOnly = false,
     this.detectionGridCells,
     this.onGridCellsChanged,
   });
@@ -33,8 +37,14 @@ class NiedIntensityLayer extends StatefulWidget {
 class _NiedIntensityLayerState extends State<NiedIntensityLayer>
     with GridCentersEmitMixin {
   final Map<String, _HeldGridCell> _gridCells = {};
+  double? _symbolZoom;
+  bool? _symbolDisplay0;
+  bool? _symbolInformationFocusDotsOnly;
+  List<(LatLng, int, bool)> _symbolSnapshot = const [];
+  List<Widget>? _symbolWidgets;
 
   static const Color _idleColor = Color(0x4D0003CF);
+  static const Color _missingColor = Color(0x4D888888);
 
   static const List<Color> _niedDotColors = [
     Color(0x4D0003CF),
@@ -74,15 +84,15 @@ class _NiedIntensityLayerState extends State<NiedIntensityLayer>
   @override
   Widget build(BuildContext context) {
     final data = widget.stations;
-    if (data == null || data.isEmpty) return const SizedBox.shrink();
+    if (data == null || data.isEmpty) {
+      _symbolSnapshot = const [];
+      _symbolWidgets = null;
+      return const SizedBox.shrink();
+    }
 
     // Avoid MapCamera InheritedWidget — continuous EEW follow would otherwise
     // rebuild hundreds of station dots on every camera tick.
     final zoom = mapStyleZoomOf(context);
-
-    final overview = _overviewFactor(zoom);
-    final dotSize = (0.9 + (zoom - 3) * 0.95).clamp(0.9, 7.5);
-    final dotBorderWidth = (0.35 + overview * 0.55).clamp(0.35, 0.9);
 
     final detectionCells = widget.detectionGridCells;
     final hasDetectionCells =
@@ -98,13 +108,55 @@ class _NiedIntensityLayerState extends State<NiedIntensityLayer>
       widget.onGridCellsChanged,
     );
 
+    return Stack(
+      children: [
+        if (_gridCells.isNotEmpty && !widget.hideGrid)
+          PolygonLayer(polygons: _buildGridPolygons()),
+        ..._stationSymbols(data, zoom),
+      ],
+    );
+  }
+
+  List<Widget> _stationSymbols(List<NiedStation> data, double zoom) {
+    // Blink affects the detection grid only. Compare value snapshots because
+    // incoming station objects and lists can be updated in place.
+    if (_symbolWidgets != null &&
+        _symbolZoom == zoom &&
+        _symbolDisplay0 == widget.displayShindo0 &&
+        _symbolInformationFocusDotsOnly == widget.informationFocusDotsOnly &&
+        _symbolSnapshot.length == data.length) {
+      var same = true;
+      for (var i = 0; i < data.length; i++) {
+        if (_symbolSnapshot[i].$1 != data[i].coordinate ||
+            _symbolSnapshot[i].$2 != data[i].level ||
+            _symbolSnapshot[i].$3 != data[i].isRealtimeObservationMissing) {
+          same = false;
+          break;
+        }
+      }
+      if (same) return _symbolWidgets!;
+    }
+    final overview = _overviewFactor(zoom);
+    final dotSize = (0.9 + (zoom - 3) * 0.95).clamp(0.9, 7.5);
+    final dotBorderWidth = (0.35 + overview * 0.55).clamp(0.35, 0.9);
     final dots = <StationDot>[];
     final iconMarkers = <Marker>[];
 
     for (final station in data) {
       final level = station.level;
 
-      if (level < 0) {
+      if (station.isRealtimeObservationMissing) {
+        dots.add(
+          StationDot(
+            coordinate: station.coordinate,
+            color: _missingColor,
+            radius: dotSize / 2,
+            fillOpacity: 0.14 + overview * 0.22,
+            borderOpacity: 0.45 + overview * 0.45,
+            borderWidth: dotBorderWidth,
+          ),
+        );
+      } else if (level < 0) {
         dots.add(
           StationDot(
             coordinate: station.coordinate,
@@ -115,9 +167,14 @@ class _NiedIntensityLayerState extends State<NiedIntensityLayer>
             borderWidth: dotBorderWidth,
           ),
         );
-      } else if (level < (widget.displayShindo0 ? 6 : 8) || zoom < 4) {
+      } else if (widget.informationFocusDotsOnly ||
+          level < (widget.displayShindo0 ? 6 : 8) ||
+          zoom < 4) {
         final dotColor =
-            _niedDotColors[level.clamp(0, _niedDotColors.length - 1)];
+            widget.informationFocusDotsOnly &&
+                level >= (widget.displayShindo0 ? 6 : 8)
+            ? _jmaColors[_levelToJmaIndex(level)]
+            : _niedDotColors[level.clamp(0, _niedDotColors.length - 1)];
         dots.add(
           StationDot(
             coordinate: station.coordinate,
@@ -132,10 +189,10 @@ class _NiedIntensityLayerState extends State<NiedIntensityLayer>
         final idx = _levelToJmaIndex(level);
         iconMarkers.add(
           Marker(
-            width: 14.0,
-            height: 14.0,
+            width: NiedIntensityNumberMarker.markerSize,
+            height: NiedIntensityNumberMarker.markerSize,
             point: station.coordinate,
-            child: _IntensityMarker(
+            child: NiedIntensityNumberMarker(
               color: _jmaColors[idx],
               label: _jmaLabels[idx],
               level: level,
@@ -145,14 +202,17 @@ class _NiedIntensityLayerState extends State<NiedIntensityLayer>
       }
     }
 
-    return Stack(
-      children: [
-        if (_gridCells.isNotEmpty && !widget.hideGrid)
-          PolygonLayer(polygons: _buildGridPolygons()),
-        StationDotPainterLayer(dots: dots, sizeWithCameraZoom: true),
-        if (iconMarkers.isNotEmpty) MarkerLayer(markers: iconMarkers),
-      ],
-    );
+    _symbolSnapshot = [
+      for (final s in data)
+        (s.coordinate, s.level, s.isRealtimeObservationMissing),
+    ];
+    _symbolZoom = zoom;
+    _symbolDisplay0 = widget.displayShindo0;
+    _symbolInformationFocusDotsOnly = widget.informationFocusDotsOnly;
+    return _symbolWidgets = [
+      StationDotPainterLayer(dots: dots, sizeWithCameraZoom: true),
+      if (iconMarkers.isNotEmpty) MarkerLayer(markers: iconMarkers),
+    ];
   }
 
   void _replaceGridCellsFromDetection(
@@ -213,20 +273,27 @@ class _NiedIntensityLayerState extends State<NiedIntensityLayer>
   }
 }
 
-class _IntensityMarker extends StatelessWidget {
+class NiedIntensityNumberMarker extends StatelessWidget {
+  static const double markerSize = 14.0;
   final Color color;
   final String label;
   final int level;
+  final bool? highIntensity;
+  final Color? foregroundColor;
 
-  const _IntensityMarker({
+  const NiedIntensityNumberMarker({
+    super.key,
     required this.color,
     required this.label,
     required this.level,
+    this.highIntensity,
+    this.foregroundColor,
   });
 
   @override
   Widget build(BuildContext context) {
-    final isHigh = JpShindoScale.jmaIndexFromKanameishiLevel(level) >= 7;
+    final isHigh =
+        highIntensity ?? JpShindoScale.jmaIndexFromKanameishiLevel(level) >= 7;
 
     return Container(
       decoration: BoxDecoration(
@@ -243,9 +310,11 @@ class _IntensityMarker extends StatelessWidget {
           child: Text(
             label,
             style: TextStyle(
-              color: JpShindoScale.jmaIndexFromKanameishiLevel(level) >= 4
-                  ? Colors.black
-                  : Colors.white,
+              color:
+                  foregroundColor ??
+                  (JpShindoScale.jmaIndexFromKanameishiLevel(level) >= 4
+                      ? Colors.black
+                      : Colors.white),
               fontSize: isHigh ? 8 : 7,
               fontWeight: FontWeight.bold,
               height: 1.0,

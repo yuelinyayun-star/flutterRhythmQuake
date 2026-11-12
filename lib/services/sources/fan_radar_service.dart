@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:convert';
+import 'api_json_decoder.dart';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -11,6 +11,20 @@ import 'web_source_proxy.dart';
 
 enum CmaImageProduct { radar, precipitation }
 
+/// Transfers the validated image to the foreground image stream once. It does
+/// not cross background-engine handoffs, which contain only original PNG bytes.
+class RadarImageHandle {
+  RadarImageHandle(this._image);
+  ui.Image? _image;
+  ui.Image? take() {
+    final image = _image;
+    _image = null;
+    return image;
+  }
+
+  void dispose() => take()?.dispose();
+}
+
 class FanRadarFrame {
   const FanRadarFrame({
     required this.time,
@@ -19,6 +33,7 @@ class FanRadarFrame {
     required this.width,
     required this.height,
     required this.imageBytes,
+    this.validatedImage,
   });
 
   final DateTime time;
@@ -27,6 +42,7 @@ class FanRadarFrame {
   final int width;
   final int height;
   final Uint8List imageBytes;
+  final RadarImageHandle? validatedImage;
 }
 
 // Keep the legacy name and handoff kind for existing map/background consumers.
@@ -91,6 +107,7 @@ class FanRadarService {
   int _session = 0;
   FanRadarFrame? _latestFrame;
   String? _latestFilename;
+  bool _retainDecodedImage = true;
 
   Stream<FanRadarFrame?> get frameStream => _frameController.stream;
   FanRadarFrame? get latestFrame => _latestFrame;
@@ -99,7 +116,9 @@ class FanRadarService {
   Future<void> start({
     Duration interval = refreshInterval,
     int startupAttempts = 3,
+    bool retainDecodedImage = true,
   }) {
+    _retainDecodedImage = retainDecodedImage;
     if (_started) {
       // Startup race: a previous start may still be fetching, or the first
       // attempt failed. Keep the overlay warm by requesting again when empty.
@@ -123,6 +142,9 @@ class FanRadarService {
     _timer = null;
     _started = false;
     _fetchQueued = false;
+    // Stop may keep the original PNG for resume, but must not pin a validated
+    // image that the map never consumed (for example, closing during startup).
+    _latestFrame?.validatedImage?.dispose();
     if (clear && _latestFrame != null) {
       _latestFrame = null;
       _latestFilename = null;
@@ -172,7 +194,7 @@ class FanRadarService {
         debugPrint('[CmaRadar] list HTTP ${response.statusCode}');
         return false;
       }
-      final entry = _latestEntry(utf8.decode(response.bodyBytes));
+      final entry = _latestEntry(response.bodyBytes);
       final current = _latestFrame;
       if (current != null &&
           (entry.time.isBefore(current.time) ||
@@ -192,7 +214,11 @@ class FanRadarService {
         return false;
       }
       final frame = await _decodeFrame(entry.time, image.bodyBytes);
-      if (!_started || session != _session) return false;
+      if (!_started || session != _session) {
+        frame.validatedImage?.dispose();
+        return false;
+      }
+      _latestFrame?.validatedImage?.dispose();
       _latestFrame = frame;
       _latestFilename = entry.filename;
       _frameController.add(frame);
@@ -207,12 +233,12 @@ class FanRadarService {
     }
   }
 
-  ({DateTime time, String filename}) _latestEntry(String text) {
-    final match = RegExp(
-      '^\\s*${RegExp.escape(_callback)}\\s*\\(([\\s\\S]*)\\)\\s*;?\\s*\$',
-    ).firstMatch(text);
-    if (match == null) throw const FormatException('Invalid radar JSONP');
-    final decoded = jsonDecode(match.group(1)!);
+  ({DateTime time, String filename}) _latestEntry(List<int> bytes) {
+    final decoded = decodeApiJsonEnvelopeBytes(
+      bytes,
+      JsonWireEnvelope.jsonp,
+      _callback,
+    );
     if (decoded is! Map || decoded['datas'] is! List) {
       throw const FormatException('Missing radar list');
     }
@@ -284,9 +310,14 @@ class FanRadarService {
       throw const FormatException('Invalid radar dimensions');
     }
     final codec = await ui.instantiateImageCodec(bytes);
+    ui.Image? validated;
     try {
       final decoded = await codec.getNextFrame();
-      decoded.image.dispose();
+      if (_retainDecodedImage) {
+        validated = decoded.image;
+      } else {
+        decoded.image.dispose();
+      }
     } finally {
       codec.dispose();
     }
@@ -297,6 +328,7 @@ class FanRadarService {
       width: width,
       height: height,
       imageBytes: bytes,
+      validatedImage: validated == null ? null : RadarImageHandle(validated),
     );
   }
 }

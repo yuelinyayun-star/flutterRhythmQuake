@@ -10,6 +10,7 @@ User=filebrowser
 Group=filebrowser
 EnvironmentFile=/etc/rhythmquake-collector/collector.env
 Environment=XDG_DATA_HOME=/var/lib/rhythmquake-collector/runtime
+Environment=XDG_STATE_HOME=/var/lib/rhythmquake-collector/runtime
 Environment=LIBGL_ALWAYS_SOFTWARE=1
 Environment=NO_AT_BRIDGE=1
 Environment=GSETTINGS_BACKEND=memory

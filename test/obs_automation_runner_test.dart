@@ -14,6 +14,59 @@ void main() {
 
   tearDown(input.resetForTest);
 
+  test(
+    'disabled row cannot trigger and already running row keeps its fixed stop condition',
+    () async {
+      final executor = _FakeActionExecutor();
+      final runner = ObsAutomationRunner(
+        inputService: input,
+        actionExecutor: executor,
+      );
+      addTearDown(runner.dispose);
+      final preset = _ceaToCencPreset();
+      final rule = preset.stacks.single;
+      runner.configure([
+        preset.copyWith(stacks: [rule.copyWith(enabled: false)]),
+      ]);
+      final event = _event(
+        source: 'ceaEew',
+        eventId: 'rule-switch',
+        isEew: true,
+        originTime: DateTime.utc(2026, 8, 20, 12),
+        lat: 31.2,
+        lng: 103.8,
+      );
+      input.emitUnifiedEvent(event, ObsUnifiedEventPhase.added);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(executor.types, isEmpty);
+      runner.configure([preset]);
+      input.emitUnifiedEvent(event, ObsUnifiedEventPhase.added);
+      await _waitUntil(() => runner.activeWaiterCount == 1);
+      expect(executor.types, [ObsAutomationBlockType.startRecord]);
+      runner.configure([
+        preset.copyWith(stacks: [rule.copyWith(enabled: false)]),
+      ]);
+      input.emitUnifiedEvent(
+        _event(
+          source: 'cencEqlist',
+          eventId: 'rule-switch-information',
+          isEew: false,
+          originTime: event.originTime!,
+          lat: 31.3,
+          lng: 103.9,
+          reportNumText: '正式测定',
+        ),
+        ObsUnifiedEventPhase.added,
+      );
+      await _waitUntil(() => executor.types.length == 2);
+      expect(executor.types, [
+        ObsAutomationBlockType.startRecord,
+        ObsAutomationBlockType.stopRecord,
+      ]);
+      expect(runner.activeWaiterCount, 0);
+    },
+  );
+
   test('CEA waits for matching CENC automatic or reviewed report', () async {
     for (final reviewLabel in ['自动测定', '正式测定']) {
       final executor = _FakeActionExecutor();

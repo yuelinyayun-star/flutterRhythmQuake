@@ -5,6 +5,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutterrhythmquake/models/quake_message.dart';
 import 'package:flutterrhythmquake/services/quake_event_adapter.dart';
+import 'package:flutterrhythmquake/services/epicenter_region_service.dart';
+import 'package:flutterrhythmquake/services/native_east_asia_regions.dart';
 import 'package:flutterrhythmquake/providers/map_state_provider.dart';
 import 'package:flutterrhythmquake/providers/quake_provider.dart';
 import 'package:flutterrhythmquake/services/sources/eqlist/eqlist_manager.dart';
@@ -12,6 +14,11 @@ import 'package:flutterrhythmquake/widgets/ui/eqlist_panel.dart';
 import 'package:provider/provider.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUpAll(() async => EpicenterRegionService.instance.load());
+  final mappedKmaName = NativeEastAsiaRegions.supported
+      ? '韩国庆尚北道附近'
+      : '朝鲜半岛南部附近';
   final manager = EqlistManager();
 
   setUp(() {
@@ -75,13 +82,13 @@ void main() {
         ),
       );
       await tester.pump();
-      final card = find.text('韩国附近');
+      final card = find.text(mappedKmaName);
       expect(find.text('2026-07-23 02:47:04 (UTC+8)'), findsOneWidget);
 
       await tester.longPress(card);
       await tester.pump();
-      const expectedCopy =
-          '[RhythmQuake] 烈度IV M4.2 韩国附近 '
+      final expectedCopy =
+          '[RhythmQuake] 烈度IV M4.2 $mappedKmaName '
           '2026-07-23 02:47:04 (UTC+8) 深度12km KMA';
       expect(mapState.selectedHistoryEvent, isNull);
       expect(clipboardWrites, [expectedCopy]);
@@ -205,7 +212,7 @@ void main() {
         ),
       );
       await tester.pump();
-      expect(find.text('韩国附近'), findsOneWidget);
+      expect(find.text(mappedKmaName), findsOneWidget);
       expect(find.text('경상북도'), findsNothing);
       expect(find.text('2026-07-23 02:47:04 (UTC+8)'), findsOneWidget);
       expect(cached.location, '경상북도');

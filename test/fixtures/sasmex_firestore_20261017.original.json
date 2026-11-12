@@ -1,0 +1,46 @@
+{
+  "name": "projects/sasno-d79e1/databases/(default)/documents/app/events",
+  "fields": {
+    "SASNOEVENTDATA": {
+      "mapValue": {
+        "fields": {
+          "intensity": {
+            "stringValue": "Leve"
+          },
+          "unix": {
+            "integerValue": "1792229803"
+          },
+          "metadata": {
+            "mapValue": {
+              "fields": {
+                "version": {
+                  "stringValue": "6.1.0"
+                },
+                "source": {
+                  "stringValue": "SASNO"
+                }
+              }
+            }
+          },
+          "region": {
+            "stringValue": "Zihuatanejo, Gro."
+          },
+          "epicenter": {
+            "mapValue": {
+              "fields": {
+                "latitude": {
+                  "doubleValue": 17.64686
+                },
+                "longitude": {
+                  "doubleValue": -101.55189
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "createTime": "2026-04-22T00:17:50.294874Z",
+  "updateTime": "2026-10-17T09:36:57.204067Z"
+}

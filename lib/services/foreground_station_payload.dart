@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import '../models/source_payload.dart';
 import '../core/seedlink_station_style.dart';
 import '../core/seedlink_activity.dart';
 
@@ -37,19 +38,30 @@ class ForegroundStationPayload {
     List<NiedStation> stations, {
     String? source,
     bool includeTrackingHistory = true,
-  }) => {
-    'kind': 'nied',
-    if (source != null) 'source': source,
-    'stations': stations.map((station) => _niedStation(station,
-        includeTrackingHistory: includeTrackingHistory)).toList(growable: false),
-  };
+  }) {
+    final dates = <(int, bool), String>{};
+    return {
+      'kind': 'nied',
+      if (source != null) 'source': source,
+      'stations': stations
+          .map(
+            (station) => includeTrackingHistory
+                ? _niedStation(station)
+                : _niedHistoryFields(station, dates),
+          )
+          .toList(growable: false),
+    };
+  }
 
   static Map<String, dynamic> kma(
     List<KmaStation> stations, {
     DateTime? dataTime,
+    String? layerSignature,
   }) => {
     'kind': 'kma',
     'dataTime': dataTime?.toIso8601String(),
+    if (layerSignature != null && layerSignature.isNotEmpty)
+      'layerSignature': layerSignature,
     'stations': stations.map(_kmaStation).toList(growable: false),
   };
 
@@ -57,11 +69,15 @@ class ForegroundStationPayload {
     List<CwaStation> stations, {
     DateTime? dataTime,
     bool includeOriginalJson = false,
+    String? layerSignature,
   }) => {
     'kind': 'cwa',
-    if (includeOriginalJson && StationHistoryCapture.instance.original('cwa') != null)
+    if (includeOriginalJson &&
+        StationHistoryCapture.instance.original('cwa') != null)
       'originalJson': StationHistoryCapture.instance.original('cwa'),
     'dataTime': dataTime?.toIso8601String(),
+    if (layerSignature != null && layerSignature.isNotEmpty)
+      'layerSignature': layerSignature,
     'stations': stations.map(_cwaStation).toList(growable: false),
   };
 
@@ -74,11 +90,15 @@ class ForegroundStationPayload {
     List<SeisJsStation> stations, {
     DateTime? dataTime,
     bool includeOriginalJson = false,
+    String? layerSignature,
   }) => {
     'kind': 'seisjs',
-    if (includeOriginalJson && StationHistoryCapture.instance.original('seisjs') != null)
+    if (includeOriginalJson &&
+        StationHistoryCapture.instance.original('seisjs') != null)
       'originalJson': StationHistoryCapture.instance.original('seisjs'),
     'dataTime': dataTime?.toIso8601String(),
+    if (layerSignature != null && layerSignature.isNotEmpty)
+      'layerSignature': layerSignature,
     'stations': stations.map(_seisJsStation).toList(growable: false),
   };
 
@@ -90,27 +110,32 @@ class ForegroundStationPayload {
     bool includeOriginalJson = false,
   }) => {
     'kind': 'palert',
-    if (includeOriginalJson && StationHistoryCapture.instance.original('palert') != null)
+    if (includeOriginalJson &&
+        StationHistoryCapture.instance.original('palert') != null)
       'originalJson': StationHistoryCapture.instance.original('palert'),
     'detectedStationIds': [
-      for (final station in detection?.detectedStations ?? <DetectedStationEntry>[])
+      for (final station
+          in detection?.detectedStations ?? <DetectedStationEntry>[])
         station.code,
     ],
     'dataTime': dataTime?.toIso8601String(),
     'receivedTime': receivedTime?.toIso8601String(),
     'detectionGrid': [
-      for (final cell in detection?.gridCells.values ?? <NiedDetectionGridCell>[])
+      for (final cell
+          in detection?.gridCells.values ?? <NiedDetectionGridCell>[])
         [cell.center.latitude, cell.center.longitude, cell.level],
     ],
     'stations': stations.map(_pAlertStation).toList(growable: false),
   };
 
   static Set<String> decodePAlertDetectedStationIds(
-    Map<String, dynamic> payload, {required DateTime now}
-  ) {
+    Map<String, dynamic> payload, {
+    required DateTime now,
+  }) {
     final received = _date(payload['receivedTime']);
     final raw = payload['detectedStationIds'];
-    if (received == null || raw is! List ||
+    if (received == null ||
+        raw is! List ||
         PAlertService.isFrameStale(received, now)) {
       return const {};
     }
@@ -143,7 +168,8 @@ class ForegroundStationPayload {
             (cell[2] as int) <= 20)
           PAlertDetectionGridCell(
             center: LatLng(
-              (cell[0] as num).toDouble(), (cell[1] as num).toDouble(),
+              (cell[0] as num).toDouble(),
+              (cell[1] as num).toDouble(),
             ),
             level: cell[2] as int,
           ),
@@ -196,7 +222,8 @@ class ForegroundStationPayload {
             'intensity': station.intensity,
             'lastMotionUpdate': station.lastMotionUpdate?.toIso8601String(),
             'sensorType': station.sensorType.name,
-            if (station.activity != null) 'activity': station.activity!.toJson(),
+            if (station.activity != null)
+              'activity': station.activity!.toJson(),
           },
         )
         .toList(growable: false),
@@ -298,28 +325,39 @@ class ForegroundStationPayload {
     'time': frame.time.toIso8601String(),
   };
 
-  static Map<String, dynamic> jmaSatelliteCloud(JmaSatelliteCloudFrame frame) => {
-    'kind': 'jmaSatelliteCloud',
-    'basetime': frame.basetime,
-    'validtime': frame.validtime,
-    'time': frame.time.toIso8601String(),
-  };
+  static Map<String, dynamic> jmaSatelliteCloud(JmaSatelliteCloudFrame frame) =>
+      {
+        'kind': 'jmaSatelliteCloud',
+        'basetime': frame.basetime,
+        'validtime': frame.validtime,
+        'time': frame.time.toIso8601String(),
+      };
 
-  static Map<String, dynamic> nsmcSatelliteCloud(NsmcSatelliteCloudFrame frame) => {
+  static Map<String, dynamic> nsmcSatelliteCloud(
+    NsmcSatelliteCloudFrame frame,
+  ) => {
     'kind': 'nsmcSatelliteCloud',
     'time': frame.time.toIso8601String(),
     'imageBytes': frame.imageBytes,
+    if (frame.isTiled) 'tiled': true,
   };
 
-  static NsmcSatelliteCloudFrame? decodeNsmcSatelliteCloud(Map<String, dynamic> raw) {
+  static NsmcSatelliteCloudFrame? decodeNsmcSatelliteCloud(
+    Map<String, dynamic> raw,
+  ) {
     final time = _date(raw['time']);
     final bytes = raw['imageBytes'];
-    if (time == null || bytes is! List || bytes.isEmpty ||
+    if (time != null && raw['tiled'] == true)
+      return NsmcSatelliteCloudFrame.tiles(time: time.toUtc());
+    if (time == null ||
+        bytes is! List ||
+        bytes.isEmpty ||
         bytes.any((value) => value is! int || value < 0 || value > 255)) {
       return null;
     }
     return NsmcSatelliteCloudFrame(
-      time: time.toUtc(), imageBytes: Uint8List.fromList(bytes.cast<int>()),
+      time: time.toUtc(),
+      imageBytes: Uint8List.fromList(bytes.cast<int>()),
     );
   }
 
@@ -717,7 +755,7 @@ class ForegroundStationPayload {
     if (raw is! List) return const [];
     return raw
         .whereType<Map>()
-        .map((item) => _decodeNiedStation(Map<String, dynamic>.from(item)))
+        .map((item) => _decodeNiedStation(_readOnlyMap(item)))
         .whereType<NiedStation>()
         .toList(growable: false);
   }
@@ -726,7 +764,7 @@ class ForegroundStationPayload {
     if (raw is! List) return const [];
     return raw
         .whereType<Map>()
-        .map((item) => _decodeKmaStation(Map<String, dynamic>.from(item)))
+        .map((item) => _decodeKmaStation(_readOnlyMap(item)))
         .whereType<KmaStation>()
         .toList(growable: false);
   }
@@ -735,7 +773,7 @@ class ForegroundStationPayload {
     if (raw is! List) return const [];
     return raw
         .whereType<Map>()
-        .map((item) => _decodeCwaStation(Map<String, dynamic>.from(item)))
+        .map((item) => _decodeCwaStation(_readOnlyMap(item)))
         .whereType<CwaStation>()
         .toList(growable: false);
   }
@@ -744,7 +782,7 @@ class ForegroundStationPayload {
     if (raw is! List) return const [];
     return raw
         .whereType<Map>()
-        .map((item) => _decodeSnetStation(Map<String, dynamic>.from(item)))
+        .map((item) => _decodeSnetStation(_readOnlyMap(item)))
         .whereType<SnetStation>()
         .toList(growable: false);
   }
@@ -753,16 +791,28 @@ class ForegroundStationPayload {
     if (raw is! List) return const [];
     return raw
         .whereType<Map>()
-        .map((item) => _decodeSeisJsStation(Map<String, dynamic>.from(item)))
+        .map((item) => _decodeSeisJsStation(_readOnlyMap(item)))
         .whereType<SeisJsStation>()
         .toList(growable: false);
   }
 
-  static List<PAlertStation> decodePAlert(dynamic raw) {
+  static List<PAlertStation> decodePAlert(
+    dynamic raw, {
+    bool nativeDisplay = false,
+    DateTime? Function(dynamic)? displayTime,
+  }) {
     if (raw is! List) return const [];
     return raw
         .whereType<Map>()
-        .map((item) => _decodePAlertStation(Map<String, dynamic>.from(item)))
+        .map(
+          (item) => _decodePAlertStation(
+            item is Map<String, dynamic>
+                ? item
+                : Map<String, dynamic>.from(item),
+            nativeDisplay: nativeDisplay,
+            displayTime: displayTime,
+          ),
+        )
         .whereType<PAlertStation>()
         .toList(growable: false);
   }
@@ -781,7 +831,111 @@ class ForegroundStationPayload {
     return LatLng(lat, lng);
   }
 
-  static Map<String, dynamic> _niedStation(NiedStation station, {
+  static final _niedHistoryLayout = SourcePayloadLayout(const [
+    'id',
+    'code',
+    'name',
+    'coordinate',
+    'network',
+    'prefecture',
+    'level',
+    'calibrationFactor',
+    'thresholdCode',
+    'ascend',
+    'triggerStamp',
+    'activity',
+    'isActive',
+    'abnormalUpdateCount',
+    'detectState',
+    'detectReason',
+    'expireSeconds',
+    'defaultExpireSeconds',
+    'lastUpdate',
+    'lastDataTime',
+    'lastReceivedAt',
+    'pixelX',
+    'pixelY',
+    'scanReliable',
+    'pixelClusterId',
+    'gifObservations',
+    'gifLayerQualityFlags',
+  ]);
+  static final _niedObservationLayout = SourcePayloadLayout(const [
+    'layer',
+    'colorPosition',
+    'shindo',
+    'pga',
+    'pgv',
+    'pgd',
+    'velocityResponse',
+  ]);
+  static final _historyCoordinates = Expando<Map<String, dynamic>>(
+    'nied-history-coordinate',
+  );
+  static final _emptyHistoryFlags = snapshotSourcePayload(<String, dynamic>{});
+
+  static Map<String, dynamic> _niedHistoryFields(
+    NiedStation s,
+    Map<(int, bool), String> dates,
+  ) {
+    String? stamp(DateTime? time) => time == null
+        ? null
+        : dates.putIfAbsent((
+            time.microsecondsSinceEpoch,
+            time.isUtc,
+          ), time.toIso8601String);
+    final coordinate = _historyCoordinates[s] ??= snapshotSourcePayload(
+      _latLng(s.coordinate),
+    );
+    return SourcePayloadFields(_niedHistoryLayout, [
+      s.id,
+      s.code,
+      s.name,
+      coordinate,
+      s.network,
+      s.prefecture,
+      s.level,
+      s.calibrationFactor,
+      s.thresholdCode,
+      s.ascend,
+      s.triggerStamp,
+      s.activity,
+      s.isActive,
+      s.abnormalUpdateCount,
+      s.detectState,
+      s.detectReason,
+      s.expireSeconds,
+      s.defaultExpireSeconds,
+      stamp(s.lastUpdate),
+      stamp(s.lastDataTime),
+      stamp(s.lastReceivedAt),
+      s.pixelX,
+      s.pixelY,
+      s.scanReliable,
+      s.pixelClusterId,
+      [
+        for (final v in s.gifObservations.values)
+          SourcePayloadFields(_niedObservationLayout, [
+            v.layer.id,
+            v.colorPosition,
+            v.shindo,
+            v.pga,
+            v.pgv,
+            v.pgd,
+            v.velocityResponse,
+          ]),
+      ],
+      s.gifLayerQualityFlags.isEmpty
+          ? _emptyHistoryFlags
+          : {
+              for (final e in s.gifLayerQualityFlags.entries)
+                e.key.id: e.value.toList(growable: false),
+            },
+    ]);
+  }
+
+  static Map<String, dynamic> _niedStation(
+    NiedStation station, {
     bool includeTrackingHistory = true,
   }) => {
     'id': station.id,
@@ -867,9 +1021,7 @@ class ForegroundStationPayload {
     final observations = raw['gifObservations'];
     if (observations is List) {
       for (final item in observations.whereType<Map>()) {
-        final observation = _decodeNiedObservation(
-          Map<String, dynamic>.from(item),
-        );
+        final observation = _decodeNiedObservation(_readOnlyMap(item));
         if (observation != null) station.updateGifObservation(observation);
       }
     }
@@ -914,7 +1066,6 @@ class ForegroundStationPayload {
     'coordinate': _latLng(station.coordinate),
     'intensity': station.intensity,
     'lastUpdate': station.lastUpdate?.toIso8601String(),
-    'recentLevel': station.recentLevel,
     'activityLevel': station.activityLevel,
     'holdLevel': station.holdLevel,
     'ascend': station.ascend,
@@ -952,6 +1103,8 @@ class ForegroundStationPayload {
     'alertIntensity': station.alertIntensity,
     'hasAlert': station.hasAlert,
     'lastUpdate': station.lastUpdate?.toIso8601String(),
+    if (station.preparedGridLevel != null)
+      'gridLevel': station.preparedGridLevel,
   };
 
   static CwaStation? _decodeCwaStation(Map<String, dynamic> raw) {
@@ -971,7 +1124,7 @@ class ForegroundStationPayload {
       alertIntensity: _number(raw['alertIntensity']) ?? -3.1,
       hasAlert: raw['hasAlert'] == true,
       lastUpdate: _date(raw['lastUpdate']),
-    );
+    )..preparedGridLevel = _int(raw['gridLevel']);
   }
 
   static Map<String, dynamic> _snetStation(SnetStation station) => {
@@ -1026,6 +1179,9 @@ class ForegroundStationPayload {
     'maxIntensity': station.maxIntensity,
     'isDesktop': station.isDesktop,
     'lastUpdate': station.lastUpdate?.toIso8601String(),
+    if (station.preparedMapLevel != null) 'mapLevel': station.preparedMapLevel,
+    if (station.preparedMapActive != null)
+      'mapActive': station.preparedMapActive,
   };
 
   static SeisJsStation? _decodeSeisJsStation(Map<String, dynamic> raw) {
@@ -1033,20 +1189,22 @@ class ForegroundStationPayload {
     final id = raw['id']?.toString();
     if (coordinate == null || id == null) return null;
     return SeisJsStation(
-      id: id,
-      region: raw['region']?.toString() ?? '',
-      coordinate: coordinate,
-      shindo: _int(raw['shindo']) ?? 0,
-      calcShindo: _number(raw['calcShindo']) ?? -3,
-      intensity: _number(raw['intensity']) ?? 0,
-      pga: _number(raw['pga']) ?? 0,
-      pgv: _number(raw['pgv']) ?? 0,
-      maxPga: _number(raw['maxPga']) ?? 0,
-      maxPgv: _number(raw['maxPgv']) ?? 0,
-      maxIntensity: _number(raw['maxIntensity']) ?? 0,
-      isDesktop: raw['isDesktop'] == true,
-      lastUpdate: _date(raw['lastUpdate']),
-    );
+        id: id,
+        region: raw['region']?.toString() ?? '',
+        coordinate: coordinate,
+        shindo: _int(raw['shindo']) ?? 0,
+        calcShindo: _number(raw['calcShindo']) ?? -3,
+        intensity: _number(raw['intensity']) ?? 0,
+        pga: _number(raw['pga']) ?? 0,
+        pgv: _number(raw['pgv']) ?? 0,
+        maxPga: _number(raw['maxPga']) ?? 0,
+        maxPgv: _number(raw['maxPgv']) ?? 0,
+        maxIntensity: _number(raw['maxIntensity']) ?? 0,
+        isDesktop: raw['isDesktop'] == true,
+        lastUpdate: _date(raw['lastUpdate']),
+      )
+      ..preparedMapLevel = _int(raw['mapLevel'])
+      ..preparedMapActive = raw['mapActive'] as bool?;
   }
 
   static Map<String, dynamic> _pAlertStation(PAlertStation station) => {
@@ -1064,7 +1222,11 @@ class ForegroundStationPayload {
     'receivedAt': station.receivedAt?.toIso8601String(),
   };
 
-  static PAlertStation? _decodePAlertStation(Map<String, dynamic> raw) {
+  static PAlertStation? _decodePAlertStation(
+    Map<String, dynamic> raw, {
+    bool nativeDisplay = false,
+    DateTime? Function(dynamic)? displayTime,
+  }) {
     final coordinate = _readLatLng(_nestedMap(raw['coordinate']));
     final id = raw['id']?.toString();
     if (coordinate == null || id == null) return null;
@@ -1079,8 +1241,10 @@ class ForegroundStationPayload {
       cwaIntensityIndex: _int(raw['cwaIntensityIndex']),
       heldCwaIntensityIndex: _int(raw['heldCwaIntensityIndex']),
       heldLevel: _int(raw['heldLevel']),
-      dataTime: _date(raw['dataTime']),
-      receivedAt: _date(raw['receivedAt']),
+      dataTime: (displayTime ?? _date)(raw['dataTime']),
+      receivedAt: (displayTime ?? _date)(raw['receivedAt']),
+      sampledLevel: _int(raw['sampledLevel']),
+      preparedMapRecent: nativeDisplay ? raw['mapRecent'] as bool? : null,
     );
   }
 
@@ -1090,9 +1254,14 @@ class ForegroundStationPayload {
     return null;
   }
 
-  static Map<String, dynamic> _nestedMap(dynamic raw) {
-    return raw is Map ? Map<String, dynamic>.from(raw) : const {};
-  }
+  // These decoders only read fields and construct independently owned stations.
+  // Native packed maps are already typed and immutable; copying every field
+  // first allocates a second index for every station on every frame.
+  static Map<String, dynamic> _readOnlyMap(Map raw) =>
+      raw is Map<String, dynamic> ? raw : Map<String, dynamic>.from(raw);
+
+  static Map<String, dynamic> _nestedMap(dynamic raw) =>
+      raw is Map ? _readOnlyMap(raw) : const {};
 
   static int? _int(dynamic raw) {
     if (raw is int) return raw;

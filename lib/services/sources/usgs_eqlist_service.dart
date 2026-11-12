@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:convert';
+import 'api_json_decoder.dart';
 import 'package:http/http.dart' as http;
 import '../../models/quake_message.dart';
 import '../../utils/fe_regions.dart';
@@ -75,7 +75,7 @@ class UsgsEqlistService {
         return;
       }
 
-      final data = json.decode(resp.body);
+      final data = decodeApiJsonResponse(resp);
       final features = data['features'] as List?;
       onStatusChanged?.call(true);
       if (features == null || features.isEmpty) return;

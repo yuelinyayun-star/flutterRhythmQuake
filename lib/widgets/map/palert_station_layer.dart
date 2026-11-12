@@ -4,6 +4,7 @@ import 'package:latlong2/latlong.dart';
 
 import '../../services/sources/palert_detection_grid.dart';
 import '../../services/sources/palert_service.dart';
+import '../../services/sources/native_station_display.dart';
 import 'ka_shindo_marker_style.dart';
 import 'map_style_zoom.dart';
 import 'station_dot_painter_layer.dart';
@@ -15,6 +16,7 @@ class PAlertStationLayer extends StatelessWidget {
   final bool hideGrid;
   final bool blinkOn;
   final DateTime? observationTime;
+  final List<NativeStationGrid>? preparedGrids;
 
   const PAlertStationLayer({
     super.key,
@@ -24,6 +26,7 @@ class PAlertStationLayer extends StatelessWidget {
     this.hideGrid = false,
     this.blinkOn = true,
     this.observationTime,
+    this.preparedGrids,
   });
 
   static const Color _idleColor = Color(0x804466AA);
@@ -45,8 +48,9 @@ class PAlertStationLayer extends StatelessWidget {
 
     for (final station in stations) {
       final recent =
-          station.receivedAt != null &&
-          nowUtc.difference(station.receivedAt!.toUtc()) <= _realtimeHold;
+          station.preparedMapRecent ??
+          (station.receivedAt != null &&
+              nowUtc.difference(station.receivedAt!.toUtc()) <= _realtimeHold);
       final level = station.gridLevel;
       final showMarker =
           recent &&
@@ -106,6 +110,19 @@ class PAlertStationLayer extends StatelessWidget {
   }
 
   List<Polygon> _buildGridPolygons() {
+    if (preparedGrids case final grids?) {
+      return [
+        for (final grid in grids)
+          Polygon(
+            points: grid.points,
+            borderStrokeWidth: 2.0,
+            borderColor: blinkOn
+                ? _gridColor(grid.level)
+                : _gridColor(grid.level).withValues(alpha: 0),
+            color: Colors.transparent,
+          ),
+      ];
+    }
     const halfStep = 0.99 / 2;
     return detectionGridCells
         .map((cell) {
@@ -131,6 +148,11 @@ class PAlertStationLayer extends StatelessWidget {
   }
 
   static double _markerSize(int level) => 14.0;
+  static Color _gridColor(int level) => level <= 7
+      ? const Color(0xFF008000)
+      : level <= 13
+      ? const Color(0xFFFFFF00)
+      : const Color(0xFFFF0000);
 
   static double _overviewFactor(double zoom) {
     return ((zoom - 3.2) / 3.8).clamp(0.0, 1.0).toDouble();

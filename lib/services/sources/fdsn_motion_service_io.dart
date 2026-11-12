@@ -1,12 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import '../../core/seedlink_station_style.dart';
 import '../../core/seedlink_activity.dart';
 import 'seedlink_signal_analysis.dart';
+import 'native_seedlink_codec.dart';
 import 'package:http/http.dart' as http;
 import 'fdsn_channel_sensitivity.dart';
 import 'fdsn_channel_catalog.dart';
@@ -18,6 +19,7 @@ import 'fdsn_source_catalog.dart';
 import 'fdsn_connection_health.dart';
 import 'fdsn_source_status.dart';
 import 'fdsn_network_io.dart';
+import 'source_tcp_socket.dart';
 import 'package:latlong2/latlong.dart';
 
 class FdsnMotionSample {
@@ -250,7 +252,7 @@ class FdsnMotionService {
   bool? _lastConnectedStatus;
 
   final List<_SeedLinkConnection> _connections = [];
-  final Set<Socket> _discoverySockets = {};
+  final Set<SourceTcpSocket> _discoverySockets = {};
   Timer? _discoveryRetry;
   final Map<String, List<FdsnSeedLinkStream>> _discovered = {};
   final Map<String, DateTime> _discoveredAt = {};
@@ -276,7 +278,9 @@ class FdsnMotionService {
   };
 
   @visibleForTesting
-  List<Map<String, Object>> get connectionDiagnostics => [
+  List<Map<String, Object>> get connectionDiagnostics => connectionSnapshot;
+
+  List<Map<String, Object>> get connectionSnapshot => [
     for (final c in _connections)
       {
         'host': c.host,
@@ -285,7 +289,14 @@ class FdsnMotionService {
         'selected': c.streams.length,
         'accepted': c._acceptedStations.length,
         'packets': c._packetCount,
+        'bufferedPacketBytes': c._buffer.length,
+        'packetDrainPending': c._packetDrainTimer?.isActive ?? false,
+        'selectionReplies': c._replyIndex,
         'decodeRejected': c._decodeRejected,
+        'sampleDecoder': NativeSeedLinkCodec.supported ? 'rust-abi-1' : 'dart',
+        'signalProcessor': SeedLinkSignalAnalysis.usesNative
+            ? 'rust-abi-1'
+            : 'dart',
         'stale': c._staleCount,
         'received': c._receivedStations.length,
         'pending': c._measurementRecords.length,
@@ -762,7 +773,7 @@ class FdsnMotionService {
         debugPrint('SeedLink ${source.source} HTTP catalogue failed: $error');
       }
     }
-    Socket? socket;
+    SourceTcpSocket? socket;
     Timer? timeoutTimer;
     Timer? deadline;
     final info = FdsnSeedLinkInfo(
@@ -963,7 +974,7 @@ class _SeedLinkConnection {
   final bool resumeAfterDisconnect;
   final Duration reconnectDelay;
 
-  Socket? _socket;
+  SourceTcpSocket? _socket;
   Timer? _reconnectTimer;
   Timer? _watchdog;
   Timer? _packetDrainTimer;
@@ -971,6 +982,7 @@ class _SeedLinkConnection {
   bool _running = false;
   int _runGeneration = 0;
   bool _connected = false;
+  bool _peerClosedWithPendingPackets = false;
   final List<int> _buffer = [];
   final _signalAnalysis = <String, SeedLinkSignalAnalysis>{};
   final Map<String, DateTime> _receivedStations = {};
@@ -1038,6 +1050,7 @@ class _SeedLinkConnection {
   void stop() {
     _running = false;
     _runGeneration++;
+    _peerClosedWithPendingPackets = false;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     _watchdog?.cancel();
@@ -1052,7 +1065,11 @@ class _SeedLinkConnection {
     _responseCache.clear();
     _responseRetryAfter.clear();
     _buffer.clear();
+    for (final analysis in _signalAnalysis.values) {
+      analysis.dispose();
+    }
     _signalAnalysis.clear();
+    NativeSeedLinkCodec.releaseScratch();
     _measurementRecords.clear();
     _measurementJobs.clear();
     _receivedStations.clear();
@@ -1077,6 +1094,7 @@ class _SeedLinkConnection {
         return;
       }
       _socket = socket;
+      _peerClosedWithPendingPackets = false;
       _networkRoute = connected.route.directive;
       _buffer.clear();
       _acceptedStations.clear();
@@ -1167,7 +1185,10 @@ class _SeedLinkConnection {
     }
   }
 
-  Future<void> _checkNetworkRoute(Socket socket, int generation) async {
+  Future<void> _checkNetworkRoute(
+    SourceTcpSocket socket,
+    int generation,
+  ) async {
     if (_checkingRoute) return;
     _checkingRoute = true;
     try {
@@ -1186,11 +1207,15 @@ class _SeedLinkConnection {
     }
   }
 
-  void _sendSelections(Socket socket) {
+  void _sendSelections(SourceTcpSocket socket) {
+    final bytes = BytesBuilder(copy: false);
     for (var index = 0; index < streams.length * 3; index++) {
-      _sendLine(socket, _selectionCommand(index));
+      bytes.add(ascii.encode('${_selectionCommand(index)}\r\n'));
     }
-    _sendLine(socket, 'END');
+    bytes.add(ascii.encode('END\r\n'));
+    // Preserve command order while matching Socket's former buffered burst.
+    // A large subscription must not become hundreds of separate FFI/OS writes.
+    socket.add(bytes.takeBytes());
   }
 
   String _selectionCommand(int index) {
@@ -1211,7 +1236,7 @@ class _SeedLinkConnection {
         : 'DATA ${((sequence + 1) & 0xffffff).toRadixString(16).padLeft(6, '0').toUpperCase()}';
   }
 
-  void _sendLine(Socket socket, String line) {
+  void _sendLine(SourceTcpSocket socket, String line) {
     socket.add(ascii.encode('$line\r\n'));
   }
 
@@ -1309,12 +1334,19 @@ class _SeedLinkConnection {
     }
     // Compact once per socket chunk, instead of shifting all remaining packets
     // after each 520-byte record.
+    if (!_isCurrentRun(generation)) return;
     if (consumed > 0) _buffer.removeRange(0, consumed);
     if (_buffer.length >= _packetSize) {
       _packetDrainTimer = Timer(
         Duration.zero,
         () => _drainPacketBuffer(generation),
       );
+    } else if (_peerClosedWithPendingPackets) {
+      _peerClosedWithPendingPackets = false;
+      final socket = _socket;
+      if (socket != null) {
+        _handleClosed(socket, generation, reason: 'peer closed');
+      }
     }
   }
 
@@ -1778,7 +1810,7 @@ class _SeedLinkConnection {
   bool _isDisplacementUnit(String unit) => unit == 'M' || unit == 'METER';
 
   void _handleClosed(
-    Socket socket,
+    SourceTcpSocket socket,
     int generation, {
     String reason = 'closed',
   }) {
@@ -1786,6 +1818,19 @@ class _SeedLinkConnection {
       socket.destroy();
       return;
     }
+    if (reason == 'peer closed' &&
+        _buffer.length >= _packetSize &&
+        _isCurrentRun(generation)) {
+      // TCP EOF follows its bytes, but packet decoding is deliberately spread
+      // over event-loop turns. Preserve received records and resume sequences
+      // before detaching this connection, using the existing bounded batches.
+      _peerClosedWithPendingPackets = true;
+      _watchdog?.cancel();
+      _watchdog = null;
+      if (_packetDrainTimer == null) _drainPacketBuffer(generation);
+      return;
+    }
+    _peerClosedWithPendingPackets = false;
     _lastCloseReason = reason;
     // Detach first: destroy can synchronously deliver onDone on some transports.
     _socket = null;
@@ -1795,7 +1840,11 @@ class _SeedLinkConnection {
     _packetDrainTimer?.cancel();
     _packetDrainTimer = null;
     _buffer.clear();
+    for (final analysis in _signalAnalysis.values) {
+      analysis.dispose();
+    }
     _signalAnalysis.clear();
+    NativeSeedLinkCodec.releaseScratch();
     _measurementRecords.clear();
     _measurementJobs.clear();
     _receivedStations.clear();
@@ -2019,6 +2068,14 @@ class _MiniSeedDecoder {
     required int sampleCount,
   }) {
     if (payload.isEmpty || sampleCount <= 0) return const [];
+    if (NativeSeedLinkCodec.supported) {
+      return NativeSeedLinkCodec.decode(
+        payload,
+        encoding: encoding,
+        endian: endian,
+        sampleCount: sampleCount,
+      );
+    }
     switch (encoding) {
       case 1:
         return _decodeInt16(payload, endian, sampleCount);

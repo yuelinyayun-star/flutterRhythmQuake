@@ -1,0 +1,28 @@
+{
+  "key": "cat_BOLETIN_SEGUIMIENTO_007_20250730_070828",
+  "source": "cat_tsunami",
+  "Data": {
+    "id": "BOLETIN_SEGUIMIENTO_007_20250730_070828",
+    "eventId": "BOLETIN_SEGUIMIENTO_007_20250730_070828",
+    "updates": 7,
+    "level": "Advisory",
+    "headline": "BOLETIN SEGUIMIENTO 007 20250730 070828",
+    "issueTime": "2025-07-30T07:08:28.350-06:00",
+    "shockTime": "2025-07-29T18:56:00",
+    "latitude": 52.53,
+    "longitude": 160.165,
+    "magnitude": 8.8,
+    "depth": 20.0,
+    "placeName": "115 km al AL ESTE SURESTE DE PETROPAVLOSVKY-KAMCHATSKIY, RUSIA",
+    "description": "De acuerdo a la actualizacion de la informacion de seguimiento de la propagacion del tsunami generado, para las costas nacionales se registro una altura de 0.70 metros en Ensenada, B.C., 0.25 metros en Isla Clarion, Manzanillo 1.15 metros, Colima y Salina Cruz 0.25 metros. Se continuara monitoreando el nivel del mar.",
+    "instruction": "Mantener a la poblacion alejada de las playas hasta la cancelacion de la alerta;\nSe esperan corrientes fuertes e inusuales en la entrada de los puertos.\nExtremar precauciones para las operaciones portuarias.",
+    "severity": "Moderate",
+    "urgency": "Immediate",
+    "certainty": "Observed",
+    "capUrl": "https://diredimoat.semar.gob.mx/cat/rss/BOLETIN_SEGUIMIENTO_007_20250730_070828.xml",
+    "bulletinUrl": "https://digaohm.semar.gob.mx/cat/Boletines/BOLETIN_SEGUIMIENTO_007_20250730_070828.txt"
+  },
+  "original": "test/fixtures/tsunami_presentation_20261023/raw/d499d119ead5394b.original",
+  "url": "https://diredimoat.semar.gob.mx/cat/rss/BOLETIN_SEGUIMIENTO_007_20250730_070828.xml",
+  "sha256": "d499d119ead5394b970ab5ac889bece5db01f788769ebda6ed55a0ce9251fb82"
+}

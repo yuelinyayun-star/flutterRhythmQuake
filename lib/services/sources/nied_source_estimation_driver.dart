@@ -2,9 +2,11 @@ import 'dart:math' as math;
 
 import '../../core/event_detection/event_detection_models.dart';
 import '../../core/event_detection/robust_station_trigger_detector.dart';
+import '../../core/event_detection/native_station_trigger_detector.dart';
 import '../../core/event_detection/spatiotemporal_event_detector.dart';
 import '../../core/nied_replay_logger.dart';
 import '../../core/source_estimation/source_estimation_models.dart';
+import '../../core/source_estimation/nied_hyp_input_snapshot.dart';
 import '../../core/source_estimation/source_estimation_trigger.dart';
 import '../../core/source_estimation/source_trigger_continuity_gate.dart';
 import '../../core/source_estimation/station_event_tracker.dart';
@@ -14,6 +16,8 @@ import 'nied_gif_observation.dart';
 import 'nied_detection_rules.dart';
 import 'nied_monitor.dart';
 import 'nied_station_observation_adapter.dart';
+import 'nied_station_topology.dart';
+import 'native_ka_detector.dart';
 
 class NiedSourceEstimationDriver {
   static const sourceEventDetectorId =
@@ -43,11 +47,9 @@ class NiedSourceEstimationDriver {
   Set<String> _dartHypActiveStationCodes = <String>{};
   final Map<String, DateTime> _dartHypActiveTriggerAtByCode =
       <String, DateTime>{};
-  String? _dartHypAdjStationIdsKey;
-  Map<String, List<int>> _dartHypAdjStationIds = const <String, List<int>>{};
-  String? _dartDetectionAdjStationCodesKey;
-  Map<String, List<String>> _dartDetectionAdjStationCodes =
-      const <String, List<String>>{};
+  NiedStationTopology? _stationTopology;
+  NativeKaDetector? _nativeKaDetector;
+  List<String> _nativeKaStationCodes = const <String>[];
   List<double> _dartHypGridDecimal = const <double>[0.0, 0.0];
   bool _dartHypGridInitialized = false;
   int _sensitivity = 2;
@@ -78,7 +80,10 @@ class NiedSourceEstimationDriver {
     this.sourceId = StationEventTracker.niedSourceId,
     this.onSourceTrigger,
   }) : stationTriggerDetector =
-           stationTriggerDetector ?? RobustStationTriggerDetector(),
+           stationTriggerDetector ??
+           (NativeStationTriggerDetector.supported
+               ? NativeStationTriggerDetector()
+               : RobustStationTriggerDetector()),
        eventDetector =
            eventDetector ??
            SpatiotemporalEventDetector(
@@ -104,11 +109,17 @@ class NiedSourceEstimationDriver {
     _directReceiverEventId = null;
     _directReceiverLastObservedAt = null;
     _resetDartHypocenterEventState();
-    _dartHypAdjStationIdsKey = null;
-    _dartHypAdjStationIds = const <String, List<int>>{};
-    _dartDetectionAdjStationCodesKey = null;
-    _dartDetectionAdjStationCodes = const <String, List<String>>{};
+    _stationTopology = null;
+    _nativeKaDetector?.dispose();
+    _nativeKaDetector = null;
+    _nativeKaStationCodes = const <String>[];
     _descriptorCache.clear();
+  }
+
+  void dispose() {
+    reset();
+    final detector = stationTriggerDetector;
+    if (detector is NativeStationTriggerDetector) detector.dispose();
   }
 
   EventDetection processStations(
@@ -123,10 +134,14 @@ class NiedSourceEstimationDriver {
         ? _truncateToGifSecond(rawObservedAt)
         : rawObservedAt;
     _prepareDartHypocenterEventState(resolvedObservedAt);
-    final stationTriggers = observationAdapter
-        .fromStations(stations, observedAt: resolvedObservedAt)
-        .map(stationTriggerDetector.update)
-        .toList(growable: false);
+    final observations = observationAdapter.fromStations(
+      stations,
+      observedAt: resolvedObservedAt,
+    );
+    final stationDetector = stationTriggerDetector;
+    final stationTriggers = stationDetector is BatchStationTriggerDetector
+        ? stationDetector.updateBatch(observations)
+        : observations.map(stationDetector.update).toList(growable: false);
     final rawEventDetection = eventDetector.update(
       observedAt: resolvedObservedAt,
       stations: stationTriggers,
@@ -231,20 +246,14 @@ class NiedSourceEstimationDriver {
               .toIso8601String(),
           'nied_hypocenter_new_active_stations':
               trackerInput['newActiveStations'],
-          'nied_hypocenter_active_stations':
-              trackerInput['activeStations'],
-          'nied_hypocenter_inactive_stations':
-              trackerInput['inactiveStations'],
-          'nied_hypocenter_inactive_scope':
-              trackerInput['inactiveScope'],
-          'nied_hypocenter_detection_grid':
-              trackerInput['detectionGrid'],
-          'nied_hypocenter_adj_station_ids':
-              trackerInput['adjStationIds'],
+          'nied_hypocenter_active_stations': trackerInput['activeStations'],
+          'nied_hypocenter_inactive_stations': trackerInput['inactiveStations'],
+          'nied_hypocenter_inactive_scope': trackerInput['inactiveScope'],
+          'nied_hypocenter_detection_grid': trackerInput['detectionGrid'],
+          'nied_hypocenter_adj_station_ids': trackerInput['adjStationIds'],
           'nied_detection_adj_station_codes':
               trackerInput['detectionAdjStationCodes'],
-          'nied_hypocenter_input_diagnostics':
-              trackerInput['diagnostics'],
+          'nied_hypocenter_input_diagnostics': trackerInput['diagnostics'],
           'station_trigger_detector_id': stationTriggerDetector.detectorId,
           'station_trigger_active_count': stationTriggers
               .where((trigger) => trigger.isActiveLike)
@@ -542,8 +551,9 @@ class NiedSourceEstimationDriver {
       for (final station in stations) station.code: station,
     };
 
-    final adjStationIds = _dartHypocenterAdjStationIds(stations);
-    final adjByCode = _dartDetectionAdjacencyByCode(stations);
+    final topology = _topologyForStations(stations);
+    final adjStationIds = topology.hypocenterAdjacentIds;
+    final adjByCode = topology.detectionAdjacentCodes;
     final preexistingActiveCount = stations
         .where((station) => station.isActive)
         .length;
@@ -551,13 +561,13 @@ class NiedSourceEstimationDriver {
     // possibleStations: activity > 0
     final possibleStations = stations.where((s) => s.activity > 0).toList();
 
-    // Active selection with neighbor scoring (equivalent to reference chainActivate)
+    // Active selection with neighbor scoring (equivalent to reference chainActivate).
+    // Native station-core owns this hot loop when available; the Dart block is
+    // retained as the exact fallback for unsupported targets.
     final activeStationsSet = <String>{};
-    final checkedStations = <String>{};
     final newActiveStations = <Map<String, Object?>>[];
     final activeStations = <Map<String, Object?>>[];
     final inactiveCandidates = <NiedStation>[];
-    final stationPairAbnormalCache = <String, bool>{};
 
     Map<String, Object?> snapshot(NiedStation station, {required bool active}) {
       return _dartHypocenterStationSnapshot(
@@ -570,109 +580,111 @@ class NiedSourceEstimationDriver {
       );
     }
 
-    // chainActivate: flood-fill through adjacency
-    void chainActivate(NiedStation start) {
-      final pending = <String>[start.code];
-      while (pending.isNotEmpty) {
-        final code = pending.removeLast();
-        if (checkedStations.contains(code)) continue;
-        checkedStations.add(code);
-        final station = stationByCode[code];
-        if (station == null) continue;
-        if (station.activity > 0) {
-          activeStationsSet.add(code);
-          final neighbors = adjByCode[code] ?? <String>[];
-          for (final neighborCode in neighbors) {
-            if (!checkedStations.contains(neighborCode) &&
-                stationByCode.containsKey(neighborCode)) {
-              pending.add(neighborCode);
+    final nativeResult = _processNativeKa(
+      stations,
+      hadActiveGrid: _dartHypGridInitialized,
+    );
+    if (nativeResult != null) {
+      for (final index in nativeResult.activeIndices) {
+        if (index >= 0 && index < stations.length) {
+          activeStationsSet.add(stations[index].code);
+        }
+      }
+    } else {
+      final checkedStations = <String>{};
+      final stationPairAbnormalCache = <String, bool>{};
+
+      void chainActivate(NiedStation start) {
+        final pending = <String>[start.code];
+        while (pending.isNotEmpty) {
+          final code = pending.removeLast();
+          if (checkedStations.contains(code)) continue;
+          checkedStations.add(code);
+          final station = stationByCode[code];
+          if (station == null) continue;
+          if (station.activity > 0) {
+            activeStationsSet.add(code);
+            final neighbors = adjByCode[code] ?? <String>[];
+            for (final neighborCode in neighbors) {
+              if (!checkedStations.contains(neighborCode) &&
+                  stationByCode.containsKey(neighborCode)) {
+                pending.add(neighborCode);
+              }
             }
           }
         }
       }
-    }
 
-    bool hasAbnormalStationPair(List<NiedStation> candidates) {
-      for (var i = 0; i < candidates.length - 1; i++) {
-        for (var j = i + 1; j < candidates.length; j++) {
-          final first = candidates[i];
-          final second = candidates[j];
-          final lowId = math.min(first.id, second.id);
-          final highId = math.max(first.id, second.id);
-          final key = '$lowId-$highId';
-          final isAbnormal = stationPairAbnormalCache.putIfAbsent(
-            key,
-            () => isNiedAbnormalStationPair(
-              firstTriggerStamp: first.triggerStamp,
-              secondTriggerStamp: second.triggerStamp,
-              distanceKm: _haversineKm(
-                first.coordinate.latitude,
-                first.coordinate.longitude,
-                second.coordinate.latitude,
-                second.coordinate.longitude,
+      bool hasAbnormalStationPair(List<NiedStation> candidates) {
+        for (var i = 0; i < candidates.length - 1; i++) {
+          for (var j = i + 1; j < candidates.length; j++) {
+            final first = candidates[i];
+            final second = candidates[j];
+            final lowId = math.min(first.id, second.id);
+            final highId = math.max(first.id, second.id);
+            final key = '$lowId-$highId';
+            final isAbnormal = stationPairAbnormalCache.putIfAbsent(
+              key,
+              () => isNiedAbnormalStationPair(
+                firstTriggerStamp: first.triggerStamp,
+                secondTriggerStamp: second.triggerStamp,
+                distanceKm: _haversineKm(
+                  first.coordinate.latitude,
+                  first.coordinate.longitude,
+                  second.coordinate.latitude,
+                  second.coordinate.longitude,
+                ),
               ),
-            ),
-          );
-          if (isAbnormal) return true;
+            );
+            if (isAbnormal) return true;
+          }
         }
-      }
-      return false;
-    }
-
-    for (final station in possibleStations) {
-      if (checkedStations.contains(station.code)) continue;
-
-      if (station.isActive && station.ascend > 0) {
-        chainActivate(station);
-        continue;
+        return false;
       }
 
-      // Neighbor scoring
-      final neighborCodes = adjByCode[station.code] ?? <String>[];
-      final nearbyStations = neighborCodes
-          .map((code) => stationByCode[code])
-          .where((s) => s != null && s.kaLevel > -1)
-          .cast<NiedStation>()
-          .toList();
-
-      if (nearbyStations.isEmpty) continue;
-
-      // nearbyActiveNum: active station = 1, non-active with ascend > 1 = 1, ascend <= 1 = 0.5
-      double nearbyActiveNum = 0;
-      for (final nearby in nearbyStations) {
-        if (nearby.activity <= 0) continue;
-        if (nearby.isActive) {
-          nearbyActiveNum += 1;
-        } else if (nearby.ascend <= 1) {
-          nearbyActiveNum += 0.5;
-        } else {
-          nearbyActiveNum += 1;
-        }
-      }
-
-      final nearbyCount = nearbyStations.length.clamp(
-        0,
-        niedNearbyStationLimit,
-      );
-      final numThres = niedStationCountThreshold(_sensitivity, nearbyCount);
-      var activityThres = niedActivityThreshold(_sensitivity, nearbyCount);
-
-      if (nearbyActiveNum >= numThres) {
-        final abnormalCandidates = nearbyStations
-            .where((station) => !station.isActive && station.ascend > 2)
-            .toList(growable: false);
-        if (hasAbnormalStationPair(abnormalCandidates)) {
-          activityThres *= 2;
-        }
-        // nearbyActivity = sum(activity) + nearbyActiveNum * (nearbyActiveNum + 1) / 2
-        double nearbyActivity = 0;
-        for (final nearby in nearbyStations) {
-          nearbyActivity += nearby.activity;
-        }
-        nearbyActivity += nearbyActiveNum * (nearbyActiveNum + 1) / 2;
-
-        if (nearbyActivity >= activityThres) {
+      for (final station in possibleStations) {
+        if (checkedStations.contains(station.code)) continue;
+        if (station.isActive && station.ascend > 0) {
           chainActivate(station);
+          continue;
+        }
+        final neighborCodes = adjByCode[station.code] ?? <String>[];
+        final nearbyStations = neighborCodes
+            .map((code) => stationByCode[code])
+            .where((s) => s != null && s.kaLevel > -1)
+            .cast<NiedStation>()
+            .toList();
+        if (nearbyStations.isEmpty) continue;
+        double nearbyActiveNum = 0;
+        for (final nearby in nearbyStations) {
+          if (nearby.activity <= 0) continue;
+          if (nearby.isActive) {
+            nearbyActiveNum += 1;
+          } else if (nearby.ascend <= 1) {
+            nearbyActiveNum += 0.5;
+          } else {
+            nearbyActiveNum += 1;
+          }
+        }
+        final nearbyCount = nearbyStations.length.clamp(
+          0,
+          niedNearbyStationLimit,
+        );
+        final numThres = niedStationCountThreshold(_sensitivity, nearbyCount);
+        var activityThres = niedActivityThreshold(_sensitivity, nearbyCount);
+        if (nearbyActiveNum >= numThres) {
+          final abnormalCandidates = nearbyStations
+              .where((station) => !station.isActive && station.ascend > 2)
+              .toList(growable: false);
+          if (hasAbnormalStationPair(abnormalCandidates)) {
+            activityThres *= 2;
+          }
+          double nearbyActivity = 0;
+          for (final nearby in nearbyStations) {
+            nearbyActivity += nearby.activity;
+          }
+          nearbyActivity += nearbyActiveNum * (nearbyActiveNum + 1) / 2;
+          if (nearbyActivity >= activityThres) chainActivate(station);
         }
       }
     }
@@ -805,10 +817,7 @@ class NiedSourceEstimationDriver {
         'surroundingCellCount': surroundingGridKeys.length,
       },
       'adjStationIds': adjStationIds,
-      'detectionAdjStationCodes': Map<String, List<String>>.unmodifiable({
-        for (final entry in adjByCode.entries)
-          entry.key: List<String>.unmodifiable(entry.value),
-      }),
+      'detectionAdjStationCodes': adjByCode,
       'diagnostics': {
         'level_present_count': stations
             .where((station) => station.kaLevel >= 0)
@@ -868,17 +877,17 @@ class NiedSourceEstimationDriver {
     final triggerAt =
         _dartHypocenterStationTriggerAt(station) ?? preservedTriggerAt;
     final updateAt = station.lastDataTime ?? station.lastUpdate ?? observedAt;
-    return {
-      'id': station.id,
-      'code': station.code,
-      'latLng': [station.coordinate.latitude, station.coordinate.longitude],
-      'triggerStamp': triggerAt?.millisecondsSinceEpoch,
-      'updateStamp': updateAt.millisecondsSinceEpoch,
-      'ascend': station.ascend,
-      'level': station.kaLevel,
-      'shindo': _stationComparableValue(station),
-      'isActive': active,
-    };
+    return NiedHypStationSnapshot(
+      stationId: station.id,
+      code: station.code,
+      coordinate: station.coordinate,
+      triggerStamp: triggerAt?.millisecondsSinceEpoch,
+      updateStamp: updateAt.millisecondsSinceEpoch,
+      ascend: station.ascend,
+      level: station.kaLevel,
+      currentShindo: _stationComparableValue(station),
+      active: active,
+    );
   }
 
   DateTime? _dartHypocenterStationTriggerAt(NiedStation station) {
@@ -891,127 +900,80 @@ class NiedSourceEstimationDriver {
     return null;
   }
 
-  Map<String, List<int>> _dartHypocenterAdjStationIds(
-    List<NiedStation> stations,
-  ) {
-    final key = stations.map((station) => station.code).join('|');
-    if (_dartHypAdjStationIdsKey == key) return _dartHypAdjStationIds;
-    final result = <String, List<int>>{};
-    for (final station in stations) {
-      final distances = <({int id, double distanceKm, double bearingDeg})>[];
-      for (final other in stations) {
-        final distanceKm = _haversineKm(
-          station.coordinate.latitude,
-          station.coordinate.longitude,
-          other.coordinate.latitude,
-          other.coordinate.longitude,
-        );
-        distances.add((
-          id: other.id,
-          distanceKm: distanceKm,
-          bearingDeg: _bearingDeg(
-            station.coordinate.latitude,
-            station.coordinate.longitude,
-            other.coordinate.latitude,
-            other.coordinate.longitude,
-          ),
-        ));
-      }
-      distances.sort((a, b) {
-        final distanceCompare = a.distanceKm.compareTo(b.distanceKm);
-        return distanceCompare != 0 ? distanceCompare : a.id.compareTo(b.id);
-      });
-      final selected = <int>{};
-      final coveredDirections = <int>{};
-      for (final item in distances) {
-        if (item.distanceKm <= 30.0) {
-          selected.add(item.id);
-          if (item.id != station.id) {
-            coveredDirections.add(_bearingDirection(item.bearingDeg));
-          }
-        }
-      }
-      for (final item in distances) {
-        if (coveredDirections.length >= 4) break;
-        if (item.id == station.id ||
-            item.distanceKm <= 30.0 ||
-            item.distanceKm > 300.0) {
-          continue;
-        }
-        final direction = _bearingDirection(item.bearingDeg);
-        if (coveredDirections.add(direction)) {
-          selected.add(item.id);
-        }
-      }
-      result['${station.id}'] = List<int>.unmodifiable(selected);
-    }
-    _dartHypAdjStationIdsKey = key;
-    _dartHypAdjStationIds = Map<String, List<int>>.unmodifiable(result);
-    return _dartHypAdjStationIds;
+  NiedStationTopology _topologyForStations(List<NiedStation> stations) {
+    final cached = _stationTopology;
+    if (cached != null && cached.matchesStations(stations)) return cached;
+    final topology = NiedStationTopology.fromStations(stations);
+    _configureNativeKaDetector(stations, topology);
+    return _stationTopology = topology;
   }
 
-  Map<String, List<String>> _dartDetectionAdjacencyByCode(
+  void _configureNativeKaDetector(
     List<NiedStation> stations,
+    NiedStationTopology topology,
   ) {
-    final key = stations.map((station) => station.code).join('|');
-    if (_dartDetectionAdjStationCodesKey == key) {
-      return _dartDetectionAdjStationCodes;
+    if (!NativeKaDetector.supported) return;
+    final indexByCode = <String, int>{};
+    for (var index = 0; index < stations.length; index++) {
+      indexByCode[stations[index].code] = index;
     }
-    final result = <String, List<String>>{};
+    final adjacency = <List<int>>[];
     for (final station in stations) {
-      final distances =
-          <({NiedStation station, double distanceKm})>[
-            for (final other in stations)
-              (
-                station: other,
-                distanceKm: _haversineKm(
-                  station.coordinate.latitude,
-                  station.coordinate.longitude,
-                  other.coordinate.latitude,
-                  other.coordinate.longitude,
-                ),
-              ),
-          ]..sort((left, right) {
-            final byDistance = left.distanceKm.compareTo(right.distanceKm);
-            return byDistance != 0
-                ? byDistance
-                : left.station.id.compareTo(right.station.id);
-          });
-      final nearby = distances
-          .where((item) => item.distanceKm <= 30.0)
-          .toList();
-      if (nearby.length <= 1) {
-        for (final candidate in distances) {
-          if (candidate.distanceKm > 30.0 && candidate.distanceKm <= 40.0) {
-            nearby.add(candidate);
-            break;
-          }
-        }
+      final row = <int>[];
+      for (final code
+          in topology.detectionAdjacentCodes[station.code] ??
+              const <String>[]) {
+        final index = indexByCode[code];
+        if (index != null && !row.contains(index)) row.add(index);
       }
-      result[station.code] = List<String>.unmodifiable(
-        nearby.take(niedNearbyStationLimit).map((item) => item.station.code),
+      adjacency.add(row);
+    }
+    try {
+      final detector = NativeKaDetector(
+        adjacency: adjacency,
+        distance: (first, second) => _haversineKm(
+          stations[first].coordinate.latitude,
+          stations[first].coordinate.longitude,
+          stations[second].coordinate.latitude,
+          stations[second].coordinate.longitude,
+        ),
+      );
+      _nativeKaDetector?.dispose();
+      _nativeKaDetector = detector;
+      _nativeKaStationCodes = [for (final station in stations) station.code];
+    } catch (error) {
+      debugPrint('[NIED] Native KA detector unavailable: $error');
+      _nativeKaDetector?.dispose();
+      _nativeKaDetector = null;
+      _nativeKaStationCodes = const <String>[];
+    }
+  }
+
+  NativeKaDetectionResult? _processNativeKa(
+    List<NiedStation> stations, {
+    required bool hadActiveGrid,
+  }) {
+    final detector = _nativeKaDetector;
+    if (detector == null || _nativeKaStationCodes.length != stations.length) {
+      return null;
+    }
+    for (var index = 0; index < stations.length; index++) {
+      if (_nativeKaStationCodes[index] != stations[index].code) return null;
+      final station = stations[index];
+      detector.writeInput(
+        index,
+        kaLevel: station.kaLevel,
+        activity: station.activity,
+        ascend: station.ascend,
+        isActive: station.isActive,
+        continuousShindo: station.continuousShindo,
+        triggerStamp: station.triggerStamp,
       );
     }
-    _dartDetectionAdjStationCodesKey = key;
-    _dartDetectionAdjStationCodes = Map<String, List<String>>.unmodifiable(
-      result,
+    return detector.process(
+      sensitivity: _sensitivity,
+      hadActiveGrid: hadActiveGrid,
     );
-    return _dartDetectionAdjStationCodes;
-  }
-
-  int _bearingDirection(double bearingDeg) {
-    return (((bearingDeg + 45.0) % 360.0) ~/ 90) % 4;
-  }
-
-  double _bearingDeg(double lat1, double lon1, double lat2, double lon2) {
-    final phi1 = lat1 * math.pi / 180.0;
-    final phi2 = lat2 * math.pi / 180.0;
-    final deltaLambda = (lon2 - lon1) * math.pi / 180.0;
-    final y = math.sin(deltaLambda) * math.cos(phi2);
-    final x =
-        math.cos(phi1) * math.sin(phi2) -
-        math.sin(phi1) * math.cos(phi2) * math.cos(deltaLambda);
-    return (math.atan2(y, x) * 180.0 / math.pi + 360.0) % 360.0;
   }
 
   double _haversineKm(double lat1, double lon1, double lat2, double lon2) {

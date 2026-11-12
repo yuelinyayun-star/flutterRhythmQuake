@@ -1,0 +1,7 @@
+WHEWS 事件 20261106194044，第1报至第5报。
+
+*.Data.original.json：本机归档 sourcePayload 中的原始 Data，逐报以 UTF-8 JSON 缩进导出，字段和值不变；排版不等于原 WebSocket 字节。
+*.saved-record.json：本机保存记录的逐字节副本，包含适配字段和原始 sourcePayload，可供对照。
+外层 WebSocket 封装未保存在这些记录中，本次未补写或伪造。
+manifest.json：报次、上游报告时间和各文件 SHA256。
+本次仅只读导出，未修改 APP、历史记录或设置。

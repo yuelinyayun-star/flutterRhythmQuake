@@ -1,0 +1,34 @@
+{
+  "type": "update",
+  "source": "sasmex",
+  "Data": {
+    "source": "sasmex",
+    "id": "1792229803000",
+    "eventId": "1792229803000",
+    "epochMs": 1792229803000,
+    "region": "Zihuatanejo, Gro.",
+    "lat": 17.64686,
+    "lng": -101.55189,
+    "intensidad": "Leve",
+    "grado": 1,
+    "severidad": 2,
+    "isWarn": false,
+    "original": {
+      "intensity": "Leve",
+      "unix": 1792229803,
+      "metadata": {
+        "version": "6.1.0",
+        "source": "SASNO"
+      },
+      "region": "Zihuatanejo, Gro.",
+      "epicenter": {
+        "latitude": 17.64686,
+        "longitude": -101.55189
+      }
+    },
+    "severity": "Minor",
+    "severityOrigin": "intensity",
+    "msgType": "Alert",
+    "updated": "2026-10-17T09:36:57.204067Z"
+  }
+}

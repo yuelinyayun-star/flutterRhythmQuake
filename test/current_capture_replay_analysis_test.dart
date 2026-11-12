@@ -71,6 +71,346 @@ void main() {
     const compactReport = bool.fromEnvironment(
       'CURRENT_CAPTURE_COMPACT_REPORT',
     );
+    // Default-off shadow knob for the L2/L3 start-point experiment. `off` keeps
+    // production behaviour; `cold` forces a cold start; `cold_all` additionally
+    // seeds from every triggered station's centroid.
+    const hypStartShadowOverride = String.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_START_SHADOW',
+      defaultValue: 'off',
+    );
+    NiedHypStartShadow.reset();
+    NiedHypStartShadow.forceColdStart =
+        hypStartShadowOverride == 'cold' ||
+        hypStartShadowOverride == 'cold_all';
+    NiedHypStartShadow.useAllTriggeredCentroidSeed =
+        hypStartShadowOverride == 'all' || hypStartShadowOverride == 'cold_all';
+    // Default-off L5 shadow knob for the depth-prior experiment. `off` keeps
+    // production (native Rust search, free depth); `dart_free` forces the Dart
+    // search path with a free depth (path control); `pinN` additionally pins
+    // the focal depth to N km. Note the production floor rejects depth < 10 km.
+    const hypDepthShadowOverride = String.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_DEPTH_SHADOW',
+      defaultValue: 'off',
+    );
+    NiedHypStartShadow.forceDartSearch =
+        hypDepthShadowOverride == 'dart_free' ||
+        hypDepthShadowOverride.startsWith('pin');
+    const hypJointShadowOverride = String.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_JOINT_SHADOW',
+      defaultValue: 'production',
+    );
+    const hypNativeJoint = bool.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_NATIVE_JOINT',
+    );
+    if (hypJointShadowOverride == 'off') {
+      NiedHypStartShadow.jointReferenceNeighbors = false;
+    } else if (hypJointShadowOverride.startsWith('on')) {
+      if (!hypNativeJoint) {
+        NiedHypStartShadow.forceDartSearch = true;
+      }
+      NiedHypStartShadow.jointReferenceNeighbors = true;
+      final maxDegree = double.tryParse(hypJointShadowOverride.substring(2));
+      if (maxDegree != null) {
+        NiedHypStartShadow.jointReferenceMaxDegree = maxDegree;
+      }
+    }
+    const hypJointMinActive = int.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_JOINT_MIN_ACTIVE',
+      defaultValue: 15,
+    );
+    NiedHypStartShadow.jointReferenceMinActiveStations = hypJointMinActive;
+    const hypJointMaxScore = String.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_JOINT_MAX_SCORE',
+      defaultValue: '5',
+    );
+    NiedHypStartShadow.jointReferenceMaxCurrentScore =
+        double.tryParse(hypJointMaxScore) ?? 1e100;
+    const hypJointWarmOnly = bool.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_JOINT_WARM_ONLY',
+    );
+    NiedHypStartShadow.jointReferenceRequirePreviousResult = hypJointWarmOnly;
+    const hypRelativeRankShadow = bool.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_RELATIVE_RANK_SHADOW',
+    );
+    NiedHypStartShadow.referenceRelativeRankWeight = hypRelativeRankShadow;
+    const hypRelativeRankMaxStations = int.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_RELATIVE_RANK_MAX_STATIONS',
+      defaultValue: 0,
+    );
+    NiedHypStartShadow.referenceRelativeRankMaxStations =
+        hypRelativeRankMaxStations;
+    const hypStrongDensityShadow = bool.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_STRONG_DENSITY_SHADOW',
+    );
+    NiedHypStartShadow.referenceStrongDensityWeight = hypStrongDensityShadow;
+    const hypPhaseRatioShadow = String.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_PHASE_RATIO_SHADOW',
+      defaultValue: '2.0',
+    );
+    NiedHypStartShadow.referencePhasePToSRatio =
+        double.tryParse(hypPhaseRatioShadow) ?? 2.0;
+    const hypInactiveMaxAzimuthGap = String.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_INACTIVE_MAX_AZIMUTH_GAP',
+      defaultValue: 'inf',
+    );
+    NiedHypStartShadow.referenceInactiveMaxAzimuthGapDegrees =
+        double.tryParse(hypInactiveMaxAzimuthGap) ?? double.infinity;
+    if (NiedHypStartShadow.referenceInactiveMaxAzimuthGapDegrees.isFinite) {
+      NiedHypStartShadow.forceDartSearch = true;
+    }
+    const hypOneSidedResidualCap = String.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_ONE_SIDED_RESIDUAL_CAP',
+      defaultValue: 'nan',
+    );
+    final parsedOneSidedResidualCap = double.tryParse(hypOneSidedResidualCap);
+    NiedHypStartShadow.referenceOneSidedResidualCapSeconds =
+        parsedOneSidedResidualCap != null &&
+            parsedOneSidedResidualCap.isFinite &&
+            parsedOneSidedResidualCap > 0
+        ? parsedOneSidedResidualCap
+        : null;
+    const hypOneSidedResidualCapMaxDepth = String.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_ONE_SIDED_RESIDUAL_CAP_MAX_DEPTH',
+      defaultValue: 'inf',
+    );
+    NiedHypStartShadow.referenceOneSidedResidualCapMaxDepthKm =
+        double.tryParse(hypOneSidedResidualCapMaxDepth) ?? double.infinity;
+    const hypOneSidedResidualCapMaxMove = String.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_ONE_SIDED_RESIDUAL_CAP_MAX_MOVE',
+      defaultValue: 'inf',
+    );
+    NiedHypStartShadow.referenceOneSidedResidualCapMaxMoveKm =
+        double.tryParse(hypOneSidedResidualCapMaxMove) ?? double.infinity;
+    const hypOneSidedInactiveMultiplier = String.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_ONE_SIDED_INACTIVE_MULTIPLIER',
+      defaultValue: '1',
+    );
+    NiedHypStartShadow.referenceOneSidedInactivePenaltyMultiplier =
+        double.tryParse(hypOneSidedInactiveMultiplier) ?? 1.0;
+    if (NiedHypStartShadow.referenceOneSidedResidualCapSeconds != null) {
+      NiedHypStartShadow.forceDartSearch = true;
+    }
+    if (NiedHypStartShadow.referenceOneSidedInactivePenaltyMultiplier < 1.0) {
+      NiedHypStartShadow.forceDartSearch = true;
+    }
+    const hypOneSidedHighScoreRescue = bool.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_ONE_SIDED_HIGH_SCORE_RESCUE',
+      defaultValue: true,
+    );
+    const hypOneSidedHighScoreRescueCommit = bool.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_ONE_SIDED_HIGH_SCORE_RESCUE_COMMIT',
+    );
+    const hypOneSidedHighScorePublishOnly = bool.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_ONE_SIDED_HIGH_SCORE_PUBLISH_ONLY',
+      defaultValue: true,
+    );
+    const hypOneSidedHighScorePublishConsistency = String.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_ONE_SIDED_HIGH_SCORE_PUBLISH_CONSISTENCY_KM',
+      defaultValue: '35',
+    );
+    const hypOneSidedHighScoreRescueMinOutwardGain = String.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_ONE_SIDED_HIGH_SCORE_RESCUE_MIN_OUTWARD_GAIN',
+      defaultValue: '0',
+    );
+    NiedHypStartShadow.referenceOneSidedHighScoreRescue =
+        NiedHypStartShadow.productionOffshoreTuning &&
+        hypOneSidedHighScoreRescue;
+    NiedHypStartShadow.referenceOneSidedHighScoreRescueCommit =
+        hypOneSidedHighScoreRescueCommit;
+    NiedHypStartShadow.referenceOneSidedHighScorePublishOnly =
+        NiedHypStartShadow.productionOffshoreTuning &&
+        hypOneSidedHighScorePublishOnly;
+    NiedHypStartShadow.referenceOneSidedHighScorePublishConsistencyKm =
+        double.tryParse(hypOneSidedHighScorePublishConsistency) ?? 35.0;
+    NiedHypStartShadow.referenceOneSidedHighScoreRescueMinOutwardGainKm =
+        double.tryParse(hypOneSidedHighScoreRescueMinOutwardGain) ?? 0.0;
+    const hypOneSidedPhaseRatio = String.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_ONE_SIDED_PHASE_RATIO',
+      defaultValue: 'nan',
+    );
+    final parsedOneSidedPhaseRatio = double.tryParse(hypOneSidedPhaseRatio);
+    NiedHypStartShadow.referenceOneSidedPhasePToSRatio =
+        parsedOneSidedPhaseRatio != null && parsedOneSidedPhaseRatio.isFinite
+        ? parsedOneSidedPhaseRatio
+        : null;
+    const hypNewStationRampShadow = String.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_NEW_STATION_RAMP_SHADOW',
+      defaultValue: '0',
+    );
+    NiedHypStartShadow.referenceNewStationRampSeconds =
+        double.tryParse(hypNewStationRampShadow) ?? 0.0;
+    if (NiedHypStartShadow.referenceNewStationRampSeconds > 0) {
+      NiedHypStartShadow.forceDartSearch = true;
+    }
+    const hypProposalCommitAudit = bool.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_PROPOSAL_COMMIT_AUDIT',
+    );
+    NiedHypStartShadow.referenceProposalCommitAudit = hypProposalCommitAudit;
+    if (hypProposalCommitAudit) {
+      NiedHypStartShadow.forceDartSearch = true;
+    }
+    const hypAnchorMinSupport = int.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_ANCHOR_MIN_SUPPORT',
+      defaultValue: 7,
+    );
+    const hypAnchorMaxScore = String.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_ANCHOR_MAX_SCORE',
+      defaultValue: '0.5',
+    );
+    NiedHypStartShadow.referenceAnchorMinSupport = hypAnchorMinSupport;
+    NiedHypStartShadow.referenceAnchorMaxScore =
+        double.tryParse(hypAnchorMaxScore) ?? 0.5;
+    const hypSparseComparePublishable = bool.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_SPARSE_COMPARE_PUBLISHABLE',
+    );
+    NiedHypStartShadow.referenceSparseComparePublishableResearch =
+        hypSparseComparePublishable;
+    const hypPersistentOverrideMinStreak = int.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_PERSISTENT_OVERRIDE_MIN_STREAK',
+      defaultValue: 3,
+    );
+    NiedHypStartShadow.referencePersistentOverrideMinStreak =
+        hypPersistentOverrideMinStreak;
+    const hypOneSidedMatureAnchor = bool.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_ONE_SIDED_MATURE_ANCHOR',
+    );
+    NiedHypStartShadow.referenceOneSidedMatureAnchorResearch =
+        hypOneSidedMatureAnchor;
+    const hypLargeMoveMinGain = String.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_LARGE_MOVE_MIN_GAIN',
+      defaultValue: '0',
+    );
+    NiedHypStartShadow.referenceLargeMoveMinFullGain =
+        double.tryParse(hypLargeMoveMinGain) ?? 0.0;
+    if (hypDepthShadowOverride.startsWith('pin')) {
+      NiedHypStartShadow.pinnedDepthKm = double.parse(
+        hypDepthShadowOverride.substring(3),
+      );
+    }
+    // Default-off J2 shadow knob for the NYAD inactive-evidence experiment. When
+    // `on`, the reference scorer replaces its distance-based inactive penalty
+    // with the Horiuchi 2005 inequality; NYAD needs a wall-clock "now" so it
+    // also forces the Dart search path.
+    const hypNyadShadowOverride = String.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_NYAD_SHADOW',
+      defaultValue: 'off',
+    );
+    NiedHypStartShadow.nyadNegativeEvidence = hypNyadShadowOverride == 'on';
+    // Default-off J3 shadow knob for the amplitude-consistency experiment. `off`
+    // keeps production (pure travel time); `amp` enables the amplitude term with
+    // the default weight; `ampN.N` overrides the weight. The amplitude channel
+    // needs per-station intensity the native scorer does not carry, so enabling
+    // it forces the Dart search path.
+    const hypAmpShadowOverride = String.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_AMP_SHADOW',
+      defaultValue: 'off',
+    );
+    NiedHypStartShadow.amplitudeConsistency = hypAmpShadowOverride.startsWith(
+      'amp',
+    );
+    if (NiedHypStartShadow.amplitudeConsistency) {
+      // `amp<weight>` or `amp<weight>g<minStations>` (e.g. `amp3.0g20`).
+      final body = hypAmpShadowOverride.substring(3);
+      final gateIndex = body.indexOf('g');
+      final weightPart = gateIndex >= 0 ? body.substring(0, gateIndex) : body;
+      final gatePart = gateIndex >= 0 ? body.substring(gateIndex + 1) : '';
+      final parsedWeight = double.tryParse(weightPart);
+      if (parsedWeight != null) {
+        NiedHypStartShadow.amplitudeWeight = parsedWeight;
+      }
+      final parsedGate = int.tryParse(gatePart);
+      if (parsedGate != null) {
+        NiedHypStartShadow.amplitudeMinStations = parsedGate;
+      }
+    }
+    // Default-off M2 shadow knob for the weak-depth-prior joint-likelihood
+    // experiment. `off` keeps the term at exactly 0; `dp` / `dp<priorKm>` /
+    // `dp<priorKm>:<sigmaKm>:<weight>` (e.g. `dp20:25:0.5`) enable the soft
+    // Gaussian pull. Unlike J1's hard pin this never rejects a candidate;
+    // composes with the amp/nyad/grid knobs above.
+    const hypDepthPriorShadowOverride = String.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_DEPTHPRIOR_SHADOW',
+      defaultValue: 'off',
+    );
+    if (hypDepthPriorShadowOverride.startsWith('dp')) {
+      final parts = hypDepthPriorShadowOverride.substring(2).split(':');
+      final priorKm = double.tryParse(parts[0]);
+      NiedHypStartShadow.depthPriorKm = priorKm ?? 20.0;
+      if (parts.length > 1 && parts[1].isNotEmpty) {
+        final sigma = double.tryParse(parts[1]);
+        if (sigma != null) NiedHypStartShadow.depthPriorSigmaKm = sigma;
+      }
+      if (parts.length > 2 && parts[2].isNotEmpty) {
+        final weight = double.tryParse(parts[2]);
+        if (weight != null) NiedHypStartShadow.depthPriorWeight = weight;
+      }
+    }
+    // Default-off 方案 C shadow knob for the search-form experiment. `off` keeps
+    // the production four-stage six-neighbour greedy climb; `grid` swaps it for
+    // the deterministic global coarse-grid posterior + local refine, which runs
+    // entirely on the Dart scorer. Composes with the J3 amplitude knob above.
+    const hypGridShadowOverride = String.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_GRID_SHADOW',
+      defaultValue: 'off',
+    );
+    NiedHypStartShadow.searchForm =
+        hypGridShadowOverride == 'grid' || hypGridShadowOverride == 'gridwide'
+        ? 'grid'
+        : 'greedy';
+    if (hypGridShadowOverride == 'gridwide') {
+      // Wide-box preset: the M1 fine box (±1.0°/±1.25° around the temporary
+      // epicentre seed) never contains the true epicentre when the seed itself
+      // is far off (measured: 北海道東方沖 seed ~39°N vs truth 43.77°N), while
+      // the production greedy's 3.0° first stage can walk out of a bad seed.
+      // A 1.0° coarse spacing over ±5°/±6° restores that reach at ~1.4× the
+      // M1 node budget (11×13×5=715 vs 495); the local refine resolves 0.3°/0.1°.
+      NiedHypStartShadow.gridSpacingDeg = 1.0;
+      NiedHypStartShadow.gridExtentLatDeg = 5.0;
+      NiedHypStartShadow.gridExtentLngDeg = 6.0;
+    }
+    // Default-off inspection-view shadow knob. `on` relabels the per-station
+    // `wave`/`predicted_s`/`residual_s` of `travel_time_curve_panels` with the
+    // reference scorer's own per-station residual rule instead of the obsolete
+    // global 15 s S gate ∪ station flag. Display-only: published estimates must
+    // be byte-identical (that identity is the point of the knob).
+    const hypPanelPhaseShadowOverride = String.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_PANELPHASE_SHADOW',
+      defaultValue: 'off',
+    );
+    NiedHypStartShadow.curvePanelPhaseFromResidual =
+        hypPanelPhaseShadowOverride == 'on';
+    // Default-off ⑦a-1 shadow knob (独立实验「似然重设计」). `off` keeps the
+    // production adjacency-only merge; `on` additionally requires a single-source
+    // P/S travel-time residual match against the target cluster's current
+    // estimate before a station may join it (adjacent families are vetoed).
+    const hypFamilyVetoShadowOverride = String.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_FAMILYVETO_SHADOW',
+      defaultValue: 'off',
+    );
+    NiedHypStartShadow.referenceFamilyVeto =
+        hypFamilyVetoShadowOverride == 'on';
+    // Default-off ⑦a-2 shadow knob. `off` keeps production's overlap-only
+    // publication pick; `s` enables the min-support gate at the default 8
+    // stations; `s<minSupport>` / `s<minSupport>:<maxJumpKm>` override it.
+    const hypPubGateShadowOverride = String.fromEnvironment(
+      'CURRENT_CAPTURE_HYP_PUBGATE_SHADOW',
+      defaultValue: 'off',
+    );
+    NiedHypStartShadow.publishSupportGate = hypPubGateShadowOverride.startsWith(
+      's',
+    );
+    if (NiedHypStartShadow.publishSupportGate) {
+      final parts = hypPubGateShadowOverride.substring(1).split(':');
+      final parsedMin = int.tryParse(parts[0]);
+      if (parsedMin != null) NiedHypStartShadow.publishMinSupport = parsedMin;
+      if (parts.length > 1) {
+        final parsedJump = double.tryParse(parts[1]);
+        if (parsedJump != null) {
+          NiedHypStartShadow.publishMaxJumpKm = parsedJump;
+        }
+      }
+    }
+    addTearDown(NiedHypStartShadow.reset);
     final writebackExperiment = _writebackExperiment(
       writebackPolicyOverride,
       searchSchedule: _searchSchedule(searchScheduleOverride),
@@ -147,7 +487,7 @@ void main() {
     )..createSync(recursive: true);
     final jsonFile = File('${outDir.path}/report.json');
     jsonFile.writeAsStringSync(
-      '${const JsonEncoder.withIndent('  ').convert({'schemaVersion': 'current_capture_replay_analysis_v1', 'createdAtUtc': DateTime.now().toUtc().toIso8601String(), 'captureDirectory': captureDirectory.path, 'writebackPolicy': writebackExperiment.label, 'compactReport': compactReport, 'cases': reports})}\n',
+      '${const JsonEncoder.withIndent('  ').convert({'schemaVersion': 'current_capture_replay_analysis_v1', 'createdAtUtc': DateTime.now().toUtc().toIso8601String(), 'captureDirectory': captureDirectory.path, 'writebackPolicy': writebackExperiment.label, 'searchSchedule': searchScheduleOverride, 'hypStartShadow': hypStartShadowOverride, 'hypDepthShadow': hypDepthShadowOverride, 'hypNyadShadow': hypNyadShadowOverride, 'hypAmpShadow': hypAmpShadowOverride, 'hypFamilyVetoShadow': hypFamilyVetoShadowOverride, 'hypPubGateShadow': hypPubGateShadowOverride, 'compactReport': compactReport, 'cases': reports})}\n',
     );
     final mdFile = File('${outDir.path}/report.md');
     mdFile.writeAsStringSync(_markdown(reports));
@@ -770,6 +1110,12 @@ Map<String, Object?> _compactDiagnostics(Map<String, Object?> diagnostics) {
     'srev_kaizou_magnitude_processed_intensity',
     'srev_kaizou_magnitude_branch',
     'srev_kaizou_magnitude_active_detection_count',
+    // Shadow-experiment observability (only present when the matching
+    // CURRENT_CAPTURE_HYP_*_SHADOW knob is on; absent from production runs).
+    'search_amp_shadow',
+    'search_depthprior_shadow',
+    'search_grid_shadow',
+    'search_panelphase_shadow',
   ];
   return <String, Object?>{
     for (final key in keys)

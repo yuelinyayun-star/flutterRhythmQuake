@@ -87,12 +87,16 @@ class FdsnStation {
 
 /// During provider handover cached observations can coexist briefly. Draw a
 /// station once, preferring a fresh regional observation over the global relay.
-List<FdsnStation> deduplicateFdsnStations(Iterable<FdsnStation> stations) {
+List<FdsnStation> deduplicateFdsnStations(
+  Iterable<FdsnStation> stations, {
+  DateTime? at,
+}) {
   final selected = <String, FdsnStation>{};
-  final now = DateTime.now();
+  final now = at ?? DateTime.now();
   for (final station in stations) {
     if (station.lastMotionUpdate == null ||
-        now.difference(station.lastMotionUpdate!) > FdsnStation.motionRetention) {
+        now.difference(station.lastMotionUpdate!) >
+            FdsnStation.motionRetention) {
       continue;
     }
     final previous = selected[station.code];

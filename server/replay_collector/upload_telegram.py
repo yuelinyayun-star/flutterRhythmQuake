@@ -18,7 +18,10 @@ from urllib.parse import urlsplit
 
 
 FOLDER = "RhythmQuake回放文件夹"
-NAME = re.compile(r"RhythmQuake_[a-f0-9]{64}_([a-f0-9]{64})\.rqreplay\Z")
+NAME = re.compile(
+    r'(?:RhythmQuake_[a-f0-9]{64}|[^<>:"/\\|?*\x00-\x1f\x7f]+_[a-f0-9]{8})'
+    r'_([a-f0-9]{64})\.rqreplay\Z'
+)
 
 
 def discover(config: Path) -> tuple[str, Path]:

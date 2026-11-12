@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../services/sources/api_json_decoder.dart';
 
 import '../models/unified_quake_data.dart';
 import 'cwa_intensity_prediction.dart';
@@ -110,7 +111,7 @@ class CwaReportIntensities {
   static Map<String, int> fromWarnArea(String text) {
     if (text.isEmpty) return const {};
     try {
-      final areas = jsonDecode(text);
+      final areas = decodeApiJson(text);
       if (areas is! List) return const {};
       return countyRanks({
         'intensityAreas': [

@@ -1,3 +1,4 @@
+import 'package:flutterrhythmquake/services/whews_authorization_policy.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -46,6 +47,7 @@ Map<String, dynamic> referenceArchive(Iterable<StationHistoryFrame> frames) {
 }
 
 void main() {
+  setUp(() => WhewsAuthorizationPolicy.storeOverride = MemoryConnectionRetryStore());
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test('captured station archive remains byte-compatible and lossless', () async {

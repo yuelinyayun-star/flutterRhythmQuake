@@ -7,13 +7,17 @@ import '../../core/calculator.dart';
 import '../../models/eew_event_group.dart';
 import '../../core/utils/quake_time.dart';
 import '../../models/unified_quake_data.dart';
-import 'unified_intensity_format.dart';
+import '../../models/unified_event_presentation.dart';
+import '../../core/cwa_intensity_prediction.dart';
+import '../../core/intensity_class.dart';
+import '../map/ka_shindo_marker_style.dart';
 import '../../services/debug/history_replay.dart';
 import 'history_replay_controls.dart';
 import 'settings_controls.dart';
 
 class HistoryPanel extends StatelessWidget {
-  const HistoryPanel({super.key});
+  const HistoryPanel({super.key, this.active = true});
+  final bool active;
 
   @override
   Widget build(BuildContext context) {
@@ -53,6 +57,7 @@ class HistoryPanel extends StatelessWidget {
                             '${groups[index].latest.source}:${groups[index].eventId}',
                           ),
                           group: groups[index],
+                          active: active,
                         );
                       },
                     ),
@@ -66,8 +71,13 @@ class HistoryPanel extends StatelessWidget {
 
 class _EewEventGroupCard extends StatefulWidget {
   final EewEventGroup group;
+  final bool active;
 
-  const _EewEventGroupCard({super.key, required this.group});
+  const _EewEventGroupCard({
+    super.key,
+    required this.group,
+    required this.active,
+  });
 
   @override
   State<_EewEventGroupCard> createState() => _EewEventGroupCardState();
@@ -77,21 +87,102 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
   static const double _badgeSize = 42;
   bool _expanded = false;
   bool _exporting = false;
+  bool _loading = false;
+  int _loadGeneration = 0;
+  EewEventGroup? _loadedGroup;
+
+  @override
+  void dispose() {
+    _loadGeneration++;
+    _loadedGroup = null;
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant _EewEventGroupCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.active || !identical(oldWidget.group, widget.group)) {
+      _loadGeneration++;
+      _loadedGroup = null;
+      _loading = false;
+      if (!widget.active) _expanded = false;
+      if (_expanded) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _expanded && widget.active) _loadExpandedReports();
+        });
+      }
+    }
+  }
+
+  EewEventGroup _current(QuakeProvider provider) =>
+      provider.eewHistory.firstWhere(
+        (group) =>
+            group.eventId == widget.group.eventId &&
+            group.latest.source == widget.group.latest.source,
+        orElse: () => widget.group,
+      );
+
+  Future<void> _loadExpandedReports() async {
+    final provider = context.read<QuakeProvider>();
+    final current = _current(provider);
+    if (!current.hasDeferredReports) return;
+    // Directory records already retain the exact display summary and badge
+    // metadata. Expanding report rows must not hydrate every original body.
+    if (current.storedReports!.payloads.values.every(
+      (ref) => ref.fileId != null,
+    )) {
+      return;
+    }
+    final generation = ++_loadGeneration;
+    setState(() => _loading = true);
+    try {
+      final loaded = await provider.loadHistoryReports(current);
+      if (!mounted ||
+          generation != _loadGeneration ||
+          !_expanded ||
+          !widget.active) {
+        return;
+      }
+      setState(() {
+        _loadedGroup = loaded;
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() {
+        _loading = false;
+        _expanded = false;
+        _loadedGroup = null;
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('历史报文加载失败：$error')));
+    }
+  }
+
+  void _toggleExpanded() {
+    setState(() {
+      _expanded = !_expanded;
+      if (!_expanded) {
+        _loadGeneration++;
+        _loadedGroup = null;
+        _loading = false;
+      }
+    });
+    if (_expanded) _loadExpandedReports();
+  }
 
   Future<void> _replayAction({required bool export}) async {
     if (_exporting) return;
     setState(() => _exporting = true);
     try {
       final provider = context.read<QuakeProvider>();
-      final current = provider.eewHistory.firstWhere(
-        (group) =>
-            group.eventId == widget.group.eventId &&
-            group.latest.source == widget.group.latest.source,
-        orElse: () => widget.group,
-      );
+      final current = _current(provider);
       if (export) {
-        final loaded = current.storedStations == null
-            ? current : await provider.loadHistoryStationFrames(current);
+        final loaded =
+            current.storedStations == null && !current.hasDeferredReports
+            ? current
+            : await provider.loadHistoryStationFrames(current);
         if (!mounted) return;
         final package = HistoryReplayPackage.fromGroup(loaded);
         setState(() => _exporting = true);
@@ -107,7 +198,7 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
           HistoryReplayPackage.fromGroup(current),
           remember: false,
           relatedHistory: provider.eewHistory,
-          storedGroup: current.storedStations == null ? null : current,
+          storedGroup: current,
         );
         await controller.playPrepared();
         if (controller.active && mounted) {
@@ -153,13 +244,38 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
     }
   }
 
+  Color _eventColor(UnifiedQuakeData event) {
+    final cwa = cwaEewBadgeIntensity(event);
+    if (cwa != null) {
+      return KaShindoMarkerStyle.colorForLevel(
+        CwaIntensityPrediction.markerLevels[cwa.rank],
+      );
+    }
+    final estimated = estimatedNewApiEewBadgeIntensity(event);
+    final forcedInfo = forcedInfoIntensityValue(event);
+    return _colorFromClass(
+      estimated == null
+          ? (forcedInfo == null
+                ? event.className
+                : intensityClassName(double.parse(forcedInfo)))
+          : intensityClassName(estimated.toDouble()),
+    );
+  }
+
+  UnifiedEventPresentation _presentation(UnifiedQuakeData event) =>
+      UnifiedEventPresentation.fromEvent(
+        event,
+        sourceSummary:
+            widget.group.storedReports?.payloads[event]?.sasmexFields,
+      );
+
   @override
   Widget build(BuildContext context) {
     final latest = widget.group.latest;
-    final color = _colorFromClass(latest.className);
-    final reports = widget.group.reports;
+    final color = _eventColor(latest);
+    final reports = (_loadedGroup ?? widget.group).reports;
     final hasMultiple = reports.length > 1;
-    final savedReports = reports.where(HistoryReplayPackage.hasPayload).length;
+    final savedReports = widget.group.savedReportCount;
 
     return Material(
       color: SettingsControlStyle.field,
@@ -192,9 +308,7 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
                   children: [
                     Expanded(
                       child: InkWell(
-                        onTap: hasMultiple
-                            ? () => setState(() => _expanded = !_expanded)
-                            : null,
+                        onTap: hasMultiple ? _toggleExpanded : null,
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
@@ -243,7 +357,18 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
                   ],
                 ),
               ),
-              if (hasMultiple && _expanded) _buildReportList(reports, color),
+              if (hasMultiple && _expanded)
+                if (_loading)
+                  const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: SizedBox(
+                      height: 16,
+                      width: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                else
+                  _buildReportList(reports, color),
             ],
           ),
         ),
@@ -252,6 +377,7 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
   }
 
   Widget _buildMainRow(UnifiedQuakeData event, Color color) {
+    final sasmex = event.source == 'sasmex' ? _presentation(event) : null;
     final scaler = MediaQuery.textScalerOf(context);
     final titleHeight = scaler.scale(13) * 1.35 * 2;
     final infoHeight = scaler.scale(11) * 1.4;
@@ -286,9 +412,9 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
                       children: [
                         Expanded(
                           child: Tooltip(
-                            message: event.titleText,
+                            message: event.displayTitleText,
                             child: Text(
-                              event.titleText,
+                              event.displayTitleText,
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 13,
@@ -336,13 +462,17 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
                   ),
                   const SizedBox(height: 4),
                   _summaryLine(
-                    QuakeTime.formatUnifiedOriginClock(
-                      event,
-                      includeSeconds: false,
-                    ),
+                    sasmex?.timeText ??
+                        QuakeTime.formatUnifiedOriginClock(
+                          event,
+                          includeSeconds: false,
+                        ),
                     infoHeight,
                   ),
-                  _summaryLine('$magnitude  $depth', infoHeight),
+                  _summaryLine(
+                    sasmex?.secondaryText ?? event.plumMissingParametersText ?? '$magnitude  $depth',
+                    infoHeight,
+                  ),
                   _summaryLine(
                     _isInvestigatingHypocenter(event.hypocenter)
                         ? '震源 調査中'
@@ -387,8 +517,16 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
   }
 
   Widget _buildBadge(UnifiedQuakeData event, Color color) {
+    final estimated = estimatedEewIntensityValue(event);
+    final forcedInfoIntensity = forcedInfoIntensityValue(event);
+    final sasmex = event.source == 'sasmex' ? _presentation(event) : null;
+    final intensity =
+        sasmex?.intensityValue ??
+        (event.isEew
+            ? unifiedEewIntensityValue(event)
+            : forcedInfoIntensity ?? event.maxIntensity);
     if (event.useShindo) {
-      final text = event.maxIntensity;
+      final text = intensity;
       final hasSub =
           text.length > 1 && (text.contains('弱') || text.contains('強'));
       final mainChar = hasSub ? text.substring(0, 1) : text;
@@ -446,7 +584,7 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
                       ),
               ),
               Text(
-                '震度',
+                estimated == null ? '震度' : '预估震度',
                 style: TextStyle(
                   fontSize: 6,
                   fontWeight: FontWeight.w500,
@@ -460,10 +598,12 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
       );
     }
 
-    final value = double.tryParse(event.maxIntensity);
+    final value = double.tryParse(intensity);
     final display = value != null
-        ? unifiedRomanIntensityLabel(event.maxIntensity)
-        : event.maxIntensity;
+        ? (estimated != null && value == 0
+              ? '0'
+              : unifiedRomanIntensityLabel(intensity))
+        : intensity;
 
     return Container(
       width: _badgeSize,
@@ -492,7 +632,10 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
               ),
             ),
             Text(
-              '烈度',
+              sasmex?.intensityLabel ??
+                  (estimated == null && forcedInfoIntensity == null
+                      ? '烈度'
+                      : '预估烈度'),
               style: TextStyle(
                 fontSize: 6,
                 fontWeight: FontWeight.w500,
@@ -523,7 +666,7 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
   }
 
   Widget _buildReportRow(UnifiedQuakeData report, Color groupColor) {
-    final reportColor = _colorFromClass(report.className);
+    final reportColor = _eventColor(report);
 
     return InkWell(
       onTap: () {
@@ -676,6 +819,13 @@ class _EewEventGroupCardState extends State<_EewEventGroupCard> {
   }
 
   String _formatInfo(UnifiedQuakeData event) {
+    if (event.plumMissingParametersText case final text?) {
+      return '${event.hypocenter}  $text';
+    }
+    if (event.source == 'sasmex') {
+      final display = _presentation(event);
+      return '${display.secondaryText}\n${display.timeText}';
+    }
     final hypocenterInvestigating = _isInvestigatingHypocenter(
       event.hypocenter,
     );

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import unittest
 from datetime import UTC, datetime
+from pathlib import Path
 from types import MethodType
 
 from kma_pews_relay import (
@@ -89,19 +91,46 @@ class KmaPewsDecoderTest(unittest.TestCase):
             13: 0,
             14: 1,
             15: 2,
-            2: 3,
-            3: 4,
-            4: 5,
-            5: 6,
-            6: 7,
-            7: 8,
-            8: 9,
-            9: 10,
-            10: 11,
+            2: 2,
+            3: 3,
+            4: 4,
+            5: 5,
+            6: 6,
+            7: 7,
+            8: 8,
+            9: 9,
+            10: 10,
             11: 11,
         }
         self.assertEqual(
             {raw: fan_compatible_mmi(raw) for raw in range(16)}, expected
+        )
+
+    def test_real_official_frame_matches_same_second_fan_message(self) -> None:
+        fixtures = Path(__file__).with_name("test_fixtures")
+        frame = (fixtures / "kma_20261013052830.original.b").read_bytes()
+        table = (fixtures / "kma_stations_20261013052828.original.s").read_bytes()
+        fan = json.loads(
+            (fixtures / "fan_kma_20261013052830.original.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        relay = KmaRelay(Config())
+        relay.state.stations = decode_stations(table)
+        stamp = datetime(2026, 10, 13, 5, 28, 30, tzinfo=UTC)
+
+        asyncio.run(relay._accept_frame(stamp, frame))
+
+        self.assertEqual(len(relay.state.stations), 265)
+        self.assertEqual(
+            (relay.state.stations[106].latitude, relay.state.stations[106].longitude),
+            (37.68, 127.88),
+        )
+        self.assertEqual(relay.state.latest_raw_mmi[106], 5)
+        self.assertEqual(relay.state.latest_data["timestamp"], fan["Data"]["timestamp"])
+        self.assertEqual(relay.state.latest_data["mmi"], fan["Data"]["mmi"])
+        self.assertEqual(
+            relay._data_message("update")["Data"]["mmi"], fan["Data"]["mmi"]
         )
 
     def test_websocket_data_message_keeps_fan_shape(self) -> None:

@@ -153,18 +153,35 @@ class LocalEewSidebarPanel extends StatefulWidget {
 
 class _LocalEewSidebarPanelState extends State<LocalEewSidebarPanel> {
   Timer? _timer;
+  int _tableRetryTicks = 0;
+  bool _travelTableLoadFailed = false;
 
   @override
   void initState() {
     super.initState();
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!TravelTimeService().isLoaded && ++_tableRetryTicks % 15 == 0) {
+        _loadTravelTimes();
+      }
       if (mounted) setState(() {});
     });
     LocationService().positionListenable.addListener(_refresh);
     TravelTimeService().loadedListenable.addListener(_refresh);
-    TravelTimeService().ensureLoaded().catchError((Object error) {
-      debugPrint('Local EEW travel times unavailable: $error');
-    });
+    _loadTravelTimes();
+  }
+
+  void _loadTravelTimes() {
+    TravelTimeService()
+        .ensureLoaded()
+        .then((_) {
+          if (mounted && _travelTableLoadFailed) {
+            setState(() => _travelTableLoadFailed = false);
+          }
+        })
+        .catchError((Object error) {
+          debugPrint('Local EEW travel times unavailable: $error');
+          if (mounted) setState(() => _travelTableLoadFailed = true);
+        });
   }
 
   void _refresh() {
@@ -296,7 +313,16 @@ class _LocalEewSidebarPanelState extends State<LocalEewSidebarPanel> {
                     SizedBox(height: scale(3)),
                     Text(
                       countdown == null
-                          ? 'S 波走时不可用'
+                          ? widget.event.originTime == null
+                                ? '缺少有效发震时间'
+                                : !TravelTimeService().isLoaded
+                                ? _travelTableLoadFailed
+                                      ? 'S 波走时表加载失败'
+                                      : 'S 波走时表加载中'
+                                : !widget.event.depth.isFinite ||
+                                      widget.event.depth < 0
+                                ? '震源深度无效'
+                                : 'S 波走时不可用'
                           : countdown == 0
                           ? 'S 波预计已到达'
                           : '秒后 S 波到达',

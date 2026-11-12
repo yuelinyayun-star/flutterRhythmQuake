@@ -1,3 +1,4 @@
+import 'package:flutterrhythmquake/services/whews_authorization_policy.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -13,6 +14,7 @@ import 'package:flutterrhythmquake/services/sound_effect_service.dart';
 import 'package:flutterrhythmquake/services/sources/whews_service.dart';
 
 void main() {
+  setUp(() => WhewsAuthorizationPolicy.storeOverride = MemoryConnectionRetryStore());
   TestWidgetsFlutterBinding.ensureInitialized();
   final examples =
       (jsonDecode(
@@ -204,7 +206,8 @@ void main() {
   testWidgets(
     'late card lasts five minutes and replay cannot extend or revive it',
     (tester) async {
-      final provider = QuakeProvider();
+      // Advance only card timers; this test must not open catalog sockets.
+      final provider = QuakeProvider(startCatalogServices: false);
       await tester.pump(const Duration(milliseconds: 50));
       final event = lateDeliveryScenario();
       provider.handleUnifiedEventForTest(event);

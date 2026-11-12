@@ -5,11 +5,12 @@ import 'package:latlong2/latlong.dart';
 
 import '../../core/event_detection/event_detection_models.dart';
 import '../../core/event_detection/legacy_shake_event_detector_adapter.dart';
-import '../../../core/nied_replay_logger.dart';
+import '../../core/nied_replay_logger.dart';
 import 'jp_shindo_scale.dart';
 import 'nied_background_worker.dart';
 import 'nied_detection_rules.dart';
 import 'nied_monitor.dart';
+import 'native_nied_detection_owner.dart';
 import 'shake_alert_gate.dart';
 
 enum ShakeDetectStage { idle, weak, detected, strong }
@@ -85,19 +86,33 @@ class ShakeDetectionService {
   ShakeDetectionService._internal()
     : _sourceId = 'nied',
       _minimumJointStations = 0,
-      _allowActiveRiseShortcut = true;
+      _allowActiveRiseShortcut = true,
+      _nativeOwnerRequested = false;
 
   /// Independent state and timers while reusing the NIED detection algorithm.
   ShakeDetectionService.forSource(
     this._sourceId, {
     int minimumJointStations = 0,
     bool allowActiveRiseShortcut = true,
+    bool nativeOwner = false,
   }) : assert(minimumJointStations >= 0),
        _minimumJointStations = minimumJointStations,
-       _allowActiveRiseShortcut = allowActiveRiseShortcut;
+       _allowActiveRiseShortcut = allowActiveRiseShortcut,
+       _nativeOwnerRequested = nativeOwner;
   final String _sourceId;
   final int _minimumJointStations;
   final bool _allowActiveRiseShortcut;
+  final bool _nativeOwnerRequested;
+
+  /// Android hosted mode promotes the shared NIED singleton to the Rust
+  /// detection owner at setStations(background: true) time. iOS has no
+  /// station_core build and keeps the explicit Dart worker branch instead —
+  /// a platform split, not a silent Rust-to-Dart fallback.
+  bool _dynamicNativeOwner = false;
+  bool get _nativeOwner => _nativeOwnerRequested || _dynamicNativeOwner;
+  NativeNiedDetectionOwner? _detectionOwner;
+  String? get preparedLayerSignature => _detectionOwner?.layerSignature;
+  int _nativeGeneration = 0;
 
   static const ShakeDetectionSnapshot idleSnapshot = ShakeDetectionSnapshot(
     stage: ShakeDetectStage.idle,
@@ -125,6 +140,7 @@ class ShakeDetectionService {
   bool _shake2Notified = false;
   bool _focused = false;
   Timer? _expireCheckTimer;
+  Timer? _stationExpiryRefreshTimer;
   bool _useBackgroundWorker = false;
   bool _backgroundDetectionRunning = false;
   bool _backgroundDetectionPending = false;
@@ -136,6 +152,7 @@ class ShakeDetectionService {
   NiedStation? _configuredMiddleStation;
   NiedStation? _configuredLastStation;
   bool _configuredForBackground = false;
+  bool _configuredDynamicNative = false;
   bool _backgroundExpireApplied = false;
 
   void Function(int shindo)? onShakeDetected;
@@ -151,6 +168,10 @@ class ShakeDetectionService {
     bool detachStations = false,
     bool emitSnapshot = true,
   }) {
+    _nativeGeneration++;
+    _detectionOwner?.reset(clearHolds: clearStationState);
+    _stationExpiryRefreshTimer?.cancel();
+    _stationExpiryRefreshTimer = null;
     final hadActive =
         _prevMaxShindo >= 0 ||
         _gridCells.isNotEmpty ||
@@ -174,6 +195,8 @@ class ShakeDetectionService {
     _legacyEventDetector.reset();
 
     if (detachStations) {
+      _detectionOwner?.dispose();
+      _detectionOwner = null;
       _stations = null;
       _adjStationIds = [];
       _distMatrix = [];
@@ -184,6 +207,8 @@ class ShakeDetectionService {
       _configuredMiddleStation = null;
       _configuredLastStation = null;
       _configuredForBackground = false;
+      _configuredDynamicNative = false;
+      _dynamicNativeOwner = false;
       _useBackgroundWorker = false;
       _expireCheckTimer?.cancel();
       _expireCheckTimer = null;
@@ -211,13 +236,28 @@ class ShakeDetectionService {
   void setStations(List<NiedStation> stations, {bool background = false}) {
     final previousStations = _stations;
     _stations = stations;
+    // Hosted NIED detection must run on the Rust owner whenever the platform
+    // supports station_core (Windows/Android). The Dart background worker is
+    // only reachable on platforms without native support (iOS) so a broken
+    // native library can never silently fall back to Dart detection.
+    final nativePlatform = NativeNiedDetectionOwner.supported;
+    _dynamicNativeOwner =
+        !_nativeOwnerRequested &&
+        _sourceId == 'nied' &&
+        background &&
+        nativePlatform;
     _useBackgroundWorker =
-        _sourceId == 'nied' && background && NiedBackgroundWorker.instance.supported;
+        !_nativeOwner &&
+        !nativePlatform &&
+        _sourceId == 'nied' &&
+        background &&
+        NiedBackgroundWorker.instance.supported;
     final middleStation = stations.isEmpty
         ? null
         : stations[stations.length ~/ 2];
     final configUnchanged =
         _configuredForBackground == _useBackgroundWorker &&
+        _configuredDynamicNative == _dynamicNativeOwner &&
         stations.length == _configuredStationCount &&
         (stations.isEmpty ||
             (identical(stations.first, _configuredFirstStation) &&
@@ -233,19 +273,26 @@ class ShakeDetectionService {
           .join('|');
       final sameLayout =
           signature == _lastStationSignature &&
-          _configuredForBackground == _useBackgroundWorker;
+          _configuredForBackground == _useBackgroundWorker &&
+          _configuredDynamicNative == _dynamicNativeOwner;
       _configuredStationCount = stations.length;
       _configuredFirstStation = stations.isEmpty ? null : stations.first;
       _configuredMiddleStation = middleStation;
       _configuredLastStation = stations.isEmpty ? null : stations.last;
       _configuredForBackground = _useBackgroundWorker;
+      _configuredDynamicNative = _dynamicNativeOwner;
       if (sameLayout && previousStations != null) {
+        if (_nativeOwner) {
+          _detectionOwner!.rebind(stations);
+        }
         for (var i = 0; i < stations.length; i++) {
           if (identical(stations[i], previousStations[i])) continue;
-          stations[i].adoptDetectionHold(
-            previousStations[i],
-            _handleStationExpired,
-          );
+          if (!_nativeOwner) {
+            stations[i].adoptDetectionHold(
+              previousStations[i],
+              _handleStationExpired,
+            );
+          }
           stations[i].defaultExpireSeconds =
               previousStations[i].defaultExpireSeconds;
           stations[i].expireSeconds = previousStations[i].expireSeconds;
@@ -254,6 +301,8 @@ class ShakeDetectionService {
         return;
       }
       _lastStationSignature = signature;
+      _stationExpiryRefreshTimer?.cancel();
+      _stationExpiryRefreshTimer = null;
       for (final station in previousStations ?? <NiedStation>[]) {
         station.activeTimer?.cancel();
         station.isActive = false;
@@ -262,6 +311,7 @@ class ShakeDetectionService {
       }
       _backgroundExpireApplied = false;
       if (_useBackgroundWorker) {
+        _disposeDetectionOwner();
         _backgroundDetectorInit = NiedBackgroundWorker.instance
             .configureDetector(
               signature: signature,
@@ -277,7 +327,27 @@ class ShakeDetectionService {
             );
         _adjStationIds = [];
         _distMatrix = [];
+      } else if (_nativeOwner) {
+        if (_sourceId != 'nied' ||
+            _minimumJointStations != 0 ||
+            !_allowActiveRiseShortcut) {
+          throw StateError('Native NIED detector policy mismatch');
+        }
+        _disposeDetectionOwner();
+        _detectionOwner = NativeNiedDetectionOwner(
+          stations,
+          onUpdate: _bindNativeDetection,
+        );
+        for (var i = 0; i < stations.length; i++) {
+          stations[i]
+            ..defaultExpireSeconds = NiedStation.kaExpireSeconds
+            ..expireSeconds = NiedStation.kaExpireSeconds;
+        }
+        _adjStationIds = [];
+        _distMatrix = [];
+        _backgroundDetectorInit = null;
       } else {
+        _disposeDetectionOwner();
         _backgroundDetectorInit = null;
         _buildAdjacency();
       }
@@ -292,6 +362,16 @@ class ShakeDetectionService {
       _legacyEventDetector.reset();
     }
     _startExpireCheck();
+  }
+
+  /// Releases a previously configured native owner before a mode switch
+  /// (e.g. hosted background -> foreground sync detection) leaks the Rust
+  /// session across repeated transitions.
+  void _disposeDetectionOwner() {
+    if (_detectionOwner == null) return;
+    _nativeGeneration++;
+    _detectionOwner!.dispose();
+    _detectionOwner = null;
   }
 
   void _clearStationRuntimeState({required bool clearValues}) {
@@ -318,6 +398,10 @@ class ShakeDetectionService {
   }
 
   void processUpdate({bool background = false}) {
+    if (_nativeOwner) {
+      _processNativeOwnedUpdate();
+      return;
+    }
     if (background &&
         _useBackgroundWorker &&
         NiedBackgroundWorker.instance.supported) {
@@ -329,6 +413,121 @@ class ShakeDetectionService {
       return;
     }
     _processUpdateSync();
+  }
+
+  void _processNativeOwnedUpdate() {
+    final stations = _stations;
+    if (stations == null || stations.isEmpty) return;
+    final owner = _detectionOwner;
+    if (owner == null) throw StateError('NIED native detector not configured');
+    owner.process(stations, _sensitivity);
+  }
+
+  // This path only binds prepared native views and dispatches native effects.
+  // It does not run the legacy detector, aggregate grids, or create hold timers.
+  void _bindNativeDetection(List<dynamic> result) {
+    final stations = _stations;
+    if (stations == null) return;
+    final generation = _nativeGeneration;
+    for (final row in result[0] as List) {
+      stations[row[0] as int]
+        ..isActive = row[1] as bool
+        ..detectState = row[2] as int
+        ..detectReason = row[3] as String;
+    }
+    for (final action in result[1] as List) {
+      switch (action[0] as int) {
+        case 0:
+          onShakeDetected?.call(action[1] as int);
+        case 1:
+          onNotification?.call(action[1] as String, action[2] as String);
+        case 2:
+          onFocusWindow?.call();
+        case 3:
+          onShakeExpired?.call();
+      }
+      if (generation != _nativeGeneration) return;
+    }
+    final view = result[2] as List?;
+    if (view == null) return;
+    final stage = ShakeDetectStage.values[view[0] as int];
+    final entries = <DetectedStationEntry>[
+      for (final row in view[5] as List)
+        DetectedStationEntry(
+          code: stations[row[0] as int].code,
+          prefecture: stations[row[0] as int].prefecture,
+          level: row[1] as int,
+          jmaShindo: row[2] as int,
+          detectState: row[3] as int,
+          detectReason: row[4] as String,
+        ),
+    ];
+    _gridCells
+      ..clear()
+      ..addEntries([
+        for (final row in view[6] as List)
+          MapEntry(
+            row[0] as String,
+            NiedDetectionGridCell(
+              center: LatLng(
+                (row[1] as num).toDouble(),
+                (row[2] as num).toDouble(),
+              ),
+              level: row[3] as int,
+              shindo: (row[4] as num).toDouble(),
+            ),
+          ),
+      ]);
+    _prevMaxShindo = view[4] as int;
+    final snapshot = ShakeDetectionSnapshot(
+      stage: stage,
+      weakCount: view[1] as int,
+      detectedCount: view[2] as int,
+      strongCount: view[3] as int,
+      maxShindo: view[4] as int,
+      detectedStations: entries,
+      gridCells: Map<String, NiedDetectionGridCell>.from(_gridCells),
+    );
+    final observedAt = DateTime.fromMicrosecondsSinceEpoch(
+      view[7] as int,
+      isUtc: view[8] as bool,
+    );
+    final start = view[9] as List?;
+    final startedAt = start == null
+        ? null
+        : DateTime.fromMicrosecondsSinceEpoch(
+            start[0] as int,
+            isUtc: start[1] as bool,
+          );
+    final state = EventDetectionState.values[view[10] as int];
+    final event = EventDetection(
+      detectorId: 'legacy_shake_detection_adapter',
+      sourceId: _sourceId,
+      eventId: startedAt == null
+          ? null
+          : '$_sourceId-${startedAt.toIso8601String()}',
+      state: state,
+      observedAt: observedAt,
+      startedAt: startedAt,
+      updatedAt: state == EventDetectionState.idle ? null : observedAt,
+      endedAt: state == EventDetectionState.ended ? observedAt : null,
+      memberStationIds: List<String>.unmodifiable(
+        entries.map((entry) => entry.code),
+      ),
+      detectionScore: (view[11] as num).toDouble(),
+      maxIntensity: snapshot.maxShindo,
+      reasonCodes: state == EventDetectionState.idle
+          ? const {}
+          : {'legacy_stage_${stage.name}'},
+      metadata: {
+        'legacy_stage': stage.name,
+        'legacy_max_shindo': snapshot.maxShindo,
+        'legacy_grid_cell_count': _gridCells.length,
+      },
+    );
+    NiedReplayLogger.instance.logDetection(snapshot);
+    onDetectionSnapshotChanged?.call(snapshot);
+    if (generation == _nativeGeneration) onEventDetectionChanged?.call(event);
   }
 
   void _processUpdateSync() {
@@ -791,6 +990,10 @@ class ShakeDetectionService {
   }
 
   void _checkShakeNotification() {
+    // A real input frame/periodic check already includes every expired hold.
+    // Do not publish that same state again from a queued expiry refresh.
+    _stationExpiryRefreshTimer?.cancel();
+    _stationExpiryRefreshTimer = null;
     _refreshDetectionGrids();
     final currentMaxShindo = _currentMaxShindo();
 
@@ -832,10 +1035,18 @@ class ShakeDetectionService {
   }
 
   void _handleStationExpired() {
-    _checkShakeNotification();
+    // Station holds still expire individually at their original deadlines.
+    // Publish their combined state once per short UI interval: otherwise a
+    // burst of 100+ expired holds rebuilds/captures the entire station network
+    // 100+ times while an EEW is recording. This is not a new observation.
+    _stationExpiryRefreshTimer ??= Timer(const Duration(milliseconds: 16), () {
+      _stationExpiryRefreshTimer = null;
+      _checkShakeNotification();
+    });
   }
 
   void _startExpireCheck() {
+    if (_nativeOwner) return;
     if (_expireCheckTimer != null) return;
     _expireCheckTimer = Timer.periodic(const Duration(seconds: 2), (_) {
       if (_prevMaxShindo >= 0) {

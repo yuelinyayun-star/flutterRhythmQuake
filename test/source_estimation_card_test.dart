@@ -6,19 +6,100 @@ import 'package:flutterrhythmquake/core/source_estimation/station_event_tracker.
 import 'package:flutterrhythmquake/providers/map_state_provider.dart';
 import 'package:flutterrhythmquake/providers/quake_provider.dart';
 import 'package:flutterrhythmquake/services/sources/nied_monitor.dart';
+import 'package:flutterrhythmquake/services/sources/palert_source_state.dart';
+import 'package:flutterrhythmquake/core/cwa_intensity_prediction.dart';
 import 'package:flutterrhythmquake/widgets/ui/alert_module.dart';
+import 'package:flutterrhythmquake/services/epicenter_region_service.dart';
+import 'package:flutterrhythmquake/utils/fe_regions.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
+import 'support/unified_ui_fonts.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUpAll(() async => EpicenterRegionService.instance.load());
   final tracker = StationEventTracker.instance;
 
   setUp(tracker.resetNied);
   tearDown(tracker.resetNied);
 
-  testWidgets('colors source estimation by estimated shindo in unified UI', (
+  testWidgets(
+    'Japanese source-estimation card resolves its unchanged coordinates',
+    (tester) async {
+      // UI boundary fixture only; this is not an injected earthquake report.
+      final observedAt = DateTime.utc(2026, 10, 20);
+      tracker.setNiedEstimator(
+        const _Kotoho7JsUiEstimator(latitude: 35.6762, longitude: 139.6503),
+      );
+      tracker.ingestNiedFrame(
+        stations: [
+          _station('N', const LatLng(36, 140), observedAt),
+          _station('E', const LatLng(35, 141), observedAt),
+          _station('S', const LatLng(34, 140), observedAt),
+          _station('W', const LatLng(35, 139), observedAt),
+        ],
+        observedAt: observedAt,
+        stageName: 'confirmed',
+        maxShindo: 4,
+        eventId: 'ui-japanese-land-name',
+        metadata: const {
+          'source_trigger_member_ids': ['N', 'E', 'S', 'W'],
+        },
+      );
+      await _pumpAlertModule(tester);
+      await tester.pump();
+      expect(find.text(getFEName(35.6762, 139.6503)), findsOneWidget);
+      expect(tracker.currentNiedEvent.value!.estimate!.latitude, 35.6762);
+      expect(tracker.currentNiedEvent.value!.estimate!.longitude, 139.6503);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('P-Alert uses Taiwan forecast with its preliminary magnitude', (
     tester,
   ) async {
+    // Explicit UI boundary fixture, not a live earthquake report.
+    final time = DateTime.utc(2026, 10, 14);
+    final estimate = SourceEstimate(
+      latitude: 23.5,
+      longitude: 121,
+      depthKm: 20,
+      magnitude: 4.2,
+      originTime: time,
+      confidence: 0.5,
+      method: 'palert_hyp_v1',
+      supportingStationCount: 6,
+      diagnostics: const {'palert_magnitude_preliminary': true},
+    );
+    PAlertSourceState.events.value = [
+      SeismicActiveEvent(
+        eventId: 'ui-palert-fixture',
+        sourceId: 'palert',
+        startedAt: time,
+        updatedAt: time,
+        stageName: 'confirmed',
+        maxShindo: -1,
+        estimate: estimate,
+      ),
+    ];
+    addTearDown(() => PAlertSourceState.events.value = const []);
+    await _pumpAlertModule(tester);
+    await tester.pump();
+    final expected = CwaIntensityPrediction.predict(
+      magnitude: 4.2,
+      depth: 20,
+      lat: 23.5,
+      lng: 121,
+      adjustment: 1,
+    )!.maximumRank;
+    expect(find.text(CwaIntensityPrediction.labels[expected]), findsOneWidget);
+    expect(find.text('预估震度'), findsOneWidget);
+    expect(find.textContaining('M4.2'), findsOneWidget);
+    expect(find.textContaining('PGA 初估'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('shows JMA predicted shindo in unified UI', (tester) async {
     final observedAt = DateTime.utc(2026, 6, 21, 1);
     tracker.setNiedEstimator(const _Kotoho7JsUiEstimator());
     tracker.ingestNiedFrame(
@@ -47,80 +128,110 @@ void main() {
       find.text('\u9707\u6e90\u672c\u5730\u63a8\u7b97 \u7b2c1\u62a5'),
       findsNothing,
     );
-    expect(find.text('4'), findsOneWidget);
-    expect(find.text('\u68c0\u51fa\u9707\u5ea6'), findsOneWidget);
+    // JMA 式预估震度：M5.0 / 深度 40km / (35N,140E) → 震度 3
+    expect(find.text('3'), findsOneWidget);
+    expect(find.text('\u9884\u4f30\u9707\u5ea6'), findsOneWidget);
+    expect(find.text('\u68c0\u51fa\u9707\u5ea6'), findsNothing);
     expect(find.textContaining('JS\u8bef\u5dee 1.250'), findsOneWidget);
     expect(find.textContaining('\u89e6\u53d1 4\u7ad9'), findsOneWidget);
     expect(find.textContaining('\u652f\u6301 4\u7ad9'), findsWidgets);
   });
 
-  for (final (jmaIndex, coarseShindo, main, suffix) in const [
-    (5, 5, '5', '-'),
-    (6, 5, '5', '+'),
-    (7, 6, '6', '-'),
-    (8, 6, '6', '+'),
-  ]) {
-    testWidgets('shows exact kotoho7 JMA badge index $jmaIndex', (
-      tester,
-    ) async {
-      final observedAt = DateTime.utc(2026, 7, 28, 1);
-      tracker.setNiedEstimator(
-        _Kotoho7JsUiEstimator(jmaIndex: jmaIndex, jmaClass: coarseShindo),
-      );
-      tracker.ingestNiedFrame(
-        stations: [
-          _station('N', const LatLng(36, 140), observedAt),
-          _station('E', const LatLng(35, 141), observedAt),
-          _station('S', const LatLng(34, 140), observedAt),
-          _station('W', const LatLng(35, 139), observedAt),
-        ],
-        observedAt: observedAt,
-        stageName: 'confirmed',
-        maxShindo: coarseShindo,
-        eventId: 'ui-kotoho7-shindo-$jmaIndex',
-        metadata: const {
-          'source_trigger_member_ids': ['N', 'E', 'S', 'W'],
-        },
-      );
+  testWidgets('badge shows JMA predicted shindo, not the detected index', (
+    tester,
+  ) async {
+    final observedAt = DateTime.utc(2026, 7, 28, 1);
+    // 注入与预测不同的「检出」索引 2；M5.0 / 深度40km / (35N,140E) 预测为震度 3。
+    tracker.setNiedEstimator(
+      const _Kotoho7JsUiEstimator(jmaIndex: 2, jmaClass: 2, magnitude: 5.0),
+    );
+    tracker.ingestNiedFrame(
+      stations: [
+        _station('N', const LatLng(36, 140), observedAt),
+        _station('E', const LatLng(35, 141), observedAt),
+        _station('S', const LatLng(34, 140), observedAt),
+        _station('W', const LatLng(35, 139), observedAt),
+      ],
+      observedAt: observedAt,
+      stageName: 'confirmed',
+      maxShindo: 2,
+      eventId: 'ui-predicted-vs-detected',
+      metadata: const {
+        'source_trigger_member_ids': ['N', 'E', 'S', 'W'],
+      },
+    );
 
-      await _pumpAlertModule(tester);
-      await tester.pump();
+    await _pumpAlertModule(tester);
+    await tester.pump();
 
-      expect(find.text(main), findsOneWidget);
-      expect(find.text(suffix), findsOneWidget);
-      expect(find.text('\u68c0\u51fa\u9707\u5ea6'), findsOneWidget);
-    });
+    expect(find.text('\u9884\u4f30\u9707\u5ea6'), findsOneWidget);
+    expect(find.text('\u68c0\u51fa\u9707\u5ea6'), findsNothing);
+    expect(find.text('3'), findsOneWidget); // 预测值，而非检出的 2
+    expect(find.text('2'), findsNothing);
+  });
 
-    testWidgets('shows exact Dart HYP JMA badge index $jmaIndex', (
-      tester,
-    ) async {
-      final observedAt = DateTime.utc(2026, 7, 28, 1);
-      tracker.setNiedEstimator(const _DartHypUiEstimator());
-      tracker.ingestNiedFrame(
-        stations: [
-          _station('N', const LatLng(36, 140), observedAt),
-          _station('E', const LatLng(35, 141), observedAt),
-          _station('S', const LatLng(34, 140), observedAt),
-          _station('W', const LatLng(35, 139), observedAt),
-        ],
-        observedAt: observedAt,
-        stageName: 'confirmed',
-        maxShindo: coarseShindo,
-        eventId: 'ui-dart-hyp-shindo-$jmaIndex',
-        metadata: {
-          'nied_max_jma_shindo_index': jmaIndex,
-          'source_trigger_member_ids': const ['N', 'E', 'S', 'W'],
-        },
-      );
+  testWidgets('renders predicted shindo suffix for strong events', (
+    tester,
+  ) async {
+    final observedAt = DateTime.utc(2026, 7, 28, 1);
+    // M7.0 / 深度10km / (35N,140E) → 预测 6+（主档 6 + 后缀 +）。
+    tracker.setNiedEstimator(
+      const _Kotoho7JsUiEstimator(magnitude: 7.0, depthKm: 10),
+    );
+    tracker.ingestNiedFrame(
+      stations: [
+        _station('N', const LatLng(36, 140), observedAt),
+        _station('E', const LatLng(35, 141), observedAt),
+        _station('S', const LatLng(34, 140), observedAt),
+        _station('W', const LatLng(35, 139), observedAt),
+      ],
+      observedAt: observedAt,
+      stageName: 'confirmed',
+      maxShindo: 4,
+      eventId: 'ui-predicted-suffix',
+      metadata: const {
+        'source_trigger_member_ids': ['N', 'E', 'S', 'W'],
+      },
+    );
 
-      await _pumpAlertModule(tester);
-      await tester.pump();
+    await _pumpAlertModule(tester);
+    await tester.pump();
 
-      expect(find.text(main), findsOneWidget);
-      expect(find.text(suffix), findsOneWidget);
-      expect(find.text('\u68c0\u51fa\u9707\u5ea6'), findsOneWidget);
-    });
-  }
+    expect(find.text('\u9884\u4f30\u9707\u5ea6'), findsOneWidget);
+    expect(find.text('6'), findsOneWidget);
+    expect(find.text('+'), findsOneWidget);
+  });
+
+  testWidgets('falls back to the unified no-intensity marker without M', (
+    tester,
+  ) async {
+    final observedAt = DateTime.utc(2026, 7, 28, 1);
+    // 震级缺失 ⇒ 无法预估 ⇒ 与统一 UI 的「无震度」一致显示 '-'。
+    tracker.setNiedEstimator(const _Kotoho7JsUiEstimator(magnitude: -1));
+    tracker.ingestNiedFrame(
+      stations: [
+        _station('N', const LatLng(36, 140), observedAt),
+        _station('E', const LatLng(35, 141), observedAt),
+        _station('S', const LatLng(34, 140), observedAt),
+        _station('W', const LatLng(35, 139), observedAt),
+      ],
+      observedAt: observedAt,
+      stageName: 'confirmed',
+      maxShindo: 4,
+      eventId: 'ui-predicted-nomagnitude',
+      metadata: const {
+        'source_trigger_member_ids': ['N', 'E', 'S', 'W'],
+      },
+    );
+
+    await _pumpAlertModule(tester);
+    await tester.pump();
+
+    expect(find.text('\u9884\u4f30\u9707\u5ea6'), findsOneWidget);
+    expect(find.text('-'), findsOneWidget);
+    expect(find.text('4'), findsNothing);
+    expect(find.text('\u68c0\u51fa\u9707\u5ea6'), findsNothing);
+  });
 
   testWidgets('shows only current Dart HYP result diagnostics and JST time', (
     tester,
@@ -147,9 +258,11 @@ void main() {
     await tester.pump();
 
     expect(find.text('\u9707\u6e90\u672c\u5730\u63a8\u7b97'), findsOneWidget);
-    expect(find.text('1'), findsOneWidget);
-    expect(find.text('\u68c0\u51fa\u9707\u5ea6'), findsOneWidget);
-    expect(find.text('35.783\u00b0N, 141.317\u00b0E'), findsOneWidget);
+    // M4.6 / 深度40km / (35.783N,141.317E) → 预测 震度 2
+    expect(find.text('2'), findsOneWidget);
+    expect(find.text('\u9884\u4f30\u9707\u5ea6'), findsOneWidget);
+    expect(find.text('\u68c0\u51fa\u9707\u5ea6'), findsNothing);
+    expect(find.text(getFEName(35.783, 141.317)), findsOneWidget);
     expect(
       find.text(
         'M4.6 \u00b7 \u6df1\u5ea6 40km \u00b7 \u652f\u6301 5\u7ad9 \u00b7 Dart HYP',
@@ -231,10 +344,7 @@ void main() {
     await _pumpAlertModule(tester);
     await tester.pump();
 
-    expect(
-      find.textContaining('35.000\u00b0N, 140.000\u00b0E'),
-      findsOneWidget,
-    );
+    expect(find.text(getFEName(35, 140)), findsOneWidget);
     expect(
       find.textContaining('\u5019\u9009\u533a\u57df \u5f85\u786e\u8ba4'),
       findsOneWidget,
@@ -292,7 +402,7 @@ void main() {
       find.textContaining('\u672c\u5730\u652f\u6301 11\u7ad9 +5'),
       findsOneWidget,
     );
-    expect(find.textContaining('0.000\u00b0N, 0.020\u00b0E'), findsOneWidget);
+    expect(find.text(getFEName(0, 0.02)), findsOneWidget);
   });
 
   testWidgets('hides source estimation card when estimated epicenter is off', (
@@ -330,6 +440,11 @@ Future<void> _pumpAlertModule(
   WidgetTester tester, {
   bool showEstimatedEpicenter = true,
 }) async {
+  await tester.runAsync(loadUnifiedUiFonts);
+  tester.view.physicalSize = const Size(1266, 900);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
   final mapState = MapStateProvider()
     ..setShowEstimatedEpicenter(showEstimatedEpicenter);
   await tester.pumpWidget(
@@ -338,16 +453,30 @@ Future<void> _pumpAlertModule(
         ChangeNotifierProvider(create: (_) => QuakeProvider()),
         ChangeNotifierProvider<MapStateProvider>.value(value: mapState),
       ],
-      child: const MaterialApp(home: Scaffold(body: AlertModule())),
+      child: MaterialApp(
+        theme: unifiedUiTestTheme(),
+        home: const Scaffold(body: AlertModule()),
+      ),
     ),
   );
 }
 
 class _Kotoho7JsUiEstimator implements SourceEstimator {
-  const _Kotoho7JsUiEstimator({this.jmaIndex = 4, this.jmaClass = 4});
+  const _Kotoho7JsUiEstimator({
+    this.jmaIndex = 4,
+    this.jmaClass = 4,
+    this.magnitude = 5.0,
+    this.depthKm = 40,
+    this.latitude = 35,
+    this.longitude = 140,
+  });
 
   final int jmaIndex;
   final int jmaClass;
+  final double magnitude;
+  final double depthKm;
+  final double latitude;
+  final double longitude;
 
   @override
   String get methodId => 'nied_gif_kotoho7_js_receiver_v1';
@@ -358,12 +487,13 @@ class _Kotoho7JsUiEstimator implements SourceEstimator {
   @override
   SourceEstimate estimate(SourceEstimationRequest request) {
     return SourceEstimate(
-      latitude: 35,
-      longitude: 140,
-      depthKm: 40,
+      latitude: latitude,
+      longitude: longitude,
+      depthKm: depthKm,
       confidence: 0.4,
       method: methodId,
       supportingStationCount: 4,
+      magnitude: magnitude,
       originTime: request.observedAt,
       diagnostics: {
         'best_source_error': 1.25,

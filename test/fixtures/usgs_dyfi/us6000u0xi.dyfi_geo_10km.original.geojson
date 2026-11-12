@@ -1,0 +1,104 @@
+{
+   "type" : "FeatureCollection",
+   "features" : [
+      {
+         "type" : "Feature",
+         "geometry" : {
+            "type" : "Polygon",
+            "coordinates" : [
+               [
+                  [
+                     168.10506,
+                     -15.89981
+                  ],
+                  [
+                     168.19837,
+                     -15.90104
+                  ],
+                  [
+                     168.19961,
+                     -15.81074
+                  ],
+                  [
+                     168.10635,
+                     -15.80952
+                  ]
+               ]
+            ]
+         },
+         "properties" : {
+            "name" : "UTM:(59L 019 824 10000)<br>Longana",
+            "dist" : 36,
+            "stddev" : 0.33,
+            "cdi" : 7,
+            "nresp" : 1
+         }
+      },
+      {
+         "geometry" : {
+            "coordinates" : [
+               [
+                  [
+                     167.14357,
+                     -15.45681
+                  ],
+                  [
+                     167.23672,
+                     -15.45589
+                  ],
+                  [
+                     167.23575,
+                     -15.36555
+                  ],
+                  [
+                     167.14264,
+                     -15.36647
+                  ]
+               ]
+            ],
+            "type" : "Polygon"
+         },
+         "type" : "Feature",
+         "properties" : {
+            "stddev" : 0.33,
+            "name" : "UTM:(58L 073 829 10000)<br>Luganville",
+            "dist" : 108,
+            "nresp" : 1,
+            "cdi" : 3.4
+         }
+      },
+      {
+         "properties" : {
+            "stddev" : 0.32,
+            "name" : "UTM:(58L 073 828 10000)<br>Luganville",
+            "dist" : 107,
+            "nresp" : 2,
+            "cdi" : 2.9
+         },
+         "type" : "Feature",
+         "geometry" : {
+            "coordinates" : [
+               [
+                  [
+                     167.1445,
+                     -15.54716
+                  ],
+                  [
+                     167.23769,
+                     -15.54623
+                  ],
+                  [
+                     167.23672,
+                     -15.45589
+                  ],
+                  [
+                     167.14357,
+                     -15.45681
+                  ]
+               ]
+            ],
+            "type" : "Polygon"
+         }
+      }
+   ]
+}

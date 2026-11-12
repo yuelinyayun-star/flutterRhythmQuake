@@ -6,11 +6,18 @@ import 'package:latlong2/latlong.dart' show LatLng;
 import '../../core/utils/quake_time.dart';
 import '../../core/utils/world_wrap.dart';
 import '../../models/usgs_shakemap.dart';
+import '../../models/quake_message.dart';
 
 class UsgsShakeMapLayer extends StatelessWidget {
-  const UsgsShakeMapLayer({super.key, this.frame, this.status});
+  const UsgsShakeMapLayer({
+    super.key,
+    this.frame,
+    this.status,
+    this.showLegend = true,
+  });
   final UsgsShakeMapFrame? frame;
   final String? status;
+  final bool showLegend;
 
   @override
   Widget build(BuildContext context) {
@@ -32,7 +39,49 @@ class UsgsShakeMapLayer extends StatelessWidget {
               ),
             ),
           ),
-        Align(
+        if (showLegend) UsgsShakeMapLegend(frame: data, status: status),
+      ],
+    );
+  }
+}
+
+/// Screen-space metadata is composed after map fills, independently of the
+/// geographic contour painter. Cached products outside the camera stay silent.
+class UsgsShakeMapLegend extends StatelessWidget {
+  const UsgsShakeMapLegend({
+    super.key,
+    this.frame,
+    this.status,
+    this.statusEvent,
+  });
+  final UsgsShakeMapFrame? frame;
+  final String? status;
+  final QuakeMessage? statusEvent;
+
+  @override
+  Widget build(BuildContext context) {
+    final camera = MapCamera.of(context);
+    final data = frame;
+    final product = data?.product;
+    final event = data?.event ?? statusEvent;
+    if ((data == null && status == null) || event == null) {
+      return const SizedBox.shrink();
+    }
+    final viewport = Offset.zero & camera.nonRotatedSize;
+    final epicenter = camera.latLngToScreenOffset(
+      WorldWrap.latLngClosestToCamera(
+        LatLng(event.latitude, event.longitude),
+        camera,
+      ),
+    );
+    if (!viewport.contains(epicenter) &&
+        (data == null ||
+            !UsgsMmiContourPainter.hasVisibleContour(data, camera))) {
+      return const SizedBox.shrink();
+    }
+    return IgnorePointer(
+      child: RepaintBoundary(
+        child: Align(
           alignment: Alignment.bottomCenter,
           child: Padding(
             padding: const EdgeInsets.only(bottom: 18, left: 12, right: 12),
@@ -101,7 +150,7 @@ class UsgsShakeMapLayer extends StatelessWidget {
             ),
           ),
         ),
-      ],
+      ),
     );
   }
 }
@@ -127,6 +176,66 @@ class UsgsMmiContourPainter extends CustomPainter {
           ),
         ),
     ];
+  }
+
+  static bool hasVisibleContour(UsgsShakeMapFrame frame, MapCamera camera) {
+    final viewport = Offset.zero & camera.nonRotatedSize;
+    final product = frame.product;
+    // Reject distant cached products using four corners before projecting any
+    // contour vertices. Mercator plus camera rotation preserves these bounds.
+    if (camera.crs is Epsg3857) {
+      final middle = (product.west + product.east) / 2;
+      final shift =
+          WorldWrap.longitudeClosestTo(middle, camera.center.longitude) -
+          middle;
+      final corners = [
+        for (final lat in [product.south, product.north])
+          for (final lng in [product.west, product.east])
+            camera.latLngToScreenOffset(LatLng(lat, lng + shift)),
+      ];
+      var bounds = Rect.fromPoints(corners.first, corners.first);
+      for (final point in corners.skip(1)) {
+        bounds = bounds.expandToInclude(Rect.fromPoints(point, point));
+      }
+      final margin = frame.contours.fold<double>(
+        1,
+        (width, contour) => contour.weight > width ? contour.weight : width,
+      );
+      if (!bounds.inflate(margin + 1).overlaps(viewport)) return false;
+    }
+    for (final contour in frame.contours) {
+      final visible = viewport.inflate(contour.weight + 1);
+      for (final line in contour.lines) {
+        final points = projectLine(line, camera);
+        for (var i = 1; i < points.length; i++) {
+          if (_segmentIntersects(points[i - 1], points[i], visible)) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  static bool _segmentIntersects(Offset start, Offset end, Rect visible) {
+    var from = 0.0, to = 1.0;
+    for (final (origin, delta, minimum, maximum) in [
+      (start.dx, end.dx - start.dx, visible.left, visible.right),
+      (start.dy, end.dy - start.dy, visible.top, visible.bottom),
+    ]) {
+      if (delta == 0) {
+        if (origin < minimum || origin > maximum) return false;
+        continue;
+      }
+      final first = (minimum - origin) / delta;
+      final last = (maximum - origin) / delta;
+      final entry = first < last ? first : last;
+      final exit = first < last ? last : first;
+      if (entry > from) from = entry;
+      if (exit < to) to = exit;
+      if (from > to) return false;
+    }
+    return true;
   }
 
   @override

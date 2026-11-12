@@ -87,6 +87,45 @@ void main() {
     NiedBackgroundWorker.instance.stop();
   });
 
+  test(
+    'lagging reconnect metadata cannot rewind an accepted live frame',
+    () async {
+      final transport = CapturedNiedTransport();
+      addTearDown(transport.stop);
+      await transport.start();
+      transport.elapsed = const Duration(seconds: 2);
+      transport.latest = CapturedNiedTransport.first.add(
+        const Duration(seconds: 2),
+      );
+      await transport.monitor.tickForTest();
+      final accepted = transport.monitor.dataFrameTime.value;
+      expect(
+        accepted,
+        CapturedNiedTransport.first.add(const Duration(seconds: 2)),
+      );
+
+      transport.elapsed = const Duration(seconds: 5);
+      transport.latest = CapturedNiedTransport.first.add(
+        const Duration(seconds: 1),
+      );
+      transport.gifRequests.clear();
+      await transport.monitor.tickForTest();
+      expect(transport.gifRequests, isEmpty);
+      expect(transport.monitor.dataFrameTime.value, accepted);
+
+      transport.elapsed = const Duration(seconds: 8);
+      transport.latest = accepted!;
+      await transport.monitor.tickForTest();
+      expect(transport.gifRequests, isEmpty);
+      expect(transport.monitor.dataFrameTime.value, accepted);
+
+      transport.elapsed = const Duration(seconds: 11);
+      transport.latest = accepted.add(const Duration(seconds: 1));
+      await transport.monitor.tickForTest();
+      expect(transport.monitor.dataFrameTime.value, transport.latest);
+    },
+  );
+
   test('startup requests source time before original GIF data', () async {
     final transport = CapturedNiedTransport();
     addTearDown(transport.stop);

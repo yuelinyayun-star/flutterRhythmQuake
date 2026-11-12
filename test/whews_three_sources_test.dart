@@ -1,3 +1,4 @@
+import 'package:flutterrhythmquake/services/whews_authorization_policy.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -25,6 +26,7 @@ Map<String, dynamic> fixture(String name) =>
         as Map<String, dynamic>;
 
 void main() {
+  setUp(() => WhewsAuthorizationPolicy.storeOverride = MemoryConnectionRetryStore());
   TestWidgetsFlutterBinding.ensureInitialized();
   final funvisis = fixture('funvisis_documented_20261008.json');
   final cwa = fixture('cwa_tsunami_documented_20261008.json');

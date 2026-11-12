@@ -1,0 +1,816 @@
+{
+  "name": "钓鱼岛及其附属岛屿",
+  "officialBaselines": {
+    "url": "https://www.fmprc.gov.cn/web/wjb_673085/zzjg_673183/bjhysws_674671/bhsmgb/201209/t20120910_320427.shtml",
+    "sha256": "72f24d85b3c7f2bbad03e92f48acc91da86939ca6e26650905e52be8534f7663",
+    "closedGroups": 2,
+    "uniqueBasepoints": 17
+  },
+  "officialIslandCoordinates": {
+    "url": "https://www.fmprc.gov.cn/diaoyudao/chn/zrhj/201510/t20151009_8520998.htm",
+    "sha256": "b19e38d9f78bde8975c72007b2e024ba85f05dbbba67570a060db29bd1ce6f1b",
+    "count": 71
+  },
+  "officialIslandNames": {
+    "url": "https://www.fmprc.gov.cn/diaoyudao/chn/zrhj/201510/t20151009_8520992.htm",
+    "sha256": "b385225efafd24a82ac83d1880d303512e077bf0356fda1c2408d66f14fd31fd"
+  },
+  "territorialRule": {
+    "url": "https://www.mee.gov.cn/ywgz/fgbz/fl/202303/t20230314_1019569.shtml",
+    "sha256": "dbc32adc7d9283059afb3592912560e33c0ccd69f2090fff1f7c2243e5fc05a4",
+    "nauticalMiles": 12,
+    "metres": 22224
+  },
+  "envelopeMeaning": "Computed WGS84 12-nautical-mile envelope from official baselines; NOT an officially published territorial-sea vector dataset",
+  "approximation": {
+    "baselineSampleMaximumMetres": 200,
+    "discAzimuthStepDegrees": 1,
+    "geodesicModel": "WGS84 ellipsoid, pyproj.Geod",
+    "expectedChordAndSamplingDeficitMetresUnder": 2
+  },
+  "shorelineMeaning": "Existing unchanged app vector shoreline; official island reference coordinates are not used to fabricate island outlines",
+  "originalSourcesUnchanged": true,
+  "ambiguousBasemapIslandsUseOfficialCollectiveName": [
+    {
+      "displayName": "钓鱼岛及其附属岛屿",
+      "reason": "No unique main-island coordinate inside this existing basemap polygon; no specific island name guessed",
+      "point": [
+        123.55636531717316,
+        25.721227282183236
+      ]
+    },
+    {
+      "displayName": "钓鱼岛及其附属岛屿",
+      "reason": "No unique main-island coordinate inside this existing basemap polygon; no specific island name guessed",
+      "point": [
+        123.54318768922144,
+        25.723008180767252
+      ]
+    },
+    {
+      "displayName": "钓鱼岛及其附属岛屿",
+      "reason": "No unique main-island coordinate inside this existing basemap polygon; no specific island name guessed",
+      "point": [
+        123.54415338537589,
+        25.724011503913175
+      ]
+    },
+    {
+      "displayName": "钓鱼岛及其附属岛屿",
+      "reason": "No unique main-island coordinate inside this existing basemap polygon; no specific island name guessed",
+      "point": [
+        123.46152733718483,
+        25.734721978495905
+      ]
+    },
+    {
+      "displayName": "钓鱼岛及其附属岛屿",
+      "reason": "No unique main-island coordinate inside this existing basemap polygon; no specific island name guessed",
+      "point": [
+        123.5412760947836,
+        25.779119027703004
+      ]
+    },
+    {
+      "displayName": "钓鱼岛及其附属岛屿",
+      "reason": "No unique main-island coordinate inside this existing basemap polygon; no specific island name guessed",
+      "point": [
+        123.53982351765228,
+        25.779244443096243
+      ]
+    },
+    {
+      "displayName": "钓鱼岛及其附属岛屿",
+      "reason": "No unique main-island coordinate inside this existing basemap polygon; no specific island name guessed",
+      "point": [
+        124.5563195426983,
+        25.922017326761107
+      ]
+    },
+    {
+      "displayName": "钓鱼岛及其附属岛屿",
+      "reason": "No unique main-island coordinate inside this existing basemap polygon; no specific island name guessed",
+      "point": [
+        124.55962248751811,
+        25.92339689608675
+      ]
+    },
+    {
+      "displayName": "钓鱼岛及其附属岛屿",
+      "reason": "No unique main-island coordinate inside this existing basemap polygon; no specific island name guessed",
+      "point": [
+        124.55906814712877,
+        25.923748059187826
+      ]
+    },
+    {
+      "displayName": "钓鱼岛及其附属岛屿",
+      "reason": "No unique main-island coordinate inside this existing basemap polygon; no specific island name guessed",
+      "point": [
+        124.55987656019656,
+        25.92397380689566
+      ]
+    },
+    {
+      "displayName": "钓鱼岛及其附属岛屿",
+      "reason": "No unique main-island coordinate inside this existing basemap polygon; no specific island name guessed",
+      "point": [
+        124.55898345623596,
+        25.92419955460349
+      ]
+    }
+  ],
+  "points": [
+    {
+      "name": "钓鱼岛",
+      "lat": 25.743333333333332,
+      "lon": 123.47333333333333,
+      "publishedCoordinate": "北纬25°44.6′东经123°28.4′"
+    },
+    {
+      "name": "龙头鱼岛",
+      "lat": 25.75,
+      "lon": 123.48666666666666,
+      "publishedCoordinate": "北纬25°45′东经123°29.2′"
+    },
+    {
+      "name": "鲳鱼岛",
+      "lat": 25.733333333333334,
+      "lon": 123.46,
+      "publishedCoordinate": "北纬25°44.0′东经123°27.6′"
+    },
+    {
+      "name": "大黄鱼岛",
+      "lat": 25.74,
+      "lon": 123.47666666666667,
+      "publishedCoordinate": "北纬25°44.4′东经123°28.6′"
+    },
+    {
+      "name": "小黄鱼岛",
+      "lat": 25.74,
+      "lon": 123.48333333333333,
+      "publishedCoordinate": "北纬25°44.4′东经123°29.0′"
+    },
+    {
+      "name": "金钱鱼岛",
+      "lat": 25.74,
+      "lon": 123.48833333333333,
+      "publishedCoordinate": "北纬25°44.4′东经123°29.3′"
+    },
+    {
+      "name": "金钱鱼西岛",
+      "lat": 25.74,
+      "lon": 123.48833333333333,
+      "publishedCoordinate": "北纬25°44.4′东经123°29.3′"
+    },
+    {
+      "name": "梅童鱼岛",
+      "lat": 25.74,
+      "lon": 123.48833333333333,
+      "publishedCoordinate": "北纬25°44.4′东经123°29.3′"
+    },
+    {
+      "name": "梅童鱼东岛",
+      "lat": 25.74,
+      "lon": 123.48833333333333,
+      "publishedCoordinate": "北纬25°44.4′东经123°29.3′"
+    },
+    {
+      "name": "梅童鱼西岛",
+      "lat": 25.74,
+      "lon": 123.48833333333333,
+      "publishedCoordinate": "北纬25°44.4′东经123°29.3′"
+    },
+    {
+      "name": "龙王鲷岛",
+      "lat": 25.741666666666667,
+      "lon": 123.49,
+      "publishedCoordinate": "北纬25°44.5′东经123°29.4′"
+    },
+    {
+      "name": "龙王鲷西岛",
+      "lat": 25.741666666666667,
+      "lon": 123.49,
+      "publishedCoordinate": "北纬25°44.5′东经123°29.4′"
+    },
+    {
+      "name": "龙王鲷东岛",
+      "lat": 25.74,
+      "lon": 123.49,
+      "publishedCoordinate": "北纬25°44.4′东经123°29.4′"
+    },
+    {
+      "name": "龙王鲷南岛",
+      "lat": 25.74,
+      "lon": 123.49,
+      "publishedCoordinate": "北纬25°44.4′东经123°29.4′"
+    },
+    {
+      "name": "黄姑鱼岛",
+      "lat": 25.741666666666667,
+      "lon": 123.49166666666666,
+      "publishedCoordinate": "北纬25°44.5′东经123°29.5′"
+    },
+    {
+      "name": "黄尾屿",
+      "lat": 25.923333333333332,
+      "lon": 123.68166666666667,
+      "publishedCoordinate": "北纬25°55.4′东经123°40.9′"
+    },
+    {
+      "name": "海豚岛",
+      "lat": 25.93,
+      "lon": 123.67833333333333,
+      "publishedCoordinate": "北纬25°55.8′东经123°40.7′"
+    },
+    {
+      "name": "大珠岛",
+      "lat": 25.926666666666666,
+      "lon": 123.67833333333333,
+      "publishedCoordinate": "北纬25°55.6′东经123°40.7′"
+    },
+    {
+      "name": "小珠岛",
+      "lat": 25.926666666666666,
+      "lon": 123.67833333333333,
+      "publishedCoordinate": "北纬25°55.6′东经123°40.7′"
+    },
+    {
+      "name": "上虎牙岛",
+      "lat": 25.928333333333335,
+      "lon": 123.68333333333334,
+      "publishedCoordinate": "北纬25°55.7′东经123°41.0′"
+    },
+    {
+      "name": "下虎牙岛",
+      "lat": 25.93,
+      "lon": 123.685,
+      "publishedCoordinate": "北纬25°55.8′东经123°41.1′"
+    },
+    {
+      "name": "西牛角岛",
+      "lat": 25.926666666666666,
+      "lon": 123.685,
+      "publishedCoordinate": "北纬25°55.6′东经123°41.1′"
+    },
+    {
+      "name": "东牛角岛",
+      "lat": 25.926666666666666,
+      "lon": 123.685,
+      "publishedCoordinate": "北纬25°55.6′东经123°41.1′"
+    },
+    {
+      "name": "黄牛岛",
+      "lat": 25.926666666666666,
+      "lon": 123.685,
+      "publishedCoordinate": "北纬25°55.6′东经123°41.1′"
+    },
+    {
+      "name": "牛尾岛",
+      "lat": 25.926666666666666,
+      "lon": 123.68666666666667,
+      "publishedCoordinate": "北纬25°55.6′东经123°41.2′"
+    },
+    {
+      "name": "牛蹄岛",
+      "lat": 25.926666666666666,
+      "lon": 123.68666666666667,
+      "publishedCoordinate": "北纬25°55.6′东经123°41.2′"
+    },
+    {
+      "name": "小龙岛",
+      "lat": 25.925,
+      "lon": 123.67666666666666,
+      "publishedCoordinate": "北纬25°55.5′东经123°40.6′"
+    },
+    {
+      "name": "大雁岛",
+      "lat": 25.925,
+      "lon": 123.67666666666666,
+      "publishedCoordinate": "北纬25°55.5′东经123°40.6′"
+    },
+    {
+      "name": "燕子岛",
+      "lat": 25.925,
+      "lon": 123.675,
+      "publishedCoordinate": "北纬25°55.5′东经123°40.5′"
+    },
+    {
+      "name": "刺猬岛",
+      "lat": 25.923333333333332,
+      "lon": 123.67666666666666,
+      "publishedCoordinate": "北纬25°55.4′东经123°40.6′"
+    },
+    {
+      "name": "卧蚕岛",
+      "lat": 25.921666666666667,
+      "lon": 123.67666666666666,
+      "publishedCoordinate": "北纬25°55.3′东经123°40.6′"
+    },
+    {
+      "name": "大金龟子岛",
+      "lat": 25.921666666666667,
+      "lon": 123.67833333333333,
+      "publishedCoordinate": "北纬25°55.3′东经123°40.7′"
+    },
+    {
+      "name": "小金龟子岛",
+      "lat": 25.92,
+      "lon": 123.67833333333333,
+      "publishedCoordinate": "北纬25°55.2′东经123°40.7′"
+    },
+    {
+      "name": "海龟岛",
+      "lat": 25.921666666666667,
+      "lon": 123.69,
+      "publishedCoordinate": "北纬25°55.3′东经123°41.4′"
+    },
+    {
+      "name": "海星岛",
+      "lat": 25.926666666666666,
+      "lon": 123.68833333333333,
+      "publishedCoordinate": "北纬25°55.6′东经123°41.3′"
+    },
+    {
+      "name": "海贝岛",
+      "lat": 25.92,
+      "lon": 123.68666666666667,
+      "publishedCoordinate": "北纬25°55.2′东经123°41.2′"
+    },
+    {
+      "name": "赤尾屿",
+      "lat": 25.921666666666667,
+      "lon": 124.55833333333334,
+      "publishedCoordinate": "北纬25°55.3′东经124°33.5′"
+    },
+    {
+      "name": "赤背北岛",
+      "lat": 25.925,
+      "lon": 124.55833333333334,
+      "publishedCoordinate": "北纬25°55.5′东经124°33.5′"
+    },
+    {
+      "name": "赤背东岛",
+      "lat": 25.925,
+      "lon": 124.56166666666667,
+      "publishedCoordinate": "北纬25°55.5′东经124°33.7′"
+    },
+    {
+      "name": "赤背西岛",
+      "lat": 25.923333333333332,
+      "lon": 124.55833333333334,
+      "publishedCoordinate": "北纬25°55.4′东经124°33.5′"
+    },
+    {
+      "name": "赤背南岛",
+      "lat": 25.923333333333332,
+      "lon": 124.56,
+      "publishedCoordinate": "北纬25°55.4′东经124°33.6′"
+    },
+    {
+      "name": "小赤尾岛",
+      "lat": 25.921666666666667,
+      "lon": 124.555,
+      "publishedCoordinate": "北纬25°55.3′东经124°33.3′"
+    },
+    {
+      "name": "赤头岛",
+      "lat": 25.921666666666667,
+      "lon": 124.55666666666667,
+      "publishedCoordinate": "北纬25°55.3′东经124°33.4′"
+    },
+    {
+      "name": "赤冠岛",
+      "lat": 25.921666666666667,
+      "lon": 124.55666666666667,
+      "publishedCoordinate": "北纬25°55.3′东经124°33.4′"
+    },
+    {
+      "name": "赤鼻岛",
+      "lat": 25.921666666666667,
+      "lon": 124.55666666666667,
+      "publishedCoordinate": "北纬25°55.3′东经124°33.4′"
+    },
+    {
+      "name": "赤嘴岛",
+      "lat": 25.921666666666667,
+      "lon": 124.555,
+      "publishedCoordinate": "北纬25°55.3′东经124°33.3′"
+    },
+    {
+      "name": "望赤岛",
+      "lat": 25.92,
+      "lon": 124.55333333333333,
+      "publishedCoordinate": "北纬25°55.2′东经124°33.2′"
+    },
+    {
+      "name": "北小岛",
+      "lat": 25.73,
+      "lon": 123.54166666666667,
+      "publishedCoordinate": "北纬25°43.8′东经123°32.5′"
+    },
+    {
+      "name": "鸟巢岛",
+      "lat": 25.731666666666666,
+      "lon": 123.54166666666667,
+      "publishedCoordinate": "北纬25°43.9′东经123°32.5′"
+    },
+    {
+      "name": "鸟卵岛",
+      "lat": 25.731666666666666,
+      "lon": 123.54166666666667,
+      "publishedCoordinate": "北纬25°43.9′东经123°32.5′"
+    },
+    {
+      "name": "小鸟岛",
+      "lat": 25.72833333333333,
+      "lon": 123.545,
+      "publishedCoordinate": "北纬25°43.7′东经123°32.7′"
+    },
+    {
+      "name": "南小岛",
+      "lat": 25.723333333333333,
+      "lon": 123.55,
+      "publishedCoordinate": "北纬25°43.4′东经123°33′"
+    },
+    {
+      "name": "龙门北岛",
+      "lat": 25.725,
+      "lon": 123.545,
+      "publishedCoordinate": "北纬25°43.5′东经123°32.7′"
+    },
+    {
+      "name": "龙门岛",
+      "lat": 25.725,
+      "lon": 123.54333333333334,
+      "publishedCoordinate": "北纬25°43.5′东经123°32.6′"
+    },
+    {
+      "name": "龙门南岛",
+      "lat": 25.723333333333333,
+      "lon": 123.545,
+      "publishedCoordinate": "北纬25°43.4′东经123°32.7′"
+    },
+    {
+      "name": "卧龙岛",
+      "lat": 25.723333333333333,
+      "lon": 123.54333333333334,
+      "publishedCoordinate": "北纬25°43.4′东经123°32.6′"
+    },
+    {
+      "name": "卧龙西岛",
+      "lat": 25.723333333333333,
+      "lon": 123.54333333333334,
+      "publishedCoordinate": "北纬25°43.4′东经123°32.6′"
+    },
+    {
+      "name": "飞龙北岛",
+      "lat": 25.723333333333333,
+      "lon": 123.55666666666667,
+      "publishedCoordinate": "北纬25°43.4′东经123°33.4′"
+    },
+    {
+      "name": "飞龙岛",
+      "lat": 25.721666666666668,
+      "lon": 123.55666666666667,
+      "publishedCoordinate": "北纬25°43.3′东经123°33.4′"
+    },
+    {
+      "name": "龙珠岛",
+      "lat": 25.721666666666668,
+      "lon": 123.555,
+      "publishedCoordinate": "北纬25°43.3′东经123°33.3′"
+    },
+    {
+      "name": "飞龙南岛",
+      "lat": 25.721666666666668,
+      "lon": 123.55666666666667,
+      "publishedCoordinate": "北纬25°43.3′东经123°33.4′"
+    },
+    {
+      "name": "长龙岛",
+      "lat": 25.72,
+      "lon": 123.55666666666667,
+      "publishedCoordinate": "北纬25°43.2′东经123°33.4′"
+    },
+    {
+      "name": "金龙岛",
+      "lat": 25.721666666666668,
+      "lon": 123.555,
+      "publishedCoordinate": "北纬25°43.3′东经123°33.3′"
+    },
+    {
+      "name": "北屿",
+      "lat": 25.781666666666666,
+      "lon": 123.54333333333334,
+      "publishedCoordinate": "北纬25°46.9′东经123°32.6′"
+    },
+    {
+      "name": "北屿仔岛",
+      "lat": 25.78,
+      "lon": 123.54333333333334,
+      "publishedCoordinate": "北纬25°46.8′东经123°32.6′"
+    },
+    {
+      "name": "小元宝岛",
+      "lat": 25.78,
+      "lon": 123.54333333333334,
+      "publishedCoordinate": "北纬25°46.8′东经123°32.6′"
+    },
+    {
+      "name": "飞云岛",
+      "lat": 25.78,
+      "lon": 123.54,
+      "publishedCoordinate": "北纬25°46.8′东经123°32.4′"
+    },
+    {
+      "name": "元宝岛",
+      "lat": 25.78,
+      "lon": 123.54166666666667,
+      "publishedCoordinate": "北纬25°46.8′东经123°32.5′"
+    },
+    {
+      "name": "南屿",
+      "lat": 25.755,
+      "lon": 123.56666666666666,
+      "publishedCoordinate": "北纬25°45.3′东经123°34′"
+    },
+    {
+      "name": "飞屿",
+      "lat": 25.735,
+      "lon": 123.50666666666666,
+      "publishedCoordinate": "北纬25°44.1′东经123°30.4′"
+    },
+    {
+      "name": "飞仔岛",
+      "lat": 25.735,
+      "lon": 123.50666666666666,
+      "publishedCoordinate": "北纬25°44.1′东经123°30.4′"
+    }
+  ],
+  "regions": [
+    {
+      "displayName": "钓鱼岛及其附属岛屿",
+      "zoneKind": "islandLand",
+      "labelPoint": [
+        123.55636531717316,
+        25.721227282183236
+      ]
+    },
+    {
+      "displayName": "钓鱼岛及其附属岛屿",
+      "zoneKind": "islandLand",
+      "labelPoint": [
+        123.54318768922144,
+        25.723008180767252
+      ]
+    },
+    {
+      "displayName": "南小岛",
+      "zoneKind": "islandLand",
+      "labelPoint": [
+        123.5498183261999,
+        25.7230332638459
+      ]
+    },
+    {
+      "displayName": "钓鱼岛及其附属岛屿",
+      "zoneKind": "islandLand",
+      "labelPoint": [
+        123.54415338537589,
+        25.724011503913175
+      ]
+    },
+    {
+      "displayName": "北小岛",
+      "zoneKind": "islandLand",
+      "labelPoint": [
+        123.54177087234723,
+        25.729981276631417
+      ]
+    },
+    {
+      "displayName": "钓鱼岛及其附属岛屿",
+      "zoneKind": "islandLand",
+      "labelPoint": [
+        123.46152733718483,
+        25.734721978495905
+      ]
+    },
+    {
+      "displayName": "钓鱼岛",
+      "zoneKind": "islandLand",
+      "labelPoint": [
+        123.47657225267227,
+        25.743174976000304
+      ]
+    },
+    {
+      "displayName": "南屿",
+      "zoneKind": "islandLand",
+      "labelPoint": [
+        123.56700672785547,
+        25.7550141891222
+      ]
+    },
+    {
+      "displayName": "钓鱼岛及其附属岛屿",
+      "zoneKind": "islandLand",
+      "labelPoint": [
+        123.5412760947836,
+        25.779119027703004
+      ]
+    },
+    {
+      "displayName": "钓鱼岛及其附属岛屿",
+      "zoneKind": "islandLand",
+      "labelPoint": [
+        123.53982351765228,
+        25.779244443096243
+      ]
+    },
+    {
+      "displayName": "北屿",
+      "zoneKind": "islandLand",
+      "labelPoint": [
+        123.54410499058,
+        25.781150757073497
+      ]
+    },
+    {
+      "displayName": "钓鱼岛及其附属岛屿",
+      "zoneKind": "islandLand",
+      "labelPoint": [
+        124.5563195426983,
+        25.922017326761107
+      ]
+    },
+    {
+      "displayName": "赤尾屿",
+      "zoneKind": "islandLand",
+      "labelPoint": [
+        124.559057881566,
+        25.922544071412716
+      ]
+    },
+    {
+      "displayName": "钓鱼岛及其附属岛屿",
+      "zoneKind": "islandLand",
+      "labelPoint": [
+        124.55962248751811,
+        25.92339689608675
+      ]
+    },
+    {
+      "displayName": "钓鱼岛及其附属岛屿",
+      "zoneKind": "islandLand",
+      "labelPoint": [
+        124.55906814712877,
+        25.923748059187826
+      ]
+    },
+    {
+      "displayName": "黄尾屿",
+      "zoneKind": "islandLand",
+      "labelPoint": [
+        123.68192534015179,
+        25.923998889974307
+      ]
+    },
+    {
+      "displayName": "钓鱼岛及其附属岛屿",
+      "zoneKind": "islandLand",
+      "labelPoint": [
+        124.55987656019656,
+        25.92397380689566
+      ]
+    },
+    {
+      "displayName": "钓鱼岛及其附属岛屿",
+      "zoneKind": "islandLand",
+      "labelPoint": [
+        124.55898345623596,
+        25.92419955460349
+      ]
+    },
+    {
+      "displayName": "钓鱼岛及其附属岛屿",
+      "zoneKind": "internalWaters",
+      "group": "diaoyu_huangwei",
+      "labelPoint": [
+        123.61346811062381,
+        25.85060580185003
+      ]
+    },
+    {
+      "displayName": "钓鱼岛及其附属岛屿",
+      "zoneKind": "territorialSea",
+      "group": "diaoyu_huangwei",
+      "labelPoint": [
+        123.40461454652896,
+        25.82536779009989
+      ]
+    },
+    {
+      "displayName": "钓鱼岛及其附属岛屿",
+      "zoneKind": "internalWaters",
+      "group": "chiwei",
+      "labelPoint": [
+        124.55655272487455,
+        25.922544071412716
+      ]
+    },
+    {
+      "displayName": "钓鱼岛及其附属岛屿",
+      "zoneKind": "territorialSea",
+      "group": "chiwei",
+      "labelPoint": [
+        124.44380389892325,
+        25.922746897384158
+      ]
+    }
+  ],
+  "baselineRings": [
+    [
+      [
+        123.45833333333333,
+        25.735
+      ],
+      [
+        123.45666666666666,
+        25.736666666666668
+      ],
+      [
+        123.45666666666666,
+        25.74
+      ],
+      [
+        123.45833333333333,
+        25.745
+      ],
+      [
+        123.67833333333333,
+        25.93
+      ],
+      [
+        123.685,
+        25.93
+      ],
+      [
+        123.68833333333333,
+        25.926666666666666
+      ],
+      [
+        123.69,
+        25.923333333333332
+      ],
+      [
+        123.69,
+        25.921666666666667
+      ],
+      [
+        123.55666666666667,
+        25.72
+      ],
+      [
+        123.55333333333333,
+        25.72
+      ],
+      [
+        123.46,
+        25.733333333333334
+      ],
+      [
+        123.45833333333333,
+        25.735
+      ]
+    ],
+    [
+      [
+        124.56166666666667,
+        25.921666666666667
+      ],
+      [
+        124.55333333333333,
+        25.92
+      ],
+      [
+        124.555,
+        25.921666666666667
+      ],
+      [
+        124.55833333333334,
+        25.925
+      ],
+      [
+        124.56166666666667,
+        25.925
+      ],
+      [
+        124.56166666666667,
+        25.921666666666667
+      ]
+    ]
+  ],
+  "outputSha256": "c80895e026190d7da87b6a456e9320e88a46cce188fde0ce39b61584437961f9"
+}

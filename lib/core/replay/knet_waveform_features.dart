@@ -1,6 +1,10 @@
 import 'dart:math' as math;
 
 import 'knet_waveform_archive.dart';
+import 'knet_duration_proxy.dart';
+import 'knet_second_metrics.dart';
+import 'knet_align.dart';
+import 'knet_batch.dart';
 
 const knetWaveformFeatureVersion = 'knet_waveform_features_v1';
 
@@ -67,6 +71,69 @@ class KnetWaveformFeatureExtractor {
       'pgv_integrated_without_instrument_response_correction',
       'jma_intensity_unfiltered_duration_proxy',
     };
+    // One FFI call per station: native aligns the source channels and computes
+    // all seconds together. Retain the original Dart pipeline as a fallback.
+    const axes = ['NS', 'EW', 'UD'];
+    for (final axis in axes) {
+      if (!byComponent.containsKey(axis)) {
+        qualityFlags.add('missing_${axis.toLowerCase()}_component');
+      }
+    }
+    final native = nativeKnetBatchFeatures(
+      components: [for (final axis in axes) byComponent[axis]?.accelerationGal],
+      starts: [
+        for (final axis in axes)
+          byComponent[axis] == null
+              ? 0
+              : _durationToSamples(
+                  sampleStart.difference(byComponent[axis]!.sampleStartTimeUtc),
+                  samplingHz,
+                ),
+      ],
+      offsetsGal: [for (final axis in axes) byComponent[axis]?.offsetGal ?? 0],
+      sampleCount: sampleCount,
+      samplesPerSecond: samplesPerSecond,
+      samplingHz: samplingHz,
+      durationSeconds: config.jmaDurationSeconds,
+      baselineSeconds: config.energyBaselineSeconds,
+      epsilon: config.epsilon,
+    );
+    if (native != null) {
+      return KnetWaveformFeatureSeries(
+        stationCode: first.stationCode,
+        network: first.network,
+        sensorRole: first.sensorRole,
+        stationLatitude: first.stationLatitude,
+        stationLongitude: first.stationLongitude,
+        sampleStartTimeUtc: sampleStart,
+        samplingHz: samplingHz,
+        sourcePaths:
+            byComponent.values
+                .map((channel) => channel.sourcePath)
+                .whereType<String>()
+                .toSet()
+                .toList(growable: false)
+              ..sort(),
+        availableComponents: byComponent.keys.toList(growable: false)..sort(),
+        seconds: [
+          for (final (index, feature) in native.indexed)
+            KnetWaveformSecondFeature(
+              secondIndex: index,
+              startTimeUtc: sampleStart.add(Duration(seconds: index)),
+              pgaGal: feature.pga,
+              maxHorizontalAccelerationGal: feature.horizontalPga,
+              pgvCms: feature.pgv,
+              rmsAccelerationGal: feature.rms,
+              energyRatioToPreviousBaseline: feature.energyRatio,
+              jmaIntensityApprox: feature.intensityProxy,
+              qualityFlags: const [],
+            ),
+        ],
+        qualityFlags: qualityFlags.toList(growable: false)..sort(),
+        processingVersion: knetWaveformFeatureVersion,
+      );
+    }
+
     for (final component in const ['NS', 'EW', 'UD']) {
       final channel = byComponent[component];
       if (channel == null) {
@@ -77,11 +144,19 @@ class KnetWaveformFeatureExtractor {
         sampleStart.difference(channel.sampleStartTimeUtc),
         samplingHz,
       );
-      componentValues[component] = List<double>.generate(
-        sampleCount,
-        (index) => channel.accelerationGal[index + offset] - channel.offsetGal,
-        growable: false,
-      );
+      componentValues[component] =
+          nativeAlignKnetChannel(
+            channel.accelerationGal,
+            offset,
+            sampleCount,
+            channel.offsetGal,
+          ) ??
+          List<double>.generate(
+            sampleCount,
+            (index) =>
+                channel.accelerationGal[index + offset] - channel.offsetGal,
+            growable: false,
+          );
     }
 
     final secondCount = sampleCount ~/ samplesPerSecond;
@@ -101,32 +176,54 @@ class KnetWaveformFeatureExtractor {
       double sumSquare = 0;
       double maxHorizontalGal = 0;
 
-      for (var sample = startSample; sample < endSample; sample++) {
-        final ns = componentValues['NS']?[sample] ?? 0;
-        final ew = componentValues['EW']?[sample] ?? 0;
-        final ud = componentValues['UD']?[sample] ?? 0;
-        final horizontalGal = math.sqrt(ns * ns + ew * ew);
-        final vectorGal = math.sqrt(horizontalGal * horizontalGal + ud * ud);
-        vectorAcceleration.add(vectorGal);
-        pgaGal = math.max(pgaGal, vectorGal);
-        maxHorizontalGal = math.max(maxHorizontalGal, horizontalGal);
-        sumSquare += vectorGal * vectorGal;
-
-        for (final entry in componentValues.entries) {
-          velocities[entry.key] =
-              velocities[entry.key]! + entry.value[sample] * dt;
+      final nativeSecond = nativeKnetSecondMetrics(
+        componentValues['NS'],
+        componentValues['EW'],
+        componentValues['UD'],
+        startSample,
+        samplesPerSecond,
+        dt,
+        [velocities['NS'] ?? 0, velocities['EW'] ?? 0, velocities['UD'] ?? 0],
+      );
+      if (nativeSecond != null) {
+        vectorAcceleration.addAll(nativeSecond.vectors);
+        pgaGal = nativeSecond.pga;
+        pgvCms = nativeSecond.pgv;
+        sumSquare = nativeSecond.sumSquare;
+        maxHorizontalGal = nativeSecond.horizontalPga;
+        for (final (i, key) in ['NS', 'EW', 'UD'].indexed) {
+          if (velocities.containsKey(key)) {
+            velocities[key] = nativeSecond.finalVelocities[i];
+          }
         }
-        final nsVelocity = velocities['NS'] ?? 0;
-        final ewVelocity = velocities['EW'] ?? 0;
-        final udVelocity = velocities['UD'] ?? 0;
-        pgvCms = math.max(
-          pgvCms,
-          math.sqrt(
-            nsVelocity * nsVelocity +
-                ewVelocity * ewVelocity +
-                udVelocity * udVelocity,
-          ),
-        );
+      } else {
+        for (var sample = startSample; sample < endSample; sample++) {
+          final ns = componentValues['NS']?[sample] ?? 0;
+          final ew = componentValues['EW']?[sample] ?? 0;
+          final ud = componentValues['UD']?[sample] ?? 0;
+          final horizontalGal = math.sqrt(ns * ns + ew * ew);
+          final vectorGal = math.sqrt(horizontalGal * horizontalGal + ud * ud);
+          vectorAcceleration.add(vectorGal);
+          pgaGal = math.max(pgaGal, vectorGal);
+          maxHorizontalGal = math.max(maxHorizontalGal, horizontalGal);
+          sumSquare += vectorGal * vectorGal;
+
+          for (final entry in componentValues.entries) {
+            velocities[entry.key] =
+                velocities[entry.key]! + entry.value[sample] * dt;
+          }
+          final nsVelocity = velocities['NS'] ?? 0;
+          final ewVelocity = velocities['EW'] ?? 0;
+          final udVelocity = velocities['UD'] ?? 0;
+          pgvCms = math.max(
+            pgvCms,
+            math.sqrt(
+              nsVelocity * nsVelocity +
+                  ewVelocity * ewVelocity +
+                  udVelocity * udVelocity,
+            ),
+          );
+        }
       }
 
       final rmsAccelerationGal = math.sqrt(sumSquare / samplesPerSecond);
@@ -330,6 +427,12 @@ double? _durationProxyIntensity(
 ) {
   if (vectorAccelerationGal.isEmpty || samplingHz <= 0) return null;
   final durationSamples = math.max(1, (durationSeconds * samplingHz).ceil());
+  final native = nativeKnetDurationProxy(
+    vectorAccelerationGal,
+    samplingHz,
+    durationSeconds,
+  );
+  if (native != null) return native.isNaN ? null : native;
   final sorted = vectorAccelerationGal.toList(growable: false)
     ..sort((a, b) => b.compareTo(a));
   final threshold = sorted[math.min(sorted.length - 1, durationSamples - 1)];

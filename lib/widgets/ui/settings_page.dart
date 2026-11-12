@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -20,8 +21,10 @@ import '../../services/wauth_browser_stub.dart'
 import '../../services/background_service.dart';
 import '../../services/tts_service.dart';
 import '../../services/sources/fan_service.dart';
+import '../../services/sources/fssn_service.dart';
 import '../../services/sources/whews_service.dart';
 import '../../services/sources/jian_service.dart';
+import '../../services/whews_authorization_policy.dart';
 import '../../services/sources/sasmex_service.dart';
 import 'jian_auth_settings.dart';
 import 'settings_controls.dart';
@@ -44,8 +47,11 @@ import 'app_page_background.dart';
 import 'android_background_power_settings.dart';
 import 'debug_page.dart';
 import 'manual_location_dialog.dart';
+import 'system_voice_prompt.dart';
 import 'obs_automation_presets_page.dart';
 import 'ui_runtime_flags.dart';
+import 'ui_scale.dart';
+import 'unified_carousel_settings.dart';
 import 'package:flutter/foundation.dart';
 import 'package:file_picker/file_picker.dart';
 
@@ -74,6 +80,7 @@ class _SettingsPageState extends State<SettingsPage>
   _SettingsCategory _selectedCategory = _SettingsCategory.data;
   String _settingsQuery = '';
   bool _fanEnabled = true;
+  bool _fssnEnabled = true;
   bool _whewsEnabled = false;
   bool _jianEnabled = false;
   bool _whewsNiedEnabled = false;
@@ -146,6 +153,7 @@ class _SettingsPageState extends State<SettingsPage>
   bool _weatherLocalOnly = true;
   String _weatherLocalLevel = 'county';
   bool _ttsEnabled = false;
+  bool _ttsAvailabilityBusy = false;
   bool _ttsEventEnabled = false;
   bool _ttsCountdownEnabled = false;
   bool _ttsUpdateEnabled = false;
@@ -268,8 +276,8 @@ class _SettingsPageState extends State<SettingsPage>
 
   /// HTML uses rgba(36,36,38,0.40) + blur(22px). Flutter BackdropFilter
   /// composites darker, so keep a lighter fill + milder sigma to match.
+  /// Glass is now pre-baked by _StaticGlass with SettingsControlStyle.blurSigma.
   static const Color _panelColor = SettingsControlStyle.panel;
-  static const double _panelBlurSigma = SettingsControlStyle.blurSigma;
   static const Color _fieldColor = SettingsControlStyle.field;
   static const Color _borderColor = SettingsControlStyle.border;
   static const Color _dividerColor = SettingsControlStyle.divider;
@@ -398,6 +406,14 @@ class _SettingsPageState extends State<SettingsPage>
       ],
     ),
     _SettingsCategoryInfo(
+      category: _SettingsCategory.obs,
+      title: 'OBS 录制',
+      subtitle: '自动录制、触发条件与连接',
+      icon: Icons.videocam_outlined,
+      accent: Color(0xFF62C6FF),
+      keywords: ['obs', '录制', '自动录制', '触发条件', '结束录制'],
+    ),
+    _SettingsCategoryInfo(
       category: _SettingsCategory.advanced,
       title: '高级',
       subtitle: '界面行为与开发工具',
@@ -405,6 +421,9 @@ class _SettingsPageState extends State<SettingsPage>
       accent: Color(0xFFAEB8CC),
       keywords: [
         '高级',
+        '轮播',
+        '统一 UI',
+        '卡片',
         '历史',
         '保存上限',
         '永久保存',
@@ -418,12 +437,7 @@ class _SettingsPageState extends State<SettingsPage>
         '开发',
         '背景',
         '自定义背景',
-        'obs',
-        '自动化',
-        '自动录制',
         '回放',
-        'replay buffer',
-        '预设',
       ],
     ),
   ];
@@ -496,6 +510,7 @@ class _SettingsPageState extends State<SettingsPage>
     if (!mounted) return;
     setState(() {
       _fanEnabled = prefs.getBool(_fanEnabledKey) ?? true;
+      _fssnEnabled = prefs.getBool(FssnService.enabledPreferenceKey) ?? true;
       _whewsEnabled = prefs.getBool(_whewsEnabledKey) ?? false;
       _jianEnabled = prefs.getBool(JianService.enabledPreferenceKey) ?? false;
       _whewsNiedEnabled = prefs.getBool(_whewsNiedEnabledKey) ?? false;
@@ -591,6 +606,7 @@ class _SettingsPageState extends State<SettingsPage>
           prefs.getInt(QuakeMapView.kmaIntensityHoldPreferenceKey) ?? 1;
       _hideGridOnEew = prefs.getBool(_hideGridOnEewKey) ?? false;
       _sideInfoAutoShowBeta = prefs.getBool(_sideInfoAutoShowBetaKey) ?? true;
+      UiRuntimeFlags.restoreTsunamiSidebarVisible(prefs);
       _localEewDomestic =
           prefs.getBool(UiRuntimeFlags.localEewDomesticKey) ?? true;
       _localEewForeign =
@@ -656,6 +672,10 @@ class _SettingsPageState extends State<SettingsPage>
         credentials.hasApiToken && _whewsKmaEnabled;
     QuakeMapView.fdsnStationLimitNotifier.value = _fdsnStationLimit;
     SourceManager().setSourceEnabled('FAN', _fanEnabled);
+    SourceManager().getSource<FanService>()?.setFssnDeliveryEnabled(
+      !_fssnEnabled,
+    );
+    SourceManager().setSourceEnabled(FssnService.sourceName, _fssnEnabled);
     SourceManager().getSource<WhewsService>()?.setApiToken(
       credentials.apiToken,
     );
@@ -950,8 +970,14 @@ class _SettingsPageState extends State<SettingsPage>
     required String apiToken,
     required SharedPreferences preferences,
   }) async {
+    // This method is called only by an explicit Save or successful OAuth login.
+    await WhewsAuthorizationPolicy().resumeToken(apiToken);
+    final sameToken = QuakeMapView.whewsApiTokenNotifier.value == apiToken;
     QuakeMapView.whewsApiTokenNotifier.value = apiToken;
-    SourceManager().getSource<WhewsService>()?.setApiToken(apiToken);
+    SourceManager().getSource<WhewsService>()?.setApiToken(
+      apiToken,
+      retryRejected: sameToken,
+    );
     SourceManager().setSourceEnabled(
       'WHEWS',
       preferences.getBool(_whewsEnabledKey) ?? _whewsEnabled,
@@ -964,6 +990,7 @@ class _SettingsPageState extends State<SettingsPage>
         preferences.getBool(_whewsSnetEnabledKey) ?? _whewsSnetEnabled;
     QuakeMapView.whewsKmaEnabledNotifier.value =
         preferences.getBool(_whewsKmaEnabledKey) ?? _whewsKmaEnabled;
+    if (sameToken) QuakeMapView.whewsAuthorizationSavedNotifier.value++;
   }
 
   Future<void> _disableWhewsSources() async {
@@ -1289,6 +1316,37 @@ class _SettingsPageState extends State<SettingsPage>
   Future<void> _saveWeatherLocalLevel(String level) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_weatherLocalLevelKey, level);
+  }
+
+  Future<bool> _openWindowsSpeechSettings() => launchUrl(
+    Uri.parse('ms-settings:speech'),
+    mode: LaunchMode.externalApplication,
+  );
+
+  Future<void> _changeGptSovitsEnabled(bool value) async {
+    if (_ttsAvailabilityBusy) return;
+    setState(() => _ttsAvailabilityBusy = true);
+    try {
+      if (!value &&
+          _ttsEnabled &&
+          !kIsWeb &&
+          defaultTargetPlatform == TargetPlatform.windows) {
+        final ready = await ensureSystemVoiceAvailable(
+          context,
+          check: TtsService().checkWindowsSystemVoice,
+          openSettings: _openWindowsSpeechSettings,
+        );
+        if (!mounted || !ready) return;
+      }
+      if (!mounted) return;
+      setState(() {
+        _gptSovitsEnabled = value;
+        _ttsVoices = TtsService().voices;
+      });
+      await _saveTtsConfig(gptSovitsEnabled: value);
+    } finally {
+      if (mounted) setState(() => _ttsAvailabilityBusy = false);
+    }
   }
 
   Future<void> _saveTtsConfig({
@@ -1650,43 +1708,43 @@ class _SettingsPageState extends State<SettingsPage>
             ],
           );
 
+    Widget panel = DecoratedBox(
+      decoration: BoxDecoration(
+        color: _panelColor,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _borderColor),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.28),
+            blurRadius: 32,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      // Match HTML inset top highlight without overriding panel fill.
+      child: Stack(
+        children: [
+          body,
+          const Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 1,
+            child: IgnorePointer(
+              child: ColoredBox(color: Color.fromRGBO(255, 255, 255, 0.08)),
+            ),
+          ),
+        ],
+      ),
+    );
+    // The backdrop behind the panel is AppPageBackground (static image at
+    // fixed opacity), so blur(backdrop) is a function of position only: read
+    // it from a pre-baked blurred layer instead of a live BackdropFilter,
+    // which otherwise re-blurs nearly the full screen every frame while the
+    // settings list scrolls.
     return ClipRRect(
       borderRadius: BorderRadius.circular(14),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(
-          sigmaX: _panelBlurSigma,
-          sigmaY: _panelBlurSigma,
-        ),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: _panelColor,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: _borderColor),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.28),
-                blurRadius: 32,
-                offset: const Offset(0, 8),
-              ),
-            ],
-          ),
-          // Match HTML inset top highlight without overriding panel fill.
-          child: Stack(
-            children: [
-              body,
-              const Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                height: 1,
-                child: IgnorePointer(
-                  child: ColoredBox(color: Color.fromRGBO(255, 255, 255, 0.08)),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+      child: _StaticGlass(child: panel),
     );
   }
 
@@ -1906,6 +1964,9 @@ class _SettingsPageState extends State<SettingsPage>
   }
 
   Widget _buildSettingsContent() {
+    if (_settingsQuery.isEmpty && _selectedCategory == _SettingsCategory.obs) {
+      return const ObsAutomationPresetsPage(embedded: true);
+    }
     final matches = _settingsQuery.isEmpty
         ? const <_SettingsCategoryInfo>[]
         : _categories.where(_categoryMatchesQuery).toList(growable: false);
@@ -2153,6 +2214,8 @@ class _SettingsPageState extends State<SettingsPage>
             children: [
               _buildTileSelector(),
               const _SettingsDivider(),
+              _buildMapDragGlassSelector(),
+              const _SettingsDivider(),
               _buildInfoLayerSwitch(
                 title: '中国断层',
                 value: _overlayCnFault,
@@ -2262,6 +2325,8 @@ class _SettingsPageState extends State<SettingsPage>
             children: [_buildMagFilterList()],
           ),
         ];
+      case _SettingsCategory.obs:
+        return [_buildObsAutomationEntry()];
       case _SettingsCategory.advanced:
         return [
           _buildSectionPanel(
@@ -2277,9 +2342,15 @@ class _SettingsPageState extends State<SettingsPage>
             icon: Icons.visibility_outlined,
             title: '界面行为',
             children: [
+              if (!UiScale.isPhone(context)) ...[
+                const UnifiedCarouselSettings(),
+                const _SettingsDivider(),
+              ],
               _buildHideGridOnEewSwitch(),
               const _SettingsDivider(),
               _buildSideInfoAutoShowSwitch(),
+              const _SettingsDivider(),
+              _buildTsunamiSidebarSwitch(),
               const _SettingsDivider(),
               _buildLocalEewSidebarSwitch(domestic: true),
               const _SettingsDivider(),
@@ -2289,15 +2360,6 @@ class _SettingsPageState extends State<SettingsPage>
               const _SettingsDivider(),
               _buildPageBackgroundSettings(),
             ],
-          ),
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 6),
-            child: Divider(height: 1, thickness: 1, color: _dividerColor),
-          ),
-          _buildSectionPanel(
-            icon: Icons.account_tree_outlined,
-            title: '自动化',
-            children: [_buildObsAutomationEntry()],
           ),
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 6),
@@ -2346,7 +2408,7 @@ class _SettingsPageState extends State<SettingsPage>
   Widget _buildApiInterfaceSwitches() {
     final rows = [
       _buildApiSwitch(
-        title: 'Jian Project 地震预警/情报',
+        title: 'Jian Project 地震预警/情报/海啸',
         value: _jianEnabled,
         onChanged: (val) async {
           setState(() => _jianEnabled = val);
@@ -2362,6 +2424,17 @@ class _SettingsPageState extends State<SettingsPage>
           setState(() => _fanEnabled = val);
           _saveApiSourceEnabled(_fanEnabledKey, val);
           SourceManager().setSourceEnabled('FAN', val);
+          _requestForegroundConnectionReload();
+        },
+      ),
+      _buildApiSwitch(
+        title: 'FSSN 地震情报/震源机制解',
+        value: _fssnEnabled,
+        onChanged: (val) async {
+          setState(() => _fssnEnabled = val);
+          await _saveApiSourceEnabled(FssnService.enabledPreferenceKey, val);
+          SourceManager().getSource<FanService>()?.setFssnDeliveryEnabled(!val);
+          SourceManager().setSourceEnabled(FssnService.sourceName, val);
           _requestForegroundConnectionReload();
         },
       ),
@@ -2833,6 +2906,29 @@ class _SettingsPageState extends State<SettingsPage>
           setState(() => _tileKey = val);
           _saveTileKey(val);
           context.read<MapStateProvider>().setTileKey(val);
+        },
+      ),
+    );
+  }
+
+  /// Drag-time glass quality for map panels (see UiRuntimeFlags docs).
+  Widget _buildMapDragGlassSelector() {
+    final mode = UiRuntimeFlags.mapDragGlassModeNotifier.value;
+    return _buildSettingRow(
+      title: '拖拽时面板背景',
+      subtitle: '地图拖拽中的毛玻璃策略：低清/关闭可显著省电，停止拖拽后自动恢复',
+      leading: Icons.blur_on,
+      control: _buildDropdown<int>(
+        value: mode,
+        options: const [
+          _SelectOption(UiRuntimeFlags.mapDragGlassFull, '完整毛玻璃'),
+          _SelectOption(UiRuntimeFlags.mapDragGlassLowRes, '低清毛玻璃（省电）'),
+          _SelectOption(UiRuntimeFlags.mapDragGlassOff, '关闭毛玻璃（最省电）'),
+        ],
+        onChanged: (val) {
+          if (val == null) return;
+          UiRuntimeFlags.setMapDragGlassMode(val);
+          setState(() {});
         },
       ),
     );
@@ -4186,6 +4282,26 @@ class _SettingsPageState extends State<SettingsPage>
     );
   }
 
+  Widget _buildTsunamiSidebarSwitch() => _buildSettingRow(
+    title: '侧栏显示海啸',
+    subtitle: '控制右侧海啸文字和图件显示',
+    leading: Icons.waves_outlined,
+    control: Align(
+      alignment: Alignment.centerRight,
+      child: ValueListenableBuilder<bool>(
+        valueListenable: UiRuntimeFlags.tsunamiSidebarVisibleNotifier,
+        builder: (context, enabled, _) => Switch(
+          value: enabled,
+          activeThumbColor: _accentColor,
+          activeTrackColor: _accentColor.withValues(alpha: 0.38),
+          inactiveThumbColor: Colors.white70,
+          inactiveTrackColor: Colors.white24,
+          onChanged: UiRuntimeFlags.setTsunamiSidebarVisible,
+        ),
+      ),
+    ),
+  );
+
   Widget _buildSideInfoAutoShowSwitch() {
     return _buildSettingRow(
       title: '打开侧栏常驻',
@@ -4281,15 +4397,24 @@ class _SettingsPageState extends State<SettingsPage>
           leading: Icons.record_voice_over_outlined,
           control: Align(
             alignment: Alignment.centerRight,
-            child: Switch(
+            child: SystemVoiceEnableSwitch(
               value: _ttsEnabled,
-              activeThumbColor: _accentColor,
-              activeTrackColor: _accentColor.withValues(alpha: 0.38),
-              inactiveThumbColor: Colors.white70,
-              inactiveTrackColor: Colors.white24,
-              onChanged: (val) {
-                setState(() => _ttsEnabled = val);
-                _saveTtsConfig(enabled: val);
+              requiresSystemVoice:
+                  !kIsWeb &&
+                  defaultTargetPlatform == TargetPlatform.windows &&
+                  !_gptSovitsEnabled,
+              blocked: _ttsAvailabilityBusy,
+              check: TtsService().checkWindowsSystemVoice,
+              openSettings: _openWindowsSpeechSettings,
+              onBusyChanged: (busy) {
+                if (mounted) setState(() => _ttsAvailabilityBusy = busy);
+              },
+              onChanged: (val) async {
+                setState(() {
+                  _ttsEnabled = val;
+                  _ttsVoices = TtsService().voices;
+                });
+                await _saveTtsConfig(enabled: val);
               },
             ),
           ),
@@ -4308,10 +4433,7 @@ class _SettingsPageState extends State<SettingsPage>
               activeTrackColor: _accentColor.withValues(alpha: 0.38),
               inactiveThumbColor: Colors.white70,
               inactiveTrackColor: Colors.white24,
-              onChanged: (val) {
-                setState(() => _gptSovitsEnabled = val);
-                _saveTtsConfig(gptSovitsEnabled: val);
-              },
+              onChanged: _ttsAvailabilityBusy ? null : _changeGptSovitsEnabled,
             ),
           ),
         ),
@@ -4880,8 +5002,8 @@ class _SettingsPageState extends State<SettingsPage>
 
   Widget _buildObsAutomationEntry() {
     return _buildSettingRow(
-      title: 'OBS 自动化预设',
-      subtitle: '编辑触发条件与录制、回放动作',
+      title: 'OBS 自动录制',
+      subtitle: '按机构启用录制，设置震级与录制时间',
       leading: Icons.videocam_outlined,
       control: Align(
         alignment: Alignment.centerRight,
@@ -4899,7 +5021,7 @@ class _SettingsPageState extends State<SettingsPage>
               );
             },
             icon: const Icon(Icons.open_in_new, size: 16),
-            label: const Text('管理预设'),
+            label: const Text('录制设置'),
           ),
         ),
       ),
@@ -5069,7 +5191,7 @@ class _SelectOption<T> {
   const _SelectOption(this.value, this.label);
 }
 
-enum _SettingsCategory { data, map, alert, voice, filter, advanced }
+enum _SettingsCategory { data, map, alert, voice, filter, obs, advanced }
 
 class _SettingsCategoryInfo {
   final _SettingsCategory category;
@@ -5150,4 +5272,230 @@ class _SettingsDivider extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Replaces the panel's live BackdropFilter with a pre-baked blurred view of
+/// the page background. The blur result of a static backdrop only depends on
+/// position: this widget measures the panel's on-screen origin, then draws the
+/// full-screen blurred background translated so the panel shows exactly the
+/// region a live filter would sample. Zero per-frame blur passes.
+class _StaticGlass extends StatefulWidget {
+  const _StaticGlass({required this.child});
+  final Widget child;
+  @override
+  State<_StaticGlass> createState() => _StaticGlassState();
+}
+
+class _StaticGlassState extends State<_StaticGlass> {
+  final _hostKey = GlobalKey();
+  Size _screen = Size.zero;
+  Offset _origin = Offset.zero;
+  bool _measured = false;
+
+  void _scheduleMeasure() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final box = _hostKey.currentContext?.findRenderObject() as RenderBox?;
+      if (box == null || !box.attached || !box.hasSize) return;
+      final screen = MediaQuery.sizeOf(context);
+      final origin = box.localToGlobal(Offset.zero);
+      if (!_measured || screen != _screen || origin != _origin) {
+        setState(() {
+          _screen = screen;
+          _origin = origin;
+          _measured = true;
+        });
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    _scheduleMeasure();
+    return Stack(
+      key: _hostKey,
+      children: [
+        if (_measured)
+          Positioned.fill(
+            child: ClipRect(
+              child: OverflowBox(
+                alignment: Alignment.topLeft,
+                minWidth: 0,
+                maxWidth: double.infinity,
+                minHeight: 0,
+                maxHeight: double.infinity,
+                child: SizedBox(
+                  width: _screen.width,
+                  height: _screen.height,
+                  child: Transform.translate(
+                    offset: -_origin,
+                    child: const _BlurredPageBackground(),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        widget.child,
+      ],
+    );
+  }
+}
+
+/// Same painting as AppPageBackground (solid base + cover image at opacity
+/// .35), but with blur baked into the decoded image once per source.
+class _BlurredPageBackground extends StatefulWidget {
+  const _BlurredPageBackground();
+  @override
+  State<_BlurredPageBackground> createState() => _BlurredPageBackgroundState();
+}
+
+class _BlurredPageBackgroundState extends State<_BlurredPageBackground> {
+  static const _blurSigma = SettingsControlStyle.blurSigma;
+  static final Map<String, ui.Image> _cache = {};
+  static const _cacheLimit = 6;
+
+  ui.Image? _image;
+  String? _key;
+  int _generation = 0;
+  bool _baking = false;
+  String? _pendingKey;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _scheduleBake();
+  }
+
+  @override
+  void didUpdateWidget(covariant _BlurredPageBackground old) {
+    super.didUpdateWidget(old);
+    _scheduleBake();
+  }
+
+  String _sourceKey(PageBackgroundProvider pageBg) {
+    final custom =
+        !kIsWeb && pageBg.useCustom && pageBg.hasCustomImage
+        ? pageBg.customBytes
+        : null;
+    final source = custom ?? 'madoka';
+    return '${identityHashCode(source)}';
+  }
+
+  Future<Uint8List> _sourceBytes(PageBackgroundProvider pageBg) {
+    final custom =
+        !kIsWeb && pageBg.useCustom && pageBg.hasCustomImage
+        ? pageBg.customBytes
+        : null;
+    if (custom != null) return Future.value(custom);
+    return AppPageBackground.cachedBytes();
+  }
+
+  void _scheduleBake() {
+    final key = _sourceKey(context.read<PageBackgroundProvider>());
+    if (key == _key) return;
+    final cached = _cache[key];
+    if (cached != null) {
+      _generation++;
+      setState(() {
+        _image = cached;
+        _key = key;
+      });
+      return;
+    }
+    _pendingKey = key;
+    if (_baking) return;
+    _baking = true;
+    _runBake();
+  }
+
+  Future<void> _runBake() async {
+    while (mounted && _pendingKey != null) {
+      final key = _pendingKey!;
+      _pendingKey = null;
+      final generation = ++_generation;
+      try {
+        final bytes = _sourceBytes(context.read<PageBackgroundProvider>());
+        final image = await _bake(bytes);
+        if (!mounted || generation != _generation) continue;
+        if (_cache.length >= _cacheLimit) {
+          for (final stale
+              in _cache.keys.take(_cache.length - _cacheLimit + 1).toList()) {
+            _cache.remove(stale);
+          }
+        }
+        _cache[key] = image;
+        setState(() {
+          _image = image;
+          _key = key;
+        });
+      } catch (_) {
+        // Keep the previous image; panel falls back to tint-only glass.
+      }
+    }
+    _baking = false;
+  }
+
+  static Future<ui.Image> _bake(Future<Uint8List> bytesFuture) async {
+    final bytes = await bytesFuture;
+    final codec = await ui.instantiateImageCodec(
+      bytes,
+      targetWidth: 1440,
+    );
+    final frame = await codec.getNextFrame();
+    final src = frame.image;
+    try {
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(recorder);
+      canvas.drawImage(
+        src,
+        Offset.zero,
+        Paint()
+          ..imageFilter = ImageFilter.blur(sigmaX: _blurSigma, sigmaY: _blurSigma),
+      );
+      return recorder.endRecording().toImageSync(src.width, src.height);
+    } finally {
+      src.dispose();
+    }
+  }
+
+  @override
+  void dispose() {
+    _generation++;
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final image = _image;
+    return ColoredBox(
+      color: const Color(0xFF020208),
+      child: image == null
+          ? null
+          : CustomPaint(
+              size: Size.infinite,
+              painter: _BlurredPageBackgroundPainter(image),
+            ),
+    );
+  }
+}
+
+class _BlurredPageBackgroundPainter extends CustomPainter {
+  _BlurredPageBackgroundPainter(this.image);
+  final ui.Image image;
+  @override
+  void paint(Canvas canvas, Size size) {
+    paintImage(
+      canvas: canvas,
+      rect: Offset.zero & size,
+      image: image,
+      alignment: Alignment.center,
+      fit: BoxFit.cover,
+      filterQuality: FilterQuality.medium,
+      // AppPageBackground shows the image at 35% opacity.
+      opacity: .35,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_BlurredPageBackgroundPainter old) => old.image != image;
 }

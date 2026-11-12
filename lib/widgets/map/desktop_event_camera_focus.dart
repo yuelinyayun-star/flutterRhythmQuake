@@ -9,14 +9,18 @@ class DesktopCameraCandidate {
   final int index;
   final LatLng location;
   final List<LatLng> stationPoints;
+  final List<LatLng> fitPoints;
   final bool isVolcano;
+  final bool isMapProduct;
 
   const DesktopCameraCandidate({
     required this.key,
     required this.index,
     required this.location,
     this.stationPoints = const [],
+    this.fitPoints = const [],
     this.isVolcano = false,
+    this.isMapProduct = false,
   });
 
   static DesktopCameraCandidate? fromEvent(
@@ -38,7 +42,10 @@ class DesktopCameraCandidate {
           ? LatLng(latitude, longitude)
           : LatLngBounds.fromPoints(focusPoints).center,
       stationPoints: event.source == 'nowQuakeCencIr' ? focusPoints : const [],
+      fitPoints: focusPoints,
       isVolcano: event.isVolcanoEvent,
+      isMapProduct:
+          event.source == 'usgsDyfi' || event.source == 'usgsShakeMap',
     );
   }
 }
@@ -46,6 +53,19 @@ class DesktopCameraCandidate {
 /// Chooses a camera owner, without merging or removing any source events.
 class DesktopEventCameraFocus {
   String? _ownerKey;
+
+  /// A fixed camera may contain several carousel members. Their cards can
+  /// change without replacing the camera owner or fitting the viewport again.
+  static DesktopCameraCandidate cardInViewport({
+    required DesktopCameraCandidate owner,
+    DesktopCameraCandidate? requested,
+    required bool Function(LatLng) isVisible,
+  }) =>
+      requested != null &&
+          requested.isVolcano == owner.isVolcano &&
+          isVisible(requested.location)
+      ? requested
+      : owner;
 
   void reset() => _ownerKey = null;
 
@@ -67,6 +87,8 @@ class DesktopEventCameraFocus {
     var selected = requested ?? owner ?? candidates.first;
     // Use the animation destination, not a transient camera frame.
     if (owner != null &&
+        !owner.isMapProduct &&
+        !selected.isMapProduct &&
         owner.isVolcano == selected.isVolcano &&
         !(selected.stationPoints.length > 1 &&
             owner.stationPoints.length < 2) &&
@@ -74,7 +96,9 @@ class DesktopEventCameraFocus {
         isVisible(selected.location)) {
       selected = owner;
     }
-    if (!selected.isVolcano && selected.stationPoints.length < 2) {
+    if (!selected.isVolcano &&
+        !selected.isMapProduct &&
+        selected.stationPoints.length < 2) {
       // Prefer an active station report covering this epicenter, even when the
       // corresponding bulletin arrives before the first camera fit ends.
       for (final candidate in candidates) {

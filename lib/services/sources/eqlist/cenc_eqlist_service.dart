@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:convert';
+import '../api_json_decoder.dart';
 
 import 'package:http/http.dart' as http;
 
@@ -47,7 +47,7 @@ class CencEqlistService {
         return;
       }
 
-      final data = json.decode(resp.body);
+      final data = decodeApiJsonResponse(resp);
       if (data is! Map) return;
       onStatusChanged?.call(true);
 

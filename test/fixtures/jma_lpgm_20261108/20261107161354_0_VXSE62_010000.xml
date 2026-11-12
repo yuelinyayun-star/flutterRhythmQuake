@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Report xmlns="http://xml.kishou.go.jp/jmaxml1/" xmlns:jmx="http://xml.kishou.go.jp/jmaxml1/">
+<Control>
+<Title>長周期地震動に関する観測情報</Title>
+<DateTime>2026-11-07T16:13:53Z</DateTime>
+<Status>通常</Status>
+<EditorialOffice>気象庁本庁</EditorialOffice>
+<PublishingOffice>気象庁</PublishingOffice>
+</Control>
+<Head xmlns="http://xml.kishou.go.jp/jmaxml1/informationBasis1/">
+<Title>長周期地震動に関する観測情報</Title>
+<ReportDateTime>2026-11-08T01:13:00+09:00</ReportDateTime>
+<TargetDateTime>2026-11-08T01:13:00+09:00</TargetDateTime>
+<EventID>20261108010441</EventID>
+<InfoType>発表</InfoType>
+<Serial>1</Serial>
+<InfoKind>長周期地震動に関する観測情報</InfoKind>
+<InfoKindVersion>1.3_0</InfoKindVersion>
+<Headline>
+<Text>０８日０１時０４分ころの地震により、長周期地震動階級１を観測した地域があります。</Text>
+<Information type="長周期地震動に関する観測情報（細分区域）">
+<Item>
+<Kind><Name>長周期地震動階級１</Name></Kind>
+<Areas codeType="地震情報／細分区域">
+<Area><Name>長野県南部</Name><Code>422</Code></Area>
+<Area><Name>愛知県東部</Name><Code>450</Code></Area>
+<Area><Name>愛知県西部</Name><Code>451</Code></Area>
+</Areas>
+</Item>
+</Information>
+</Headline>
+</Head>
+<Body xmlns="http://xml.kishou.go.jp/jmaxml1/body/seismology1/" xmlns:jmx_eb="http://xml.kishou.go.jp/jmaxml1/elementBasis1/">
+<Earthquake>
+<OriginTime>2026-11-08T01:04:00+09:00</OriginTime>
+<ArrivalTime>2026-11-08T01:04:00+09:00</ArrivalTime>
+<Hypocenter>
+<Area>
+<Name>静岡県西部</Name>
+<Code type="震央地名">443</Code>
+<jmx_eb:Coordinate description="北緯３４．９度　東経１３７．７度　深さ　４０ｋｍ">+34.9+137.7-40000/</jmx_eb:Coordinate>
+</Area>
+</Hypocenter>
+<jmx_eb:Magnitude type="Mj" description="Ｍ５．７">5.7</jmx_eb:Magnitude>
+</Earthquake>
+<Intensity>
+<Observation>
+<CodeDefine>
+<Type xpath="Pref/Code">地震情報／都道府県等</Type>
+<Type xpath="Pref/Area/Code">地震情報／細分区域</Type>
+<Type xpath="Pref/Area/IntensityStation/Code">長周期地震動観測点</Type>
+</CodeDefine>
+<MaxInt>5+</MaxInt>
+<MaxLgInt>1</MaxLgInt>
+<LgCategory>1</LgCategory>
+<Pref>
+<Name>長野県</Name>
+<Code>20</Code>
+<MaxInt>5-</MaxInt>
+<MaxLgInt>1</MaxLgInt>
+<Area>
+<Name>長野県南部</Name>
+<Code>422</Code>
+<MaxInt>5-</MaxInt>
+<MaxLgInt>1</MaxLgInt>
+<IntensityStation>
+<Name>飯田市高羽町</Name>
+<Code>2020502</Code>
+<Int>4</Int>
+<LgInt>1</LgInt>
+<LgIntPerPeriod PeriodicBand="1" PeriodUnit="秒台">1</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="2" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="3" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="4" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="5" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="6" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="7" PeriodUnit="秒台">0</LgIntPerPeriod>
+<Sva unit="cm/s">6.4</Sva>
+<SvaPerPeriod unit="cm/s" PeriodicBand="1" PeriodUnit="秒台">6.4</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="2" PeriodUnit="秒台">3.7</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="3" PeriodUnit="秒台">1.8</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="4" PeriodUnit="秒台">0.9</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="5" PeriodUnit="秒台">0.5</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="6" PeriodUnit="秒台">0.4</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="7" PeriodUnit="秒台">0.2</SvaPerPeriod>
+</IntensityStation>
+</Area>
+</Pref>
+<Pref>
+<Name>愛知県</Name>
+<Code>23</Code>
+<MaxInt>5+</MaxInt>
+<MaxLgInt>1</MaxLgInt>
+<Area>
+<Name>愛知県東部</Name>
+<Code>450</Code>
+<MaxInt>5-</MaxInt>
+<MaxLgInt>1</MaxLgInt>
+<IntensityStation>
+<Name>豊橋市向山</Name>
+<Code>2320100</Code>
+<Int>4</Int>
+<LgInt>1</LgInt>
+<LgIntPerPeriod PeriodicBand="1" PeriodUnit="秒台">1</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="2" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="3" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="4" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="5" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="6" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="7" PeriodUnit="秒台">0</LgIntPerPeriod>
+<Sva unit="cm/s">5.4</Sva>
+<SvaPerPeriod unit="cm/s" PeriodicBand="1" PeriodUnit="秒台">5.4</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="2" PeriodUnit="秒台">3.1</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="3" PeriodUnit="秒台">1.3</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="4" PeriodUnit="秒台">0.8</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="5" PeriodUnit="秒台">0.5</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="6" PeriodUnit="秒台">0.3</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="7" PeriodUnit="秒台">0.2</SvaPerPeriod>
+</IntensityStation>
+</Area>
+<Area>
+<Name>愛知県西部</Name>
+<Code>451</Code>
+<MaxInt>5+</MaxInt>
+<MaxLgInt>1</MaxLgInt>
+<IntensityStation>
+<Name>名古屋千種区日和町</Name>
+<Code>2310100</Code>
+<Int>4</Int>
+<LgInt>1</LgInt>
+<LgIntPerPeriod PeriodicBand="1" PeriodUnit="秒台">1</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="2" PeriodUnit="秒台">1</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="3" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="4" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="5" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="6" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="7" PeriodUnit="秒台">0</LgIntPerPeriod>
+<Sva unit="cm/s">6.9</Sva>
+<SvaPerPeriod unit="cm/s" PeriodicBand="1" PeriodUnit="秒台">5.3</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="2" PeriodUnit="秒台">6.9</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="3" PeriodUnit="秒台">2.8</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="4" PeriodUnit="秒台">1.0</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="5" PeriodUnit="秒台">0.6</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="6" PeriodUnit="秒台">0.4</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="7" PeriodUnit="秒台">0.3</SvaPerPeriod>
+</IntensityStation>
+<IntensityStation>
+<Name>豊田市小坂町＊</Name>
+<Code>2321120</Code>
+<Int>5-</Int>
+<LgInt>1</LgInt>
+<LgIntPerPeriod PeriodicBand="1" PeriodUnit="秒台">1</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="2" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="3" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="4" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="5" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="6" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="7" PeriodUnit="秒台">0</LgIntPerPeriod>
+<Sva unit="cm/s">5.0</Sva>
+<SvaPerPeriod unit="cm/s" PeriodicBand="1" PeriodUnit="秒台">5.0</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="2" PeriodUnit="秒台">3.0</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="3" PeriodUnit="秒台">1.0</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="4" PeriodUnit="秒台">0.0</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="5" PeriodUnit="秒台">0.0</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="6" PeriodUnit="秒台">0.0</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="7" PeriodUnit="秒台">0.0</SvaPerPeriod>
+</IntensityStation>
+</Area>
+</Pref>
+</Observation>
+</Intensity>
+<Comments>
+<ForecastComment codeType="固定付加文">
+<Text>この地震について、緊急地震速報を発表しています。</Text>
+<Code>0241</Code>
+</ForecastComment>
+<VarComment codeType="固定付加文">
+<Text>＊印は気象庁以外の長周期地震動観測点についての情報です。</Text>
+<Code>0263</Code>
+</VarComment>
+<FreeFormComment>各長周期地震動階級に対する簡易な現象表現
+ 階級１やや大きな揺れ
+ 階級２大きな揺れ
+ 階級３非常に大きな揺れ
+ 階級４極めて大きな揺れ
+波形、スペクトル等、本地震の長周期地震動に関する詳細な情報は気象庁の長周期地震動に関する観測情報のウェブサイト ( https://www.data.jma.go.jp/eew/data/ltpgm/event.php?eventId=20261108010441 ) もあわせてご活用ください。
+</FreeFormComment>
+<URI>https://www.data.jma.go.jp/eew/data/ltpgm/event.php?eventId=20261108010441</URI>
+</Comments>
+</Body>
+</Report>

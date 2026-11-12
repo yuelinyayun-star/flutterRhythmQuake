@@ -6,13 +6,14 @@ bool shouldShowPAlertSource(
   SourceEstimate estimate,
   Iterable<UnifiedQuakeData> events, {
   required bool hideOnMatchingEew,
+  bool replay = false,
 }) {
   if (!hideOnMatchingEew) return true;
   final origin = estimate.originTime;
   final depth = estimate.depthKm;
   if (origin == null || depth == null) return true;
   return !events.any((event) {
-    if (event.source != 'cwaEew' ||
+    if (event.isReplay != replay || event.source != 'cwaEew' ||
         !event.isEew ||
         event.isCanceled ||
         event.isAssumption ||

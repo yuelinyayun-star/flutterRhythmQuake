@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'event_detection_models.dart';
 
 class RobustStationTriggerConfig {
@@ -44,9 +46,9 @@ class RobustStationTriggerDetector implements StationTriggerDetector {
     final previousObservedAt = history.lastObservedAt;
     final signal = _signalValue(observation);
     final baseline = _median(history);
-    final ascend = signal == null || history.samples.isEmpty
+    final ascend = signal == null || history.isEmpty
         ? 0
-        : (signal - history.samples.last.value).round();
+        : (signal - history.lastValue).round();
     final delta = signal == null || baseline == null ? 0.0 : signal - baseline;
 
     StationTriggerState nextState;
@@ -68,8 +70,7 @@ class RobustStationTriggerDetector implements StationTriggerDetector {
       }
     } else {
       history.missingFrames = 0;
-      final hasBaseline =
-          history.samples.length >= config.minimumBaselineSamples;
+      final hasBaseline = history.length >= config.minimumBaselineSamples;
       if (!hasBaseline) {
         nextState = StationTriggerState.idle;
         reasons.add('warming_up');
@@ -134,9 +135,7 @@ class RobustStationTriggerDetector implements StationTriggerDetector {
       ..state = nextState
       ..lastObservedAt = observation.observedAt;
     if (signal != null) {
-      history.addSample(
-        _TimedSignal(observedAt: observation.observedAt, value: signal),
-      );
+      history.addSample(observation.observedAt.microsecondsSinceEpoch, signal);
       _trimHistory(history, observation.observedAt);
     }
     if (nextState == StationTriggerState.ended) {
@@ -237,14 +236,12 @@ class RobustStationTriggerDetector implements StationTriggerDetector {
   }
 
   double? _median(_StationTriggerHistory history) {
-    if (history.samples.isEmpty) return null;
+    if (history.isEmpty) return null;
 
     final histogramMedian = history.boundedIntegerMedian;
     if (histogramMedian != null) return histogramMedian;
 
-    final sorted =
-        history.samples.map((sample) => sample.value).toList(growable: false)
-          ..sort();
+    final sorted = history.sortedValues();
     final middle = sorted.length ~/ 2;
     if (sorted.length.isOdd) return sorted[middle];
     return (sorted[middle - 1] + sorted[middle]) / 2.0;
@@ -255,7 +252,14 @@ class _StationTriggerHistory {
   static const int _minimumHistogramValue = -32;
   static const int _maximumHistogramValue = 63;
 
-  final List<_TimedSignal> samples = [];
+  // Keep exact microsecond timestamps and IEEE-754 values without a separate
+  // object for every station sample. Capacity grows only
+  // when needed; chronological expiry advances the head without shifting.
+  Int64List _times = Int64List(8);
+  Float64List _values = Float64List(8);
+  int _head = 0;
+  int _length = 0;
+  bool _chronological = true;
   final List<int> _boundedIntegerCounts = List<int>.filled(
     _maximumHistogramValue - _minimumHistogramValue + 1,
     0,
@@ -270,6 +274,19 @@ class _StationTriggerHistory {
   int decayStreak = 0;
   int missingFrames = 0;
 
+  bool get isEmpty => _length == 0;
+  int get length => _length;
+  int _index(int offset) => (_head + offset) & (_values.length - 1);
+  double get lastValue => _values[_index(_length - 1)];
+
+  Float64List sortedValues() {
+    final sorted = Float64List(_length);
+    for (var offset = 0; offset < _length; offset++) {
+      sorted[offset] = _values[_index(offset)];
+    }
+    return sorted..sort();
+  }
+
   bool get wasActive =>
       state == StationTriggerState.rising ||
       state == StationTriggerState.triggered ||
@@ -277,9 +294,9 @@ class _StationTriggerHistory {
       state == StationTriggerState.decaying;
 
   double? get boundedIntegerMedian {
-    if (!_containsOnlyBoundedIntegers || samples.isEmpty) return null;
-    final lowerRank = (samples.length - 1) ~/ 2;
-    final upperRank = samples.length ~/ 2;
+    if (!_containsOnlyBoundedIntegers || isEmpty) return null;
+    final lowerRank = (_length - 1) ~/ 2;
+    final upperRank = _length ~/ 2;
     int? lowerValue;
     int? upperValue;
     var seen = 0;
@@ -301,9 +318,26 @@ class _StationTriggerHistory {
     return (lowerValue + upperValue) / 2.0;
   }
 
-  void addSample(_TimedSignal sample) {
-    samples.add(sample);
-    final index = _histogramIndex(sample.value);
+  void addSample(int observedAtMicros, double value) {
+    if (_length > 0 && observedAtMicros < _times[_index(_length - 1)]) {
+      _chronological = false;
+    }
+    if (_length == _values.length) {
+      final times = Int64List(_values.length * 2);
+      final values = Float64List(_values.length * 2);
+      for (var offset = 0; offset < _length; offset++) {
+        final index = _index(offset);
+        times[offset] = _times[index];
+        values[offset] = _values[index];
+      }
+      _times = times;
+      _values = values;
+      _head = 0;
+    }
+    final tail = _index(_length++);
+    _times[tail] = observedAtMicros;
+    _values[tail] = value;
+    final index = _histogramIndex(value);
     if (index == null) {
       _containsOnlyBoundedIntegers = false;
       return;
@@ -312,20 +346,41 @@ class _StationTriggerHistory {
   }
 
   void removeBefore(int cutoffMicros) {
+    if (_chronological) {
+      while (_length > 0 && _times[_head] < cutoffMicros) {
+        _removeHistogramValue(_values[_head]);
+        _head = (_head + 1) & (_values.length - 1);
+        _length--;
+      }
+      return;
+    }
+    // The public detector accepts out-of-order observations. Preserve the
+    // original stable filtering semantics until the retained window is sorted.
     var writeIndex = 0;
-    for (final sample in samples) {
-      if (sample.observedAt.microsecondsSinceEpoch < cutoffMicros) {
-        final index = _histogramIndex(sample.value);
-        if (index != null) {
-          _boundedIntegerCounts[index]--;
-        }
+    int? previousMicros;
+    _chronological = true;
+    for (var readIndex = 0; readIndex < _length; readIndex++) {
+      final index = _index(readIndex);
+      final micros = _times[index];
+      final value = _values[index];
+      if (micros < cutoffMicros) {
+        _removeHistogramValue(value);
         continue;
       }
-      samples[writeIndex++] = sample;
+      if (previousMicros != null && micros < previousMicros) {
+        _chronological = false;
+      }
+      previousMicros = micros;
+      final target = _index(writeIndex++);
+      _times[target] = micros;
+      _values[target] = value;
     }
-    if (writeIndex < samples.length) {
-      samples.removeRange(writeIndex, samples.length);
-    }
+    _length = writeIndex;
+  }
+
+  void _removeHistogramValue(double value) {
+    final index = _histogramIndex(value);
+    if (index != null) _boundedIntegerCounts[index]--;
   }
 
   int? _histogramIndex(double value) {
@@ -345,11 +400,4 @@ class _StationTriggerHistory {
     decayStreak = 0;
     missingFrames = 0;
   }
-}
-
-class _TimedSignal {
-  final DateTime observedAt;
-  final double value;
-
-  const _TimedSignal({required this.observedAt, required this.value});
 }

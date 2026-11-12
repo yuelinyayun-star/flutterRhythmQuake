@@ -13,6 +13,7 @@ import 'package:flutterrhythmquake/services/sources/chinaeew_icl_service.dart';
 import 'package:flutterrhythmquake/services/sources/jian_icl_service.dart';
 import 'package:flutterrhythmquake/services/sources/source_manager.dart';
 import 'package:flutterrhythmquake/widgets/map/source_dashboard.dart';
+import 'package:flutterrhythmquake/widgets/ui/station_dashboard.dart';
 import 'package:provider/provider.dart';
 
 class _StatusProvider extends ChangeNotifier implements QuakeProvider {
@@ -57,21 +58,113 @@ void main() {
       await chinese.load();
     }
   });
-  const sources = ['Wolfx', 'FAN', 'WHEWS', 'Jian Project', 'NowQuake', 'P2P'];
+  const sources = [
+    'Wolfx',
+    'FAN',
+    'FSSN',
+    'WHEWS',
+    'Jian Project',
+    'NowQuake',
+    'P2P',
+  ];
   const labels = [
     'Wolfx',
     'FAN（未认证）',
+    'FSSN',
     'WHEWS',
     'Jian（待确认）',
     'NowQuake',
     'P2PQ',
   ];
 
+  for (final width in [800.0, 1280.0, 1600.0, 1920.0]) {
+    for (final textScale in [1.0, 1.25]) {
+      testWidgets('desktop status shares station panel edges $width / $textScale', (tester) async {
+        tester.view.physicalSize = Size(width, 900);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final provider = _StatusProvider();
+        await tester.pumpWidget(ChangeNotifierProvider<QuakeProvider>.value(
+          value: provider,
+          child: MaterialApp(home: MediaQuery(
+            data: MediaQueryData(size: Size(width, 900), textScaler: TextScaler.linear(textScale)),
+            child: Scaffold(body: Stack(children: [
+              StationDashboard(data: StationSummaryData()),
+              const SourceDashboard(),
+            ])),
+          )),
+        ));
+        final station = tester.getRect(find.descendant(
+          of: find.byType(StationDashboard), matching: find.byType(ClipRRect),
+        ).first);
+        final content = find.descendant(
+          of: find.byKey(const ValueKey('source-dashboard-scale')),
+          matching: find.byType(ConstrainedBox),
+        ).first;
+        final box = tester.renderObject<RenderBox>(content);
+        final status = Rect.fromPoints(box.localToGlobal(Offset.zero),
+          box.localToGlobal(box.size.bottomRight(Offset.zero)));
+        expect(status.left, closeTo(station.left, .01));
+        expect(status.right, closeTo(station.right, .01));
+        expect(find.text('本地注入'), findsNothing);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+        provider.dispose();
+      });
+    }
+  }
+
   for (final (size, mobile) in [
     (const Size(320, 640), true),
     (const Size(800, 900), false),
   ]) {
-    testWidgets('ICL API statuses follow source state at $size', (tester) async {
+    testWidgets('FSSN follows enabled state and connection colors at $size', (
+      tester,
+    ) async {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final manager = SourceManager();
+      final enabled = manager.isSourceEnabled('FSSN');
+      addTearDown(() => manager.setSourceEnabled('FSSN', enabled));
+      manager.setSourceEnabled('FSSN', true);
+      final provider = _StatusProvider();
+      await tester.pumpWidget(
+        ChangeNotifierProvider<QuakeProvider>.value(
+          value: provider,
+          child: MaterialApp(
+            home: Scaffold(
+              body: Stack(children: [SourceDashboard(mobile: mobile)]),
+            ),
+          ),
+        ),
+      );
+      for (final (status, color) in [
+        (SourceStatus.disconnected, Colors.white),
+        (SourceStatus.connecting, const Color(0xFFFFFF00)),
+        (SourceStatus.connected, const Color(0xFF008000)),
+        (SourceStatus.error, const Color(0xFFFF0000)),
+      ]) {
+        provider.statuses['FSSN'] = status;
+        provider.sourceStatusListenable.value++;
+        await tester.pump();
+        expect(find.text('FSSN'), findsOneWidget);
+        expect(tester.widget<Text>(find.text('FSSN')).style?.color, color);
+      }
+      manager.setSourceEnabled('FSSN', false);
+      provider.sourceStatusListenable.value++;
+      await tester.pump();
+      expect(find.text('FSSN'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      provider.dispose();
+    });
+
+    testWidgets('ICL API statuses follow source state at $size', (
+      tester,
+    ) async {
       tester.view.physicalSize = size;
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
@@ -93,16 +186,21 @@ void main() {
       expect(find.text('China_EEW_ICL'), findsNothing);
 
       provider.statuses[JianIclService.sourceName] = SourceStatus.connected;
-      provider.statuses[ChinaEewIclService.sourceName] = SourceStatus.connecting;
+      provider.statuses[ChinaEewIclService.sourceName] =
+          SourceStatus.connecting;
       provider.sourceStatusListenable.value++;
       await tester.pump();
       if (AppEdition.hasIcl) {
         expect(find.text('Jian_ICL'), findsOneWidget);
         expect(find.text('China_EEW_ICL'), findsOneWidget);
-        expect(tester.widget<Text>(find.text('Jian_ICL')).style?.color,
-            const Color(0xFF008000));
-        expect(tester.widget<Text>(find.text('China_EEW_ICL')).style?.color,
-            const Color(0xFFFFFF00));
+        expect(
+          tester.widget<Text>(find.text('Jian_ICL')).style?.color,
+          const Color(0xFF008000),
+        );
+        expect(
+          tester.widget<Text>(find.text('China_EEW_ICL')).style?.color,
+          const Color(0xFFFFFF00),
+        );
         for (final label in ['Jian_ICL', 'China_EEW_ICL']) {
           final rect = tester.getRect(find.text(label));
           expect(rect.left, greaterThanOrEqualTo(0));
@@ -114,7 +212,8 @@ void main() {
       }
 
       provider.statuses[JianIclService.sourceName] = SourceStatus.disconnected;
-      provider.statuses[ChinaEewIclService.sourceName] = SourceStatus.disconnected;
+      provider.statuses[ChinaEewIclService.sourceName] =
+          SourceStatus.disconnected;
       provider.sourceStatusListenable.value++;
       await tester.pump();
       expect(find.text('Jian_ICL'), findsNothing);
@@ -233,7 +332,7 @@ void main() {
   }
 
   for (final width in [800.0, 1600.0]) {
-    for (final count in [0, 1, 4, 5, 6]) {
+    for (final count in [0, 1, 4, 5, 6, 7]) {
       testWidgets('$count APIs wrap after five at width $width', (
         tester,
       ) async {

@@ -2178,26 +2178,43 @@ void main() {
         NiedDartHypSourceEstimator.stableHypocenterUpdateThreshold,
       );
 
+      // JMA 方針：震源が安定した後も入力震度が改善すれば再公開する。
+      // 旧方針は最初の安定フレーム（3.5）で凍結していた。
       final stronger = estimator.estimate(
         request(15, dirty: true, shindo: 4.5),
       );
       expect(stronger, isNotNull);
       expect(stronger!.diagnostics['nied_dart_hyp_stable'], isTrue);
       expect(stronger.diagnostics['nied_dart_hyp_stable_update_count'], 16);
-      expect(stronger.magnitude, latest.magnitude);
-      expect(stronger.diagnostics['srev_kaizou_magnitude_locked'], isTrue);
+      expect(stronger.magnitude, greaterThan(latest.magnitude!));
       expect(
-        stronger.diagnostics['srev_kaizou_magnitude_locked_report_num'],
-        1,
+        stronger.diagnostics['srev_kaizou_magnitude_input_intensity'],
+        4.5,
       );
       expect(
         stronger.diagnostics['srev_kaizou_magnitude_published_report_num'],
         1,
       );
+      // 震度が改善した直後はまだ未成熟なので確定しない。
+      expect(stronger.diagnostics['srev_kaizou_magnitude_locked'], isFalse);
+
+      // 震度がホールド期間改善しなければ最終報として確定する。
+      SourceEstimate matured = stronger;
+      for (var index = 16; index <= 125; index++) {
+        matured = estimator.estimate(request(index, dirty: true, shindo: 4.5))!;
+      }
+      expect(matured.diagnostics['srev_kaizou_magnitude_locked'], isTrue);
+      expect(matured.magnitude, stronger.magnitude);
       expect(
-        stronger.diagnostics['srev_kaizou_magnitude_input_intensity'],
-        3.5,
+        matured.diagnostics['srev_kaizou_magnitude_locked_report_num'],
+        1,
       );
+      expect(
+        matured.diagnostics['srev_kaizou_magnitude_published_input_intensity'],
+        4.5,
+      );
+      expect(matured.diagnostics['srev_kaizou_magnitude_lock_reason'],
+          'stable_and_observation_matured');
     },
   );
 
@@ -2272,6 +2289,75 @@ void main() {
     // KA dispatches every non-empty active frame, including a new segment
     // before it reaches the five-station publish threshold.
     expect(estimator.supports(laterRequest), isTrue);
+  });
+
+  test('inactive source expires while unrelated KA activity continues', () {
+    final estimator = NiedDartHypSourceEstimator(
+      searchSchedule: NiedHypSearchSchedule.referenceBroadFourStage,
+    );
+    final base = DateTime(2026, 10, 15, 14, 10);
+    final initial = <Map<String, Object?>>[
+      for (var index = 0; index < 5; index++)
+        {
+          'id': 'ENDED$index',
+          'code': 'ENDED$index',
+          'latLng': [35.0 + index * 0.01, 140.0 + index * 0.01],
+          'triggerStamp': base
+              .add(Duration(milliseconds: index * 200))
+              .millisecondsSinceEpoch,
+          'updateStamp': base.millisecondsSinceEpoch,
+          'ascend': 4,
+          'level': 12,
+          'isActive': true,
+        },
+    ];
+    final unrelated = <String, Object?>{
+      'id': 'UNRELATED',
+      'code': 'UNRELATED',
+      'latLng': [43.0, 145.0],
+      'triggerStamp': base
+          .add(const Duration(seconds: 60))
+          .millisecondsSinceEpoch,
+      'updateStamp': base
+          .add(const Duration(seconds: 60))
+          .millisecondsSinceEpoch,
+      'ascend': 1,
+      'level': 1,
+      'isActive': true,
+    };
+    SourceEstimationRequest request(
+      int second,
+      List<Map<String, Object?>> active,
+    ) => SourceEstimationRequest(
+      sourceId: 'nied',
+      eventId: 'cluster-lifecycle',
+      observedAt: base.add(Duration(seconds: second)),
+      stageName: 'confirmed',
+      maxShindo: 0,
+      stations: const [],
+      metadata: {
+        'nied_hypocenter_input_format': 'nied_station_hypocenter_snapshot_v1',
+        'nied_hypocenter_new_active_stations': active,
+        'nied_hypocenter_active_stations': active,
+        // No low-level scoring candidates, as with levels >= 6 / missing.
+        'nied_hypocenter_inactive_stations': const [],
+        'nied_hypocenter_adj_station_ids': <String, List<String>>{
+          for (final station in initial)
+            station['id']! as String: [
+              for (final neighbor in initial)
+                if (neighbor['id'] != station['id']) neighbor['id']! as String,
+            ],
+        },
+      },
+    );
+    expect(estimator.estimate(request(5, initial)), isNotNull);
+    for (var update = 1; update < 10; update++) {
+      expect(estimator.estimate(request(60 + update, [unrelated])), isNotNull);
+    }
+    final ended = request(70, [unrelated]);
+    expect(estimator.estimate(ended), isNull);
+    expect(ended.metadata['nied_dart_hyp_clear_published_source'], isTrue);
+    expect(ended.metadata['nied_dart_hyp_sources'], isEmpty);
   });
 
   test('reference NIED HYP does not publish a zero-support candidate', () {

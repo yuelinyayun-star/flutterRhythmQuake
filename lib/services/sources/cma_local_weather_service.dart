@@ -1,5 +1,6 @@
+import 'source_http_client.dart';
 import 'dart:async';
-import 'dart:convert';
+import 'api_json_decoder.dart';
 
 import 'package:flutter/foundation.dart'
     show ValueNotifier, debugPrint, kIsWeb, visibleForTesting;
@@ -428,7 +429,7 @@ DateTime? _cmaDateTime(Object? value) {
 
 class CmaLocalWeatherService {
   CmaLocalWeatherService({http.Client? client})
-    : _client = client ?? http.Client();
+    : _client = client ?? createSourceHttpClient();
 
   static const String _stationDirectoryUrl =
       'https://weather.cma.cn/api/map/weather/1';
@@ -495,7 +496,7 @@ class CmaLocalWeatherService {
   static void _startBackgroundPrefetchWorker() {
     if (_isWorkerActive) return;
     _isWorkerActive = true;
-    _sharedWorkerClient ??= http.Client();
+    _sharedWorkerClient ??= createSourceHttpClient();
     _processPrefetchQueue();
   }
 
@@ -514,14 +515,14 @@ class CmaLocalWeatherService {
       await Future.wait(
         batch.map((id) async {
           try {
-            final response = await (_sharedWorkerClient ?? http.Client())
+            final response = await (_sharedWorkerClient ?? createSourceHttpClient())
                 .get(
                   sourceUri(Uri.parse('$_observationBaseUrl$id')),
                   headers: _requestHeaders,
                 )
                 .timeout(const Duration(seconds: 8));
             if (response.statusCode == 200) {
-              final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+              final decoded = decodeApiJsonBytes(response.bodyBytes);
               if (decoded is Map) {
                 final fallbackStation = CmaWeatherStation(
                   id: id,
@@ -597,7 +598,7 @@ class CmaLocalWeatherService {
             const Duration(minutes: 10)) {
       return;
     }
-    final c = client ?? http.Client();
+    final c = client ?? createSourceHttpClient();
     try {
       final response = await c
           .get(
@@ -606,7 +607,7 @@ class CmaLocalWeatherService {
           )
           .timeout(const Duration(seconds: 20));
       if (response.statusCode == 200) {
-        final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+        final decoded = decodeApiJsonBytes(response.bodyBytes);
         if (decoded is Map && _cmaInt(decoded['code']) == 0) {
           final data = decoded['data'];
           if (data is Map && data['city'] is List) {
@@ -764,7 +765,7 @@ class CmaLocalWeatherService {
       if (response.statusCode != 200) {
         throw StateError('HTTP ${response.statusCode}');
       }
-      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      final decoded = decodeApiJsonBytes(response.bodyBytes);
       if (decoded is! Map) throw const FormatException('response is not map');
       final observation = cmaObservationFromJson(
         Map<String, dynamic>.from(decoded),
@@ -847,7 +848,7 @@ class CmaLocalWeatherService {
       if (response.statusCode != 200) {
         throw StateError('HTTP ${response.statusCode}');
       }
-      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      final decoded = decodeApiJsonBytes(response.bodyBytes);
       if (decoded is! Map || _cmaInt(decoded['code']) != 0) return null;
       final data = decoded['data'];
       if (data is! Map || data['city'] is! List) return null;

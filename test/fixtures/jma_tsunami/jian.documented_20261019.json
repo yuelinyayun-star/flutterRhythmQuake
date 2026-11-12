@@ -1,0 +1,32 @@
+{
+  "type": "jma-tsunami",
+  "Data": {
+    "id": "20261010025608",
+    "title": "津波予報",
+    "level": "津波予報",
+    "headline": "津波予報の有効時刻を過ぎたため、津波予報を解除しました。",
+    "number": 1,
+    "originTime": 1791574620000,
+    "endTime": 1791720000000,
+    "infoTypeName": "発表",
+    "cancel": false,
+    "cleared": true,
+    "orgUnit": "日本気象庁",
+    "telegram": "VTSE41",
+    "area": [
+      {
+        "code": "100",
+        "name": "北海道太平洋沿岸東部",
+        "kind": "津波なし",
+        "kindCode": "00",
+        "cleared": true,
+        "arrivalTime": "",
+        "condition": "",
+        "maxHeight": "",
+        "maxHeightDesc": "",
+        "stations": []
+      }
+    ]
+  },
+  "md5": "example"
+}

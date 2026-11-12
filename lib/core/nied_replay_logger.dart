@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/sources/shake_detection_service.dart';
+import '../services/sources/native_replay_log_session.dart';
 
 /// NIED 回放日志记录器
 ///
@@ -26,8 +27,47 @@ class NiedReplayLogger {
   String? _logPath;
   String? _captureDirPath;
   DateTime? _sessionStart;
+  NativeReplayLogSession? _native;
+  String? _testOutputDirectory;
+
+  NativeReplayLogSession _nativeOwner() => _native ??= NativeReplayLogSession(
+    onStatus: (status) {
+      _logPath = status['log_path'] as String?;
+      _captureDirPath = status['capture_dir'] as String?;
+      if (status['error'] != null) {
+        debugPrint('[ReplayLogger] archive error: ${status['error']}');
+      }
+      _notifyChanged();
+    },
+  );
+
+  void _appendRecord(int type, Map<String, dynamic> record) {
+    if (externalRecordSink case final sink?) {
+      sink(type, record);
+      return;
+    }
+    if (NativeReplayLogSession.supported) {
+      _nativeOwner().append(type, record);
+    } else {
+      _frames.add(record);
+    }
+  }
 
   bool get isEnabled => _enabled;
+  // A background data owner forwards prepared records to the one archive
+  // session in the UI host; it never opens a competing archive session.
+  void Function(int, Map<String, dynamic>)? externalRecordSink;
+  void Function(DateTime, String, Uint8List, String)? externalGifSink;
+  void setExternalRecordingEnabled(bool enabled) => _enabled = enabled;
+
+  void acceptPreparedRecord(int type, Map<String, dynamic> record) {
+    if (!_enabled) return;
+    _appendRecord(type, record);
+    _autoSave();
+  }
+  String get archiveBackend => NativeReplayLogSession.supported
+      ? 'rust-replay-archive-v1'
+      : 'dart-reference';
   bool get autoSaveOnSourceTrigger => _autoSaveOnSourceTrigger;
 
   void loadPreferencesFrom(SharedPreferences prefs) {
@@ -53,6 +93,27 @@ class NiedReplayLogger {
   void setEnabled(bool v) {
     if (v == _enabled) return;
     _enabled = v;
+    if (NativeReplayLogSession.supported) {
+      if (v) {
+        _sessionStart = DateTime.now();
+        _logPath = null;
+        _captureDirPath = null;
+        _nativeOwner().start(
+          sessionStart: _sessionStart!.toIso8601String(),
+          stamp: _sessionTimestamp(_sessionStart!),
+          outputDirectory:
+              _testOutputDirectory ??
+              '${Platform.environment['USERPROFILE'] ?? '.'}/Desktop',
+          writeToDisk: _writeToDisk,
+        );
+      } else {
+        // User-requested stop is a barrier: the final records must be saved
+        // before reporting disabled. Automatic saving never blocks the UI.
+        _nativeOwner().stopSync();
+      }
+      _notifyChanged();
+      return;
+    }
     if (v) {
       _frames.clear();
       _capturedGifs.clear();
@@ -65,7 +126,7 @@ class NiedReplayLogger {
       _flushPendingGifCaptures();
       debugPrint('[ReplayLogger] ENABLED — session started');
     } else {
-      _flush();
+      _flush(force: true);
       debugPrint('[ReplayLogger] DISABLED — saved to $_logPath');
     }
     _notifyChanged();
@@ -82,7 +143,7 @@ class NiedReplayLogger {
     if (!_enabled) {
       setEnabled(true);
     }
-    _frames.add({
+    _appendRecord(5, {
       'type': 'source_trigger',
       'event_id': eventId,
       'observed_at': observedAt.toIso8601String(),
@@ -103,6 +164,19 @@ class NiedReplayLogger {
     required Uint8List bytes,
     String layerKey = 'jma_s',
   }) {
+    if (externalGifSink case final sink?) {
+      sink(jstTime, gifUrl, bytes, layerKey);
+      return;
+    }
+    if (NativeReplayLogSession.supported) {
+      _nativeOwner().capture({
+        'jst': jstTime.toIso8601String(),
+        'url': gifUrl,
+        'layer': layerKey,
+        'fallback_name': '${_compactTimestamp(jstTime)}.$layerKey.gif',
+      }, bytes);
+      return;
+    }
     final pending = _PendingGifCapture(
       jstTime: jstTime,
       gifUrl: gifUrl,
@@ -130,7 +204,7 @@ class NiedReplayLogger {
     Map<String, int>? stationLevels,
   }) {
     if (!_enabled) return;
-    _frames.add({
+    _appendRecord(2, {
       'type': 'frame',
       'jst': jstTime.toIso8601String(),
       'gif_url': gifUrl,
@@ -147,7 +221,7 @@ class NiedReplayLogger {
   /// 记录检测结果
   void logDetection(ShakeDetectionSnapshot snapshot) {
     if (!_enabled) return;
-    _frames.add({
+    _appendRecord(3, {
       'type': 'detection',
       'stage': snapshot.stage.name,
       'weak': snapshot.weakCount,
@@ -178,7 +252,7 @@ class NiedReplayLogger {
     int activeStationCount = 0,
   }) {
     if (!_enabled) return;
-    _frames.add({
+    _appendRecord(4, {
       'type': 'epicenter',
       'lat': lat,
       'lng': lng,
@@ -191,6 +265,8 @@ class NiedReplayLogger {
   int _lastAutoSaveCount = 0;
   DateTime? _lastAutoSaveAt;
   void _autoSave() {
+    if (externalRecordSink != null) return;
+    if (NativeReplayLogSession.supported) return;
     if (!_enabled || !_writeToDisk) return;
     final now = DateTime.now();
     final enoughRecords = _frames.length - _lastAutoSaveCount >= 80;
@@ -210,8 +286,12 @@ class NiedReplayLogger {
   }
 
   /// 同步写入 (可从任何上下文调用)
-  void _writeSync() {
-    if (!_enabled || _frames.isEmpty) return;
+  void _writeSync({bool force = false}) {
+    if (NativeReplayLogSession.supported) {
+      _native?.saveSync();
+      return;
+    }
+    if ((!_enabled && !force) || _frames.isEmpty) return;
     if (!_writeToDisk) return;
     try {
       final home = Platform.environment['USERPROFILE'] ?? '.';
@@ -248,8 +328,12 @@ class NiedReplayLogger {
   }
 
   /// 写入文件到桌面 (async, 用于关闭时保存)
-  Future<void> _flush() async {
-    _writeSync();
+  Future<void> _flush({bool force = false}) async {
+    if (NativeReplayLogSession.supported) {
+      await _native?.save();
+      return;
+    }
+    _writeSync(force: force);
   }
 
   /// 手动触发保存
@@ -260,6 +344,7 @@ class NiedReplayLogger {
   String? get captureDirPath => _captureDirPath;
 
   void _flushPendingGifCaptures() {
+    if (NativeReplayLogSession.supported) return;
     if (!_enabled) return;
     for (final pending in _pendingGifCaptures) {
       _writeGifCaptureSync(pending);
@@ -360,7 +445,11 @@ class NiedReplayLogger {
   void resetForTest({
     bool autoSaveOnSourceTrigger = false,
     bool writeToDisk = false,
+    String? outputDirectory,
   }) {
+    _native?.dispose();
+    _native = null;
+    _testOutputDirectory = outputDirectory;
     _enabled = false;
     _autoSaveOnSourceTrigger = autoSaveOnSourceTrigger;
     _writeToDisk = writeToDisk;
@@ -376,7 +465,11 @@ class NiedReplayLogger {
   }
 
   @visibleForTesting
-  List<Map<String, dynamic>> get debugRecords => List.unmodifiable(_frames);
+  List<Map<String, dynamic>> get debugRecords => List.unmodifiable(
+    NativeReplayLogSession.supported
+        ? (_native?.readRecords() ?? const [])
+        : _frames,
+  );
 }
 
 class _PendingGifCapture {

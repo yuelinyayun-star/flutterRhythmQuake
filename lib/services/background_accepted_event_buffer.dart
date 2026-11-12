@@ -1,3 +1,4 @@
+import 'sources/api_json_decoder.dart';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -47,7 +48,7 @@ class BackgroundAcceptedEventBuffer {
     final events = <UnifiedQuakeData>[];
     for (final row in _rows) {
       try {
-        final entry = jsonDecode(row) as Map<String, dynamic>;
+        final entry = decodeApiJson(row) as Map<String, dynamic>;
         events.add(
           UnifiedQuakeData.fromMap(
             Map<String, dynamic>.from(entry['event'] as Map),
@@ -66,7 +67,7 @@ class BackgroundAcceptedEventBuffer {
     final oldest = _now().toUtc().subtract(_maxAge).millisecondsSinceEpoch;
     _rows.removeWhere((row) {
       try {
-        final entry = jsonDecode(row) as Map<String, dynamic>;
+        final entry = decodeApiJson(row) as Map<String, dynamic>;
         return (entry['receivedAt'] as int) < oldest;
       } catch (_) {
         return true;

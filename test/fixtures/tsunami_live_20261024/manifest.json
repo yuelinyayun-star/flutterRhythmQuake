@@ -1,0 +1,81 @@
+{
+  "started": "2026-10-24T03:00:09.675779+00:00",
+  "frames": [
+    {
+      "file": "frame_000.original",
+      "received": "2026-10-24T03:00:12.436952+00:00",
+      "bytes": 27972,
+      "sha256": "2ecdbec5ab205e4e056e4a8fb9ffc32c02452a7be4e32c898c69de1dff3e48c2",
+      "sources": {
+        "jma_eew": 1,
+        "cwa_eew": 1,
+        "sa_eew": 1,
+        "kma_eew": 1,
+        "early_est": 1,
+        "cea": 1,
+        "cea-pr": 1,
+        "jma": 1,
+        "cwa": 1,
+        "cenc": 1,
+        "kma": 1,
+        "bmkg": 1,
+        "geonet": 1,
+        "tmd": 1,
+        "usp": 1,
+        "gfz": 1,
+        "ingv": 1,
+        "usgs": 1,
+        "emsc": 1,
+        "hko": 1,
+        "bcsf": 1,
+        "nrcan": 1,
+        "mmd": 1,
+        "phivolcs": 1,
+        "ga": 1,
+        "cenais": 1,
+        "gsras": 1,
+        "bgs": 1,
+        "ipma": 1,
+        "ssn": 1,
+        "afad": 1,
+        "sed": 1,
+        "noa": 1,
+        "scsn": 1,
+        "iag": 1,
+        "igp": 1,
+        "nepal": 1,
+        "funvisis": 1,
+        "beijing": 1,
+        "yunnan": 1,
+        "ningxia": 1,
+        "tsunami": 1,
+        "ntwc": 1,
+        "ptwc": 1,
+        "incois": 1,
+        "cat_tsunami": 1,
+        "cwa_tsunami": 1,
+        "weatheralarm": 1,
+        "va": 1,
+        "jma_tsunami": 1
+      }
+    },
+    {
+      "file": "frame_001.original",
+      "received": "2026-10-24T03:00:30.705535+00:00",
+      "bytes": 1335,
+      "sha256": "8eb9f3753c672d5932cabb0c4a1b9bab5a285bb017f218c1ccbc6dd84f4d774e",
+      "sources": {
+        "weatheralarm": 1
+      }
+    },
+    {
+      "file": "frame_002.original",
+      "received": "2026-10-24T03:00:42.378649+00:00",
+      "bytes": 104,
+      "sha256": "46abf8360130beb454ac2a497a58666c953cd79a702795458ddaa49c8269b010",
+      "sources": {
+        "heartbeat": 1
+      }
+    }
+  ]
+}

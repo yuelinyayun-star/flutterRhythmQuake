@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:developer';
 import 'dart:io';
@@ -9,6 +10,10 @@ import 'package:flutter/scheduler.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:flutterrhythmquake/main.dart' as app;
 import 'package:flutterrhythmquake/services/sources/fdsn_motion_service_io.dart';
+import 'package:flutterrhythmquake/services/sources/nied_realtime_pipeline.dart';
+import 'package:flutterrhythmquake/services/sources/fdsn_realtime_pipeline.dart';
+import 'package:flutterrhythmquake/services/sources/mock_input_service.dart';
+import 'package:flutterrhythmquake/widgets/map/quake_map_view.dart';
 
 // Explicit opt-in entrypoint. Never used by release packaging.
 void main() {
@@ -26,6 +31,33 @@ void main() {
   // Match release logging while retaining VM sampling and frame timings.
   debugPrint = (String? message, {int? wrapWidth}) {};
   final timings = <FrameTiming>[];
+  final originalGifInput = MockInputService();
+  Map<String, Object?> replay = const {'state': 'idle'};
+  // Diagnostic-only controls exercise the same original-GIF UI entrypoint.
+  registerExtension('ext.rhythm.niedReplay', (method, parameters) async {
+    final source = parameters['source'];
+    if (source != null &&
+        const ['lmoni', 'kmoni', 'yahoo', 'jian', 'whews'].contains(source)) {
+      QuakeMapView.niedSourceNotifier.value = source;
+    }
+    final path = parameters['gifPath'];
+    if (path != null && replay['state'] != 'running') {
+      replay = {'state': 'running', 'path': path};
+      unawaited(
+        originalGifInput
+            .injectFromNiedGifPath(path)
+            .then(
+              (count) {
+                replay = {'state': 'completed', 'frames': count};
+              },
+              onError: (Object error) {
+                replay = {'state': 'error', 'error': error.toString()};
+              },
+            ),
+      );
+    }
+    return ServiceExtensionResponse.result(jsonEncode(replay));
+  });
   SchedulerBinding.instance.addTimingsCallback((frames) {
     timings.addAll(frames);
     if (timings.length > 600) timings.removeRange(0, timings.length - 600);
@@ -36,9 +68,15 @@ void main() {
       'pid': pid,
       'rssBytes': ProcessInfo.currentRss,
       'maxRssBytes': ProcessInfo.maxRss,
+      'niedPipeline': NiedRealtimePipeline.active?.diagnostics,
+      'originalGifReplay': replay,
+      'fdsnDataOwner':
+          FdsnRealtimePipeline.active?.lastFrame?.processingIsolate,
       'stationConnections': [
         // ignore: invalid_use_of_visible_for_testing_member
-        for (final connection in service.connectionDiagnostics)
+        for (final connection
+            in FdsnRealtimePipeline.active?.lastFrame?.connections ??
+            service.connectionSnapshot)
           {
             ...connection,
             'decodeRejected': {

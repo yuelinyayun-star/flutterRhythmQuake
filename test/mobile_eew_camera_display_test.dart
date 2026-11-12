@@ -6,9 +6,41 @@ import 'package:flutterrhythmquake/widgets/map/desktop_event_camera_focus.dart';
 import 'package:flutterrhythmquake/providers/map_state_provider.dart';
 import 'package:flutterrhythmquake/providers/quake_provider.dart';
 import 'package:flutterrhythmquake/services/sound_effect_service.dart';
+import 'package:flutterrhythmquake/models/usgs_dyfi.dart';
+import 'package:flutterrhythmquake/models/usgs_shakemap.dart';
+import 'package:flutterrhythmquake/services/sources/usgs_dyfi_service.dart';
+import 'package:flutterrhythmquake/services/sources/usgs_shakemap_service.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:flutterrhythmquake/widgets/ui/alert_module.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'usgs_dyfi_camera_fit_test.dart' show originalFrame;
+import 'information_camera_group_test.dart' show frameFor;
+
+class _ArchivedShakeMapPublication extends UsgsShakeMapService {
+  _ArchivedShakeMapPublication()
+    : super(client: MockClient((_) async => http.Response('', 404)));
+  UsgsShakeMapFrame? _published;
+  @override
+  UsgsShakeMapFrame? get automaticFrame => _published;
+  void publish() {
+    _published = frameFor('ci41345415');
+    notifyListeners();
+  }
+}
+
+class _ArchivedDyfiPublication extends UsgsDyfiService {
+  _ArchivedDyfiPublication()
+    : super(client: MockClient((_) async => http.Response('', 404)));
+  UsgsDyfiFrame? _published;
+  @override
+  UsgsDyfiFrame? get automaticFrame => _published;
+  void publish() {
+    _published = originalFrame('ci41345415');
+    notifyListeners();
+  }
+}
 
 UnifiedQuakeData event(String id, {bool eew = true, String source = 'cea'}) {
   final now = DateTime.now().toUtc();
@@ -41,14 +73,23 @@ void main() {
   });
   tearDown(() => SoundEffectService().enabled = true);
 
-  Future<QuakeProvider> mount(WidgetTester tester, {bool phone = true}) async {
+  Future<QuakeProvider> mount(
+    WidgetTester tester, {
+    bool phone = true,
+    UsgsDyfiService? dyfiService,
+    UsgsShakeMapService? shakeMapService,
+  }) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = phone
         ? const Size(390, 844)
         : const Size(1280, 900);
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    final provider = QuakeProvider()..configureMobileEewCarousel(phone);
+    final provider = QuakeProvider(
+      startCatalogServices: false,
+      dyfiService: dyfiService,
+      shakeMapService: shakeMapService,
+    )..configureMobileEewCarousel(phone);
     final map = MapStateProvider();
     await tester.pumpWidget(
       MultiProvider(
@@ -231,6 +272,43 @@ void main() {
   });
 
   testWidgets(
+    'desktop card page follows the map-selected EEW and information',
+    (tester) async {
+      final provider = await mount(tester, phone: false);
+      final eew = event('EEW-A');
+      provider.handleUnifiedEventForTest(eew);
+      for (var i = 0; i < 6; i++) {
+        provider.handleUnifiedEventForTest(
+          event('OTHER-$i', eew: false, source: 'info-$i'),
+        );
+      }
+      final ordered = [
+        ...provider.unifiedDisplayEvents.where((event) => event.isEew),
+        ...provider.unifiedDisplayEvents.where((event) => !event.isEew),
+      ];
+      final info = ordered.last;
+      expect(ordered.indexOf(info), greaterThanOrEqualTo(4));
+
+      provider.setMobileCameraInfoFocus(eew);
+      await tester.pump();
+      expect(find.text('EEW-A'), findsOneWidget);
+      expect(find.text(info.hypocenter), findsNothing);
+
+      provider.setMobileCameraInfoFocus(info);
+      await tester.pump();
+      expect(find.text(info.hypocenter), findsOneWidget);
+      expect(find.text('EEW-A'), findsNothing);
+
+      provider.setMobileCameraInfoFocus(eew);
+      await tester.pump();
+      expect(find.text('EEW-A'), findsOneWidget);
+      expect(find.text(info.hypocenter), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
     'phone information cards use the map carousel index without EEW',
     (tester) async {
       final provider = await mount(tester);
@@ -266,6 +344,54 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     },
   );
+
+  for (final product in ['DYFI', 'ShakeMap']) {
+    testWidgets(
+      'active automatic $product does not detach the phone card from map focus',
+      (tester) async {
+        final dyfi = product == 'DYFI' ? _ArchivedDyfiPublication() : null;
+        final shakeMap = product == 'ShakeMap'
+            ? _ArchivedShakeMapPublication()
+            : null;
+        final provider = await mount(
+          tester,
+          dyfiService: dyfi,
+          shakeMapService: shakeMap,
+        );
+        dyfi?.publish();
+        shakeMap?.publish();
+        final a = event('INFO-A', eew: false, source: 'emscEqlist');
+        final b = event('INFO-B', eew: false, source: 'jma');
+        provider.handleUnifiedEventForTest(a);
+        provider.handleUnifiedEventForTest(b);
+        await tester.pump();
+        expect(
+          product == 'DYFI'
+              ? provider.dyfiInfoDisplayEvent
+              : provider.shakeMapInfoDisplayEvent,
+          isNotNull,
+        );
+        for (var i = 0; i < 6; i++) {
+          provider.nextUnified();
+          final selected = provider.currentUnifiedEvent!;
+          provider.setMobileCameraInfoFocus(selected);
+          await tester.pump();
+          expect(find.text(selected.hypocenter), findsOneWidget);
+          for (final other in provider.unifiedEvents.where(
+            (e) => e != selected,
+          )) {
+            expect(find.text(other.hypocenter), findsNothing);
+          }
+          // Advance less than the camera interval: a second UI timer must not
+          // replace the selected card while the map still owns this event.
+          await tester.pump(const Duration(milliseconds: 750));
+          expect(find.text(selected.hypocenter), findsOneWidget);
+        }
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
 
   testWidgets(
     'information area focus holds its card across rotation and expires',

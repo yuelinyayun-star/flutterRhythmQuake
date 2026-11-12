@@ -20,16 +20,18 @@ final _prefectures =
       })
     >[];
 
-Future<void> loadWhewsNiedPrefectures() =>
-    _loadingPrefectures ??= _loadPrefectures().catchError((Object error) {
+Future<void> loadWhewsNiedPrefectures({
+  Future<String> Function(String)? loadString,
+}) =>
+    _loadingPrefectures ??= _loadPrefectures(loadString).catchError((Object error) {
       _loadingPrefectures = null;
       throw error;
     });
 
-Future<void> _loadPrefectures() async {
+Future<void> _loadPrefectures(Future<String> Function(String)? loadString) async {
   final data =
       jsonDecode(
-            await rootBundle.loadString(
+            await (loadString ?? rootBundle.loadString)(
               'assets/maps/japan_prefectures.geojson',
             ),
           )

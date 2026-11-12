@@ -19,12 +19,19 @@ import 'providers/page_background_provider.dart';
 import 'screens/main_screen.dart';
 import 'widgets/map/map_config.dart';
 import 'core/frame_rate_limiter.dart';
+import 'services/native_map_coordinates.dart';
+import 'services/native_core_bootstrap.dart';
 import 'core/app_edition.dart';
 import 'core/nied_replay_logger.dart';
 import 'services/database_helper.dart';
+import 'services/debug/runtime_rendering_probe.dart';
+import 'services/debug/field_diagnostics.dart';
+import 'services/debug/ui_peak_profiler.dart';
 import 'services/ntp_service.dart';
 import 'services/desktop_init.dart';
+import 'services/history_storage.dart';
 import 'services/location_service.dart';
+import 'services/epicenter_region_service.dart';
 import 'services/background_service.dart';
 import 'services/tts_service.dart';
 import 'services/sound_effect_service.dart';
@@ -38,6 +45,7 @@ import 'services/sources/wolfx_service.dart';
 import 'services/sources/whews_service.dart';
 import 'services/sources/jian_service.dart';
 import 'services/sources/fan_service.dart';
+import 'services/sources/fssn_service.dart';
 import 'services/sources/nowquake_cenc_intensity_service.dart';
 import 'services/sources/p2pquake_service.dart';
 import 'services/sources/mock_input_service.dart';
@@ -74,6 +82,7 @@ bool get _isMobilePlatform =>
 const String _fanZxyCacheMigrationKey = 'fan_zxy_tile_cache_cleared_20260822';
 
 void _configureImageCache() {
+  configureNativeMapCoordinates();
   final cache = PaintingBinding.instance.imageCache;
   if (_isMobilePlatform) {
     cache.maximumSize = 256;
@@ -110,8 +119,8 @@ void _startDeferredServices(
         unawaited(LocationService().requestCurrentPosition());
       }
 
-      // Epicenter bins + travel times load on first use (see getFEName /
-      // TravelTimeService.ensureLoaded) to keep steady-state RAM lower.
+      // Place-name assets are ready before feed startup. Travel-time assets
+      // still load on first use through TravelTimeService.ensureLoaded.
       if (!BackgroundService().isAndroidConnectionHostedByForegroundService) {
         SourceManager().startAll();
       }
@@ -140,6 +149,14 @@ void _startDeferredServices(
         NtpService().startPeriodicSync();
         unawaited(LocalInjectServer.startIfEnabled(prefs: prefs));
       });
+
+      // Field jank attribution: passive frame stats + periodic zone summary.
+      if (UiPeakProfiler.enabled) {
+        UiPeakProfiler.attachFrameStats();
+        Timer.periodic(const Duration(seconds: 30), (_) {
+          UiPeakProfiler.drainSummary();
+        });
+      }
 
       if (!kIsWeb) {
         try {
@@ -181,13 +198,18 @@ void _restoreWhewsConnections(
 }
 
 Widget _buildPlatformSemanticsWrapper(BuildContext context, Widget? child) {
-  final app = child ?? const SizedBox.shrink();
+  final app = RuntimePaintGate(
+    mapOnly: false,
+    child: child ?? const SizedBox.shrink(),
+  );
   if (!_disableWindowsAccessibilitySemantics) return app;
   return ExcludeSemantics(child: app);
 }
 
 void main() async {
   RhythmFrameRateBinding.ensureInitialized();
+  await initializeNativeCore();
+  await FieldDiagnostics.start();
   _configureImageCache();
   web_startup.setWebStartupStage('正在读取本地设置…');
 
@@ -212,6 +234,7 @@ void main() async {
 
   // 2.5 加载持久化设置
   await initDesktopPreferences();
+  await initializeHistoryFileStorage();
   final prefs = await SharedPreferences.getInstance();
   await FdsnSourceCatalog.initializePreferences(prefs.getBool, prefs.setBool);
   await _clearLegacyFanTileCacheOnce(prefs);
@@ -234,6 +257,8 @@ void main() async {
     LocationService().setCurrentLatLng(savedLat, savedLng);
   }
   NiedReplayLogger.instance.loadPreferencesFrom(prefs);
+  UiRuntimeFlags.restoreDesktopUnifiedPageSize(prefs);
+  UiRuntimeFlags.restoreMapDragGlassMode(prefs);
   UiRuntimeFlags.weatherMarqueeEnabledNotifier.value =
       prefs.getBool('weather_marquee_enabled') ?? false;
   UiRuntimeFlags.niedHypCurvePanelVisibleNotifier.value =
@@ -262,6 +287,11 @@ void main() async {
   QuakeMapView.fdsnStationLimitNotifier.value = fdsnStationLimit;
   FdsnMotionService().targetStationLimitNotifier.value = fdsnStationLimit;
 
+  // Feed normalization stores the mapped name in the event. Finish loading
+  // detailed regions first so the initial batch cannot retain a coarse FE name.
+  web_startup.setWebStartupStage('正在读取离线地名…');
+  await EpicenterRegionService.instance.load();
+
   // 3. 注册并启动地震数据源
   final wolfx = WolfxService();
   final whews = WhewsService(apiToken: '');
@@ -269,6 +299,9 @@ void main() async {
   final fan = FanService(
     apiKey: prefs.getString(FanService.apiKeyPreferenceKey) ?? '',
   );
+  final fssn = FssnService();
+  final fssnEnabled = prefs.getBool(FssnService.enabledPreferenceKey) ?? true;
+  fan.setFssnDeliveryEnabled(!fssnEnabled);
   final nowQuakeCencIr = NowQuakeCencIntensityService();
   final nowQuakeCencIrEnabled =
       prefs.getBool(NowQuakeCencIntensityService.preferenceKey) ?? true;
@@ -308,6 +341,8 @@ void main() async {
     prefs.getBool(JianService.enabledPreferenceKey) ?? false,
   );
   SourceManager().registerSource(fan);
+  SourceManager().registerSource(fssn);
+  SourceManager().setSourceEnabled(FssnService.sourceName, fssnEnabled);
   SourceManager().registerSource(nowQuakeCencIr);
   SourceManager().registerSource(p2p);
   SourceManager().registerSource(mock);

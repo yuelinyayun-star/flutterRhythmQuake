@@ -2,8 +2,11 @@ import 'dart:collection';
 import '../core/cwa_report_intensities.dart';
 
 import '../core/utils/quake_time.dart';
+import '../core/utils/eew_cancellation.dart';
 import '../core/utils/catalog_event_identity.dart';
+import '../core/utils/eew_event_identity.dart';
 import '../core/utils/information_report_order.dart';
+import '../core/utils/jian_cea_eew.dart';
 import '../models/quake_message.dart';
 import '../models/whews_catalog.dart';
 import '../models/unified_quake_data.dart';
@@ -38,6 +41,8 @@ class BackgroundEventProcessor {
     Map<String, DateTime>? seenNoUpdateInfoEvents,
     Map<String, DateTime>? seenUnifiedInfoEvents,
     Map<String, int>? acceptedEewReportNums,
+    Map<String, DateTime>? canceledEewEvents,
+    DateTime Function()? eewClock,
     this.onSeenStateChanged,
   }) : _sourceInfoMagFilters = Map.of(sourceInfoMagFilters),
        _infoActionWhitelist = infoActionWhitelist.trim(),
@@ -46,7 +51,9 @@ class BackgroundEventProcessor {
        _seenCwaInfoBodyKeys = Map.of(seenCwaInfoBodyKeys ?? const {}),
        _seenNoUpdateInfoEvents = Map.of(seenNoUpdateInfoEvents ?? const {}),
        _seenUnifiedInfoEvents = Map.of(seenUnifiedInfoEvents ?? const {}),
-       _acceptedEewReportNums = Map.of(acceptedEewReportNums ?? const {}) {
+       _acceptedEewReportNums = Map.of(acceptedEewReportNums ?? const {}),
+       _canceledEewEvents = Map.of(canceledEewEvents ?? const {}),
+       _eewClock = eewClock {
     _pruneSeenState(notify: false);
   }
 
@@ -66,6 +73,7 @@ class BackgroundEventProcessor {
       'background_seen_unified_info_events';
   static const String acceptedEewReportNumsPreferenceKey =
       'background_accepted_eew_report_nums';
+  static const String canceledEewEventsPreferenceKey = 'canceled_eew_events';
 
   static const Duration _bodyKeyTtl = Duration(hours: 24);
   static const Duration _noUpdateInfoTtl = Duration(hours: 48);
@@ -80,8 +88,11 @@ class BackgroundEventProcessor {
   /// 信息事件与主 UI 一样按 source slot 保存，而不是按 eventId 分裂成多条。
   final Map<String, _SlotState> _infoSlots = {};
   final List<_SlotState> _eewSlots = [];
+  final _eewIdentities = EewEventIdentityRegistry();
   final Set<String> _dismissedKeys = {};
   final Map<String, int> _acceptedEewReportNums;
+  final Map<String, DateTime> _canceledEewEvents;
+  final DateTime Function()? _eewClock;
 
   final Map<String, DateTime> _seenUsgsInfoBodyKeys;
   final Map<String, DateTime> _seenEmscInfoBodyKeys;
@@ -101,6 +112,8 @@ class BackgroundEventProcessor {
       UnmodifiableMapView(_seenUnifiedInfoEvents);
   Map<String, int> get acceptedEewReportNums =>
       UnmodifiableMapView(_acceptedEewReportNums);
+  Map<String, DateTime> get canceledEewEvents =>
+      UnmodifiableMapView(_canceledEewEvents);
 
   BackgroundEventResult process(UnifiedQuakeData event) {
     if (event.isVolcanoEvent && !jmaVolcanoPushEnabled) return _dropped;
@@ -177,6 +190,13 @@ class BackgroundEventProcessor {
     }
 
     final oldEvent = slot.event;
+    final cencPrecision = compareCencUnifiedOriginPrecision(oldEvent, event);
+    if (cencPrecision == -1 ||
+        (_isSameInfoEvent(oldEvent, event) &&
+            oldEvent.reviewType == 'reviewed' &&
+            event.reviewType == 'automatic')) {
+      return _dropped;
+    }
     if (_infoSlotSource(event) == 'emsc' &&
         !_isSameInfoEvent(oldEvent, event) &&
         !_isLaterInfoEvent(oldEvent, event)) {
@@ -186,7 +206,7 @@ class BackgroundEventProcessor {
         _isSameNoUpdateInfoBody(oldEvent, event) ||
         (_isSameInfoEvent(oldEvent, event) &&
             _isSameInfoBody(oldEvent, event)) ||
-        _isCencRecentInfoUpdate(oldEvent, event)) {
+        (cencPrecision != 1 && _isCencRecentInfoUpdate(oldEvent, event))) {
       return _dropped;
     }
 
@@ -214,7 +234,8 @@ class BackgroundEventProcessor {
         oldEvent,
         event,
       );
-      if (!isNewerReport &&
+      if (cencPrecision != 1 &&
+          !isNewerReport &&
           !newerNumberedInfo &&
           !isNewerOrigin &&
           !isSameEventBodyCorrection &&
@@ -248,16 +269,23 @@ class BackgroundEventProcessor {
   }
 
   BackgroundEventResult _processEew(UnifiedQuakeData event) {
-    final elapsedSec = QuakeTime.calcPassedSecondsUnified(event);
-    if (elapsedSec >= QuakeTime.eewTimeoutSecondsUnified(event)) {
-      return _dropped;
-    }
-
     final index = _findEewSlotIndex(event);
     final eventKey = _eventKey(event);
-    if (_dismissedKeys.contains(eventKey) ||
-        (index >= 0 &&
-            _dismissedKeys.contains(_eventKey(_eewSlots[index].event)))) {
+    if (_canceledEewEvents.containsKey(eventKey)) return _dropped;
+    final previous = index >= 0 ? _eewSlots[index].event : null;
+    final acceptingCancellation =
+        event.isCanceled && canAcceptEewCancellation(event, previous: previous,
+            now: _eewClock?.call());
+    if (event.isCanceled && !acceptingCancellation) return _dropped;
+    if (!acceptingCancellation &&
+        QuakeTime.calcPassedSecondsUnified(event, now: _eewClock?.call()) >=
+            QuakeTime.eewTimeoutSecondsUnified(event)) {
+      return _dropped;
+    }
+    if (!acceptingCancellation &&
+        (_dismissedKeys.contains(eventKey) ||
+            (index >= 0 &&
+                _dismissedKeys.contains(_eventKey(_eewSlots[index].event))))) {
       return _dropped;
     }
 
@@ -266,10 +294,16 @@ class BackgroundEventProcessor {
       final storedReportNum = event.hasReportSequence
           ? _acceptedEewReportNums[eventKey]
           : null;
-      if (storedReportNum != null && reportNum <= storedReportNum) {
+      if (!acceptingCancellation &&
+          storedReportNum != null &&
+          reportNum <= storedReportNum) {
         return _dropped;
       }
-      _acceptedEewReportNums[eventKey] = reportNum;
+      _acceptedEewReportNums[eventKey] =
+          storedReportNum != null && storedReportNum > reportNum
+          ? storedReportNum
+          : reportNum;
+      if (acceptingCancellation) _rememberCancellation(eventKey);
       onSeenStateChanged?.call();
       final accepted = event.copyWith(
         arrivedAt: event.arrivedAt ?? DateTime.now(),
@@ -300,7 +334,11 @@ class BackgroundEventProcessor {
       _acceptedEewReportNums.remove(oldKey);
       _dismissedKeys.remove(oldKey);
     }
-    _acceptedEewReportNums[eventKey] = reportNum;
+    _acceptedEewReportNums[eventKey] =
+        storedReportNum != null && storedReportNum > reportNum
+        ? storedReportNum
+        : reportNum;
+    if (acceptingCancellation) _rememberCancellation(eventKey);
     onSeenStateChanged?.call();
     final accepted = event.copyWith(
       arrivedAt: event.arrivedAt ?? DateTime.now(),
@@ -317,10 +355,20 @@ class BackgroundEventProcessor {
     final key = _eventKey(event);
     _dismissedKeys.add(key);
     if (event.isEew) {
-      _acceptedEewReportNums[key] = _extractReportNum(event.reportNumText);
+      final previous = _acceptedEewReportNums[key] ?? 0;
+      final incoming = _extractReportNum(event.reportNumText);
+      _acceptedEewReportNums[key] = previous > incoming ? previous : incoming;
     }
     while (_dismissedKeys.length > 200) {
       _dismissedKeys.remove(_dismissedKeys.first);
+    }
+  }
+
+  void _rememberCancellation(String key) {
+    _canceledEewEvents[key] = DateTime.now().toUtc();
+    _dismissedKeys.remove(key);
+    while (_canceledEewEvents.length > 200) {
+      _canceledEewEvents.remove(_canceledEewEvents.keys.first);
     }
   }
 
@@ -349,6 +397,7 @@ class BackgroundEventProcessor {
   }
 
   String _canonicalEventId(UnifiedQuakeData event) {
+    if (event.isEew) return _eewIdentities.resolve(event);
     if (!event.isEew && _infoSlotSource(event) == 'jmaEqlist') {
       final originTime = event.originTime;
       if (originTime != null) return _jmaInfoTimeToken(originTime);
@@ -470,6 +519,7 @@ class BackgroundEventProcessor {
       event.depth.toStringAsFixed(3),
       event.magnitude.toStringAsFixed(3),
       event.maxIntensity,
+      event.reviewType ?? '',
       QuakeTime.unifiedInstantUtc(event).toIso8601String(),
       if (event.source == 'cwaEqlist') event.warnArea,
     ].join('|');
@@ -496,6 +546,7 @@ class BackgroundEventProcessor {
     return _canonicalEventId(oldEvent) == _canonicalEventId(event) &&
         oldEvent.titleText == event.titleText &&
         oldEvent.reportNumText == event.reportNumText &&
+        oldEvent.reviewType == event.reviewType &&
         oldEvent.hypocenter == event.hypocenter &&
         _sameDouble(oldEvent.lat, event.lat) &&
         _sameDouble(oldEvent.lng, event.lng) &&
@@ -504,6 +555,9 @@ class BackgroundEventProcessor {
         oldEvent.maxIntensity == event.maxIntensity &&
         oldEvent.className == event.className &&
         oldEvent.warnArea == event.warnArea &&
+        oldEvent.isWarn == event.isWarn &&
+        oldEvent.isFinal == event.isFinal &&
+        oldEvent.isAssumption == event.isAssumption &&
         oldEvent.isCanceled == event.isCanceled &&
         _sameVolcanoEvent(oldEvent, event) &&
         QuakeTime.unifiedInstantUtc(oldEvent) ==
@@ -631,6 +685,8 @@ class BackgroundEventProcessor {
       _rememberUnifiedInfoEvent(event);
       return true;
     }
+    if (isUnseenCatalogReviewUpgrade(event, _seenUnifiedInfoEvents))
+      return false;
     final key = _seenUnifiedInfoEventKey(event);
     if (!_seenUnifiedInfoEvents.containsKey(key)) return false;
     final current = _infoSlots[_infoSlotSource(event)]?.event;
@@ -654,7 +710,9 @@ class BackgroundEventProcessor {
     UnifiedQuakeData event,
   ) {
     if (!_isSameInfoEvent(oldEvent, event)) return event;
-    var merged = internationalCatalogSource(event.source) != null
+    var merged =
+        internationalCatalogSource(event.source) != null ||
+            event.source == 'cencEqlist'
         ? event
         : event.copyWith(eventId: oldEvent.eventId);
     if (_jmaInfoTitleRank(event.titleText) <
@@ -743,8 +801,9 @@ class BackgroundEventProcessor {
     final newOrigin = event.originTime;
     if (oldOrigin != null && newOrigin != null) {
       if (_infoSlotSource(event) == 'emsc') {
-        return QuakeTime.unifiedInstantUtc(event)
-            .isAfter(QuakeTime.unifiedInstantUtc(oldEvent));
+        return QuakeTime.unifiedInstantUtc(
+          event,
+        ).isAfter(QuakeTime.unifiedInstantUtc(oldEvent));
       }
       return newOrigin.isAfter(oldOrigin);
     }
@@ -787,11 +846,12 @@ class BackgroundEventProcessor {
     UnifiedQuakeData oldEvent,
     UnifiedQuakeData event,
   ) {
+    if (oldEvent.replaySessionId != event.replaySessionId) return false;
     if (!oldEvent.isEew || !event.isEew || oldEvent.source != event.source) {
       return false;
     }
-    final oldId = oldEvent.eventId.trim();
-    final newId = event.eventId.trim();
+    final oldId = _eewIdentities.resolve(oldEvent);
+    final newId = _eewIdentities.resolve(event);
     if (oldId.isNotEmpty && newId.isNotEmpty && oldId == newId) return true;
     final oldIdTime = _eewEventIdTimeToken(oldId);
     final newIdTime = _eewEventIdTimeToken(newId);
@@ -815,19 +875,27 @@ class BackgroundEventProcessor {
     if ((oldLat == 0 && oldLng == 0) || (newLat == 0 && newLng == 0)) {
       return true;
     }
-    return (oldLat - newLat).abs() <= 0.05 && (oldLng - newLng).abs() <= 0.05;
+    final matches =
+        (oldLat - newLat).abs() <= 0.05 && (oldLng - newLng).abs() <= 0.05;
+    if (matches) _eewIdentities.rememberMatch(oldEvent, event);
+    return matches;
   }
 
   bool _isSameReportEewRevision(
     UnifiedQuakeData oldEvent,
     UnifiedQuakeData event,
   ) {
+    if (_isSameUnifiedEewEvent(oldEvent, event) &&
+        isEewCancellationTransition(oldEvent, event)) {
+      return true;
+    }
     if (!_isSameUnifiedEewEvent(oldEvent, event) ||
         _extractReportNum(oldEvent.reportNumText) !=
             _extractReportNum(event.reportNumText) ||
         _isSameInfoBody(oldEvent, event)) {
       return false;
     }
+    if (isJianCeaSameReportRevision(oldEvent, event)) return true;
     if (!event.hasReportSequence && !oldEvent.hasReportSequence) {
       return !event.isSnapshot && event.origin == oldEvent.origin;
     }

@@ -1,0 +1,87 @@
+{
+  "event": "2026-11-08T01:04:00+09:00",
+  "officialJmaEventID": "20261108010441",
+  "officialXml": {
+    "file": "test\\fixtures\\jma_lpgm_20261108\\20261107161354_0_VXSE62_010000.xml",
+    "sha256": "9fdb3c9b5360ced82f8502e1d581adfd13e3845bd5464cdcf155b6e916b48c0b"
+  },
+  "p2pOriginal": {
+    "file": "test\\fixtures\\jma_lpgm_20261108\\p2p_551_live_all_reports.original.json",
+    "sha256": "067d32bbdf015f165330a444cb8e0131f21b3dddc39437cb51d684dfbd7af2f6",
+    "individualReports": [
+      {
+        "wireId": "6aef4e0ae88ee598246bf489",
+        "originTime": "2026/11/08 01:04:00",
+        "issueType": "DetailScale",
+        "lat": 34.9,
+        "lng": 137.7,
+        "magnitude": 5.7,
+        "depthKm": 40
+      },
+      {
+        "wireId": "6aef4d05e88ee598246bf488",
+        "originTime": "2026/11/08 01:04:00",
+        "issueType": "DetailScale",
+        "lat": 34.9,
+        "lng": 137.7,
+        "magnitude": 5.7,
+        "depthKm": 40
+      },
+      {
+        "wireId": "6aef4cbfe88ee598246bf487",
+        "originTime": "2026/11/08 01:04:00",
+        "issueType": "ScalePrompt",
+        "lat": -200,
+        "lng": -200,
+        "magnitude": -1,
+        "depthKm": -1
+      },
+      {
+        "wireId": "6aef4cbae88ee598246bf486",
+        "originTime": "2026/11/08 01:04:00",
+        "issueType": "Destination",
+        "lat": 34.9,
+        "lng": 137.7,
+        "magnitude": 5.7,
+        "depthKm": 40
+      },
+      {
+        "wireId": "6aef4c83e88ee598246bf485",
+        "originTime": "2026/11/08 01:04:00",
+        "issueType": "ScalePrompt",
+        "lat": -200,
+        "lng": -200,
+        "magnitude": -1,
+        "depthKm": -1
+      },
+      {
+        "wireId": "6aef4c79e88ee598246bf484",
+        "originTime": "2026/11/08 01:04:00",
+        "issueType": "ScalePrompt",
+        "lat": -200,
+        "lng": -200,
+        "magnitude": -1,
+        "depthKm": -1
+      }
+    ]
+  },
+  "otherRealSourceSamples_notSameEarthquake": {
+    "jian": {
+      "id": "20260916172127",
+      "telegram": "VXSE53",
+      "file": "test\\fixtures\\jian\\jmalist_response.json",
+      "sha256": "081561dde52e7dbc43083392947622874fa41e2153d29cb2d7de9fe4cfb52bcb"
+    },
+    "whews": {
+      "id": "20260917061143",
+      "telegram": "VXSE53",
+      "file": "test\\fixtures\\catalog_20260917\\whews_all.json",
+      "sha256": "f69c83e0ed636684264840061ffa6873aecf769db5bd2a2146ba3c4799cda5db"
+    }
+  },
+  "uncaptured": [
+    "JIAN actual VXSE62 carrier JSON",
+    "WHEWS actual VXSE62 carrier JSON"
+  ],
+  "note": "Actual P2P API records and JMA original XML. JIAN/WHEWS ordinary JMA samples are real but from other events. Reconstructed VXSE62 relay envelopes in tests must not be described as captures."
+}

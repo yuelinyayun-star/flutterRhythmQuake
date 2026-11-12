@@ -1,3 +1,4 @@
+import 'package:flutterrhythmquake/services/whews_authorization_policy.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -47,6 +48,7 @@ EewEventGroup groupWith(List<StationHistoryFrame> frames) => EewEventGroup(
 );
 
 void main() {
+  setUp(() => WhewsAuthorizationPolicy.storeOverride = MemoryConnectionRetryStore());
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
@@ -75,6 +77,22 @@ void main() {
     expect(display.lpgm!.topStations, isEmpty);
     display.update({});
     expect(display.lpgm, isNull);
+  });
+
+  test('station replay marks only the updated source for repaint', () {
+    // Empty transport frames exercise notification ownership, not observations.
+    final time = cwa().times.first;
+    final nied = emptyFrame('nied', time);
+    final seisjs = emptyFrame('seisjs', time);
+    final display = ReplayStationDisplay();
+    expect(display.update({'nied': nied, 'seisjs': seisjs}), {
+      'nied',
+      'seisjs',
+    });
+    expect(display.update({'nied': nied, 'seisjs': seisjs}), isEmpty);
+    final next = emptyFrame('seisjs', time.add(const Duration(seconds: 1)));
+    expect(display.update({'nied': nied, 'seisjs': next}), {'seisjs'});
+    expect(display.update({}), {'nied', 'seisjs'});
   });
 
   test(
@@ -226,6 +244,18 @@ void main() {
       expect(
         ForegroundStationPayload.nied(
           display.nied,
+          source: 'lmoni',
+          includeTrackingHistory: false,
+        ),
+        snapshot,
+      );
+      final backgroundDisplay = ReplayStationDisplay();
+      addTearDown(backgroundDisplay.dispose);
+      final backgroundDecoded = await backgroundDisplay.decodeNied(restored);
+      backgroundDisplay.applyNied(restored, backgroundDecoded);
+      expect(
+        ForegroundStationPayload.nied(
+          backgroundDisplay.nied,
           source: 'lmoni',
           includeTrackingHistory: false,
         ),

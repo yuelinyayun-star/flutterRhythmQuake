@@ -10,12 +10,16 @@
 library;
 
 import 'dart:async';
-import 'dart:convert';
+import 'api_json_decoder.dart';
 import '../station_history_capture.dart';
 import '../foreground_station_payload.dart';
 import 'package:flutter/foundation.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'source_socket.dart';
+import 'native_station_runtime.dart';
+import 'native_station_display.dart';
+import '../obs_automation_input_service.dart';
 
 @visibleForTesting
 double seisJsRealtimeIntensityFromJson(Map<dynamic, dynamic> json) {
@@ -36,6 +40,8 @@ class SeisJsStation {
   double maxIntensity;
   bool isDesktop;
   DateTime? lastUpdate;
+  int? preparedMapLevel;
+  bool? preparedMapActive;
 
   SeisJsStation({
     required this.id,
@@ -54,14 +60,96 @@ class SeisJsStation {
   });
 }
 
+/// Selections prepared by the native source; only two display rows leave it.
+class SeisJsPreparedSummary {
+  const SeisJsPreparedSummary(this.selected, this.maximum);
+  final SeisJsStation? selected;
+  final SeisJsStation? maximum;
+}
+
 class SeisJsService {
   static final SeisJsService _instance = SeisJsService._();
   factory SeisJsService() => _instance;
-  SeisJsService._();
+  SeisJsService._() : this.detached(useNative: true);
+
+  @visibleForTesting
+  SeisJsService.detached({
+    WebSocketChannel Function(Uri)? socketFactory,
+    bool useNative = false,
+    Map<String, Object?> nativeSettings = const {},
+  }) : _socketFactory = socketFactory ?? ((uri) => connectSourceSocket(uri)),
+       _useNative = useNative,
+       _nativeSettings = nativeSettings;
+
+  final WebSocketChannel Function(Uri) _socketFactory;
+  final bool _useNative;
+  final Map<String, Object?> _nativeSettings;
+  NativeStationRuntime? _native;
+  bool get nativeActive => _native != null;
+  String nativeLayerSignature = '';
+  String nativeStatus = '';
+  @visibleForTesting
+  int nativeFrameCount = 0;
+  List<SeisJsStation> _nativeViews = const [];
+  List<ObsStationInputSample> nativeAutomationSamples = const [];
+  SeisJsPreparedSummary? nativeSummary;
+
+  void _startNative() {
+    final runtime = _native = NativeStationRuntime();
+    runtime.onFrame = (frame) {
+      if (!identical(runtime, _native)) return;
+      final status = frame['status'] as String;
+      nativeFrameCount = frame['frames'] as int;
+      if (nativeStatus != status) {
+        nativeStatus = status;
+        onStatusChanged?.call(status == 'connected');
+      }
+      final rawTime = frame['dataTime'] as String?;
+      dataTimeNotifier.value = rawTime == null ? null : DateTime.parse(rawTime);
+      nativeLayerSignature = frame['signature'] as String;
+      nativeAutomationSamples = nativeStationAutomation(frame);
+      final rows = frame['stations'] as List;
+      _nativeViews = ForegroundStationPayload.decodeSeisJs(rows);
+      for (var i = 0; i < _nativeViews.length; i++) {
+        _nativeViews[i].preparedMapLevel = rows[i]['mapLevel'] as int;
+        _nativeViews[i].preparedMapActive = rows[i]['mapActive'] as bool;
+      }
+      SeisJsStation? bind(dynamic row) => row == null
+          ? null
+          : ForegroundStationPayload.decodeSeisJs([row]).single;
+      nativeSummary = SeisJsPreparedSummary(
+        bind(frame['summary']['selected']),
+        bind(frame['summary']['max']),
+      );
+      final received = DateTime.parse(frame['receivedAt'] as String);
+      if (frame['dataChanged'] == true) {
+        StationHistoryCapture.instance.publish(
+          'seisjs',
+          () => runtime.archive!,
+          originalJsonLoader: () => runtime.original,
+          receivedAt: received,
+        );
+      }
+      _controller.add(_nativeViews);
+    };
+    runtime.start({'kind': 'seisjs', ..._nativeSettings});
+  }
+
+  @visibleForTesting
+  void handleOriginalForTesting(List<int> bytes, DateTime clock) {
+    if (_native case final runtime?) {
+      runtime.injectOriginal(bytes, clock);
+    } else {
+      _handleMessage(bytes);
+    }
+  }
 
   static const String _wsUrl = 'wss://seisjs.wolfx.jp/all_seis';
 
   WebSocketChannel? _channel;
+  StreamSubscription<dynamic>? _subscription;
+  Timer? _reconnectTimer;
+  int _serial = 0;
   Timer? _heartbeatTimer;
   Timer? _expireTimer;
   bool _running = false;
@@ -72,77 +160,126 @@ class SeisJsService {
   final ValueNotifier<DateTime?> dataTimeNotifier = ValueNotifier(null);
 
   final Map<String, SeisJsStation> _stations = {};
-  List<SeisJsStation> get stations => List.unmodifiable(_stations.values);
+  List<SeisJsStation> get stations =>
+      nativeActive ? _nativeViews : List.unmodifiable(_stations.values);
 
   void Function(bool connected)? onStatusChanged;
 
   void connect() {
     if (_running) return;
     _running = true;
-    _doConnect();
+    if (_useNative && NativeStationRuntime.supported) {
+      _startNative();
+      return;
+    }
+    _expireTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (_running) _expireStaleStations();
+    });
+    unawaited(_doConnect());
   }
 
   void disconnect() {
+    if (_native != null) {
+      StationHistoryCapture.instance.clearLatest('seisjs');
+      _native!.stop();
+      _native = null;
+      _nativeViews = const [];
+      nativeSummary = null;
+      nativeLayerSignature = '';
+      nativeStatus = '';
+      nativeAutomationSamples = const [];
+    }
     _running = false;
-    _heartbeatTimer?.cancel();
+    ++_serial;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
     _expireTimer?.cancel();
-    _channel?.sink.close();
-    _channel = null;
+    _expireTimer = null;
+    _closeSocket();
     _hasRealtimeData = false;
     dataTimeNotifier.value = null;
     onStatusChanged?.call(false);
   }
 
-  void _doConnect() {
-    try {
-      _channel = WebSocketChannel.connect(Uri.parse(_wsUrl));
-      debugPrint('SeisJS: 已连接');
+  bool _current(WebSocketChannel channel, int serial) =>
+      _running && serial == _serial && identical(_channel, channel);
 
-      _channel!.stream.listen(
+  Future<void> _doConnect() async {
+    if (!_running) return;
+    final serial = ++_serial;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _closeSocket();
+    try {
+      final channel = _socketFactory(Uri.parse(_wsUrl));
+      _channel = channel;
+      _subscription = channel.stream.listen(
         (data) {
-          _handleMessage(data.toString());
+          if (_current(channel, serial)) _handleMessage(data);
         },
         onDone: () {
-          debugPrint('SeisJS: 连接关闭');
-          if (_running) {
-            _hasRealtimeData = false;
-            onStatusChanged?.call(false);
-            Future.delayed(const Duration(seconds: 5), () {
-              if (_running) _doConnect();
-            });
-          }
+          if (_current(channel, serial)) _failed(serial);
         },
         onError: (err) {
-          debugPrint('SeisJS: 错误 $err');
-          if (_running) {
-            _hasRealtimeData = false;
-            onStatusChanged?.call(false);
-          }
+          if (_current(channel, serial)) _failed(serial);
         },
         cancelOnError: true,
       );
-
+      await channel.ready.timeout(const Duration(seconds: 20));
+      if (!_current(channel, serial)) return;
+      debugPrint('SeisJS: 已连接');
       _heartbeatTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-        _channel?.sink.add('ping');
-      });
-
-      _expireTimer = Timer.periodic(const Duration(seconds: 5), (_) {
-        _expireStaleStations();
+        if (!_current(channel, serial)) return;
+        try {
+          channel.sink.add('ping');
+        } catch (_) {
+          _failed(serial);
+        }
       });
     } catch (e) {
-      debugPrint('SeisJS: 连接失败 $e');
-      onStatusChanged?.call(false);
-      if (_running) {
-        Future.delayed(const Duration(seconds: 10), () {
-          if (_running) _doConnect();
-        });
-      }
+      _failed(serial, seconds: 10);
     }
   }
 
-  void _handleMessage(String text) {
+  void _failed(int serial, {int seconds = 5}) {
+    if (!_running || serial != _serial) return;
+    final nextSerial = ++_serial;
+    _closeSocket();
+    _hasRealtimeData = false;
+    dataTimeNotifier.value = null;
+    onStatusChanged?.call(false);
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(Duration(seconds: seconds), () {
+      if (!_running || nextSerial != _serial) return;
+      _reconnectTimer = null;
+      unawaited(_doConnect());
+    });
+  }
+
+  void _closeSocket() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+    final subscription = _subscription;
+    final channel = _channel;
+    _subscription = null;
+    _channel = null;
+    if (subscription != null) unawaited(subscription.cancel());
+    if (channel != null) {
+      unawaited(channel.sink.close().catchError((Object _) {}));
+    }
+  }
+
+  void dispose() {
+    disconnect();
+    unawaited(_controller.close());
+    dataTimeNotifier.dispose();
+  }
+
+  void _handleMessage(dynamic text) {
     try {
-      final json = jsonDecode(text);
+      final json = text is List<int>
+          ? decodeApiJsonBytes(text)
+          : decodeApiJson(text as String);
       if (json is! Map) return;
 
       final type = json['type']?.toString() ?? '';
@@ -205,8 +342,14 @@ class SeisJsService {
         onStatusChanged?.call(true);
       }
 
-      StationHistoryCapture.instance.publish('seisjs', () =>
-          ForegroundStationPayload.seisjs(stations, dataTime: dataTimeNotifier.value), source: 'seisjs');
+      StationHistoryCapture.instance.publish(
+        'seisjs',
+        () => ForegroundStationPayload.seisjs(
+          stations,
+          dataTime: dataTimeNotifier.value,
+        ),
+        source: 'seisjs',
+      );
       _controller.add(List.of(_stations.values));
     } catch (e) {
       // skip malformed messages
@@ -226,8 +369,13 @@ class SeisJsService {
       _stations.remove(id);
     }
     if (stale.isNotEmpty) {
-      StationHistoryCapture.instance.publish('seisjs', () =>
-          ForegroundStationPayload.seisjs(stations, dataTime: dataTimeNotifier.value));
+      StationHistoryCapture.instance.publish(
+        'seisjs',
+        () => ForegroundStationPayload.seisjs(
+          stations,
+          dataTime: dataTimeNotifier.value,
+        ),
+      );
       _controller.add(List.of(_stations.values));
     }
   }

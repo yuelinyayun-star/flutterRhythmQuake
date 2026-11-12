@@ -1,0 +1,17 @@
+Offline geographic place-name index
+
+Land geometry source: National Land Surveying and Mapping Center
+Dataset: township boundaries, TWD97 geographic coordinates
+Official catalog: https://data.gov.tw/dataset/7441
+Official download: https://maps.nlsc.gov.tw/download/鄉鎮市區界線(TWD97經緯度).zip
+Retrieved: 2026-10-20
+Actual layers: TOWN_MOI_1120317 (2023), Town_Majia_Sanhe
+Original ZIP SHA256: e028e5a750eee48cf7913330655e5e5c5bb1f176868fbd0afdfc661fca60557c
+License: Open Government Data License, version 1.0
+License terms: https://data.gov.tw/license
+
+Used only for offline coordinate-to-place queries, not as a public map basemap
+or a source of national/provincial boundary rendering. Source records remain
+unchanged; domestic simplified display names are separate derived aliases.
+See tool/region_data/README.md and taiwan_regions.provenance.json for version,
+coverage, source jurisdiction fields, display aliases and geographic exclusions.

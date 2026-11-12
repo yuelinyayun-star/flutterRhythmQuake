@@ -580,7 +580,10 @@ class WavePainter extends CustomPainter {
     if (event.isCanceled) {
       label = '已取消';
     } else if (event.isAssumption) {
-      label = '假定震源';
+      label = !event.isInfoEvent &&
+              const {QuakeSourceType.wolfx, QuakeSourceType.jma_fan}.contains(event.source)
+          ? 'PLUM所得假定震源'
+          : '假定震源';
     } else if (isForeignVolcano) {
       label = '遠地噴火に関する情報';
     } else if (isForeign) {

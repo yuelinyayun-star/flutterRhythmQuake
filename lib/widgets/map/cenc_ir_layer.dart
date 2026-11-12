@@ -9,6 +9,8 @@ import 'package:latlong2/latlong.dart';
 import '../../models/cenc_ir_data.dart';
 import '../../core/intensity_calculator.dart';
 import '../../core/utils/world_wrap.dart';
+import 'intensity_fill_layer.dart';
+import '../../core/utils/topojson_loader.dart';
 
 @visibleForTesting
 double cencIrStationRadiusForZoom(double zoom) {
@@ -34,8 +36,15 @@ bool cencIrLayerDataChanged(CencIrData previous, CencIrData current) {
 
 class CencIrLayer extends StatelessWidget {
   final CencIrData? data;
+  final ValueChanged<List<TopoJsonRegion>>? onInformationGeometry;
+  final ValueChanged<InformationFillSummary>? onInformationFillSummary;
 
-  const CencIrLayer({super.key, this.data});
+  const CencIrLayer({
+    super.key,
+    this.data,
+    this.onInformationGeometry,
+    this.onInformationFillSummary,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -46,15 +55,24 @@ class CencIrLayer extends StatelessWidget {
         defaultTargetPlatform == TargetPlatform.android ||
         defaultTargetPlatform == TargetPlatform.iOS;
 
-    return CustomPaint(
-      painter: CencIrPainter(
-        data: data!,
-        camera: MapCamera.of(context),
-        compact: compact,
-      ),
-      size: Size.infinite,
-      isComplex: true,
-      willChange: false,
+    return Stack(
+      children: [
+        IntensityFillLayer.cencObserved(
+          data: data!,
+          onInformationGeometry: onInformationGeometry,
+          onInformationFillSummary: onInformationFillSummary,
+        ),
+        CustomPaint(
+          painter: CencIrPainter(
+            data: data!,
+            camera: MapCamera.of(context),
+            compact: compact,
+          ),
+          size: Size.infinite,
+          isComplex: true,
+          willChange: false,
+        ),
+      ],
     );
   }
 }

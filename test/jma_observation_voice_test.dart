@@ -250,15 +250,15 @@ void main() {
     );
   });
 
-  test('EEW depth is spoken naturally; unknown depth is omitted', () {
+  test('EEW voice omits depth independently of known and unknown values', () {
     final event = observation([]).copyWith(
       source: 'jmaEew',
       isEew: true,
       hypocenter: 'カムチャツカ半島付近',
       magnitude: 6.2,
     );
-    expect(voice(event.copyWith(depth: 0)), contains('深度很浅'));
-    expect(voice(event.copyWith(depth: 14.9)), contains('深度14.9公里'));
+    expect(voice(event.copyWith(depth: 0)), isNot(contains('深度')));
+    expect(voice(event.copyWith(depth: 14.9)), isNot(contains('深度')));
     for (final depth in [-1.0, double.nan, double.infinity]) {
       expect(voice(event.copyWith(depth: depth)), isNot(contains('深度')));
     }
@@ -341,18 +341,18 @@ void main() {
     }
     for (final title in ['震源・震度に関する情報', '震度・震源に関する情報']) {
       final text = voice(event.copyWith(titleText: title));
-      expect(text, contains('深度很浅'));
+      expect(text, contains('深度0公里'));
       expect(text, contains('观测到震度4的地区：新雪谷町'));
     }
     for (final title in ['震源に関する情報', '遠地地震に関する情報', 'その他の情報']) {
       final text = voice(event.copyWith(titleText: title));
-      expect(text, contains('深度很浅'));
+      expect(text, contains('深度0公里'));
       expect(text, isNot(contains('观测到')));
     }
-    expect(voice(event.copyWith(source: 'cencEqlist')), contains('深度很浅'));
+    expect(voice(event.copyWith(source: 'cencEqlist')), contains('深度0公里'));
     expect(
       voice(event.copyWith(source: 'jmaEew', isEew: true)),
-      contains('深度很浅'),
+      isNot(contains('深度')),
     );
   });
 

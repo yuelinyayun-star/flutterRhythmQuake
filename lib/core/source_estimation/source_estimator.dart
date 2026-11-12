@@ -13,6 +13,8 @@ import 'kanameishi_jma2001_travel_time_table.dart';
 import 'kotoho7_js_eew_bridge.dart';
 import 'kotoho7_js_receiver_bridge.dart' as kotoho7_js;
 import 'nied_pgv_magnitude_diagnostics.dart';
+import 'native_hyp_scorer.dart';
+import 'nied_hyp_input_snapshot.dart';
 import 'palert_source_profile.dart';
 import 'source_estimation_models.dart';
 import 'srev_kaizou_magnitude.dart';
@@ -1312,6 +1314,533 @@ enum NiedHypSearchSchedule {
   scratchFiveStageJointNeighborhood,
 }
 
+/// Debug-only shadow knobs for the reference-aligned (kanameishi) hypocentre
+/// search *start point* and *depth handling*. All default to `false` / `null`,
+/// so production behaviour is unchanged unless a replay test explicitly flips
+/// them; the class only ever reads these flags (never mutates production
+/// state), so [reset] is a lossless revert.
+///
+/// These exist to probe the levers behind the offshore epicentre bias
+/// documented in `tmp/mag_scoreboard/OFFSHORE_EPI_ROOTCAUSE.md` and the
+/// JMA-method survey in `tmp/mag_scoreboard/JMA_INSPIRATION.md`:
+///  * L2 — [forceColdStart]: re-run every frame from the temporary epicentre
+///    seed instead of hot-starting from the previously published hypocentre.
+///  * L3 — [useAllTriggeredCentroidSeed]: derive that seed from the centroid of
+///    every triggered active station, not only the earliest-triggered ones.
+///  * J1 — [pinnedDepthKm] / [forceDartSearch]: pin the focal depth to a prior
+///    (JMA fixes 30 km for the Kurile shallow region and varies depth in 1 km
+///    steps only when the solution is unstable; ElarmS/GEOFON default to
+///    8/10 km). Pinning removes the depth ⇄ epicentral-distance ⇄ origin-time
+///    trade-off that makes offshore score surfaces flat. Because the native
+///    Rust search always walks the depth axis, a non-null [pinnedDepthKm]
+///    forces the Dart search path; [forceDartSearch] alone gives that path a
+///    free-depth control run so a depth pin is never conflated with the path
+///    switch. Measured result: both pins regress offshore accuracy (evidence 6
+///    in `OFFSHORE_EPI_ROOTCAUSE.md`), so this lever is falsified and stays off.
+///  * J2 — [nyadNegativeEvidence]: upgrade the reference scorer's *distance*-
+///    based inactive penalty (a weak `penalized/count` term, inert once ≥50
+///    weighted stations are present) to the Horiuchi 2005 NYAD inequality: any
+///    silent station whose predicted P arrival — under the scenario's own
+///    inferred origin time — is already in the past is negative evidence. The
+///    time-based count is normalised by the effective station count and reuses
+///    the same inactive weight, so the criterion is the only variable. Because
+///    NYAD needs a wall-clock "now", it can only run on the Dart scorer, so
+///    enabling it also diverts the search to the Dart path. Measured result: a
+///    net tie offshore, but the *only* lever whose sign is right (it always
+///    pulls the epicentre west, toward land) — see evidence 7 in
+///    `OFFSHORE_EPI_ROOTCAUSE.md`.
+///  * J3 — [amplitudeConsistency] / [amplitudeWeight]: add the JMA IPF
+///    amplitude channel. The production scorer is *pure travel time* — it never
+///    uses the per-station observed intensity (`currentShindo`, the NIED
+///    instrumental-intensity proxy for log-amplitude). For a candidate
+///    hypocentre each triggered station yields a per-station magnitude from its
+///    intensity and its distance (the srev-kaizou intensity↔M↔D relation with
+///    the same 20 km floor); a correct geometry makes those magnitudes agree,
+///    a wrong one scatters them. The weighted mean-absolute deviation about the
+///    weighted median is added to the score. This is an *independent* channel
+///    (intensity attenuation) to the flat travel-time surface offshore. Because
+///    the native Rust scorer carries no amplitude words, enabling it diverts to
+///    the Dart path. [amplitudeWeight] converts the magnitude-unit scatter into
+///    the score's second-unit scale and is the scanned variable.
+///  * 方案 C — [searchForm]: replace the single-trajectory greedy hill climb with
+///    a deterministic **global coarse-grid posterior + local refine** (see
+///    `docs/换搜索算法_离岸定位独立立项提案_20261015.md`). J3 proved the
+///    amplitude *information* is sound but the greedy *form* uses it unstably,
+///    so this lever changes the search form, not the information. Runs only on
+///    the Dart scorer and only when `searchForm == 'grid'`; the native ABI
+///    contract and all production defaults are untouched.
+class NiedHypStartShadow {
+  const NiedHypStartShadow._();
+
+  /// Production offshore HYP tuning. Enabled by default after the N205-N210
+  /// cross-corpus validation. Set RQ_HYP_OFFSHORE_TUNING=false to restore
+  /// the pre-tuning production behaviour as a single master rollback.
+  static const bool productionOffshoreTuning = bool.fromEnvironment(
+    'RQ_HYP_OFFSHORE_TUNING',
+    defaultValue: true,
+  );
+  static const bool productionJointRefinement = bool.fromEnvironment(
+    'RQ_HYP_JOINT_REFINEMENT',
+    defaultValue: true,
+  );
+
+  static bool forceColdStart = false;
+  static bool useAllTriggeredCentroidSeed = false;
+  static bool forceDartSearch = false;
+
+  /// Debug-only offshore search-topology probe. When enabled together with the
+  /// reference-aligned Dart search, score the full joint lat/lng/depth
+  /// neighbourhood in addition to the production six axial neighbours.
+  /// Defaults off so production search order and native execution are unchanged.
+  static bool jointReferenceNeighbors =
+      productionOffshoreTuning && productionJointRefinement;
+  static double jointReferenceMaxDegree =
+      productionOffshoreTuning && productionJointRefinement
+      ? 0.1
+      : double.infinity;
+  static int jointReferenceMinActiveStations =
+      productionOffshoreTuning && productionJointRefinement ? 15 : 0;
+  static double jointReferenceMaxCurrentScore =
+      productionOffshoreTuning && productionJointRefinement
+      ? 5.0
+      : double.infinity;
+
+  /// When true, joint-neighbour refinement is allowed only after the family
+  /// already has a finite previous solution. This keeps the first/source-birth
+  /// solve on the production axial topology and uses joint moves only as a
+  /// warm-start local refinement.
+  static bool jointReferenceRequirePreviousResult = false;
+
+  /// Research-only support-retention guard for [jointReferenceNeighbors].
+  /// A candidate is not allowed to win by explaining only a tiny subset of
+  /// the detection family's active/assigned stations. The denominator is the
+  /// frame's active family station count (not the previous candidate), because
+  /// using the previous candidate permits gradual support collapse over many
+  /// locally improving moves. Zero disables the guard.
+  static double jointReferenceMinSupportRatio = 0.0;
+
+  /// Research-only reference-scorer lever for offshore station-order drift.
+  /// Production normalizes the arrival-rank taper by max(stationCount, 100),
+  /// so late arrivals in small/medium clusters retain substantial weight.
+  /// When enabled, normalize by the actual current cluster size instead.
+  static bool referenceRelativeRankWeight = false;
+
+  /// Optional research cap for [referenceRelativeRankWeight]. A positive value
+  /// applies the alternate taper only while the active cluster is at or below
+  /// this size; zero means no cap.
+  static int referenceRelativeRankMaxStations = 0;
+
+  /// Research-only stronger spatial-density compensation. The reference path
+  /// currently uses 1/sqrt(neighborCount); this shadow uses 1/neighborCount so
+  /// dense same-side station clusters cannot dominate a sparse offshore
+  /// geometry as easily. Default false preserves production.
+  static bool referenceStrongDensityWeight = false;
+
+  /// Research-only phase-choice lever for the reference scorer. Production
+  /// prefers P unless |P residual| > 2 * |S residual|. Lowering this toward
+  /// 1.0 makes phase inference choose the actually closer travel-time branch
+  /// more readily, which may matter for offshore late/display crossings.
+  static double referencePhasePToSRatio = 2.0;
+
+  /// Research-only temporal ramp for newly triggered stations in the
+  /// reference scorer. A positive value gradually raises a station from 25%
+  /// to 100% of its normal weight during its first N seconds after trigger.
+  /// This probes whether abrupt batches of late display crossings are what
+  /// pull offshore solutions into a worse basin. Zero preserves production.
+  static double referenceNewStationRampSeconds = 0.0;
+
+  /// Research-only proposal/commit audit. Splits the reference scorer's
+  /// current stations into those already present in the previous published
+  /// phase state and stations newly introduced since that state, then compares
+  /// the previous hypocentre and the searched proposal on each subset.
+  /// Diagnostic-only for now; false preserves production byte-for-byte.
+  static bool referenceProposalCommitAudit = false;
+
+  /// Research-only conservative commit guard built on the audit above.
+  /// Reject only a large (>20 km) proposal that makes the mature subset more
+  /// than 3x worse (>+200%) while the new subset improves by less than 50%.
+  /// Defaults off; thresholds are intentionally stringent to avoid turning the
+  /// audit into another broadly tuned heuristic.
+  static bool referenceProposalCommitGate = const bool.fromEnvironment(
+    'RQ_HYP_PROPOSAL_COMMIT_GATE',
+  );
+  static bool referenceAnchorChallenger =
+      productionOffshoreTuning &&
+      const bool.fromEnvironment(
+        'RQ_HYP_ANCHOR_CHALLENGER',
+        defaultValue: true,
+      );
+  static int referenceAnchorMinSupport = const int.fromEnvironment(
+    'RQ_HYP_ANCHOR_MIN_SUPPORT',
+    defaultValue: 7,
+  );
+  static double referenceAnchorMaxScore =
+      double.tryParse(
+        const String.fromEnvironment(
+          'RQ_HYP_ANCHOR_MAX_SCORE',
+          defaultValue: '0.5',
+        ),
+      ) ??
+      0.5;
+
+  /// Research-only sparse birth-basin recovery. If a family is still on a
+  /// very low-support published solution, probe the bounded coarse grid only
+  /// after enough stations are active and accept it only when support expands
+  /// strongly. This is deliberately not the normal locator and defaults off.
+  static bool referenceSparseNullGridRescue =
+      productionOffshoreTuning &&
+      const bool.fromEnvironment(
+        'RQ_HYP_SPARSE_NULL_GRID_RESCUE',
+        defaultValue: true,
+      );
+  static int referenceSparseRescueMaxPreviousSupport = 8;
+  static int referenceSparseRescueMinActiveStations = 15;
+  static int referenceSparseRescueMinSupport = 15;
+  static double referenceSparseRescueMinSupportRatio = 2.0;
+  static bool referenceSparseComparePublishableResearch = false;
+  static double referenceProposalProbationSeconds =
+      double.tryParse(
+        const String.fromEnvironment(
+          'RQ_HYP_PROPOSAL_PROBATION_SECONDS',
+          defaultValue: '5.0',
+        ),
+      ) ??
+      5.0;
+  static double? pinnedDepthKm;
+  static bool nyadNegativeEvidence = false;
+  static double referenceInactiveHardRejectRatio = 1.0;
+  static int referencePersistentOverrideMinStreak = 3;
+  static bool referenceOneSidedMatureAnchorResearch = false;
+  static int referenceOneSidedAnchorMinSupport = 19;
+  static double referenceOneSidedAnchorMaxScore = 3.4;
+  static double referenceOneSidedAnchorMinAzimuthGapDegrees = 300.0;
+  static int referenceOneSidedAnchorPersistentOverrideMinStreak = 100;
+  static bool referenceRespectSWaveGate = false;
+  static bool referenceStrongCoreOnly = false;
+  static bool referenceStationResidualAudit = false;
+  static double referenceInactiveMaxAzimuthGapDegrees = double.infinity;
+  static double? referenceOneSidedPhasePToSRatio;
+  static double referenceOneSidedPhaseMinAzimuthGapDegrees = 280.0;
+  static int referenceOneSidedMinStations = 15;
+  static double? referenceOneSidedResidualCapSeconds;
+  static double referenceOneSidedResidualCapMaxDepthKm = double.infinity;
+  static double referenceOneSidedResidualCapMaxMoveKm = double.infinity;
+  static double referenceOneSidedInactivePenaltyMultiplier = 1.0;
+  /// Require a meaningful full-family score gain before accepting a large
+  /// (>20 km) relocation. This guards low-score offshore families against a
+  /// small batch of later stations pulling an already-good solution into a
+  /// distant basin. N215/N219 recent21 validation at 5% improved Tokara
+  /// 59.5 -> 9.6 km with zero >1 km regressions.
+  static double referenceLargeMoveMinFullGain =
+      productionOffshoreTuning
+      ? (double.tryParse(
+              const String.fromEnvironment(
+                'RQ_HYP_LARGE_MOVE_MIN_FULL_GAIN',
+                defaultValue: '0.05',
+              ),
+            ) ??
+            0.05)
+      : 0.0;
+  static double? referenceProbeLatitude;
+  static double? referenceProbeLongitude;
+  static double? referenceProbeDepthKm;
+  static bool amplitudeConsistency = false;
+  static double amplitudeWeight = 1.5;
+
+  /// J3 guard: the amplitude-consistency residual is only applied when at least
+  /// this many stations carry a finite intensity. The MAD of a handful of
+  /// coarse intensity samples is unconstrained, so sparse-station events can
+  /// run to a pathological far-field minimum (measured: the 9-station 種子島
+  /// near-sea event diverged to ~12 600 km at weight 3). Default 0 keeps the
+  /// first J3 scan (which relied on the scorer's own ≥3 sample floor) unchanged.
+  static int amplitudeMinStations = 0;
+  static bool referenceAmplitudeRescue = false;
+  static bool referenceAmplitudeRescueCommit = false;
+  static double referenceAmplitudeRescueMinTimingScore = 5.0;
+  static int referenceAmplitudeRescueMinActiveStations = 15;
+  static double referenceAmplitudeRescueWeight = 1.0;
+  static bool referenceOneSidedHighScoreRescue =
+      productionOffshoreTuning &&
+      const bool.fromEnvironment(
+        'RQ_HYP_ONE_SIDED_HIGH_SCORE_RESCUE',
+        defaultValue: true,
+      );
+  static bool referenceOneSidedHighScoreRescueCommit =
+      const bool.fromEnvironment('RQ_HYP_ONE_SIDED_HIGH_SCORE_RESCUE_COMMIT');
+  static bool referenceOneSidedHighScorePublishOnly =
+      productionOffshoreTuning &&
+      const bool.fromEnvironment(
+        'RQ_HYP_ONE_SIDED_HIGH_SCORE_PUBLISH_ONLY',
+        defaultValue: true,
+      );
+  static double referenceOneSidedHighScorePublishMaxScore = 5.0;
+  static int referenceOneSidedHighScorePublishMinStreak = 2;
+  static double referenceOneSidedHighScorePublishConsistencyKm = 35.0;
+  static double referenceOneSidedHighScoreRescueMinTimingScore = 5.0;
+  static int referenceOneSidedHighScoreRescueMinActiveStations = 15;
+  static double referenceOneSidedHighScoreRescueMaxChallengerScore = 4.0;
+  static double referenceOneSidedHighScoreRescueMaxMoveKm = 250.0;
+  static double referenceOneSidedHighScoreRescueInactiveMultiplier =
+      double.tryParse(
+        const String.fromEnvironment(
+          'RQ_HYP_ONE_SIDED_HIGH_SCORE_RESCUE_INACTIVE_MULTIPLIER',
+          defaultValue: '0.2',
+        ),
+      ) ??
+      0.2;
+  static bool referenceOneSidedHighScoreRescueDirectionalVeto =
+      const bool.fromEnvironment(
+        'RQ_HYP_ONE_SIDED_HIGH_SCORE_RESCUE_DIRECTIONAL_VETO',
+        defaultValue: true,
+      );
+  static double referenceOneSidedHighScoreRescueMinOutwardGainKm = 0.0;
+  static double referenceOneSidedHighScoreRescueGridExtentLatDeg = 0.5;
+  static double referenceOneSidedHighScoreRescueGridExtentLngDeg = 1.5;
+  static int referenceOneSidedHighScoreRescueGridTopK = 2;
+
+  /// M2 joint-likelihood shadow: a weak Gaussian depth prior added to the
+  /// reference scorer. `null` disables the term (production default); when set,
+  /// the score gains `depthPriorWeight * ((depth - depthPriorKm) /
+  /// depthPriorSigmaKm)^2` — a soft pull toward climatological focal depths
+  /// that, unlike J1's hard `pinnedDepthKm`, never rejects a candidate and
+  /// competes with (rather than overrides) the travel-time evidence. Needs the
+  /// Dart path only because it is scored there; combining it with `searchForm ==
+  /// 'grid'` is the M2 "joint likelihood × global multi-modal" experiment of
+  /// the proposal. Defaults keep the term exactly 0 and production untouched.
+  static double? depthPriorKm;
+  static double depthPriorSigmaKm = 25.0;
+  static double depthPriorWeight = 0.5;
+
+  /// 方案 C search-form shadow (independent project, see
+  /// `docs/换搜索算法_离岸定位独立立项提案_20261015.md`). `greedy` is the
+  /// production four-stage six-neighbour hill climb; `grid` replaces the single
+  /// trajectory with a deterministic **global coarse grid posterior + local
+  /// refine** over a bounded `(lat, lon, depth)` box around the temporary
+  /// epicentre seed. The grid runs entirely on the Dart scorer, so selecting it
+  /// also diverts off the native Rust path — the reference-consistency ABI
+  /// contract (`rq_station_core.h:172-174`) is never touched. Default `greedy`
+  /// keeps production byte-for-byte identical.
+  static String searchForm = 'greedy';
+
+  /// Grid node spacing in degrees. 0.25° ≈ 28 km — coarse enough to scan a wide
+  /// box cheaply; the local refine then resolves the top modes to 0.1°.
+  static double gridSpacingDeg = 0.25;
+  static double gridExtentLatDeg = 1.0;
+  static double gridExtentLngDeg = 1.25;
+
+  /// Depth planes scanned by the grid. Production floor is 10 km.
+  static List<double> gridDepthLevelsKm = <double>[10, 30, 50, 70, 100];
+
+  /// Number of distinct local-minimum modes kept as refinement seeds.
+  static int gridTopK = 4;
+
+  /// Per-stage move cap for the local six-neighbour refinement descent.
+  static int gridRefineMoveLimit = 100;
+
+  /// Inspection-view shadow lever (`curvePanelPhaseFromResidual`), default off.
+  ///
+  /// `travel_time_curve_panels[*].samples[*]` — the per-station `wave`,
+  /// `predicted_s` and `residual_s` that feed both the in-app curve overlay
+  /// (`lib/screens/main_screen.dart`, `_NiedHypCurvePanelData`) and the offline
+  /// QC figure — are labelled by `allowSWave && stationSFlag`, where
+  /// `allowSWave` is the **global 15 s cluster-age S gate**. The production
+  /// reference scorer does not use that gate at all: it assigns P/S per station
+  /// by residual comparison (`pDifference <= sDifference * 2.0`) and scores
+  /// scenarios with S anchors. Measured on four replays: gate-closed frames
+  /// still carry S stations in 北海道 37/37, 熊本 24/25, 会津 19/39, 岩手 16/31
+  /// cases — so on exactly those frames the panel hides the S curve and labels
+  /// every S station as P, i.e. the inspection view disagrees with the scorer.
+  ///
+  /// This lever replaces the panel's label with the scorer's own per-station
+  /// rule evaluated at the panel's origin time, so the displayed `wave` /
+  /// `predicted_s` / `residual_s` match what the scorer used. It changes the
+  /// **inspection view only** — no localization input — so the published
+  /// estimates must be byte-identical; enabling it exists to verify that claim
+  /// and to make the in-app overlay honest.
+  static bool curvePanelPhaseFromResidual = false;
+
+  /// Default-off ⑦a-1 shadow (独立实验「似然重设计」，证据 15/16；见
+  /// `tmp/capture_survey/lik2/LIK2_ROOTCAUSE_DETID.md`)。生产把「与已归属站在
+  /// KA 邻接图上相邻」当作并入簇的**唯一**判据（`_mergeReferenceAlignedFrame`），
+  /// 于是青森/岩手站在 f66–f75 被逐帧邻接连入北海道簇，使发布态跨 4.9° 纬度、
+  /// 误差从单族 20–26 km 恶化到 145–182 km。开启后改为「邻接 **且** 单源一致」：
+  /// 到达站必须落在目标簇**当前估计**（非官方震央）的 P/S 走时残差限内
+  /// （目标簇 ≥50 站限 7.5 s，否则 5.0 s）才允许并入；残差不合格的邻接链接被
+  /// **否决**（该站改判为新簇）。目标簇尚无有限估计时不否决（无从判定）。默认
+  /// 关闭时整条判据短路，生产逐字节不变。
+  static bool referenceFamilyVeto = false;
+
+  /// Default-off ⑦a-2 shadow。`selectOutputDetectionId` 生产仅按「与当前帧活跃
+  /// 站集的重叠数」选发布位，**无最小支撑门、无时空连续性门** ⇒ grid 影子路径下
+  /// 6 站宫城小簇顶掉仍活跃的 85 站北海道簇（636 km；证据 15）。开启后：① 有效
+  /// 站数 < [publishMinSupport] 的候选被排除（全部被排除时退回原集合）；② 若上次
+  /// 发布位仍在候选中、且「重叠最多」的新候选与它相距 > [publishMaxJumpKm]，则
+  /// 维持上次发布位（时空连续性）。默认 8 站 / 180 km，关闭时短路。
+  static bool publishSupportGate = false;
+  static int publishMinSupport = 8;
+  static double publishMaxJumpKm = 180.0;
+
+  static void reset() {
+    forceColdStart = false;
+    useAllTriggeredCentroidSeed = false;
+    forceDartSearch = false;
+    jointReferenceNeighbors =
+        productionOffshoreTuning && productionJointRefinement;
+    jointReferenceMaxDegree =
+        productionOffshoreTuning && productionJointRefinement
+        ? 0.1
+        : double.infinity;
+    jointReferenceMinActiveStations =
+        productionOffshoreTuning && productionJointRefinement ? 15 : 0;
+    jointReferenceMaxCurrentScore =
+        productionOffshoreTuning && productionJointRefinement
+        ? 5.0
+        : double.infinity;
+    jointReferenceRequirePreviousResult = false;
+    jointReferenceMinSupportRatio = 0.0;
+    referenceRelativeRankWeight = false;
+    referenceRelativeRankMaxStations = 0;
+    referenceStrongDensityWeight = false;
+    referencePhasePToSRatio = 2.0;
+    referenceNewStationRampSeconds = 0.0;
+    referenceProposalCommitAudit = false;
+    referenceProposalCommitGate = const bool.fromEnvironment(
+      'RQ_HYP_PROPOSAL_COMMIT_GATE',
+    );
+    referenceAnchorChallenger =
+        productionOffshoreTuning &&
+        const bool.fromEnvironment(
+          'RQ_HYP_ANCHOR_CHALLENGER',
+          defaultValue: true,
+        );
+    referenceAnchorMinSupport = const int.fromEnvironment(
+      'RQ_HYP_ANCHOR_MIN_SUPPORT',
+      defaultValue: 7,
+    );
+    referenceAnchorMaxScore =
+        double.tryParse(
+          const String.fromEnvironment(
+            'RQ_HYP_ANCHOR_MAX_SCORE',
+            defaultValue: '0.5',
+          ),
+        ) ??
+        0.5;
+    referenceSparseNullGridRescue =
+        productionOffshoreTuning &&
+        const bool.fromEnvironment(
+          'RQ_HYP_SPARSE_NULL_GRID_RESCUE',
+          defaultValue: true,
+        );
+    referenceSparseRescueMaxPreviousSupport = 8;
+    referenceSparseRescueMinActiveStations = 15;
+    referenceSparseRescueMinSupport = 15;
+    referenceSparseRescueMinSupportRatio = 2.0;
+    referenceSparseComparePublishableResearch = false;
+    referenceProposalProbationSeconds =
+        double.tryParse(
+          const String.fromEnvironment(
+            'RQ_HYP_PROPOSAL_PROBATION_SECONDS',
+            defaultValue: '5.0',
+          ),
+        ) ??
+        5.0;
+    pinnedDepthKm = null;
+    nyadNegativeEvidence = false;
+    referenceInactiveHardRejectRatio = 1.0;
+    referencePersistentOverrideMinStreak = 3;
+    referenceOneSidedMatureAnchorResearch = false;
+    referenceOneSidedAnchorMinSupport = 19;
+    referenceOneSidedAnchorMaxScore = 3.4;
+    referenceOneSidedAnchorMinAzimuthGapDegrees = 300.0;
+    referenceOneSidedAnchorPersistentOverrideMinStreak = 100;
+    referenceRespectSWaveGate = false;
+    referenceStrongCoreOnly = false;
+    referenceStationResidualAudit = false;
+    referenceInactiveMaxAzimuthGapDegrees = double.infinity;
+    referenceOneSidedPhasePToSRatio = null;
+    referenceOneSidedPhaseMinAzimuthGapDegrees = 280.0;
+    referenceOneSidedMinStations = 15;
+    referenceOneSidedResidualCapSeconds = null;
+    referenceOneSidedResidualCapMaxDepthKm = double.infinity;
+    referenceOneSidedResidualCapMaxMoveKm = double.infinity;
+    referenceOneSidedInactivePenaltyMultiplier = 1.0;
+    referenceLargeMoveMinFullGain = productionOffshoreTuning
+        ? (double.tryParse(
+                const String.fromEnvironment(
+                  'RQ_HYP_LARGE_MOVE_MIN_FULL_GAIN',
+                  defaultValue: '0.05',
+                ),
+              ) ??
+              0.05)
+        : 0.0;
+    referenceProbeLatitude = null;
+    referenceProbeLongitude = null;
+    referenceProbeDepthKm = null;
+    amplitudeConsistency = false;
+    amplitudeWeight = 1.5;
+    amplitudeMinStations = 0;
+    referenceAmplitudeRescue = false;
+    referenceAmplitudeRescueCommit = false;
+    referenceAmplitudeRescueMinTimingScore = 5.0;
+    referenceAmplitudeRescueMinActiveStations = 15;
+    referenceAmplitudeRescueWeight = 1.0;
+    referenceOneSidedHighScoreRescue =
+        productionOffshoreTuning &&
+        const bool.fromEnvironment(
+          'RQ_HYP_ONE_SIDED_HIGH_SCORE_RESCUE',
+          defaultValue: true,
+        );
+    referenceOneSidedHighScoreRescueCommit = const bool.fromEnvironment(
+      'RQ_HYP_ONE_SIDED_HIGH_SCORE_RESCUE_COMMIT',
+    );
+    referenceOneSidedHighScorePublishOnly =
+        productionOffshoreTuning &&
+        const bool.fromEnvironment(
+          'RQ_HYP_ONE_SIDED_HIGH_SCORE_PUBLISH_ONLY',
+          defaultValue: true,
+        );
+    referenceOneSidedHighScorePublishMaxScore = 5.0;
+    referenceOneSidedHighScorePublishMinStreak = 2;
+    referenceOneSidedHighScorePublishConsistencyKm = 35.0;
+    referenceOneSidedHighScoreRescueMinTimingScore = 5.0;
+    referenceOneSidedHighScoreRescueMinActiveStations = 15;
+    referenceOneSidedHighScoreRescueMaxChallengerScore = 4.0;
+    referenceOneSidedHighScoreRescueMaxMoveKm = 250.0;
+    referenceOneSidedHighScoreRescueInactiveMultiplier =
+        double.tryParse(
+          const String.fromEnvironment(
+            'RQ_HYP_ONE_SIDED_HIGH_SCORE_RESCUE_INACTIVE_MULTIPLIER',
+            defaultValue: '0.2',
+          ),
+        ) ??
+        0.2;
+    referenceOneSidedHighScoreRescueDirectionalVeto =
+        const bool.fromEnvironment(
+          'RQ_HYP_ONE_SIDED_HIGH_SCORE_RESCUE_DIRECTIONAL_VETO',
+          defaultValue: true,
+        );
+    referenceOneSidedHighScoreRescueMinOutwardGainKm = 0.0;
+    referenceOneSidedHighScoreRescueGridExtentLatDeg = 0.5;
+    referenceOneSidedHighScoreRescueGridExtentLngDeg = 1.5;
+    referenceOneSidedHighScoreRescueGridTopK = 2;
+    depthPriorKm = null;
+    depthPriorSigmaKm = 25.0;
+    depthPriorWeight = 0.5;
+    searchForm = 'greedy';
+    gridSpacingDeg = 0.25;
+    gridExtentLatDeg = 1.0;
+    gridExtentLngDeg = 1.25;
+    gridDepthLevelsKm = <double>[10, 30, 50, 70, 100];
+    gridTopK = 4;
+    gridRefineMoveLimit = 100;
+    curvePanelPhaseFromResidual = false;
+    referenceFamilyVeto = false;
+    publishSupportGate = false;
+    publishMinSupport = 8;
+    publishMaxJumpKm = 180.0;
+  }
+}
+
 class NiedDartHypSourceEstimator
     implements SourceEstimator, SourceEstimatorLifecycleOwner {
   static const int stableHypocenterUpdateThreshold = 15;
@@ -1520,22 +2049,27 @@ class NiedDartHypSourceEstimator
         : workerFrame.activeStations.map((station) => station.code);
     final magnitudeInputIntensity = eventState.magnitudeIntensityState
         .maximumFor(magnitudeStationCodes);
-    SrevKaizouMagnitudeResult? calculateCurrentSrevMagnitude() =>
-        magnitudeInputIntensity == null
-        ? null
-        : calculateSrevKaizouMagnitude(
-            sourceLatitude: selected.latitude,
-            sourceLongitude: selected.longitude,
-            inputIntensity: magnitudeInputIntensity,
-            multipleSources: multipleSources,
-          );
+    // 震源は現在フレームの推定（[selected]）、震度は公開状態が保持する
+    // ピークを渡す。震源格子が動けば同じピーク震度で M を再計算する。
+    SrevKaizouMagnitudeResult? calculateCurrentSrevMagnitude(
+      double inputIntensity,
+    ) => calculateSrevKaizouMagnitude(
+      sourceLatitude: selected.latitude,
+      sourceLongitude: selected.longitude,
+      inputIntensity: inputIntensity,
+      multipleSources: multipleSources,
+    );
     final srevMagnitudeResult = referenceAligned
         ? selectedState.srevMagnitudePublicationState.update(
             reportNumber: selectedState.referenceReportNum,
             stable: selectedState.referenceStable,
+            observedAt: request.observedAt,
+            observedIntensity: magnitudeInputIntensity,
             calculate: calculateCurrentSrevMagnitude,
           )
-        : calculateCurrentSrevMagnitude();
+        : magnitudeInputIntensity == null
+        ? null
+        : calculateCurrentSrevMagnitude(magnitudeInputIntensity);
     final srevMagnitudeDiagnostics =
         srevMagnitudeResult?.toDiagnostics() ??
         <String, Object?>{
@@ -5959,6 +6493,10 @@ class Kotoho7ReferenceHypSourceEstimator implements SourceEstimator {
     DateTime? observedAt,
     required double targetSeconds,
   }) {
+    final native = record.observationHistory.niedSummary(observedAt);
+    if (native != null) {
+      return native.change(targetSeconds.toInt(), record.lastAscend);
+    }
     final frames = record.observationHistory.frames;
     if (frames.isNotEmpty) {
       final latest = frames.last;
@@ -6003,6 +6541,8 @@ class Kotoho7ReferenceHypSourceEstimator implements SourceEstimator {
     SeismicStationEventRecord record, {
     required DateTime observedAt,
   }) {
+    final native = record.observationHistory.niedSummary(observedAt);
+    if (native != null) return native.immediateChange(record.lastAscend);
     final frames = record.observationHistory.frames;
     if (frames.length >= 2) {
       final latest = frames.last;
@@ -6034,6 +6574,12 @@ class Kotoho7ReferenceHypSourceEstimator implements SourceEstimator {
     required DateTime observedAt,
     required int upwardLimitDigit,
   }) {
+    if (record.observationHistory.ownsNativeWindow) {
+      return record.observationHistory.nativeFastRiseExceeds(
+        observedAt,
+        upwardLimitDigit,
+      );
+    }
     final slots = _kotoho7ScratchRecentHistoryConvertedSlots(
       record,
       observedAt: observedAt,
@@ -9135,14 +9681,20 @@ _NiedHypWorkerFrame? _niedHypWorkerFrame(SourceEstimationRequest request) {
 
   final active = <_NiedHypWorkerStation>[];
   for (final snapshot in activeByCode.values) {
-    final station = _niedHypStationFromSnapshot(snapshot, active: true,
-        palert: request.sourceId == 'palert');
+    final station = _niedHypStationFromSnapshot(
+      snapshot,
+      active: true,
+      palert: request.sourceId == 'palert',
+    );
     if (station != null) active.add(station);
   }
   final newActive = <_NiedHypWorkerStation>[];
   for (final snapshot in newActiveByCode.values) {
-    final station = _niedHypStationFromSnapshot(snapshot, active: true,
-        palert: request.sourceId == 'palert');
+    final station = _niedHypStationFromSnapshot(
+      snapshot,
+      active: true,
+      palert: request.sourceId == 'palert',
+    );
     if (station != null) newActive.add(station);
   }
   final newActiveStationIdsWithoutTrigger = <String>{
@@ -9157,8 +9709,11 @@ _NiedHypWorkerFrame? _niedHypWorkerFrame(SourceEstimationRequest request) {
   ];
   final inactive = <_NiedHypWorkerStation>[];
   for (final snapshot in inactiveByCode.values) {
-    final station = _niedHypStationFromSnapshot(snapshot, active: false,
-        palert: request.sourceId == 'palert');
+    final station = _niedHypStationFromSnapshot(
+      snapshot,
+      active: false,
+      palert: request.sourceId == 'palert',
+    );
     if (station != null) inactive.add(station);
   }
   return _NiedHypWorkerFrame(
@@ -9193,6 +9748,7 @@ _NiedHypWorkerFrame? _niedHypWorkerFrame(SourceEstimationRequest request) {
 }
 
 Map<String, Set<String>> _niedHypSnapshotAdjacency(Object? value) {
+  if (value is NiedHypAdjacencySnapshot) return value.parsed;
   if (value is! Map) return const <String, Set<String>>{};
   final result = <String, Set<String>>{};
   for (final entry in value.entries) {
@@ -9209,7 +9765,9 @@ List<Map<String, Object?>> _niedHypSnapshotList(Object? value) {
   if (value is! Iterable) return const <Map<String, Object?>>[];
   return [
     for (final item in value)
-      if (item is Map)
+      if (item is NiedHypStationSnapshot)
+        item
+      else if (item is Map)
         item.map((key, value) => MapEntry(key.toString(), value)),
   ];
 }
@@ -9227,6 +9785,16 @@ _NiedHypWorkerStation? _niedHypStationFromSnapshot(
   required bool active,
   bool palert = false,
 }) {
+  if (!palert &&
+      snapshot is NiedHypStationSnapshot &&
+      snapshot.active == active &&
+      snapshot.code.isNotEmpty) {
+    if (!snapshot.hasUsableCoordinate ||
+        (active && snapshot.triggerAt == null)) {
+      return null;
+    }
+    return snapshot;
+  }
   final code = _niedHypSnapshotCode(snapshot);
   final latLng = _niedHypSnapshotLatLng(snapshot);
   if (code == null || latLng == null) return null;
@@ -9247,8 +9815,12 @@ _NiedHypWorkerStation? _niedHypStationFromSnapshot(
     ascend: ascend,
     active: active,
     palertMaxLevel: palert ? _intFromObject(snapshot['maxLevel']) : null,
-    palertSecondMaxLevel: palert ? _intFromObject(snapshot['secondMaxLevel']) : null,
-    nonQuietBoundary: palert ? _niedHypSnapshotTime(snapshot['nonQuietBoundaryStamp']) : null,
+    palertSecondMaxLevel: palert
+        ? _intFromObject(snapshot['secondMaxLevel'])
+        : null,
+    nonQuietBoundary: palert
+        ? _niedHypSnapshotTime(snapshot['nonQuietBoundaryStamp'])
+        : null,
   );
 }
 
@@ -9485,6 +10057,12 @@ class _NiedHypEventState {
       final existing = state.worker.activeStationsByCode[station.code];
       final merged = _mergeNiedHypStation(existing, station);
       state.worker.activeStationsByCode[station.code] = merged;
+      if (existing == null) {
+        state.worker.referenceAdmittedAtByCode.putIfAbsent(
+          station.code,
+          () => observedAt,
+        );
+      }
       if (existing == null ||
           existing.level != merged.level ||
           existing.ascend != merged.ascend ||
@@ -9521,18 +10099,33 @@ class _NiedHypEventState {
           !neighborSubclusters.contains(matchingSubcluster)) {
         neighborSubclusters.add(matchingSubcluster);
       }
+      // ⑦a-1 shadow (default off). Production merges purely by adjacency. When
+      // `referenceFamilyVeto` is on, an arriving station may only join a
+      // neighbouring cluster whose *current* estimate predicts its trigger
+      // within the P/S residual limit; links that fail are vetoed so the
+      // station starts (or joins) a residual-consistent cluster instead. With
+      // the switch off `admitted` is the same list object as
+      // `neighborSubclusters`, so the production path is byte-identical.
+      final admitted = NiedHypStartShadow.referenceFamilyVeto
+          ? neighborSubclusters
+                .where(
+                  (cluster) =>
+                      _referenceAdmitsArrivingStation(station, cluster),
+                )
+                .toList(growable: false)
+          : neighborSubclusters;
       late final _NiedHypDetectionState state;
       late final String assignmentReason;
-      if (neighborSubclusters.isEmpty) {
+      if (admitted.isEmpty) {
         state = _referenceCreateState(station, observedAt: observedAt);
         _referenceCreateSubcluster(state);
         assignmentReason = 'kanameishi_reference_residual_or_new_cluster';
-      } else if (neighborSubclusters.length == 1) {
-        state = neighborSubclusters.single.state;
+      } else if (admitted.length == 1) {
+        state = admitted.single.state;
         assignmentReason = 'kanameishi_reference_adjacent_cluster';
       } else {
         final neighborStates = <_NiedHypDetectionState>{
-          for (final cluster in neighborSubclusters) cluster.state,
+          for (final cluster in admitted) cluster.state,
         };
         state = _referenceMergeAdjacentStates(
           station,
@@ -9543,7 +10136,7 @@ class _NiedHypEventState {
         );
         _referenceMergeAdjacentSubclusters(
           arriving: station,
-          clusters: neighborSubclusters,
+          clusters: admitted,
           mergedState: state,
         );
         assignmentReason = 'kanameishi_reference_adjacent_cluster';
@@ -9560,7 +10153,7 @@ class _NiedHypEventState {
     }
 
     _referenceRemoveInactiveStates(
-      frame.inactiveStations,
+      frame.activeStations,
       updateVersion: updateVersion,
       observedAt: observedAt,
     );
@@ -9696,6 +10289,52 @@ class _NiedHypEventState {
     return selected;
   }
 
+  /// ⑦a-1 shadow helper (only called when `referenceFamilyVeto` is on). Whether
+  /// [station] may join [cluster] under the single-source consistency rule:
+  /// true when the cluster has no finite estimate yet (nothing to judge against)
+  /// or when the cluster's *current* estimate predicts the station's trigger
+  /// within the P/S residual limit. The limit mirrors
+  /// [_referenceBestResidualSubcluster] (≥50-member clusters relax 5.0 → 7.5 s).
+  bool _referenceAdmitsArrivingStation(
+    _NiedHypWorkerStation station,
+    _NiedHypReferenceSubcluster cluster,
+  ) {
+    final triggerAt = station.triggerAt;
+    if (triggerAt == null) return true;
+    final result = cluster.state.worker.previousResult;
+    if (result == null || !result.score.isFinite) return true;
+    final distanceKm = _haversineKm(
+      result.latitude,
+      result.longitude,
+      station.coordinate.latitude,
+      station.coordinate.longitude,
+    );
+    final originMilliseconds =
+        cluster.state.worker.referencePreviousOriginMilliseconds ??
+        result.originTime.millisecondsSinceEpoch.toDouble();
+    final observedSeconds =
+        (triggerAt.millisecondsSinceEpoch - originMilliseconds) / 1000.0;
+    final pResidual =
+        (observedSeconds -
+                KanameishiJma2001TravelTimeTable.travelTimeSeconds(
+                  surfaceDistanceKm: distanceKm,
+                  depthKm: result.depthKm,
+                  pWave: true,
+                ))
+            .abs();
+    final sResidual =
+        (observedSeconds -
+                KanameishiJma2001TravelTimeTable.travelTimeSeconds(
+                  surfaceDistanceKm: distanceKm,
+                  depthKm: result.depthKm,
+                  pWave: false,
+                ))
+            .abs();
+    final residual = math.min(pResidual, sResidual);
+    final limitSeconds = cluster.stationIds.length >= 50 ? 7.5 : 5.0;
+    return residual <= limitSeconds;
+  }
+
   void _referenceMergeAdjacentSubclusters({
     required _NiedHypWorkerStation arriving,
     required List<_NiedHypReferenceSubcluster> clusters,
@@ -9740,6 +10379,10 @@ class _NiedHypEventState {
     required String reason,
   }) {
     state.worker.activeStationsByCode[station.code] = station;
+    state.worker.referenceAdmittedAtByCode.putIfAbsent(
+      station.code,
+      () => observedAt,
+    );
     _referenceInsertStationIntoOrder(state, station);
     stateByStationId[station.id] = state;
     _stationDetectionIdByCode[station.code] = state.id;
@@ -9876,16 +10519,18 @@ class _NiedHypEventState {
   }
 
   void _referenceRemoveInactiveStates(
-    List<_NiedHypWorkerStation> inactiveStations, {
+    List<_NiedHypWorkerStation> activeStations, {
     required int updateVersion,
     required DateTime observedAt,
   }) {
-    final inactiveIds = inactiveStations.map((station) => station.id).toSet();
+    // The low-level inactive scoring set intentionally excludes some levels
+    // and missing stations. Lifecycle must use actual KA membership instead.
+    final activeIds = activeStations.map((station) => station.id).toSet();
     for (final state in detectionIds.values.toList(growable: false)) {
       final stations = state.worker.activeStationsByCode.values;
       final fullyInactive =
           stations.isNotEmpty &&
-          stations.every((station) => inactiveIds.contains(station.id));
+          stations.every((station) => !activeIds.contains(station.id));
       if (!fullyInactive) {
         state.referenceInactiveUpdateCount = 0;
         continue;
@@ -10472,27 +11117,82 @@ class _NiedHypEventState {
     required Set<String> currentActiveCodes,
     required Set<int> estimatedIds,
   }) {
-    final candidates = estimatedIds
+    var candidates = estimatedIds
         .map((id) => detectionIds[id])
         .whereType<_NiedHypDetectionState>()
         .where((state) => state.active)
         .toList(growable: false);
     if (candidates.isEmpty) return null;
-    candidates.sort((left, right) {
-      final leftOverlap = left.worker.activeStationsByCode.keys
-          .where(currentActiveCodes.contains)
-          .length;
-      final rightOverlap = right.worker.activeStationsByCode.keys
-          .where(currentActiveCodes.contains)
-          .length;
-      final overlapCompare = rightOverlap.compareTo(leftOverlap);
-      if (overlapCompare != 0) return overlapCompare;
-      if (left.id == _selectedDetectionId) return -1;
-      if (right.id == _selectedDetectionId) return 1;
-      return right.serial.compareTo(left.serial);
-    });
-    _selectedDetectionId = candidates.first.id;
+    // ⑦a-2 shadow (default off). Production ranks candidates purely by how many
+    // of the current frame's active stations they hold, which lets a handful of
+    // far-field stations that happen to be active (an adjacent family, or a
+    // freshly re-detected cluster) displace the well-supported source — measured
+    // as the grid-path 6-station Miyagi state taking over an 85-station Hokkaido
+    // state (636 km; evidence 15). When `publishSupportGate` is on: ① candidates
+    // below `publishMinSupport` members are dropped (falling back to the full set
+    // if that empties the pool); ② the previous publication is retained when the
+    // best-supported candidate sits more than `publishMaxJumpKm` away from it.
+    if (NiedHypStartShadow.publishSupportGate && candidates.length > 1) {
+      final supported = candidates
+          .where(
+            (state) =>
+                state.worker.activeStationsByCode.length >=
+                NiedHypStartShadow.publishMinSupport,
+          )
+          .toList(growable: false);
+      if (supported.isNotEmpty) candidates = supported;
+    }
+    int overlapOf(_NiedHypDetectionState state) => state
+        .worker
+        .activeStationsByCode
+        .keys
+        .where(currentActiveCodes.contains)
+        .length;
+    final ordered = candidates.toList(growable: false)
+      ..sort((left, right) {
+        final overlapCompare = overlapOf(right).compareTo(overlapOf(left));
+        if (overlapCompare != 0) return overlapCompare;
+        if (left.id == _selectedDetectionId) return -1;
+        if (right.id == _selectedDetectionId) return 1;
+        return right.serial.compareTo(left.serial);
+      });
+    var chosen = ordered.first;
+    if (NiedHypStartShadow.publishSupportGate) {
+      _NiedHypDetectionState? previous;
+      for (final state in candidates) {
+        if (state.id == _selectedDetectionId) {
+          previous = state;
+          break;
+        }
+      }
+      if (previous != null && previous.id != chosen.id) {
+        final jumpKm = _publishedEstimateDistanceKm(previous, chosen);
+        if (jumpKm != null && jumpKm > NiedHypStartShadow.publishMaxJumpKm) {
+          chosen = previous;
+        }
+      }
+    }
+    _selectedDetectionId = chosen.id;
     return _selectedDetectionId;
+  }
+
+  /// ⑦a-2 shadow helper: haversine distance between the last estimates of two
+  /// detection states, or `null` when either has no finite estimate yet (in
+  /// which case the continuity guard stays silent).
+  double? _publishedEstimateDistanceKm(
+    _NiedHypDetectionState left,
+    _NiedHypDetectionState right,
+  ) {
+    final leftResult = left.worker.previousResult;
+    final rightResult = right.worker.previousResult;
+    if (leftResult == null || !leftResult.score.isFinite) return null;
+    if (rightResult == null || !rightResult.score.isFinite) return null;
+    return _haversineKm(
+      leftResult.latitude,
+      leftResult.longitude,
+      rightResult.latitude,
+      rightResult.longitude,
+    );
   }
 
   List<Map<String, Object?>> diagnostics({
@@ -10830,6 +11530,15 @@ _NiedHypWorkerStation _mergeNiedHypStation(
 class _NiedHypWorkerState {
   final Map<String, _NiedHypWorkerStation> activeStationsByCode =
       <String, _NiedHypWorkerStation>{};
+  final Map<String, DateTime> referenceAdmittedAtByCode = <String, DateTime>{};
+  _NiedHypWorkerResult? referenceAnchorResult;
+  final Set<String> referenceAnchorStationCodes = <String>{};
+  double? referenceAnchorCoreScore;
+  bool referenceAnchorOneSidedMature = false;
+  _NiedHypWorkerResult? referenceChallengerResult;
+  int referenceChallengerStreak = 0;
+  _NiedHypWorkerResult? referenceHighScorePublishCandidate;
+  int referenceHighScorePublishStreak = 0;
   final Map<String, bool> stationSFlagByCode = <String, bool>{};
   final Map<String, Map<String, bool>> referencePreviousWavesByFirstWave =
       <String, Map<String, bool>>{'P': <String, bool>{}, 'S': <String, bool>{}};
@@ -10842,6 +11551,7 @@ class _NiedHypWorkerState {
   double? minimumPublishedScore;
   double? referencePreviousOriginMilliseconds;
   DateTime? lastObservedAt;
+  int jointShadowPeakActiveCount = 0;
 
   _NiedHypWorkerFrame mergeFrame(
     _NiedHypWorkerFrame frame, {
@@ -10850,6 +11560,15 @@ class _NiedHypWorkerState {
     final previousObservedAt = lastObservedAt;
     if (previousObservedAt != null && observedAt.isBefore(previousObservedAt)) {
       activeStationsByCode.clear();
+      referenceAdmittedAtByCode.clear();
+      referenceAnchorResult = null;
+      referenceAnchorStationCodes.clear();
+      referenceAnchorCoreScore = null;
+      referenceAnchorOneSidedMature = false;
+      referenceChallengerResult = null;
+      referenceChallengerStreak = 0;
+      referenceHighScorePublishCandidate = null;
+      referenceHighScorePublishStreak = 0;
       stationSFlagByCode.clear();
       referencePreviousWavesByFirstWave
         ..clear()
@@ -10861,6 +11580,7 @@ class _NiedHypWorkerState {
       publishedCurveRevision = 0;
       minimumPublishedScore = null;
       referencePreviousOriginMilliseconds = null;
+      jointShadowPeakActiveCount = 0;
     }
     lastObservedAt = observedAt;
     lastAssignmentAcceptedByCode.clear();
@@ -10927,39 +11647,7 @@ class _NiedHypWorkerState {
   }
 }
 
-class _NiedHypWorkerStation {
-  const _NiedHypWorkerStation({
-    required this.id,
-    required this.code,
-    required this.coordinate,
-    required this.triggerAt,
-    required this.updateAt,
-    required this.level,
-    required this.currentShindo,
-    required this.ascend,
-    required this.active,
-    this.palertMaxLevel,
-    this.palertSecondMaxLevel,
-    this.nonQuietBoundary,
-  });
-
-  final String id;
-  final String code;
-  final LatLng coordinate;
-  final DateTime? triggerAt;
-  final DateTime? updateAt;
-  final int? level;
-  final double? currentShindo;
-  final int ascend;
-  final bool active;
-  final int? palertMaxLevel;
-  final int? palertSecondMaxLevel;
-  final DateTime? nonQuietBoundary;
-
-  bool get hasInferenceWeight => palertMaxLevel != null
-      ? PAlertSourceProfile.pickWeight(palertMaxLevel!) > 0
-      : ascend >= 2;
-}
+typedef _NiedHypWorkerStation = NiedHypStationValues;
 
 class _NiedHypWorkerCandidateConstraints {
   const _NiedHypWorkerCandidateConstraints({
@@ -10969,6 +11657,9 @@ class _NiedHypWorkerCandidateConstraints {
     required this.maxAllowedDepthKm,
     required this.maxAllowedDistanceKm,
     required this.referenceAligned,
+    this.referenceResidualCapCenterLatitude,
+    this.referenceResidualCapCenterLongitude,
+    this.referenceOneSidedRescueEligible = false,
   });
 
   final double firstLatitude;
@@ -10977,6 +11668,27 @@ class _NiedHypWorkerCandidateConstraints {
   final double maxAllowedDepthKm;
   final double maxAllowedDistanceKm;
   final bool referenceAligned;
+  final double? referenceResidualCapCenterLatitude;
+  final double? referenceResidualCapCenterLongitude;
+  final bool referenceOneSidedRescueEligible;
+
+  _NiedHypWorkerCandidateConstraints withReferenceResidualCapCenter(
+    double latitude,
+    double longitude,
+    bool oneSidedRescueEligible,
+  ) {
+    return _NiedHypWorkerCandidateConstraints(
+      firstLatitude: firstLatitude,
+      firstLongitude: firstLongitude,
+      maxDetectedDistanceKm: maxDetectedDistanceKm,
+      maxAllowedDepthKm: maxAllowedDepthKm,
+      maxAllowedDistanceKm: maxAllowedDistanceKm,
+      referenceAligned: referenceAligned,
+      referenceResidualCapCenterLatitude: latitude,
+      referenceResidualCapCenterLongitude: longitude,
+      referenceOneSidedRescueEligible: oneSidedRescueEligible,
+    );
+  }
 }
 
 class _NiedHypWorkerResult {
@@ -11212,7 +11924,25 @@ SourceEstimate? _estimateNiedHypWorkerFrame(
   }
   // NiedHypoInf keeps zero-weight L stations in trigger order. They do not
   // enter residuals, but they do determine rank weights for the whole cluster.
-  final active = referenceAlignedSearch ? clusterStations : weightedActive;
+  final strongReferenceCore = clusterStations
+      .where(
+        (station) =>
+            station.hasInferenceWeight &&
+            station.ascend >= 3 &&
+            (station.level ?? -1) >= 4,
+      )
+      .toList(growable: false);
+  final active =
+      referenceAlignedSearch && NiedHypStartShadow.referenceStrongCoreOnly
+      ? strongReferenceCore
+      : referenceAlignedSearch
+      ? clusterStations
+      : weightedActive;
+  if (active.length < minInferenceClusterSize) {
+    request.metadata['nied_dart_hyp_worker_null_reason'] =
+        'reference_strong_core_count_below_5';
+    return null;
+  }
   final inactive = _niedHypWorkerNearbyInactiveStations(frame, active);
 
   // Relative chart/scoring time starts at the first station that actually
@@ -11240,26 +11970,32 @@ SourceEstimate? _estimateNiedHypWorkerFrame(
   final earliestStations = active
       .where((station) => station.triggerAt == earliestAt)
       .toList(growable: false);
+  // L3 shadow lever: optionally seed from every triggered station instead of
+  // only the earliest-triggered ones. Defaults off (identical to production).
+  final seedStations =
+      referenceAlignedSearch && NiedHypStartShadow.useAllTriggeredCentroidSeed
+      ? active
+      : earliestStations;
   final seedLat = referenceAlignedSearch
       ? _roundTo(
-          earliestStations
+          seedStations
                   .map((station) => station.coordinate.latitude)
                   .reduce((sum, value) => sum + value) /
-              earliestStations.length,
+              seedStations.length,
           0.1,
         )
       : (seedStation.coordinate.latitude * 60).roundToDouble() / 60.0;
   final seedLng = referenceAlignedSearch
       ? _roundTo(
-          earliestStations
+          seedStations
                   .map((station) => station.coordinate.longitude)
                   .reduce((sum, value) => sum + value) /
-              earliestStations.length,
+              seedStations.length,
           0.1,
         )
       : (seedStation.coordinate.longitude * 60).roundToDouble() / 60.0;
   final seedOriginAt = seedTriggerAt.subtract(const Duration(seconds: 2));
-  final candidateConstraints = _niedHypWorkerCandidateConstraints(
+  var candidateConstraints = _niedHypWorkerCandidateConstraints(
     active,
     firstStation: seedStation,
     referenceAligned: referenceAlignedSearch,
@@ -11275,6 +12011,14 @@ SourceEstimate? _estimateNiedHypWorkerFrame(
       (elapsedSinceDetectionSeconds <= 10.0 && active.length < 30);
   request.metadata['nied_dart_hyp_worker_reused'] = false;
   final previousResult = state.previousResult;
+  if (referenceAlignedSearch &&
+      NiedHypStartShadow.jointReferenceNeighbors &&
+      NiedHypStartShadow.jointReferenceMinSupportRatio > 0.0) {
+    state.jointShadowPeakActiveCount = math.max(
+      state.jointShadowPeakActiveCount,
+      active.length,
+    );
+  }
   if (hypAgeSeconds >= 120.0) {
     final previousEstimate = state.previousEstimate;
     if (previousResult == null || previousEstimate == null) {
@@ -11332,8 +12076,10 @@ SourceEstimate? _estimateNiedHypWorkerFrame(
     );
   }
   final scoringSFlagByCode = Map<String, bool>.from(state.stationSFlagByCode);
+  // L2 shadow lever: `forceColdStart` drops the previous-frame hot start so the
+  // reference search always begins from the temporary epicentre seed.
   final useTemporaryEpicenter = referenceAlignedSearch
-      ? previousResult == null
+      ? previousResult == null || NiedHypStartShadow.forceColdStart
       : previousResult == null || elapsedSinceDetectionSeconds < 10.0;
   final startLatitude = useTemporaryEpicenter
       ? seedLat
@@ -11342,119 +12088,211 @@ SourceEstimate? _estimateNiedHypWorkerFrame(
       ? seedLng
       : previousResult.longitude;
   final startDepthKm = useTemporaryEpicenter ? 10.0 : previousResult.depthKm;
-  final searchStopwatch = Stopwatch()..start();
-  var candidateScoreCallCount = 1;
-  var current = _scoreNiedHypWorkerCandidate(
-    active,
-    inactive,
-    observedAt: request.observedAt,
-    earliestAt: earliestAt,
-    latitude: startLatitude,
-    longitude: startLongitude,
-    depthKm: startDepthKm,
-    allowSWave: allowSWave,
-    applyInactivePenalty: inactivePenaltyGateOpen,
-    stationSFlagByCode: scoringSFlagByCode,
-    candidateConstraints: candidateConstraints,
-    adjacencyByStationId: frame.adjacencyByStationId,
-    referenceAligned: referenceAlignedSearch,
-    referencePreviousWavesByFirstWave: state.referencePreviousWavesByFirstWave,
+  candidateConstraints = candidateConstraints.withReferenceResidualCapCenter(
+    startLatitude,
+    startLongitude,
+    previousResult != null &&
+        previousResult.effectiveStationCount >= 15 &&
+        previousResult.score >= 5.0,
   );
-  final stages = <Map<String, Object?>>[];
-  final steps = switch (searchSchedule) {
-    NiedHypSearchSchedule.scratchViewerFiveStage =>
-      <({double degree, double? depth, bool enabled, int moveLimit})>[
-        (
-          degree: 0.5,
-          depth: null,
-          enabled: active.length > 10,
-          moveLimit: elapsedSinceDetectionSeconds < 5.0 ? 15 : 30,
-        ),
-        (
-          degree: 0.1,
-          depth: null,
-          enabled: true,
-          moveLimit: elapsedSinceDetectionSeconds < 5.0
-              ? (active.length < 10 ? 6 : 40)
-              : 80,
-        ),
-        (degree: 0.1, depth: 50.0, enabled: true, moveLimit: 100),
-        (degree: 0.1, depth: 10.0, enabled: true, moveLimit: 100),
-        (degree: 1 / 60, depth: null, enabled: true, moveLimit: 10),
-      ],
-    NiedHypSearchSchedule.referenceBroadFourStage =>
-      <({double degree, double? depth, bool enabled, int moveLimit})>[
-        (degree: 3.0, depth: 100.0, enabled: true, moveLimit: 1000),
-        (degree: 1.0, depth: 50.0, enabled: true, moveLimit: 1000),
-        (degree: 0.3, depth: 20.0, enabled: true, moveLimit: 1000),
-        (degree: 0.1, depth: 10.0, enabled: true, moveLimit: 1000),
-      ],
-    NiedHypSearchSchedule.scratchFiveStageWithBroadRescue =>
-      <({double degree, double? depth, bool enabled, int moveLimit})>[
-        (
-          degree: 0.5,
-          depth: null,
-          enabled: active.length > 10,
-          moveLimit: elapsedSinceDetectionSeconds < 5.0 ? 15 : 30,
-        ),
-        (
-          degree: 0.1,
-          depth: null,
-          enabled: true,
-          moveLimit: elapsedSinceDetectionSeconds < 5.0
-              ? (active.length < 10 ? 6 : 40)
-              : 80,
-        ),
-        (degree: 0.1, depth: 50.0, enabled: true, moveLimit: 100),
-        (degree: 0.1, depth: 10.0, enabled: true, moveLimit: 100),
-        (degree: 1 / 60, depth: null, enabled: true, moveLimit: 10),
-        (degree: 3.0, depth: 100.0, enabled: true, moveLimit: 1000),
-        (degree: 1.0, depth: 50.0, enabled: true, moveLimit: 1000),
-        (degree: 0.3, depth: 20.0, enabled: true, moveLimit: 1000),
-        (degree: 0.1, depth: 10.0, enabled: true, moveLimit: 1000),
-        (degree: 0.1, depth: 10.0, enabled: true, moveLimit: 100),
-        (degree: 1 / 60, depth: null, enabled: true, moveLimit: 10),
-      ],
-    NiedHypSearchSchedule.scratchFiveStageJointNeighborhood =>
-      <({double degree, double? depth, bool enabled, int moveLimit})>[
-        (
-          degree: 0.5,
-          depth: null,
-          enabled: active.length > 10,
-          moveLimit: elapsedSinceDetectionSeconds < 5.0 ? 15 : 30,
-        ),
-        (
-          degree: 0.1,
-          depth: null,
-          enabled: true,
-          moveLimit: elapsedSinceDetectionSeconds < 5.0
-              ? (active.length < 10 ? 6 : 40)
-              : 80,
-        ),
-        (degree: 0.1, depth: 50.0, enabled: true, moveLimit: 100),
-        (degree: 0.1, depth: 10.0, enabled: true, moveLimit: 100),
-        (degree: 1 / 60, depth: null, enabled: true, moveLimit: 10),
-      ],
-  };
-  var totalIteration = 0;
-  var stageIteration = 0;
-  var stageEvaluatedCandidateCount = 0;
-  var stageRejectedCandidateCount = 0;
-  var stageRejectedReasonCounts = <String, int>{};
-  var stageMoves = <Map<String, Object?>>[];
-  var stepIndex = 0;
-  while (stepIndex < steps.length && totalIteration < 1000) {
-    final step = steps[stepIndex];
-    if (!step.enabled) {
-      stages.add({
-        'step_index': stepIndex,
-        'degree_step': step.degree,
-        'depth_step_km': step.depth,
-        'move_limit': step.moveLimit,
-        'termination_reason': 'skipped_station_count',
-        'iterations': 0,
-        'total_iterations': totalIteration,
-        'evaluated_candidate_count': 0,
+  // L5 / J2 / J3 shadow levers: a pinned depth cannot be honoured by the native
+  // Rust search (its six-neighbour walk always moves the depth axis), the NYAD
+  // inactive-evidence penalty needs a wall-clock "now" the native scorer never
+  // receives, and the J3 amplitude term needs a per-station intensity the
+  // native scorer's info words do not carry; any one diverts to the Dart path.
+  final pinnedDepthKm = NiedHypStartShadow.pinnedDepthKm;
+  // 方案 C (`searchForm == 'grid'`) runs the global grid posterior entirely on
+  // the Dart scorer, so it must also divert off the native Rust path.
+  final gridSearchEnabled = NiedHypStartShadow.searchForm == 'grid';
+  final forceDartSearch =
+      NiedHypStartShadow.forceDartSearch ||
+      pinnedDepthKm != null ||
+      NiedHypStartShadow.nyadNegativeEvidence ||
+      NiedHypStartShadow.amplitudeConsistency ||
+      NiedHypStartShadow.depthPriorKm != null ||
+      (NiedHypStartShadow.referenceRespectSWaveGate && !allowSWave) ||
+      NiedHypStartShadow.referenceInactiveMaxAzimuthGapDegrees.isFinite ||
+      gridSearchEnabled;
+  final effectiveStartDepthKm = pinnedDepthKm ?? startDepthKm;
+  final nativeScorer =
+      referenceAlignedSearch && NativeHypScorer.supported && !forceDartSearch
+      ? _nativeNiedHypScorer(
+          active,
+          inactive,
+          earliestAt,
+          frame.adjacencyByStationId,
+          state.referencePreviousWavesByFirstWave,
+        )
+      : null;
+  try {
+    final searchStopwatch = Stopwatch()..start();
+    final nativeFinalJoint =
+        referenceAlignedSearch &&
+        NiedHypStartShadow.jointReferenceNeighbors &&
+        NiedHypStartShadow.jointReferenceMaxDegree <= 0.1 &&
+        NiedHypStartShadow.jointReferenceMinSupportRatio <= 0.0 &&
+        (!NiedHypStartShadow.jointReferenceRequirePreviousResult ||
+            previousResult != null);
+    final nativeSearch = nativeScorer?.search(
+      startLatitude,
+      startLongitude,
+      effectiveStartDepthKm,
+      finalJoint: nativeFinalJoint,
+      finalJointMinCount: NiedHypStartShadow.jointReferenceMinActiveStations,
+      finalJointMaxScore: NiedHypStartShadow.jointReferenceMaxCurrentScore,
+    );
+    var candidateScoreCallCount = nativeSearch?.summary[3].toInt() ?? 1;
+    var current = nativeSearch != null
+        ? _nativeNiedReferenceResult(
+            nativeSearch.score,
+            active,
+            latitude: nativeSearch.summary[0],
+            longitude: nativeSearch.summary[1],
+            depthKm: nativeSearch.summary[2],
+            earliestAt: earliestAt,
+          )
+        : _scoreNiedHypWorkerCandidate(
+            active,
+            inactive,
+            observedAt: request.observedAt,
+            earliestAt: earliestAt,
+            latitude: startLatitude,
+            longitude: startLongitude,
+            depthKm: effectiveStartDepthKm,
+            allowSWave: allowSWave,
+            applyInactivePenalty: inactivePenaltyGateOpen,
+            stationSFlagByCode: scoringSFlagByCode,
+            candidateConstraints: candidateConstraints,
+            adjacencyByStationId: frame.adjacencyByStationId,
+            nativeScorer: nativeScorer,
+            referenceAligned: referenceAlignedSearch,
+            referencePreviousWavesByFirstWave:
+                state.referencePreviousWavesByFirstWave,
+          );
+    final stages = nativeSearch?.stages ?? <Map<String, Object?>>[];
+    var steps = switch (searchSchedule) {
+      NiedHypSearchSchedule.scratchViewerFiveStage =>
+        <({double degree, double? depth, bool enabled, int moveLimit})>[
+          (
+            degree: 0.5,
+            depth: null,
+            enabled: active.length > 10,
+            moveLimit: elapsedSinceDetectionSeconds < 5.0 ? 15 : 30,
+          ),
+          (
+            degree: 0.1,
+            depth: null,
+            enabled: true,
+            moveLimit: elapsedSinceDetectionSeconds < 5.0
+                ? (active.length < 10 ? 6 : 40)
+                : 80,
+          ),
+          (degree: 0.1, depth: 50.0, enabled: true, moveLimit: 100),
+          (degree: 0.1, depth: 10.0, enabled: true, moveLimit: 100),
+          (degree: 1 / 60, depth: null, enabled: true, moveLimit: 10),
+        ],
+      NiedHypSearchSchedule.referenceBroadFourStage =>
+        <({double degree, double? depth, bool enabled, int moveLimit})>[
+          (degree: 3.0, depth: 100.0, enabled: true, moveLimit: 1000),
+          (degree: 1.0, depth: 50.0, enabled: true, moveLimit: 1000),
+          (degree: 0.3, depth: 20.0, enabled: true, moveLimit: 1000),
+          (degree: 0.1, depth: 10.0, enabled: true, moveLimit: 1000),
+        ],
+      NiedHypSearchSchedule.scratchFiveStageWithBroadRescue =>
+        <({double degree, double? depth, bool enabled, int moveLimit})>[
+          (
+            degree: 0.5,
+            depth: null,
+            enabled: active.length > 10,
+            moveLimit: elapsedSinceDetectionSeconds < 5.0 ? 15 : 30,
+          ),
+          (
+            degree: 0.1,
+            depth: null,
+            enabled: true,
+            moveLimit: elapsedSinceDetectionSeconds < 5.0
+                ? (active.length < 10 ? 6 : 40)
+                : 80,
+          ),
+          (degree: 0.1, depth: 50.0, enabled: true, moveLimit: 100),
+          (degree: 0.1, depth: 10.0, enabled: true, moveLimit: 100),
+          (degree: 1 / 60, depth: null, enabled: true, moveLimit: 10),
+          (degree: 3.0, depth: 100.0, enabled: true, moveLimit: 1000),
+          (degree: 1.0, depth: 50.0, enabled: true, moveLimit: 1000),
+          (degree: 0.3, depth: 20.0, enabled: true, moveLimit: 1000),
+          (degree: 0.1, depth: 10.0, enabled: true, moveLimit: 1000),
+          (degree: 0.1, depth: 10.0, enabled: true, moveLimit: 100),
+          (degree: 1 / 60, depth: null, enabled: true, moveLimit: 10),
+        ],
+      NiedHypSearchSchedule.scratchFiveStageJointNeighborhood =>
+        <({double degree, double? depth, bool enabled, int moveLimit})>[
+          (
+            degree: 0.5,
+            depth: null,
+            enabled: active.length > 10,
+            moveLimit: elapsedSinceDetectionSeconds < 5.0 ? 15 : 30,
+          ),
+          (
+            degree: 0.1,
+            depth: null,
+            enabled: true,
+            moveLimit: elapsedSinceDetectionSeconds < 5.0
+                ? (active.length < 10 ? 6 : 40)
+                : 80,
+          ),
+          (degree: 0.1, depth: 50.0, enabled: true, moveLimit: 100),
+          (degree: 0.1, depth: 10.0, enabled: true, moveLimit: 100),
+          (degree: 1 / 60, depth: null, enabled: true, moveLimit: 10),
+        ],
+    };
+    // ---- 方案 C shadow: global coarse-grid posterior + local refine --------
+    // Deterministic alternative to the single-trajectory greedy climb. Active
+    // only when NiedHypStartShadow.searchForm == 'grid'; production always
+    // takes the greedy `steps` path below, so this branch is invisible to it.
+    Map<String, Object?>? gridShadowDiagnostics;
+    if (gridSearchEnabled) {
+      final gridSearch = _runNiedGridPosteriorSearch(
+        scoreNode: (double lat, double lng, double depthKm) =>
+            _scoreNiedHypWorkerCandidate(
+              active,
+              inactive,
+              observedAt: request.observedAt,
+              earliestAt: earliestAt,
+              latitude: lat,
+              longitude: lng,
+              depthKm: depthKm,
+              allowSWave: allowSWave,
+              applyInactivePenalty: inactivePenaltyGateOpen,
+              stationSFlagByCode: scoringSFlagByCode,
+              candidateConstraints: candidateConstraints,
+              adjacencyByStationId: frame.adjacencyByStationId,
+              nativeScorer: nativeScorer,
+              referenceAligned: referenceAlignedSearch,
+              referencePreviousWavesByFirstWave:
+                  state.referencePreviousWavesByFirstWave,
+            ),
+        seed: current,
+        seedLatitude: seedLat,
+        seedLongitude: seedLng,
+        spacingDeg: NiedHypStartShadow.gridSpacingDeg,
+        extentLatDeg: NiedHypStartShadow.gridExtentLatDeg,
+        extentLngDeg: NiedHypStartShadow.gridExtentLngDeg,
+        depthLevelsKm: NiedHypStartShadow.gridDepthLevelsKm,
+        topK: NiedHypStartShadow.gridTopK,
+        refineMoveLimit: NiedHypStartShadow.gridRefineMoveLimit,
+      );
+      current = gridSearch.result;
+      candidateScoreCallCount += gridSearch.evaluationCount;
+      gridShadowDiagnostics = gridSearch.diagnostics;
+      stages.add(<String, Object?>{
+        'step_index': 0,
+        'degree_step': NiedHypStartShadow.gridSpacingDeg,
+        'depth_step_km': null,
+        'move_limit': 0,
+        'termination_reason': 'grid_shadow_posterior',
+        'iterations': 1,
+        'total_iterations': 1,
+        'evaluated_candidate_count': gridSearch.evaluationCount,
         'rejected_candidate_count': 0,
         'rejected_reason_counts': const <String, int>{},
         'moves': const <Map<String, Object?>>[],
@@ -11472,179 +12310,280 @@ SourceEstimate? _estimateNiedHypWorkerFrame(
         },
         'terminal_candidates': const <Map<String, Object?>>[],
       });
-      stepIndex += 1;
-      continue;
+      // Skip the greedy climb; the grid + refine already terminated.
+      steps = <({double degree, double? depth, bool enabled, int moveLimit})>[];
     }
-    totalIteration += 1;
-    stageIteration += 1;
-    _NiedHypWorkerResult? bestCandidate;
-    String? bestDirection;
-    final iterationCandidates = <Map<String, Object?>>[];
-    void scoreCandidate(
-      String direction,
-      double lat,
-      double lng,
-      double depthKm,
-    ) {
-      final rejectReason = _niedHypWorkerCandidateRejectReason(
-        latitude: lat,
-        longitude: lng,
-        depthKm: depthKm,
-        constraints: candidateConstraints,
-      );
-      if (rejectReason != null) {
-        stageRejectedCandidateCount += 1;
-        stageRejectedReasonCounts[rejectReason] =
-            (stageRejectedReasonCounts[rejectReason] ?? 0) + 1;
-        iterationCandidates.add({
-          'direction': direction,
-          'latitude': lat,
-          'longitude': lng,
-          'depth_km': depthKm,
-          'evaluated': false,
-          'reject_reason': rejectReason,
-        });
-        return;
-      }
-      stageEvaluatedCandidateCount += 1;
-      candidateScoreCallCount += 1;
-      final candidate = _scoreNiedHypWorkerCandidate(
-        active,
-        inactive,
-        observedAt: request.observedAt,
-        earliestAt: earliestAt,
-        latitude: lat,
-        longitude: lng,
-        depthKm: depthKm,
-        allowSWave: allowSWave,
-        applyInactivePenalty: inactivePenaltyGateOpen,
-        stationSFlagByCode: scoringSFlagByCode,
-        candidateConstraints: candidateConstraints,
-        adjacencyByStationId: frame.adjacencyByStationId,
-        referenceAligned: referenceAlignedSearch,
-        referencePreviousWavesByFirstWave:
-            state.referencePreviousWavesByFirstWave,
-      );
-      iterationCandidates.add({
-        'direction': direction,
-        'latitude': candidate.latitude,
-        'longitude': candidate.longitude,
-        'depth_km': candidate.depthKm,
-        'score': candidate.score,
-        'error_level': candidate.errorLevel,
-        'inactive_penalty': candidate.inactivePenalty,
-        'evaluated': true,
-      });
-      if (bestCandidate == null || candidate.score < bestCandidate!.score) {
-        bestCandidate = candidate;
-        bestDirection = direction;
-      }
-    }
-
-    // NiedHypoInf.js searches this exact neighbor order. Its score surface is
-    // discrete because phase assignment changes per candidate, so preserving
-    // the order preserves the reference implementation's tie-breaking path.
-    final lateralDirections = referenceAlignedSearch
-        ? <(String, double, double)>[
-            ('lng+${step.degree}', 0.0, step.degree),
-            ('lat-${step.degree}', -step.degree, 0.0),
-            ('lng-${step.degree}', 0.0, -step.degree),
-            ('lat+${step.degree}', step.degree, 0.0),
-          ]
-        : <(String, double, double)>[
-            ('lng+${step.degree}', 0.0, step.degree),
-            ('lng-${step.degree}', 0.0, -step.degree),
-            ('lat+${step.degree}', step.degree, 0.0),
-            ('lat-${step.degree}', -step.degree, 0.0),
-          ];
-    for (final direction in lateralDirections) {
-      scoreCandidate(
-        direction.$1,
-        current.latitude + direction.$2,
-        current.longitude + direction.$3,
-        current.depthKm,
-      );
-    }
-    final depthStep = step.depth;
-    if (depthStep != null) {
-      scoreCandidate(
-        'depth-${depthStep.toInt()}',
-        current.latitude,
-        current.longitude,
-        current.depthKm - depthStep,
-      );
-      scoreCandidate(
-        'depth+${depthStep.toInt()}',
-        current.latitude,
-        current.longitude,
-        current.depthKm + depthStep,
-      );
-      if (searchSchedule ==
-          NiedHypSearchSchedule.scratchFiveStageJointNeighborhood) {
-        for (final latDirection in const [-1, 0, 1]) {
-          for (final lngDirection in const [-1, 0, 1]) {
-            for (final depthDirection in const [-1, 0, 1]) {
-              final changedAxisCount =
-                  (latDirection == 0 ? 0 : 1) +
-                  (lngDirection == 0 ? 0 : 1) +
-                  (depthDirection == 0 ? 0 : 1);
-              if (changedAxisCount < 2) continue;
-              scoreCandidate(
-                'joint_lat${latDirection >= 0 ? '+' : ''}$latDirection'
-                '_lng${lngDirection >= 0 ? '+' : ''}$lngDirection'
-                '_depth${depthDirection >= 0 ? '+' : ''}$depthDirection',
-                current.latitude + latDirection * step.degree,
-                current.longitude + lngDirection * step.degree,
-                current.depthKm + depthDirection * depthStep,
-              );
-            }
-          }
-        }
-      }
-    }
-    final selectedCandidate = bestCandidate;
-    if (selectedCandidate != null &&
-        selectedCandidate.score + 1e-9 < current.score) {
-      stageMoves.add({
-        'stage_iteration': stageIteration,
-        'total_iteration': totalIteration,
-        'direction': bestDirection,
-        'from': {
-          'latitude': current.latitude,
-          'longitude': current.longitude,
-          'depth_km': current.depthKm,
-          'score': current.score,
-          'weighted_residual_squares': current.weightedResidualSquares,
-          'weight_sum': current.weightSum,
-          'inactive_penalty': current.inactivePenalty,
-          'inactive_p_radius_km': current.inactivePRadiusKm,
-          'station_scale': current.stationScale,
-          'wave_count_penalty_multiplier': current.waveCountPenaltyMultiplier,
-        },
-        'to': {
-          'latitude': selectedCandidate.latitude,
-          'longitude': selectedCandidate.longitude,
-          'depth_km': selectedCandidate.depthKm,
-          'score': selectedCandidate.score,
-          'weighted_residual_squares':
-              selectedCandidate.weightedResidualSquares,
-          'weight_sum': selectedCandidate.weightSum,
-          'inactive_penalty': selectedCandidate.inactivePenalty,
-          'inactive_p_radius_km': selectedCandidate.inactivePRadiusKm,
-          'station_scale': selectedCandidate.stationScale,
-          'wave_count_penalty_multiplier':
-              selectedCandidate.waveCountPenaltyMultiplier,
-        },
-      });
-      current = selectedCandidate;
-      // Scratch exits after the move counter exceeds the stage limit.
-      if (stageMoves.length > step.moveLimit) {
+    var totalIteration = 0;
+    var stageIteration = 0;
+    var stageEvaluatedCandidateCount = 0;
+    var stageRejectedCandidateCount = 0;
+    var stageRejectedReasonCounts = <String, int>{};
+    var stageMoves = <Map<String, Object?>>[];
+    var stepIndex = 0;
+    while (nativeSearch == null &&
+        stepIndex < steps.length &&
+        totalIteration < 1000) {
+      final step = steps[stepIndex];
+      if (!step.enabled) {
         stages.add({
           'step_index': stepIndex,
           'degree_step': step.degree,
           'depth_step_km': step.depth,
           'move_limit': step.moveLimit,
-          'termination_reason': 'move_limit',
+          'termination_reason': 'skipped_station_count',
+          'iterations': 0,
+          'total_iterations': totalIteration,
+          'evaluated_candidate_count': 0,
+          'rejected_candidate_count': 0,
+          'rejected_reason_counts': const <String, int>{},
+          'moves': const <Map<String, Object?>>[],
+          'best_score': current.score,
+          'best_latitude': current.latitude,
+          'best_longitude': current.longitude,
+          'best_depth_km': current.depthKm,
+          'terminal_center': {
+            'latitude': current.latitude,
+            'longitude': current.longitude,
+            'depth_km': current.depthKm,
+            'score': current.score,
+            'error_level': current.errorLevel,
+            'inactive_penalty': current.inactivePenalty,
+          },
+          'terminal_candidates': const <Map<String, Object?>>[],
+        });
+        stepIndex += 1;
+        continue;
+      }
+      totalIteration += 1;
+      stageIteration += 1;
+      _NiedHypWorkerResult? bestCandidate;
+      String? bestDirection;
+      final iterationCandidates = <Map<String, Object?>>[];
+      void scoreCandidate(
+        String direction,
+        double lat,
+        double lng,
+        double depthKm,
+      ) {
+        final rejectReason = _niedHypWorkerCandidateRejectReason(
+          latitude: lat,
+          longitude: lng,
+          depthKm: depthKm,
+          constraints: candidateConstraints,
+        );
+        if (rejectReason != null) {
+          stageRejectedCandidateCount += 1;
+          stageRejectedReasonCounts[rejectReason] =
+              (stageRejectedReasonCounts[rejectReason] ?? 0) + 1;
+          iterationCandidates.add({
+            'direction': direction,
+            'latitude': lat,
+            'longitude': lng,
+            'depth_km': depthKm,
+            'evaluated': false,
+            'reject_reason': rejectReason,
+          });
+          return;
+        }
+        stageEvaluatedCandidateCount += 1;
+        candidateScoreCallCount += 1;
+        final candidate = _scoreNiedHypWorkerCandidate(
+          active,
+          inactive,
+          observedAt: request.observedAt,
+          earliestAt: earliestAt,
+          latitude: lat,
+          longitude: lng,
+          depthKm: depthKm,
+          allowSWave: allowSWave,
+          applyInactivePenalty: inactivePenaltyGateOpen,
+          stationSFlagByCode: scoringSFlagByCode,
+          candidateConstraints: candidateConstraints,
+          adjacencyByStationId: frame.adjacencyByStationId,
+          nativeScorer: nativeScorer,
+          referenceAligned: referenceAlignedSearch,
+          referencePreviousWavesByFirstWave:
+              state.referencePreviousWavesByFirstWave,
+        );
+        iterationCandidates.add({
+          'direction': direction,
+          'latitude': candidate.latitude,
+          'longitude': candidate.longitude,
+          'depth_km': candidate.depthKm,
+          'score': candidate.score,
+          'error_level': candidate.errorLevel,
+          'inactive_penalty': candidate.inactivePenalty,
+          'evaluated': true,
+        });
+        if (referenceAlignedSearch &&
+            NiedHypStartShadow.jointReferenceNeighbors &&
+            NiedHypStartShadow.jointReferenceMinSupportRatio > 0.0 &&
+            state.jointShadowPeakActiveCount > 0 &&
+            candidate.effectiveStationCount <
+                state.jointShadowPeakActiveCount *
+                    NiedHypStartShadow.jointReferenceMinSupportRatio) {
+          iterationCandidates.last['support_guard_rejected'] = true;
+          iterationCandidates.last['effective_station_count'] =
+              candidate.effectiveStationCount;
+          iterationCandidates.last['active_family_station_count'] =
+              state.jointShadowPeakActiveCount;
+          return;
+        }
+        if (bestCandidate == null || candidate.score < bestCandidate!.score) {
+          bestCandidate = candidate;
+          bestDirection = direction;
+        }
+      }
+
+      // NiedHypoInf.js searches this exact neighbor order. Its score surface is
+      // discrete because phase assignment changes per candidate, so preserving
+      // the order preserves the reference implementation's tie-breaking path.
+      final lateralDirections = referenceAlignedSearch
+          ? <(String, double, double)>[
+              ('lng+${step.degree}', 0.0, step.degree),
+              ('lat-${step.degree}', -step.degree, 0.0),
+              ('lng-${step.degree}', 0.0, -step.degree),
+              ('lat+${step.degree}', step.degree, 0.0),
+            ]
+          : <(String, double, double)>[
+              ('lng+${step.degree}', 0.0, step.degree),
+              ('lng-${step.degree}', 0.0, -step.degree),
+              ('lat+${step.degree}', step.degree, 0.0),
+              ('lat-${step.degree}', -step.degree, 0.0),
+            ];
+      for (final direction in lateralDirections) {
+        scoreCandidate(
+          direction.$1,
+          current.latitude + direction.$2,
+          current.longitude + direction.$3,
+          pinnedDepthKm ?? current.depthKm,
+        );
+      }
+      // L5 shadow lever: a non-null pinned depth suppresses every depth move, so
+      // the whole search runs on the pinned depth plane.
+      final depthStep = pinnedDepthKm != null ? null : step.depth;
+      if (depthStep != null) {
+        scoreCandidate(
+          'depth-${depthStep.toInt()}',
+          current.latitude,
+          current.longitude,
+          current.depthKm - depthStep,
+        );
+        scoreCandidate(
+          'depth+${depthStep.toInt()}',
+          current.latitude,
+          current.longitude,
+          current.depthKm + depthStep,
+        );
+        if (searchSchedule ==
+                NiedHypSearchSchedule.scratchFiveStageJointNeighborhood ||
+            (referenceAlignedSearch &&
+                NiedHypStartShadow.jointReferenceNeighbors &&
+                active.length >=
+                    NiedHypStartShadow.jointReferenceMinActiveStations &&
+                (!NiedHypStartShadow.jointReferenceRequirePreviousResult ||
+                    previousResult != null) &&
+                current.score <=
+                    NiedHypStartShadow.jointReferenceMaxCurrentScore &&
+                step.degree <= NiedHypStartShadow.jointReferenceMaxDegree)) {
+          for (final latDirection in const [-1, 0, 1]) {
+            for (final lngDirection in const [-1, 0, 1]) {
+              for (final depthDirection in const [-1, 0, 1]) {
+                final changedAxisCount =
+                    (latDirection == 0 ? 0 : 1) +
+                    (lngDirection == 0 ? 0 : 1) +
+                    (depthDirection == 0 ? 0 : 1);
+                if (changedAxisCount < 2) continue;
+                scoreCandidate(
+                  'joint_lat${latDirection >= 0 ? '+' : ''}$latDirection'
+                  '_lng${lngDirection >= 0 ? '+' : ''}$lngDirection'
+                  '_depth${depthDirection >= 0 ? '+' : ''}$depthDirection',
+                  current.latitude + latDirection * step.degree,
+                  current.longitude + lngDirection * step.degree,
+                  current.depthKm + depthDirection * depthStep,
+                );
+              }
+            }
+          }
+        }
+      }
+      final selectedCandidate = bestCandidate;
+      if (selectedCandidate != null &&
+          selectedCandidate.score + 1e-9 < current.score) {
+        stageMoves.add({
+          'stage_iteration': stageIteration,
+          'total_iteration': totalIteration,
+          'direction': bestDirection,
+          'from': {
+            'latitude': current.latitude,
+            'longitude': current.longitude,
+            'depth_km': current.depthKm,
+            'score': current.score,
+            'weighted_residual_squares': current.weightedResidualSquares,
+            'weight_sum': current.weightSum,
+            'inactive_penalty': current.inactivePenalty,
+            'inactive_p_radius_km': current.inactivePRadiusKm,
+            'station_scale': current.stationScale,
+            'wave_count_penalty_multiplier': current.waveCountPenaltyMultiplier,
+          },
+          'to': {
+            'latitude': selectedCandidate.latitude,
+            'longitude': selectedCandidate.longitude,
+            'depth_km': selectedCandidate.depthKm,
+            'score': selectedCandidate.score,
+            'weighted_residual_squares':
+                selectedCandidate.weightedResidualSquares,
+            'weight_sum': selectedCandidate.weightSum,
+            'inactive_penalty': selectedCandidate.inactivePenalty,
+            'inactive_p_radius_km': selectedCandidate.inactivePRadiusKm,
+            'station_scale': selectedCandidate.stationScale,
+            'wave_count_penalty_multiplier':
+                selectedCandidate.waveCountPenaltyMultiplier,
+          },
+        });
+        current = selectedCandidate;
+        // Scratch exits after the move counter exceeds the stage limit.
+        if (stageMoves.length > step.moveLimit) {
+          stages.add({
+            'step_index': stepIndex,
+            'degree_step': step.degree,
+            'depth_step_km': step.depth,
+            'move_limit': step.moveLimit,
+            'termination_reason': 'move_limit',
+            'iterations': stageIteration,
+            'total_iterations': totalIteration,
+            'evaluated_candidate_count': stageEvaluatedCandidateCount,
+            'rejected_candidate_count': stageRejectedCandidateCount,
+            'rejected_reason_counts': stageRejectedReasonCounts,
+            'moves': stageMoves,
+            'best_score': current.score,
+            'best_latitude': current.latitude,
+            'best_longitude': current.longitude,
+            'best_depth_km': current.depthKm,
+            'terminal_center': {
+              'latitude': current.latitude,
+              'longitude': current.longitude,
+              'depth_km': current.depthKm,
+              'score': current.score,
+              'error_level': current.errorLevel,
+              'inactive_penalty': current.inactivePenalty,
+            },
+            'terminal_candidates': iterationCandidates,
+          });
+          stepIndex += 1;
+          stageIteration = 0;
+          stageEvaluatedCandidateCount = 0;
+          stageRejectedCandidateCount = 0;
+          stageRejectedReasonCounts = <String, int>{};
+          stageMoves = <Map<String, Object?>>[];
+        }
+      } else {
+        stages.add({
+          'step_index': stepIndex,
+          'degree_step': step.degree,
+          'depth_step_km': step.depth,
+          'move_limit': step.moveLimit,
+          'termination_reason': 'local_minimum',
           'iterations': stageIteration,
           'total_iterations': totalIteration,
           'evaluated_candidate_count': stageEvaluatedCandidateCount,
@@ -11672,296 +12611,1283 @@ SourceEstimate? _estimateNiedHypWorkerFrame(
         stageRejectedReasonCounts = <String, int>{};
         stageMoves = <Map<String, Object?>>[];
       }
-    } else {
-      stages.add({
-        'step_index': stepIndex,
-        'degree_step': step.degree,
-        'depth_step_km': step.depth,
-        'move_limit': step.moveLimit,
-        'termination_reason': 'local_minimum',
-        'iterations': stageIteration,
-        'total_iterations': totalIteration,
-        'evaluated_candidate_count': stageEvaluatedCandidateCount,
-        'rejected_candidate_count': stageRejectedCandidateCount,
-        'rejected_reason_counts': stageRejectedReasonCounts,
-        'moves': stageMoves,
-        'best_score': current.score,
-        'best_latitude': current.latitude,
-        'best_longitude': current.longitude,
-        'best_depth_km': current.depthKm,
-        'terminal_center': {
-          'latitude': current.latitude,
-          'longitude': current.longitude,
-          'depth_km': current.depthKm,
-          'score': current.score,
-          'error_level': current.errorLevel,
-          'inactive_penalty': current.inactivePenalty,
-        },
-        'terminal_candidates': iterationCandidates,
-      });
-      stepIndex += 1;
-      stageIteration = 0;
-      stageEvaluatedCandidateCount = 0;
-      stageRejectedCandidateCount = 0;
-      stageRejectedReasonCounts = <String, int>{};
-      stageMoves = <Map<String, Object?>>[];
     }
-  }
-  final searchedResult = current.copyWith(searchStages: stages);
-  searchStopwatch.stop();
-  // NiedHypoInf keeps rejected clusters internally, but does not publish one
-  // until it has at least one effective station with a real score. The
-  // reference port uses a finite 1e12 sentinel for some rejected candidates,
-  // so checking `isFinite` alone would leak a support-0 placeholder to the
-  // map and unified UI.
-  final hasPublishableResult =
-      searchedResult.effectiveStationCount > 0 &&
-      searchedResult.weightSum > 0 &&
-      searchedResult.score.isFinite &&
-      searchedResult.errorLevel.isFinite;
-  if (!hasPublishableResult) {
-    request.metadata['nied_dart_hyp_worker_null_reason'] =
-        'nied_hyp_candidate_has_no_effective_station_result';
-    return null;
-  }
-  final previousPublishedResult = state.previousResult;
-  final minimumPublishedScore = state.minimumPublishedScore;
-  final searchResultAccepted = referenceAlignedSearch
-      ? true
-      : switch (writebackPolicy) {
-          _
-              when previousPublishedResult == null ||
-                  elapsedSinceDetectionSeconds < 10.0 =>
-            true,
-          NiedHypWritebackPolicy.historicalMinimumMultiplier =>
-            minimumPublishedScore == null ||
-                searchedResult.score <
-                    minimumPublishedScore * historicalMinimumMultiplier,
-          NiedHypWritebackPolicy.nonIncreasingCurrent =>
-            searchedResult.score <= previousPublishedResult.score,
-        };
-  final result = searchResultAccepted
-      ? searchedResult
-      : previousPublishedResult!;
-  late final List<Map<String, Object?>> curvePanels;
-  if (searchResultAccepted) {
-    curvePanels = _niedHypWorkerCurvePanels(
-      result,
-      active,
-      earliestAt: earliestAt,
-      allowSWave: allowSWave,
-      stationSFlagByCode: scoringSFlagByCode,
-      candidateConstraints: candidateConstraints,
-    );
-    state.publishedCurveRevision += 1;
-    _refreshNiedHypWorkerStationSFlags(
-      state.stationSFlagByCode,
-      active,
-      result,
-    );
-    state
-      ..previousResult = result
-      ..publishedCurvePanels = curvePanels
-      ..minimumPublishedScore = minimumPublishedScore == null
-          ? result.score
-          : math.min(minimumPublishedScore, result.score);
-    if (referenceAlignedSearch) {
-      state.referencePreviousWavesByFirstWave
-        ..clear()
-        ..addAll({
-          for (final entry in result.referencePreviousWavesByFirstWave.entries)
-            entry.key: Map<String, bool>.from(entry.value),
+    var searchedResult = current.copyWith(searchStages: stages);
+    Map<String, Object?>? sparseNullGridRescueDiagnostics;
+    Map<String, Object?>? amplitudeRescueDiagnostics;
+    Map<String, Object?>? oneSidedHighScoreRescueDiagnostics;
+    _NiedHypWorkerResult? highScorePublishOverride;
+    var highScorePublishCandidateSeen = false;
+    bool publishable(_NiedHypWorkerResult value) =>
+        value.effectiveStationCount > 0 &&
+        value.weightSum > 0 &&
+        value.score.isFinite &&
+        value.errorLevel.isFinite;
+    if (referenceAlignedSearch &&
+        NiedHypStartShadow.referenceSparseNullGridRescue &&
+        previousResult != null &&
+        previousResult.effectiveStationCount <=
+            NiedHypStartShadow.referenceSparseRescueMaxPreviousSupport &&
+        active.length >=
+            NiedHypStartShadow.referenceSparseRescueMinActiveStations &&
+        (!publishable(searchedResult) ||
+            NiedHypStartShadow.referenceSparseComparePublishableResearch)) {
+      final gridSearch = _runNiedGridPosteriorSearch(
+        scoreNode: (double lat, double lng, double depthKm) =>
+            _scoreNiedHypWorkerCandidate(
+              active,
+              inactive,
+              observedAt: request.observedAt,
+              earliestAt: earliestAt,
+              latitude: lat,
+              longitude: lng,
+              depthKm: depthKm,
+              allowSWave: allowSWave,
+              applyInactivePenalty: inactivePenaltyGateOpen,
+              stationSFlagByCode: scoringSFlagByCode,
+              candidateConstraints: candidateConstraints,
+              adjacencyByStationId: frame.adjacencyByStationId,
+              nativeScorer: nativeScorer,
+              referenceAligned: true,
+              referencePreviousWavesByFirstWave:
+                  state.referencePreviousWavesByFirstWave,
+            ),
+        seed: previousResult,
+        seedLatitude: seedLat,
+        seedLongitude: seedLng,
+        spacingDeg: NiedHypStartShadow.gridSpacingDeg,
+        extentLatDeg: NiedHypStartShadow.gridExtentLatDeg,
+        extentLngDeg: NiedHypStartShadow.gridExtentLngDeg,
+        depthLevelsKm: NiedHypStartShadow.gridDepthLevelsKm,
+        topK: NiedHypStartShadow.gridTopK,
+        refineMoveLimit: NiedHypStartShadow.gridRefineMoveLimit,
+      );
+      candidateScoreCallCount += gridSearch.evaluationCount;
+      final rescue = gridSearch.result;
+      final previousSupport = previousResult.effectiveStationCount;
+      final normalPublishable = publishable(searchedResult);
+      final beatsPublishableNormal =
+          !normalPublishable ||
+          (rescue.effectiveStationCount >=
+                  searchedResult.effectiveStationCount &&
+              rescue.score < searchedResult.score);
+      final rescueAccepted =
+          publishable(rescue) &&
+          rescue.effectiveStationCount >=
+              NiedHypStartShadow.referenceSparseRescueMinSupport &&
+          rescue.effectiveStationCount >=
+              previousSupport *
+                  NiedHypStartShadow.referenceSparseRescueMinSupportRatio &&
+          beatsPublishableNormal;
+      sparseNullGridRescueDiagnostics = <String, Object?>{
+        'triggered': true,
+        'previous_support': previousSupport,
+        'normal_support': searchedResult.effectiveStationCount,
+        'normal_score': searchedResult.score,
+        'rescue_support': rescue.effectiveStationCount,
+        'rescue_score': rescue.score,
+        'rescue_latitude': rescue.latitude,
+        'rescue_longitude': rescue.longitude,
+        'rescue_depth_km': rescue.depthKm,
+        'evaluation_count': gridSearch.evaluationCount,
+        'accepted': rescueAccepted,
+      };
+      if (rescueAccepted) {
+        stages.add(<String, Object?>{
+          'step_index': stepIndex,
+          'degree_step': NiedHypStartShadow.gridSpacingDeg,
+          'depth_step_km': null,
+          'move_limit': 0,
+          'termination_reason': 'sparse_support_grid_rescue',
+          'iterations': 1,
+          'total_iterations': 1,
+          'evaluated_candidate_count': gridSearch.evaluationCount,
+          'rejected_candidate_count': 0,
+          'rejected_reason_counts': const <String, int>{},
+          'moves': const <Map<String, Object?>>[],
+          'best_score': rescue.score,
+          'best_latitude': rescue.latitude,
+          'best_longitude': rescue.longitude,
+          'best_depth_km': rescue.depthKm,
         });
-      state.referencePreviousOriginMilliseconds =
-          earliestAt.millisecondsSinceEpoch +
-          result.originOffsetSeconds * 1000.0;
+        searchedResult = rescue.copyWith(searchStages: stages);
+      }
     }
-  } else {
-    curvePanels =
-        state.publishedCurvePanels ??
-        _niedHypPublishedCurvePanelsFromEstimate(state.previousEstimate) ??
-        const <Map<String, Object?>>[];
-  }
-  final waveRadii = _niedHypWorkerWaveRadii(
-    observedAt: request.observedAt,
-    originTime: result.originTime,
-    depthKm: result.depthKm,
-    maxDetectedDistanceKm: candidateConstraints.maxDetectedDistanceKm,
-  );
-  final confidence = _niedHypWorkerConfidence(result);
-  request.metadata
-    ..['nied_dart_hyp_worker_input'] = 'ka_nied_station_snapshot_v1'
-    ..['nied_dart_hyp_worker_active_count'] = clusterStations.length
-    ..['nied_dart_hyp_worker_effective_active_count'] = active.length
-    ..['nied_dart_hyp_worker_zero_contribution_count'] =
-        zeroContributionStations.length
-    ..['nied_dart_hyp_worker_inactive_count'] = inactive.length
-    ..remove('nied_dart_hyp_worker_null_reason');
-  final estimate = SourceEstimate(
-    latitude: result.latitude,
-    longitude: result.longitude,
-    depthKm: result.depthKm,
-    originTime: result.originTime,
-    confidence: confidence,
-    method: methodId,
-    supportingStationCount: result.effectiveStationCount,
-    diagnostics: {
-      'method': methodId,
-      'input_format': 'ka_nied_station_snapshot_v1',
-      'inactive_station_scope':
-          frame.inactiveScope ?? 'legacy_hypocenter_adjacency',
-      'detection_grid': request.metadata['nied_hypocenter_detection_grid'],
-      'calculation_model': referenceAlignedSearch
-          ? 'kanameishi_find_nied_hypocenter_reference_port_v1'
-          : 'article_scratch_hypocenter_core_v2',
-      'temporary_epicenter_seed_model': referenceAlignedSearch
-          ? 'kanameishi_earliest_timestamp_station_mean_round_0_1_degree'
-          : 'scratch_hyp_first_station_round_to_1_60_degree_origin_minus_2s',
-      'search_start_model': useTemporaryEpicenter
-          ? (referenceAlignedSearch
-                ? 'kanameishi_initial_hypocenter_before_first_result'
-                : 'article_step2_temporary_epicenter_within_first_10s')
-          : (referenceAlignedSearch
-                ? 'kanameishi_previous_cluster_hypocenter'
-                : 'article_step2_previous_hypocenter_after_first_10s'),
-      'elapsed_since_first_trigger_s': elapsedSinceFirstTriggerSeconds,
-      'elapsed_since_detection_id_created_s': elapsedSinceDetectionSeconds,
-      'hyp_age_s': hypAgeSeconds,
-      'hyp_calculation_enabled': true,
-      'search_cycle_ran': true,
-      'search_cycle_finished': true,
-      'search_candidate_score_call_count': candidateScoreCallCount,
-      'search_elapsed_ms': searchStopwatch.elapsedMilliseconds,
-      'search_termination_reason': 'scratch_all_enabled_stages_finished',
-      'search_result_update_model': referenceAlignedSearch
-          ? 'kanameishi_dirty_cluster_replaces_current_result'
-          : switch (writebackPolicy) {
-              NiedHypWritebackPolicy.historicalMinimumMultiplier =>
-                'scratch_4_4_first_10s_or_below_historical_min_times_multiplier',
-              NiedHypWritebackPolicy.nonIncreasingCurrent =>
-                'experiment_first_10s_or_non_increasing_current_score',
-            },
-      'search_result_writeback_policy': writebackPolicy.name,
-      'search_schedule': searchSchedule.name,
-      'search_schedule_reference': switch (searchSchedule) {
-        NiedHypSearchSchedule.scratchViewerFiveStage =>
-          'scratch_project_hyp_viewer_five_stage',
-        NiedHypSearchSchedule.referenceBroadFourStage =>
-          'kanameishi_nied_hypo_inf_broad_four_stage_experiment_same_article_score',
-        NiedHypSearchSchedule.scratchFiveStageWithBroadRescue =>
-          'scratch_five_stage_then_broad_lower_score_only_then_fine_experiment',
-        NiedHypSearchSchedule.scratchFiveStageJointNeighborhood =>
-          'scratch_five_stage_with_joint_lat_lng_depth_neighbors_experiment',
-      },
-      'historical_minimum_score_multiplier': historicalMinimumMultiplier,
-      'search_result_accepted': searchResultAccepted,
-      'historical_minimum_published_score': state.minimumPublishedScore,
-      'searched_result': {
-        'latitude': searchedResult.latitude,
-        'longitude': searchedResult.longitude,
-        'depth_km': searchedResult.depthKm,
-        'origin_time': searchedResult.originTime.toIso8601String(),
-        'score': searchedResult.score,
-      },
-      's_wave_gate_open': allowSWave,
-      'phase_cache_reference_model':
-          'scratch_4_4_quantized_assignment_only_lat_lng_1_60_depth_origin_integer',
-      'station_assignment_model':
-          'scratch_4_2_previous_source_p_window_then_s_range',
-      'station_contribution_model':
-          'ka_zero_weight_gate_max_ascend_below_2_then_scratch_distance_weight',
-      'cluster_station_count': clusterStations.length,
-      'effective_input_station_count': active.length,
-      'zero_contribution_station_count': zeroContributionStations.length,
-      'zero_contribution_station_codes': [
-        for (final station in zeroContributionStations.take(80)) station.code,
-      ],
-      'candidate_constraints': {
-        'model': referenceAlignedSearch
-            ? 'reference_hypocenter_normalized_global_domain'
-            : 'scratch_hyp_dynamic_candidate_domain',
-        'first_station_code': seedStation.code,
-        'max_detected_distance_km': candidateConstraints.maxDetectedDistanceKm,
-        'max_allowed_depth_km': candidateConstraints.maxAllowedDepthKm,
-        'max_allowed_first_station_distance_km':
-            candidateConstraints.maxAllowedDistanceKm,
-        'latitude_min': referenceAlignedSearch ? -90.0 : 15.0,
-        'latitude_max': referenceAlignedSearch ? 90.0 : 55.0,
-        'longitude_min': referenceAlignedSearch ? -180.0 : 115.0,
-        'longitude_max': referenceAlignedSearch ? 180.0 : 155.0,
-      },
-      'station_assignment_accepted': Map<String, String>.from(
-        state.lastAssignmentAcceptedByCode,
-      ),
-      'station_assignment_rejected': Map<String, String>.from(
-        state.lastAssignmentRejectedByCode,
-      ),
-      'cached_s_flag_count': state.stationSFlagByCode.values
-          .where((isS) => isS)
-          .length,
-      'historical_active_count': clusterStations.length,
-      'temporary_epicenter_seed': {
-        'station_code': seedStation.code,
-        'trigger_at': seedTriggerAt.toIso8601String(),
-        'origin_time': seedOriginAt.toIso8601String(),
-        'latitude': seedLat,
-        'longitude': seedLng,
-        'depth_km': 10.0,
-      },
-      'search_steps': [
-        for (final step in steps)
-          {
-            'degree': step.degree,
-            'depth': step.depth,
-            'enabled': step.enabled,
-            'move_limit': step.moveLimit,
+    if (referenceAlignedSearch &&
+        NiedHypStartShadow.referenceAmplitudeRescue &&
+        sparseNullGridRescueDiagnostics?['accepted'] != true &&
+        active.length >=
+            NiedHypStartShadow.referenceAmplitudeRescueMinActiveStations &&
+        publishable(searchedResult) &&
+        searchedResult.score >
+            NiedHypStartShadow.referenceAmplitudeRescueMinTimingScore) {
+      final savedAmplitudeConsistency = NiedHypStartShadow.amplitudeConsistency;
+      final savedAmplitudeWeight = NiedHypStartShadow.amplitudeWeight;
+      final savedAmplitudeMinStations = NiedHypStartShadow.amplitudeMinStations;
+      final savedInactiveMaxAzimuthGap =
+          NiedHypStartShadow.referenceInactiveMaxAzimuthGapDegrees;
+      try {
+        NiedHypStartShadow.amplitudeConsistency = true;
+        NiedHypStartShadow.amplitudeWeight =
+            NiedHypStartShadow.referenceAmplitudeRescueWeight;
+        NiedHypStartShadow.amplitudeMinStations = 20;
+        NiedHypStartShadow.referenceInactiveMaxAzimuthGapDegrees = 280.0;
+        final amplitudeSearch = _runNiedGridPosteriorSearch(
+          scoreNode: (double lat, double lng, double depthKm) =>
+              _scoreNiedHypWorkerCandidate(
+                active,
+                inactive,
+                observedAt: request.observedAt,
+                earliestAt: earliestAt,
+                latitude: lat,
+                longitude: lng,
+                depthKm: depthKm,
+                allowSWave: allowSWave,
+                applyInactivePenalty: inactivePenaltyGateOpen,
+                stationSFlagByCode: scoringSFlagByCode,
+                candidateConstraints: candidateConstraints,
+                adjacencyByStationId: frame.adjacencyByStationId,
+                nativeScorer: null,
+                referenceAligned: true,
+                referencePreviousWavesByFirstWave:
+                    state.referencePreviousWavesByFirstWave,
+              ),
+          seed: searchedResult,
+          seedLatitude: searchedResult.latitude,
+          seedLongitude: searchedResult.longitude,
+          spacingDeg: 0.5,
+          extentLatDeg: 1.0,
+          extentLngDeg: 2.0,
+          depthLevelsKm: const <double>[10.0, 30.0, 50.0, 70.0, 100.0, 150.0],
+          topK: 4,
+          refineMoveLimit: 60,
+        );
+        candidateScoreCallCount += amplitudeSearch.evaluationCount;
+        final challenger = amplitudeSearch.result;
+        final eligible =
+            publishable(challenger) &&
+            challenger.effectiveStationCount >=
+                NiedHypStartShadow.referenceAmplitudeRescueMinActiveStations &&
+            challenger.score < searchedResult.score;
+        final accepted =
+            eligible && NiedHypStartShadow.referenceAmplitudeRescueCommit;
+        amplitudeRescueDiagnostics = <String, Object?>{
+          'triggered': true,
+          'timing_score': searchedResult.score,
+          'timing_latitude': searchedResult.latitude,
+          'timing_longitude': searchedResult.longitude,
+          'timing_depth_km': searchedResult.depthKm,
+          'challenger_score': challenger.score,
+          'challenger_latitude': challenger.latitude,
+          'challenger_longitude': challenger.longitude,
+          'challenger_depth_km': challenger.depthKm,
+          'challenger_support': challenger.effectiveStationCount,
+          'evaluation_count': amplitudeSearch.evaluationCount,
+          'eligible': eligible,
+          'accepted': accepted,
+        };
+        if (accepted) {
+          searchedResult = challenger.copyWith(searchStages: stages);
+        }
+      } finally {
+        NiedHypStartShadow.amplitudeConsistency = savedAmplitudeConsistency;
+        NiedHypStartShadow.amplitudeWeight = savedAmplitudeWeight;
+        NiedHypStartShadow.amplitudeMinStations = savedAmplitudeMinStations;
+        NiedHypStartShadow.referenceInactiveMaxAzimuthGapDegrees =
+            savedInactiveMaxAzimuthGap;
+      }
+    }
+    if (referenceAlignedSearch &&
+        NiedHypStartShadow.referenceOneSidedHighScoreRescue &&
+        sparseNullGridRescueDiagnostics?['accepted'] != true &&
+        previousResult != null &&
+        previousResult.effectiveStationCount >=
+            NiedHypStartShadow
+                .referenceOneSidedHighScoreRescueMinActiveStations &&
+        (publishable(searchedResult)
+            ? searchedResult.score >
+                  NiedHypStartShadow
+                      .referenceOneSidedHighScoreRescueMinTimingScore
+            : previousResult.score >
+                  NiedHypStartShadow
+                      .referenceOneSidedHighScoreRescueMinTimingScore) &&
+        active.length >=
+            NiedHypStartShadow
+                .referenceOneSidedHighScoreRescueMinActiveStations) {
+      final savedInactiveMaxAzimuthGap =
+          NiedHypStartShadow.referenceInactiveMaxAzimuthGapDegrees;
+      final savedResidualCap =
+          NiedHypStartShadow.referenceOneSidedResidualCapSeconds;
+      final savedResidualCapMaxDepth =
+          NiedHypStartShadow.referenceOneSidedResidualCapMaxDepthKm;
+      final savedResidualCapMaxMove =
+          NiedHypStartShadow.referenceOneSidedResidualCapMaxMoveKm;
+      final savedInactiveMultiplier =
+          NiedHypStartShadow.referenceOneSidedInactivePenaltyMultiplier;
+      try {
+        final highScoreRescueStopwatch = Stopwatch()..start();
+        NiedHypStartShadow.referenceOneSidedResidualCapSeconds = 4.0;
+        NiedHypStartShadow.referenceOneSidedResidualCapMaxDepthKm = 50.0;
+        NiedHypStartShadow.referenceOneSidedResidualCapMaxMoveKm = 180.0;
+        NiedHypStartShadow.referenceOneSidedInactivePenaltyMultiplier =
+            NiedHypStartShadow
+                .referenceOneSidedHighScoreRescueInactiveMultiplier;
+        final activeCenterLatitude =
+            active.fold<double>(
+              0.0,
+              (sum, station) => sum + station.coordinate.latitude,
+            ) /
+            active.length;
+        final activeCenterLongitude =
+            active.fold<double>(
+              0.0,
+              (sum, station) => sum + station.coordinate.longitude,
+            ) /
+            active.length;
+        final normalCenterDistanceKm = _kanameishiHaversineKm(
+          activeCenterLatitude,
+          activeCenterLongitude,
+          previousResult.latitude,
+          previousResult.longitude,
+        );
+        final lonScale = math.cos(activeCenterLatitude * math.pi / 180.0);
+        final normalVectorX =
+            (previousResult.longitude - activeCenterLongitude) *
+            111.32 *
+            lonScale;
+        final normalVectorY =
+            (previousResult.latitude - activeCenterLatitude) * 111.32;
+        final normalVectorLength = math.sqrt(
+          normalVectorX * normalVectorX + normalVectorY * normalVectorY,
+        );
+        final rescueSearch = _runNiedGridPosteriorSearch(
+          scoreNode: (double lat, double lng, double depthKm) {
+            final candidateCenterDistanceKm = _kanameishiHaversineKm(
+              activeCenterLatitude,
+              activeCenterLongitude,
+              lat,
+              lng,
+            );
+            final candidateVectorX =
+                (lng - activeCenterLongitude) * 111.32 * lonScale;
+            final candidateVectorY = (lat - activeCenterLatitude) * 111.32;
+            final candidateVectorLength = math.sqrt(
+              candidateVectorX * candidateVectorX +
+                  candidateVectorY * candidateVectorY,
+            );
+            final outwardProjectionKm = normalVectorLength > 1e-9
+                ? (candidateVectorX * normalVectorX +
+                          candidateVectorY * normalVectorY) /
+                      normalVectorLength
+                : candidateCenterDistanceKm;
+            final directionCosine =
+                normalVectorLength > 1e-9 && candidateVectorLength > 1e-9
+                ? outwardProjectionKm / candidateVectorLength
+                : 1.0;
+            final longitudeForward =
+                normalVectorX.abs() < 5.0 ||
+                candidateVectorX * normalVectorX >= 0.0;
+            final latitudeForward =
+                normalVectorY.abs() < 5.0 ||
+                candidateVectorY * normalVectorY >= 0.0;
+            if (NiedHypStartShadow
+                    .referenceOneSidedHighScoreRescueDirectionalVeto &&
+                (candidateCenterDistanceKm + 1e-6 <
+                        normalCenterDistanceKm +
+                            NiedHypStartShadow
+                                .referenceOneSidedHighScoreRescueMinOutwardGainKm ||
+                    outwardProjectionKm + 1e-6 <
+                        normalCenterDistanceKm +
+                            NiedHypStartShadow
+                                .referenceOneSidedHighScoreRescueMinOutwardGainKm ||
+                    directionCosine < 0.5 ||
+                    !longitudeForward ||
+                    !latitudeForward)) {
+              return _niedReferenceRejectedCandidate(
+                latitude: lat,
+                longitude: lng,
+                depthKm: depthKm,
+                originTime: earliestAt,
+                activeCount: active.length,
+              );
+            }
+            return _scoreNiedHypWorkerCandidate(
+              active,
+              inactive,
+              observedAt: request.observedAt,
+              earliestAt: earliestAt,
+              latitude: lat,
+              longitude: lng,
+              depthKm: depthKm,
+              allowSWave: allowSWave,
+              applyInactivePenalty: inactivePenaltyGateOpen,
+              stationSFlagByCode: scoringSFlagByCode,
+              candidateConstraints: candidateConstraints,
+              adjacencyByStationId: frame.adjacencyByStationId,
+              nativeScorer: null,
+              referenceAligned: true,
+              referencePreviousWavesByFirstWave:
+                  state.referencePreviousWavesByFirstWave,
+            );
           },
-      ],
-      'score_model':
-          'scratch_hyp_weighted_variance_station_scale_inactive_plus_s_multiplier',
-      'inactive_penalty_gate_model':
-          'kotoho7_article_elapsed_le_3_or_elapsed_le_10_and_active_lt_30',
-      'inactive_penalty_gate_open': inactivePenaltyGateOpen,
-      'score': result.score,
-      'error_level': result.errorLevel,
-      'rmse': result.rmse,
-      'weight_sum': result.weightSum,
-      'weighted_residual_squares': result.weightedResidualSquares,
-      'station_scale': result.stationScale,
-      'inactive_penalty': result.inactivePenalty,
-      'inactive_p_radius_km': result.inactivePRadiusKm,
-      'inactive_reference_distance_km': result.inactiveReferenceDistanceKm,
-      'inactive_penalty_weight': result.inactivePenaltyWeight,
-      'wave_count_penalty_multiplier': result.waveCountPenaltyMultiplier,
-      'effective_station_count': result.effectiveStationCount,
-      'quality_score': result.qualityScore,
-      'quality_rank': result.qualityRank,
-      'wave_counts': {
-        'P': result.pWaveCount,
-        'S': result.sWaveCount,
-        'O': result.otherWaveCount,
+          seed: previousResult,
+          seedLatitude: previousResult.latitude,
+          seedLongitude: previousResult.longitude,
+          spacingDeg: 0.5,
+          extentLatDeg: NiedHypStartShadow
+              .referenceOneSidedHighScoreRescueGridExtentLatDeg,
+          extentLngDeg: NiedHypStartShadow
+              .referenceOneSidedHighScoreRescueGridExtentLngDeg,
+          depthLevelsKm: const <double>[0.0, 10.0, 30.0, 50.0],
+          topK: NiedHypStartShadow.referenceOneSidedHighScoreRescueGridTopK,
+          refineMoveLimit: 60,
+        );
+        candidateScoreCallCount += rescueSearch.evaluationCount;
+        final challenger = rescueSearch.result;
+        highScoreRescueStopwatch.stop();
+        final moveKm = _kanameishiHaversineKm(
+          previousResult.latitude,
+          previousResult.longitude,
+          challenger.latitude,
+          challenger.longitude,
+        );
+        final eligible =
+            publishable(challenger) &&
+            challenger.effectiveStationCount >=
+                NiedHypStartShadow
+                    .referenceOneSidedHighScoreRescueMinActiveStations &&
+            challenger.score <=
+                NiedHypStartShadow
+                    .referenceOneSidedHighScoreRescueMaxChallengerScore &&
+            moveKm <=
+                NiedHypStartShadow.referenceOneSidedHighScoreRescueMaxMoveKm;
+        final publishEligible =
+            publishable(challenger) &&
+            challenger.effectiveStationCount >=
+                NiedHypStartShadow
+                    .referenceOneSidedHighScoreRescueMinActiveStations &&
+            challenger.score <=
+                NiedHypStartShadow.referenceOneSidedHighScorePublishMaxScore &&
+            moveKm <=
+                NiedHypStartShadow.referenceOneSidedHighScoreRescueMaxMoveKm;
+        if (NiedHypStartShadow.referenceOneSidedHighScorePublishOnly &&
+            publishEligible) {
+          highScorePublishCandidateSeen = true;
+          final prior = state.referenceHighScorePublishCandidate;
+          final sameCandidate =
+              prior != null &&
+              _kanameishiHaversineKm(
+                    prior.latitude,
+                    prior.longitude,
+                    challenger.latitude,
+                    challenger.longitude,
+                  ) <=
+                  NiedHypStartShadow
+                      .referenceOneSidedHighScorePublishConsistencyKm;
+          state.referenceHighScorePublishStreak = sameCandidate
+              ? state.referenceHighScorePublishStreak + 1
+              : 1;
+          state.referenceHighScorePublishCandidate = challenger;
+          if (state.referenceHighScorePublishStreak >=
+              NiedHypStartShadow.referenceOneSidedHighScorePublishMinStreak) {
+            highScorePublishOverride = challenger;
+          }
+        }
+        final accepted =
+            eligible &&
+            NiedHypStartShadow.referenceOneSidedHighScoreRescueCommit;
+        oneSidedHighScoreRescueDiagnostics = <String, Object?>{
+          'triggered': true,
+          'normal_publishable': publishable(searchedResult),
+          'normal_score': searchedResult.score,
+          'previous_score': previousResult.score,
+          'previous_latitude': previousResult.latitude,
+          'previous_longitude': previousResult.longitude,
+          'previous_depth_km': previousResult.depthKm,
+          'challenger_score': challenger.score,
+          'challenger_latitude': challenger.latitude,
+          'challenger_longitude': challenger.longitude,
+          'challenger_depth_km': challenger.depthKm,
+          'challenger_support': challenger.effectiveStationCount,
+          'move_km': moveKm,
+          'evaluation_count': rescueSearch.evaluationCount,
+          'elapsed_ms': highScoreRescueStopwatch.elapsedMicroseconds / 1000.0,
+          'active_center_latitude': activeCenterLatitude,
+          'active_center_longitude': activeCenterLongitude,
+          'normal_center_distance_km': normalCenterDistanceKm,
+          'normal_vector_length_km': normalVectorLength,
+          'grid_modes': rescueSearch.diagnostics['grid_modes'],
+          'eligible': eligible,
+          'accepted': accepted,
+          'publish_eligible': publishEligible,
+          'publish_streak': state.referenceHighScorePublishStreak,
+          'publish_override': highScorePublishOverride != null,
+        };
+        if (accepted) {
+          searchedResult = challenger.copyWith(searchStages: stages);
+        }
+      } finally {
+        NiedHypStartShadow.referenceInactiveMaxAzimuthGapDegrees =
+            savedInactiveMaxAzimuthGap;
+        NiedHypStartShadow.referenceOneSidedResidualCapSeconds =
+            savedResidualCap;
+        NiedHypStartShadow.referenceOneSidedResidualCapMaxDepthKm =
+            savedResidualCapMaxDepth;
+        NiedHypStartShadow.referenceOneSidedResidualCapMaxMoveKm =
+            savedResidualCapMaxMove;
+        NiedHypStartShadow.referenceOneSidedInactivePenaltyMultiplier =
+            savedInactiveMultiplier;
+      }
+    }
+    if (NiedHypStartShadow.referenceOneSidedHighScorePublishOnly &&
+        !highScorePublishCandidateSeen) {
+      state.referenceHighScorePublishCandidate = null;
+      state.referenceHighScorePublishStreak = 0;
+    }
+    searchStopwatch.stop();
+    Map<String, Object?>? proposalCommitAudit;
+    if (referenceAlignedSearch &&
+        (NiedHypStartShadow.referenceProposalCommitAudit ||
+            NiedHypStartShadow.referenceProposalCommitGate) &&
+        previousResult != null) {
+      final previousStationIds = <String>{
+        for (final waves in state.referencePreviousWavesByFirstWave.values)
+          ...waves.keys,
+      };
+      final probationSeconds =
+          NiedHypStartShadow.referenceProposalProbationSeconds;
+      bool isMature(_NiedHypWorkerStation station) {
+        final admittedAt = state.referenceAdmittedAtByCode[station.code];
+        if (admittedAt == null) return false;
+        final ageSeconds =
+            request.observedAt.difference(admittedAt).inMilliseconds / 1000.0;
+        return ageSeconds >= probationSeconds;
+      }
+
+      final matureStations = active.where(isMature).toList(growable: false);
+      final newStations = active
+          .where((station) => !isMature(station))
+          .toList(growable: false);
+
+      Map<String, Object?> compareSubset(List<_NiedHypWorkerStation> subset) {
+        if (subset.length < 5) {
+          return <String, Object?>{
+            'station_count': subset.length,
+            'scorable': false,
+          };
+        }
+        _NiedHypWorkerResult scoreAt(_NiedHypWorkerResult point) =>
+            _scoreNiedHypWorkerCandidate(
+              subset,
+              const <_NiedHypWorkerStation>[],
+              observedAt: request.observedAt,
+              earliestAt: earliestAt,
+              latitude: point.latitude,
+              longitude: point.longitude,
+              depthKm: point.depthKm,
+              allowSWave: allowSWave,
+              applyInactivePenalty: false,
+              stationSFlagByCode: scoringSFlagByCode,
+              candidateConstraints: candidateConstraints,
+              adjacencyByStationId: frame.adjacencyByStationId,
+              nativeScorer: null,
+              referenceAligned: true,
+              referencePreviousWavesByFirstWave:
+                  state.referencePreviousWavesByFirstWave,
+            );
+        final before = scoreAt(previousResult);
+        final after = scoreAt(searchedResult);
+        final beforeScore = before.score;
+        final afterScore = after.score;
+        final relativeChange =
+            beforeScore.isFinite &&
+                afterScore.isFinite &&
+                beforeScore.abs() > 1e-12
+            ? (afterScore - beforeScore) / beforeScore.abs()
+            : null;
+        return <String, Object?>{
+          'station_count': subset.length,
+          'scorable': true,
+          'before_score': beforeScore,
+          'after_score': afterScore,
+          'relative_change': relativeChange,
+          'before_effective_station_count': before.effectiveStationCount,
+          'after_effective_station_count': after.effectiveStationCount,
+        };
+      }
+
+      proposalCommitAudit = <String, Object?>{
+        'previous_station_id_count': previousStationIds.length,
+        'probation_seconds': probationSeconds,
+        'mature': compareSubset(matureStations),
+        'new': compareSubset(newStations),
+        'proposal_move_km': _kanameishiHaversineKm(
+          previousResult.latitude,
+          previousResult.longitude,
+          searchedResult.latitude,
+          searchedResult.longitude,
+        ),
+        'proposal_depth_change_km':
+            searchedResult.depthKm - previousResult.depthKm,
+      };
+    }
+    // NiedHypoInf keeps rejected clusters internally, but does not publish one
+    // until it has at least one effective station with a real score. The
+    // reference port uses a finite 1e12 sentinel for some rejected candidates,
+    // so checking `isFinite` alone would leak a support-0 placeholder to the
+    // map and unified UI.
+    final hasPublishableResult =
+        searchedResult.effectiveStationCount > 0 &&
+        searchedResult.weightSum > 0 &&
+        searchedResult.score.isFinite &&
+        searchedResult.errorLevel.isFinite;
+    if (!hasPublishableResult) {
+      request.metadata['nied_dart_hyp_worker_null_reason'] =
+          'nied_hyp_candidate_has_no_effective_station_result';
+      return null;
+    }
+    final previousPublishedResult = state.previousResult;
+    final minimumPublishedScore = state.minimumPublishedScore;
+    var proposalCommitRejected = false;
+    Map<String, Object?>? largeMoveGainAudit;
+    final largeMoveMinGain = NiedHypStartShadow.referenceLargeMoveMinFullGain;
+    if (referenceAlignedSearch &&
+        largeMoveMinGain > 0 &&
+        previousPublishedResult != null &&
+        previousPublishedResult.effectiveStationCount >= 8 &&
+        sparseNullGridRescueDiagnostics?['accepted'] != true) {
+      final moveKm = _kanameishiHaversineKm(
+        previousPublishedResult.latitude,
+        previousPublishedResult.longitude,
+        searchedResult.latitude,
+        searchedResult.longitude,
+      );
+      if (moveKm > 20.0) {
+        final previousOnCurrent = _scoreNiedHypWorkerCandidate(
+          active,
+          inactive,
+          observedAt: request.observedAt,
+          earliestAt: earliestAt,
+          latitude: previousPublishedResult.latitude,
+          longitude: previousPublishedResult.longitude,
+          depthKm: previousPublishedResult.depthKm,
+          allowSWave: allowSWave,
+          applyInactivePenalty: inactivePenaltyGateOpen,
+          stationSFlagByCode: scoringSFlagByCode,
+          candidateConstraints: candidateConstraints,
+          adjacencyByStationId: frame.adjacencyByStationId,
+          nativeScorer: nativeScorer,
+          referenceAligned: true,
+          referencePreviousWavesByFirstWave:
+              state.referencePreviousWavesByFirstWave,
+        );
+        final gain =
+            previousOnCurrent.score.isFinite &&
+                searchedResult.score.isFinite &&
+                previousOnCurrent.score.abs() > 1e-12
+            ? (previousOnCurrent.score - searchedResult.score) /
+                  previousOnCurrent.score.abs()
+            : double.negativeInfinity;
+        final rejected = gain < largeMoveMinGain;
+        proposalCommitRejected = proposalCommitRejected || rejected;
+        largeMoveGainAudit = <String, Object?>{
+          'move_km': moveKm,
+          'previous_support': previousPublishedResult.effectiveStationCount,
+          'previous_score_on_current_family': previousOnCurrent.score,
+          'proposal_score': searchedResult.score,
+          'full_gain': gain,
+          'min_full_gain': largeMoveMinGain,
+          'gate_rejected': rejected,
+        };
+      }
+    }
+    Map<String, Object?>? anchorChallengerAudit;
+    if (referenceAlignedSearch &&
+        NiedHypStartShadow.referenceAnchorChallenger &&
+        previousPublishedResult != null &&
+        state.referenceAnchorResult != null &&
+        state.referenceAnchorStationCodes.length >= 5) {
+      final anchor = state.referenceAnchorResult!;
+      final moveKm = _kanameishiHaversineKm(
+        anchor.latitude,
+        anchor.longitude,
+        searchedResult.latitude,
+        searchedResult.longitude,
+      );
+      // The anchor guard only governs large relocations. Avoid four expensive
+      // subset rescoring passes for the overwhelmingly common local updates.
+      if (moveKm <= 20.0) {
+        state.referenceChallengerStreak = 0;
+        state.referenceChallengerResult = null;
+      } else {
+        final anchorStations = active
+            .where(
+              (station) =>
+                  state.referenceAnchorStationCodes.contains(station.code),
+            )
+            .toList(growable: false);
+
+        final cachedAnchorCoreScore = state.referenceAnchorCoreScore;
+        final proposalCore = _scoreNiedHypWorkerCandidate(
+          anchorStations,
+          const <_NiedHypWorkerStation>[],
+          observedAt: request.observedAt,
+          earliestAt: earliestAt,
+          latitude: searchedResult.latitude,
+          longitude: searchedResult.longitude,
+          depthKm: searchedResult.depthKm,
+          allowSWave: allowSWave,
+          applyInactivePenalty: false,
+          stationSFlagByCode: scoringSFlagByCode,
+          candidateConstraints: candidateConstraints,
+          adjacencyByStationId: frame.adjacencyByStationId,
+          nativeScorer: null,
+          referenceAligned: true,
+          referencePreviousWavesByFirstWave:
+              state.referencePreviousWavesByFirstWave,
+        );
+        final coreLoss =
+            cachedAnchorCoreScore != null &&
+                cachedAnchorCoreScore.isFinite &&
+                proposalCore.score.isFinite &&
+                cachedAnchorCoreScore.abs() > 1e-12
+            ? (proposalCore.score - cachedAnchorCoreScore) /
+                  cachedAnchorCoreScore.abs()
+            : 0.0;
+
+        // Only a challenger that still respects the trusted core is allowed to
+        // compete on the full current family. Reuse the existing native scorer
+        // and searched result; this adds at most one native evaluate call.
+        _NiedHypWorkerResult? anchorFull;
+        var fullGain = 0.0;
+        if (coreLoss <= 2.0) {
+          anchorFull = _scoreNiedHypWorkerCandidate(
+            active,
+            inactive,
+            observedAt: request.observedAt,
+            earliestAt: earliestAt,
+            latitude: anchor.latitude,
+            longitude: anchor.longitude,
+            depthKm: anchor.depthKm,
+            allowSWave: allowSWave,
+            applyInactivePenalty: inactivePenaltyGateOpen,
+            stationSFlagByCode: scoringSFlagByCode,
+            candidateConstraints: candidateConstraints,
+            adjacencyByStationId: frame.adjacencyByStationId,
+            nativeScorer: nativeScorer,
+            referenceAligned: true,
+            referencePreviousWavesByFirstWave:
+                state.referencePreviousWavesByFirstWave,
+          );
+          fullGain =
+              anchorFull.score.isFinite &&
+                  searchedResult.score.isFinite &&
+                  anchorFull.score.abs() > 1e-12
+              ? (anchorFull.score - searchedResult.score) /
+                    anchorFull.score.abs()
+              : 0.0;
+        }
+
+        final priorChallenger = state.referenceChallengerResult;
+        final sameChallenger =
+            priorChallenger != null &&
+            _kanameishiHaversineKm(
+                  priorChallenger.latitude,
+                  priorChallenger.longitude,
+                  searchedResult.latitude,
+                  searchedResult.longitude,
+                ) <=
+                25.0;
+        if (fullGain > 0.05) {
+          state.referenceChallengerStreak = sameChallenger
+              ? state.referenceChallengerStreak + 1
+              : 1;
+          state.referenceChallengerResult = searchedResult;
+        } else {
+          state.referenceChallengerStreak = 0;
+          state.referenceChallengerResult = null;
+        }
+
+        final strongPersistentOverride =
+            coreLoss <= 2.0 &&
+            fullGain >= 0.35 &&
+            state.referenceChallengerStreak >=
+                (state.referenceAnchorOneSidedMature
+                    ? NiedHypStartShadow
+                          .referenceOneSidedAnchorPersistentOverrideMinStreak
+                    : NiedHypStartShadow.referencePersistentOverrideMinStreak);
+        final anchorRejected = coreLoss > 0.50 && !strongPersistentOverride;
+        proposalCommitRejected = proposalCommitRejected || anchorRejected;
+        anchorChallengerAudit = <String, Object?>{
+          'anchor_station_count': anchorStations.length,
+          'anchor_move_km': moveKm,
+          'full_anchor_score': anchorFull?.score,
+          'full_proposal_score': searchedResult.score,
+          'full_gain': fullGain,
+          'core_anchor_score': cachedAnchorCoreScore,
+          'core_proposal_score': proposalCore.score,
+          'core_loss': coreLoss,
+          'challenger_streak': state.referenceChallengerStreak,
+          'strong_persistent_override': strongPersistentOverride,
+          'gate_rejected': anchorRejected,
+          'native_audit': nativeScorer != null,
+        };
+      }
+    }
+    if (referenceAlignedSearch &&
+        NiedHypStartShadow.referenceProposalCommitGate &&
+        proposalCommitAudit != null) {
+      final mature =
+          proposalCommitAudit['mature'] as Map<String, Object?>? ??
+          const <String, Object?>{};
+      final fresh =
+          proposalCommitAudit['new'] as Map<String, Object?>? ??
+          const <String, Object?>{};
+      final matureChange = mature['relative_change'] as double?;
+      final freshChange = fresh['relative_change'] as double?;
+      final moveKm = proposalCommitAudit['proposal_move_km'] as double? ?? 0.0;
+      proposalCommitRejected =
+          moveKm > 20.0 &&
+          mature['scorable'] == true &&
+          fresh['scorable'] == true &&
+          matureChange != null &&
+          freshChange != null &&
+          matureChange > 2.0 &&
+          freshChange > -0.5;
+      proposalCommitAudit['gate_rejected'] = proposalCommitRejected;
+    }
+    final searchResultAccepted = referenceAlignedSearch
+        ? !proposalCommitRejected
+        : switch (writebackPolicy) {
+            _
+                when previousPublishedResult == null ||
+                    elapsedSinceDetectionSeconds < 10.0 =>
+              true,
+            NiedHypWritebackPolicy.historicalMinimumMultiplier =>
+              minimumPublishedScore == null ||
+                  searchedResult.score <
+                      minimumPublishedScore * historicalMinimumMultiplier,
+            NiedHypWritebackPolicy.nonIncreasingCurrent =>
+              searchedResult.score <= previousPublishedResult.score,
+          };
+    final result = searchResultAccepted
+        ? searchedResult
+        : previousPublishedResult!;
+    late final List<Map<String, Object?>> curvePanels;
+    if (searchResultAccepted) {
+      if (referenceAlignedSearch &&
+          NiedHypStartShadow.referenceAnchorChallenger) {
+        final promoteChallenger =
+            anchorChallengerAudit?['strong_persistent_override'] == true;
+        if (state.referenceAnchorResult == null) {
+          final standardAnchorEligible =
+              result.effectiveStationCount >=
+                  NiedHypStartShadow.referenceAnchorMinSupport &&
+              result.score < NiedHypStartShadow.referenceAnchorMaxScore;
+          final resultAzimuthGap =
+              (result.referenceScenarioDiagnostics['reference_max_azimuth_gap_deg']
+                      as num?)
+                  ?.toDouble();
+          final oneSidedAnchorEligible =
+              NiedHypStartShadow.referenceOneSidedMatureAnchorResearch &&
+              resultAzimuthGap != null &&
+              resultAzimuthGap >=
+                  NiedHypStartShadow
+                      .referenceOneSidedAnchorMinAzimuthGapDegrees &&
+              result.effectiveStationCount >=
+                  NiedHypStartShadow.referenceOneSidedAnchorMinSupport &&
+              result.score < NiedHypStartShadow.referenceOneSidedAnchorMaxScore;
+          if (standardAnchorEligible || oneSidedAnchorEligible) {
+            state.referenceAnchorResult = result;
+            state.referenceAnchorOneSidedMature =
+                oneSidedAnchorEligible && !standardAnchorEligible;
+            state.referenceAnchorStationCodes
+              ..clear()
+              ..addAll(active.map((station) => station.code));
+            state.referenceAnchorCoreScore = _scoreNiedHypWorkerCandidate(
+              active,
+              const <_NiedHypWorkerStation>[],
+              observedAt: request.observedAt,
+              earliestAt: earliestAt,
+              latitude: result.latitude,
+              longitude: result.longitude,
+              depthKm: result.depthKm,
+              allowSWave: allowSWave,
+              applyInactivePenalty: false,
+              stationSFlagByCode: scoringSFlagByCode,
+              candidateConstraints: candidateConstraints,
+              adjacencyByStationId: frame.adjacencyByStationId,
+              nativeScorer: null,
+              referenceAligned: true,
+              referencePreviousWavesByFirstWave:
+                  state.referencePreviousWavesByFirstWave,
+            ).score;
+          }
+        } else if (promoteChallenger) {
+          state.referenceAnchorResult = result;
+          state.referenceAnchorOneSidedMature = false;
+          state.referenceAnchorStationCodes
+            ..clear()
+            ..addAll(active.map((station) => station.code));
+          state.referenceAnchorCoreScore = _scoreNiedHypWorkerCandidate(
+            active,
+            const <_NiedHypWorkerStation>[],
+            observedAt: request.observedAt,
+            earliestAt: earliestAt,
+            latitude: result.latitude,
+            longitude: result.longitude,
+            depthKm: result.depthKm,
+            allowSWave: allowSWave,
+            applyInactivePenalty: false,
+            stationSFlagByCode: scoringSFlagByCode,
+            candidateConstraints: candidateConstraints,
+            adjacencyByStationId: frame.adjacencyByStationId,
+            nativeScorer: null,
+            referenceAligned: true,
+            referencePreviousWavesByFirstWave:
+                state.referencePreviousWavesByFirstWave,
+          ).score;
+          state.referenceChallengerResult = null;
+          state.referenceChallengerStreak = 0;
+        }
+      }
+      curvePanels = _niedHypWorkerCurvePanels(
+        result,
+        active,
+        earliestAt: earliestAt,
+        allowSWave: allowSWave,
+        stationSFlagByCode: scoringSFlagByCode,
+        candidateConstraints: candidateConstraints,
+      );
+      state.publishedCurveRevision += 1;
+      _refreshNiedHypWorkerStationSFlags(
+        state.stationSFlagByCode,
+        active,
+        result,
+      );
+      state
+        ..previousResult = result
+        ..publishedCurvePanels = curvePanels
+        ..minimumPublishedScore = minimumPublishedScore == null
+            ? result.score
+            : math.min(minimumPublishedScore, result.score);
+      if (referenceAlignedSearch) {
+        state.referencePreviousWavesByFirstWave
+          ..clear()
+          ..addAll({
+            for (final entry
+                in result.referencePreviousWavesByFirstWave.entries)
+              entry.key: Map<String, bool>.from(entry.value),
+          });
+        state.referencePreviousOriginMilliseconds =
+            earliestAt.millisecondsSinceEpoch +
+            result.originOffsetSeconds * 1000.0;
+      }
+    } else {
+      curvePanels =
+          state.publishedCurvePanels ??
+          _niedHypPublishedCurvePanelsFromEstimate(state.previousEstimate) ??
+          const <Map<String, Object?>>[];
+    }
+    final outputResult = highScorePublishOverride ?? result;
+    final outputCurvePanels = highScorePublishOverride != null
+        ? _niedHypWorkerCurvePanels(
+            outputResult,
+            active,
+            earliestAt: earliestAt,
+            allowSWave: allowSWave,
+            stationSFlagByCode: scoringSFlagByCode,
+            candidateConstraints: candidateConstraints,
+          )
+        : curvePanels;
+    final waveRadii = _niedHypWorkerWaveRadii(
+      observedAt: request.observedAt,
+      originTime: outputResult.originTime,
+      depthKm: outputResult.depthKm,
+      maxDetectedDistanceKm: candidateConstraints.maxDetectedDistanceKm,
+    );
+    final confidence = _niedHypWorkerConfidence(outputResult);
+    final probeLat = NiedHypStartShadow.referenceProbeLatitude;
+    final probeLng = NiedHypStartShadow.referenceProbeLongitude;
+    final probeDepth = NiedHypStartShadow.referenceProbeDepthKm;
+    final referenceProbeResult =
+        referenceAlignedSearch &&
+            probeLat != null &&
+            probeLng != null &&
+            probeDepth != null
+        ? _scoreNiedHypWorkerCandidate(
+            active,
+            inactive,
+            observedAt: request.observedAt,
+            earliestAt: earliestAt,
+            latitude: probeLat,
+            longitude: probeLng,
+            depthKm: probeDepth,
+            allowSWave: allowSWave,
+            applyInactivePenalty: inactivePenaltyGateOpen,
+            stationSFlagByCode: scoringSFlagByCode,
+            candidateConstraints: candidateConstraints,
+            adjacencyByStationId: frame.adjacencyByStationId,
+            nativeScorer: nativeScorer,
+            referenceAligned: true,
+            referencePreviousWavesByFirstWave:
+                state.referencePreviousWavesByFirstWave,
+          )
+        : null;
+    final referenceProbeDepthSweep =
+        referenceAlignedSearch && probeLat != null && probeLng != null
+        ? <Map<String, Object?>>[
+            for (final depth in const <double>[
+              7.0,
+              10.0,
+              30.0,
+              50.0,
+              70.0,
+              100.0,
+              150.0,
+            ])
+              (() {
+                final item = _scoreNiedHypWorkerCandidate(
+                  active,
+                  inactive,
+                  observedAt: request.observedAt,
+                  earliestAt: earliestAt,
+                  latitude: probeLat,
+                  longitude: probeLng,
+                  depthKm: depth,
+                  allowSWave: allowSWave,
+                  applyInactivePenalty: inactivePenaltyGateOpen,
+                  stationSFlagByCode: scoringSFlagByCode,
+                  candidateConstraints: candidateConstraints,
+                  adjacencyByStationId: frame.adjacencyByStationId,
+                  nativeScorer: nativeScorer,
+                  referenceAligned: true,
+                  referencePreviousWavesByFirstWave:
+                      state.referencePreviousWavesByFirstWave,
+                );
+                return <String, Object?>{
+                  'depth_km': depth,
+                  'score': item.score,
+                  'rmse': item.rmse,
+                  'inactive_penalty': item.inactivePenalty,
+                  'support': item.effectiveStationCount,
+                  'scenario':
+                      item.referenceScenarioDiagnostics['reference_scenario'],
+                };
+              })(),
+          ]
+        : null;
+    request.metadata
+      ..['nied_dart_hyp_worker_input'] = 'ka_nied_station_snapshot_v1'
+      ..['nied_dart_hyp_worker_active_count'] = clusterStations.length
+      ..['nied_dart_hyp_worker_effective_active_count'] = active.length
+      ..['nied_dart_hyp_worker_zero_contribution_count'] =
+          zeroContributionStations.length
+      ..['nied_dart_hyp_worker_inactive_count'] = inactive.length
+      ..remove('nied_dart_hyp_worker_null_reason');
+    final estimate = SourceEstimate(
+      latitude: outputResult.latitude,
+      longitude: outputResult.longitude,
+      depthKm: outputResult.depthKm,
+      originTime: outputResult.originTime,
+      confidence: confidence,
+      method: methodId,
+      supportingStationCount: outputResult.effectiveStationCount,
+      diagnostics: {
+        'method': methodId,
+        'input_format': 'ka_nied_station_snapshot_v1',
+        'inactive_station_scope':
+            frame.inactiveScope ?? 'legacy_hypocenter_adjacency',
+        'detection_grid': request.metadata['nied_hypocenter_detection_grid'],
+        'calculation_model': referenceAlignedSearch
+            ? 'kanameishi_find_nied_hypocenter_reference_port_v1'
+            : 'article_scratch_hypocenter_core_v2',
+        'temporary_epicenter_seed_model': referenceAlignedSearch
+            ? 'kanameishi_earliest_timestamp_station_mean_round_0_1_degree'
+            : 'scratch_hyp_first_station_round_to_1_60_degree_origin_minus_2s',
+        'search_start_model': useTemporaryEpicenter
+            ? (referenceAlignedSearch
+                  ? 'kanameishi_initial_hypocenter_before_first_result'
+                  : 'article_step2_temporary_epicenter_within_first_10s')
+            : (referenceAlignedSearch
+                  ? 'kanameishi_previous_cluster_hypocenter'
+                  : 'article_step2_previous_hypocenter_after_first_10s'),
+        // Only emitted when a shadow lever is active, so the default diagnostic
+        // map stays byte-for-byte identical to production.
+        if (NiedHypStartShadow.forceColdStart ||
+            NiedHypStartShadow.useAllTriggeredCentroidSeed)
+          'search_start_shadow': <String, Object?>{
+            'force_cold_start': NiedHypStartShadow.forceColdStart,
+            'all_triggered_centroid_seed':
+                NiedHypStartShadow.useAllTriggeredCentroidSeed,
+            'seed_station_count': seedStations.length,
+            'seed_latitude': seedLat,
+            'seed_longitude': seedLng,
+          },
+        // L5 shadow lever: only emitted when the depth-prior experiment is on.
+        if (forceDartSearch || pinnedDepthKm != null)
+          'search_depth_shadow': <String, Object?>{
+            'force_dart_search': forceDartSearch,
+            'pinned_depth_km': pinnedDepthKm,
+            'start_depth_km': effectiveStartDepthKm,
+          },
+        // J2 shadow lever: only emitted when the NYAD experiment is on.
+        if (NiedHypStartShadow.nyadNegativeEvidence)
+          'search_nyad_shadow': <String, Object?>{
+            'nyad_negative_evidence': true,
+            'force_dart_search': forceDartSearch,
+          },
+        // J3 shadow lever: only emitted when the amplitude experiment is on.
+        if (NiedHypStartShadow.amplitudeConsistency)
+          'search_amp_shadow': <String, Object?>{
+            'amplitude_consistency': true,
+            'amplitude_weight': NiedHypStartShadow.amplitudeWeight,
+            'amplitude_min_stations': NiedHypStartShadow.amplitudeMinStations,
+            'force_dart_search': forceDartSearch,
+            'amplitude_station_count': result
+                .referenceScenarioDiagnostics['reference_amplitude_station_count'],
+            'amplitude_residual': result
+                .referenceScenarioDiagnostics['reference_amplitude_consistency'],
+          },
+        // M2 shadow lever: only emitted when the depth-prior experiment is on.
+        if (NiedHypStartShadow.depthPriorKm != null)
+          'search_depthprior_shadow': <String, Object?>{
+            'depth_prior_km': NiedHypStartShadow.depthPriorKm,
+            'depth_prior_sigma_km': NiedHypStartShadow.depthPriorSigmaKm,
+            'depth_prior_weight': NiedHypStartShadow.depthPriorWeight,
+            'force_dart_search': forceDartSearch,
+            'depth_prior_residual': result
+                .referenceScenarioDiagnostics['reference_depth_prior_residual'],
+          },
+        if (referenceProbeResult != null)
+          'reference_probe': <String, Object?>{
+            'latitude': probeLat,
+            'longitude': probeLng,
+            'depth_km': probeDepth,
+            'score': referenceProbeResult.score,
+            'rmse': referenceProbeResult.rmse,
+            'inactive_penalty': referenceProbeResult.inactivePenalty,
+            'inactive_penalty_weight':
+                referenceProbeResult.inactivePenaltyWeight,
+            'wave_count_penalty_multiplier':
+                referenceProbeResult.waveCountPenaltyMultiplier,
+            'effective_station_count':
+                referenceProbeResult.effectiveStationCount,
+            'p_wave_count': referenceProbeResult.pWaveCount,
+            's_wave_count': referenceProbeResult.sWaveCount,
+            'scenario': referenceProbeResult
+                .referenceScenarioDiagnostics['reference_scenario'],
+            'reference_rejected': referenceProbeResult
+                .referenceScenarioDiagnostics['reference_rejected'],
+            'reference_distance_station_count': referenceProbeResult
+                .referenceScenarioDiagnostics['reference_distance_station_count'],
+            'reference_distance_km': referenceProbeResult
+                .referenceScenarioDiagnostics['reference_distance_km'],
+            'inactive_within_reference_distance': referenceProbeResult
+                .referenceScenarioDiagnostics['inactive_within_reference_distance'],
+            'max_azimuth_gap_deg': referenceProbeResult
+                .referenceScenarioDiagnostics['reference_max_azimuth_gap_deg'],
+            if (NiedHypStartShadow.referenceStationResidualAudit)
+              'station_residuals': referenceProbeResult
+                  .referenceScenarioDiagnostics['reference_station_residuals'],
+          },
+        'reference_probe_depth_sweep': ?referenceProbeDepthSweep,
+        // 方案 C shadow lever: only emitted when the grid search form is on.
+        if (gridSearchEnabled)
+          'search_grid_shadow':
+              gridShadowDiagnostics ?? <String, Object?>{'search_form': 'grid'},
+        // Inspection-view shadow lever: only emitted when the panel phase label
+        // is taken from the scorer's per-station residual rule. Display-only.
+        if (NiedHypStartShadow.curvePanelPhaseFromResidual)
+          'search_panelphase_shadow': <String, Object?>{
+            'curve_panel_phase_from_residual': true,
+            's_wave_gate_open': allowSWave,
+          },
+        'proposal_commit_audit': ?proposalCommitAudit,
+        'large_move_gain_audit': ?largeMoveGainAudit,
+        'anchor_challenger_audit': ?anchorChallengerAudit,
+        'sparse_null_grid_rescue': ?sparseNullGridRescueDiagnostics,
+        'amplitude_rescue': ?amplitudeRescueDiagnostics,
+        'one_sided_high_score_rescue': ?oneSidedHighScoreRescueDiagnostics,
+        'elapsed_since_first_trigger_s': elapsedSinceFirstTriggerSeconds,
+        'elapsed_since_detection_id_created_s': elapsedSinceDetectionSeconds,
+        'hyp_age_s': hypAgeSeconds,
+        'hyp_calculation_enabled': true,
+        'search_cycle_ran': true,
+        'search_cycle_finished': true,
+        'search_execution_path': nativeSearch != null ? 'rust_native' : 'dart',
+        'production_offshore_tuning_enabled':
+            NiedHypStartShadow.productionOffshoreTuning,
+        'joint_refinement_enabled': NiedHypStartShadow.jointReferenceNeighbors,
+        'joint_refinement_max_degree':
+            NiedHypStartShadow.jointReferenceMaxDegree,
+        'joint_refinement_min_active':
+            NiedHypStartShadow.jointReferenceMinActiveStations,
+        'joint_refinement_max_score':
+            NiedHypStartShadow.jointReferenceMaxCurrentScore,
+        'anchor_guard_enabled': NiedHypStartShadow.referenceAnchorChallenger,
+        'anchor_active': state.referenceAnchorResult != null,
+        'anchor_station_count': state.referenceAnchorStationCodes.length,
+        'anchor_core_score': state.referenceAnchorCoreScore,
+        'anchor_rejected_this_cycle':
+            anchorChallengerAudit?['gate_rejected'] == true,
+        'challenger_streak': state.referenceChallengerStreak,
+        'sparse_birth_rescue_enabled':
+            NiedHypStartShadow.referenceSparseNullGridRescue,
+        'sparse_birth_rescue_triggered':
+            sparseNullGridRescueDiagnostics != null,
+        'sparse_birth_rescue_accepted':
+            sparseNullGridRescueDiagnostics?['accepted'] == true,
+        'one_sided_high_score_rescue_enabled':
+            NiedHypStartShadow.referenceOneSidedHighScoreRescue,
+        'one_sided_high_score_publish_only':
+            NiedHypStartShadow.referenceOneSidedHighScorePublishOnly,
+        'one_sided_high_score_publish_streak':
+            state.referenceHighScorePublishStreak,
+        'search_candidate_score_call_count': candidateScoreCallCount,
+        'search_elapsed_ms': searchStopwatch.elapsedMilliseconds,
+        'search_termination_reason': 'scratch_all_enabled_stages_finished',
+        'search_result_update_model': referenceAlignedSearch
+            ? 'kanameishi_dirty_cluster_replaces_current_result'
+            : switch (writebackPolicy) {
+                NiedHypWritebackPolicy.historicalMinimumMultiplier =>
+                  'scratch_4_4_first_10s_or_below_historical_min_times_multiplier',
+                NiedHypWritebackPolicy.nonIncreasingCurrent =>
+                  'experiment_first_10s_or_non_increasing_current_score',
+              },
+        'search_result_writeback_policy': writebackPolicy.name,
+        'search_schedule': searchSchedule.name,
+        'search_schedule_reference': switch (searchSchedule) {
+          NiedHypSearchSchedule.scratchViewerFiveStage =>
+            'scratch_project_hyp_viewer_five_stage',
+          NiedHypSearchSchedule.referenceBroadFourStage =>
+            'kanameishi_nied_hypo_inf_broad_four_stage_experiment_same_article_score',
+          NiedHypSearchSchedule.scratchFiveStageWithBroadRescue =>
+            'scratch_five_stage_then_broad_lower_score_only_then_fine_experiment',
+          NiedHypSearchSchedule.scratchFiveStageJointNeighborhood =>
+            'scratch_five_stage_with_joint_lat_lng_depth_neighbors_experiment',
+        },
+        'historical_minimum_score_multiplier': historicalMinimumMultiplier,
+        'search_result_accepted': searchResultAccepted,
+        'historical_minimum_published_score': state.minimumPublishedScore,
+        'searched_result': {
+          'latitude': searchedResult.latitude,
+          'longitude': searchedResult.longitude,
+          'depth_km': searchedResult.depthKm,
+          'origin_time': searchedResult.originTime.toIso8601String(),
+          'score': searchedResult.score,
+        },
+        's_wave_gate_open': allowSWave,
+        'phase_cache_reference_model':
+            'scratch_4_4_quantized_assignment_only_lat_lng_1_60_depth_origin_integer',
+        'station_assignment_model':
+            'scratch_4_2_previous_source_p_window_then_s_range',
+        'station_contribution_model':
+            'ka_zero_weight_gate_max_ascend_below_2_then_scratch_distance_weight',
+        'cluster_station_count': clusterStations.length,
+        'effective_input_station_count': active.length,
+        'zero_contribution_station_count': zeroContributionStations.length,
+        'zero_contribution_station_codes': [
+          for (final station in zeroContributionStations.take(80)) station.code,
+        ],
+        'candidate_constraints': {
+          'model': referenceAlignedSearch
+              ? 'reference_hypocenter_normalized_global_domain'
+              : 'scratch_hyp_dynamic_candidate_domain',
+          'first_station_code': seedStation.code,
+          'max_detected_distance_km':
+              candidateConstraints.maxDetectedDistanceKm,
+          'max_allowed_depth_km': candidateConstraints.maxAllowedDepthKm,
+          'max_allowed_first_station_distance_km':
+              candidateConstraints.maxAllowedDistanceKm,
+          'latitude_min': referenceAlignedSearch ? -90.0 : 15.0,
+          'latitude_max': referenceAlignedSearch ? 90.0 : 55.0,
+          'longitude_min': referenceAlignedSearch ? -180.0 : 115.0,
+          'longitude_max': referenceAlignedSearch ? 180.0 : 155.0,
+        },
+        'station_assignment_accepted': Map<String, String>.from(
+          state.lastAssignmentAcceptedByCode,
+        ),
+        'station_assignment_rejected': Map<String, String>.from(
+          state.lastAssignmentRejectedByCode,
+        ),
+        'cached_s_flag_count': state.stationSFlagByCode.values
+            .where((isS) => isS)
+            .length,
+        'historical_active_count': clusterStations.length,
+        'temporary_epicenter_seed': {
+          'station_code': seedStation.code,
+          'trigger_at': seedTriggerAt.toIso8601String(),
+          'origin_time': seedOriginAt.toIso8601String(),
+          'latitude': seedLat,
+          'longitude': seedLng,
+          'depth_km': 10.0,
+        },
+        'search_steps': [
+          for (final step in steps)
+            {
+              'degree': step.degree,
+              'depth': step.depth,
+              'enabled': step.enabled,
+              'move_limit': step.moveLimit,
+            },
+        ],
+        'score_model':
+            'scratch_hyp_weighted_variance_station_scale_inactive_plus_s_multiplier',
+        'inactive_penalty_gate_model':
+            'kotoho7_article_elapsed_le_3_or_elapsed_le_10_and_active_lt_30',
+        'inactive_penalty_gate_open': inactivePenaltyGateOpen,
+        'score': outputResult.score,
+        'error_level': outputResult.errorLevel,
+        'rmse': outputResult.rmse,
+        'weight_sum': outputResult.weightSum,
+        'weighted_residual_squares': outputResult.weightedResidualSquares,
+        'station_scale': outputResult.stationScale,
+        'inactive_penalty': outputResult.inactivePenalty,
+        'inactive_p_radius_km': outputResult.inactivePRadiusKm,
+        'inactive_reference_distance_km':
+            outputResult.inactiveReferenceDistanceKm,
+        'inactive_penalty_weight': outputResult.inactivePenaltyWeight,
+        'wave_count_penalty_multiplier':
+            outputResult.waveCountPenaltyMultiplier,
+        'effective_station_count': outputResult.effectiveStationCount,
+        'quality_score': outputResult.qualityScore,
+        'quality_rank': outputResult.qualityRank,
+        'wave_counts': {
+          'P': outputResult.pWaveCount,
+          'S': outputResult.sWaveCount,
+          'O': outputResult.otherWaveCount,
+        },
+        if (outputResult.referenceScenarioDiagnostics.isNotEmpty)
+          'reference_scenario_diagnostics':
+              outputResult.referenceScenarioDiagnostics,
+        'high_score_publish_override': highScorePublishOverride != null,
+        'wave_radius_model': 'scratch_4_4_jma2001_inverse_capped_by_cluster',
+        'wave_elapsed_s': waveRadii.elapsedSeconds,
+        'wave_radius_cap_km': waveRadii.radiusCapKm,
+        'wave_radius_visible': waveRadii.visible,
+        'best_source_p_radius_km': waveRadii.pRadiusKm,
+        'best_source_s_radius_km': waveRadii.sRadiusKm,
+        'search': {
+          'type': 'article_scratch_neighbor_descent',
+          'stages': stages,
+        },
+        'map_candidate_model': 'published_result_only',
+        'travel_time_curve_source':
+            'published_result_accepted_scoring_snapshot',
+        'travel_time_curve_frozen': !searchResultAccepted,
+        'travel_time_curve_revision': state.publishedCurveRevision,
+        'travel_time_curve_sample_count': outputCurvePanels.isEmpty
+            ? 0
+            : ((outputCurvePanels.first['samples'] as List?)?.length ?? 0),
+        'travel_time_curve_panels': outputCurvePanels,
       },
-      if (result.referenceScenarioDiagnostics.isNotEmpty)
-        'reference_scenario_diagnostics': result.referenceScenarioDiagnostics,
-      'wave_radius_model': 'scratch_4_4_jma2001_inverse_capped_by_cluster',
-      'wave_elapsed_s': waveRadii.elapsedSeconds,
-      'wave_radius_cap_km': waveRadii.radiusCapKm,
-      'wave_radius_visible': waveRadii.visible,
-      'best_source_p_radius_km': waveRadii.pRadiusKm,
-      'best_source_s_radius_km': waveRadii.sRadiusKm,
-      'search': {'type': 'article_scratch_neighbor_descent', 'stages': stages},
-      'map_candidate_model': 'published_result_only',
-      'travel_time_curve_source': 'published_result_accepted_scoring_snapshot',
-      'travel_time_curve_frozen': !searchResultAccepted,
-      'travel_time_curve_revision': state.publishedCurveRevision,
-      'travel_time_curve_sample_count': curvePanels.isEmpty
-          ? 0
-          : ((curvePanels.first['samples'] as List?)?.length ?? 0),
-      'travel_time_curve_panels': curvePanels,
-    },
-  );
-  state.previousEstimate = estimate;
-  return estimate;
+    );
+    state.previousEstimate = estimate;
+    return estimate;
+  } finally {
+    nativeScorer?.dispose();
+  }
 }
 
 ({
@@ -12113,12 +14039,29 @@ Map<String, Object?> _niedHypWorkerCurvePanel(
     final hypocentralDistanceKm = math.sqrt(
       distanceKm * distanceKm + result.depthKm * result.depthKm,
     );
-    final useS = allowSWave && (stationSFlagByCode[station.code] ?? false);
-    final selectedTravel = Jma2001TravelTimeApproximation.travelTimeSeconds(
+    final pTravelSeconds = Jma2001TravelTimeApproximation.travelTimeSeconds(
       hypocentralDistanceKm: hypocentralDistanceKm,
       depthKm: result.depthKm,
-      pWave: !useS,
+      pWave: true,
     );
+    final sTravelSeconds = Jma2001TravelTimeApproximation.travelTimeSeconds(
+      hypocentralDistanceKm: hypocentralDistanceKm,
+      depthKm: result.depthKm,
+      pWave: false,
+    );
+    // Display label for this station. Production (`false`) keeps the historic
+    // `global 15 s gate AND cached station flag`, which the reference scorer
+    // does not consult; the shadow (default off) mirrors the scorer's own
+    // per-station rule at this panel's origin time so the inspection view agrees
+    // with what the scorer actually used. Display-only: no scoring input.
+    final useS = NiedHypStartShadow.curvePanelPhaseFromResidual
+        ? (observedSeconds - (result.originOffsetSeconds + pTravelSeconds))
+                  .abs() >
+              (observedSeconds - (result.originOffsetSeconds + sTravelSeconds))
+                      .abs() *
+                  2.0
+        : allowSWave && (stationSFlagByCode[station.code] ?? false);
+    final selectedTravel = useS ? sTravelSeconds : pTravelSeconds;
     final weight = _niedHypWorkerDistanceWeight(
       firstDetectedDistanceKm,
       distanceKm,
@@ -12281,6 +14224,190 @@ void _refreshNiedHypWorkerStationSFlags(
   }
 }
 
+NativeHypScorer _nativeNiedHypScorer(
+  List<_NiedHypWorkerStation> active,
+  List<_NiedHypWorkerStation> inactive,
+  DateTime earliestAt,
+  Map<String, Set<String>> adjacency,
+  Map<String, Map<String, bool>> prior,
+) {
+  final palert = active.any((station) => station.palertMaxLevel != null);
+  final hasReference = active.any(
+    (station) => palert
+        ? (station.palertSecondMaxLevel ?? -1) >= 9
+        : station.ascend >= 3 && (station.level ?? -1) >= 4,
+  );
+  final eligibleInactive = <_NiedHypWorkerStation>[
+    if (hasReference)
+      for (final station in inactive)
+        if (station.hasUpdateTime &&
+            (!palert ||
+                (station.nonQuietBoundary?.isBefore(earliestAt) ?? false)))
+          station,
+  ];
+  final info = Int64List(active.length * 8);
+  final observed = Float64List(active.length);
+  for (var i = 0; i < active.length; i++) {
+    final station = active[i];
+    observed[i] =
+        station.triggerAt!.difference(earliestAt).inMilliseconds / 1000.0;
+    final p = prior['P']?[station.id], s = prior['S']?[station.id];
+    info.setRange(i * 8, (i + 1) * 8, [
+      adjacency[station.id]?.length ?? 0,
+      station.ascend,
+      station.level ?? -1,
+      station.palertMaxLevel != null ? 1 : 0,
+      station.palertMaxLevel ?? 0,
+      station.palertSecondMaxLevel ?? -1,
+      p == null
+          ? -1
+          : p
+          ? 1
+          : 0,
+      s == null
+          ? -1
+          : s
+          ? 1
+          : 0,
+    ]);
+  }
+  return NativeHypScorer(
+    coordinates: [
+      for (final station in [...active, ...eligibleInactive]) ...[
+        station.coordinate.latitude,
+        station.coordinate.longitude,
+      ],
+    ],
+    stationInfo: info,
+    observedSeconds: observed,
+    inactiveCount: eligibleInactive.length,
+  );
+}
+
+_NiedHypWorkerResult _scoreNativeNiedReferenceCandidate(
+  NativeHypScorer scorer,
+  List<_NiedHypWorkerStation> active, {
+  required double latitude,
+  required double longitude,
+  required double depthKm,
+  required DateTime earliestAt,
+}) {
+  final raw = scorer.evaluate(latitude, longitude, depthKm);
+  return _nativeNiedReferenceResult(
+    raw,
+    active,
+    latitude: latitude,
+    longitude: longitude,
+    depthKm: depthKm,
+    earliestAt: earliestAt,
+  );
+}
+
+_NiedHypWorkerResult _nativeNiedReferenceResult(
+  NativeHypScoreResult raw,
+  List<_NiedHypWorkerStation> active, {
+  required double latitude,
+  required double longitude,
+  required double depthKm,
+  required DateTime earliestAt,
+}) {
+  final selected = raw.values[0].toInt();
+  if (selected == -2) {
+    return _invalidNiedHypWorkerResult(
+      latitude: latitude,
+      longitude: longitude,
+      depthKm: depthKm,
+      originTime: earliestAt,
+      activeCount: active.length,
+    );
+  }
+  if (selected < 0) {
+    return _niedReferenceRejectedCandidate(
+      latitude: latitude,
+      longitude: longitude,
+      depthKm: depthKm,
+      originTime: earliestAt,
+      activeCount: active.length,
+    );
+  }
+  double at(int slot, int field) =>
+      raw.values[3 + slot * NativeHypScoreResult.scenarioWords + field];
+  double value(int field) => at(selected, field);
+  String firstWave(int slot) => slot < 3 ? 'P' : 'S';
+  String? lastWave(int slot) => slot % 3 == 2
+      ? null
+      : slot % 3 == 0
+      ? 'P'
+      : 'S';
+  String scenario(int slot) => slot % 3 == 2
+      ? '${firstWave(slot)}_PREV'
+      : '${firstWave(slot)}${lastWave(slot)}';
+  final pCount = value(11).toInt(), sCount = value(12).toInt();
+  final effective = value(9).toInt();
+  return _NiedHypWorkerResult(
+    latitude: latitude,
+    longitude: longitude,
+    depthKm: depthKm,
+    originTime: earliestAt.add(
+      Duration(milliseconds: (value(1) * 1000).round()),
+    ),
+    originOffsetSeconds: value(1),
+    score: value(2),
+    errorLevel: value(2),
+    rmse: value(3),
+    weightSum: value(4),
+    weightedResidualSquares: value(5),
+    stationScale: 1.0,
+    inactivePenalty: value(6),
+    inactivePRadiusKm: 0.0,
+    inactiveReferenceDistanceKm: 0.0,
+    inactivePenaltyWeight: value(7),
+    waveCountPenaltyMultiplier: value(8),
+    effectiveStationCount: effective,
+    qualityScore: value(10),
+    qualityRank: _niedHypWorkerQualityRank(value(10), effective),
+    pWaveCount: pCount,
+    sWaveCount: sCount,
+    otherWaveCount: active.length - effective,
+    searchStages: const [],
+    referencePreviousWavesByFirstWave: {
+      for (var side = 0; side < 2; side++)
+        if (raw.values[1 + side] >= 0)
+          side == 0 ? 'P' : 'S': {
+            for (var i = 0; i < active.length; i++)
+              if (raw.waves[side * active.length + i] >= 0)
+                active[i].id: raw.waves[side * active.length + i] == 1,
+          },
+    },
+    referenceScenarioDiagnostics: {
+      'reference_scenario': scenario(selected),
+      'reference_first_wave': firstWave(selected),
+      'reference_last_wave': lastWave(selected),
+      'reference_filter_stage_level': value(15).toInt(),
+      'reference_p_wave_count': pCount,
+      'reference_s_wave_count': sCount,
+      'reference_l_wave_count': value(13).toInt(),
+      'reference_o_wave_count': value(14).toInt(),
+      'reference_inactive_penalty': value(6),
+      'reference_inactive_penalty_weight': value(7),
+      'reference_wave_count_penalty_multiplier': value(8),
+      'reference_scenario_candidates': [
+        for (var slot = 0; slot < 6; slot++)
+          if (at(slot, 0) != 0)
+            <String, Object?>{
+              'first_wave': firstWave(slot),
+              'scenario': scenario(slot),
+              'score': at(slot, 2),
+              'rmse': at(slot, 3),
+              'p_wave_count': at(slot, 11).toInt(),
+              's_wave_count': at(slot, 12).toInt(),
+              'filter_stage_level': at(slot, 15).toInt(),
+            },
+      ],
+    },
+  );
+}
+
 _NiedHypWorkerResult _scoreNiedReferenceCandidate(
   List<_NiedHypWorkerStation> active,
   List<_NiedHypWorkerStation> inactive, {
@@ -12288,8 +14415,11 @@ _NiedHypWorkerResult _scoreNiedReferenceCandidate(
   required double longitude,
   required double depthKm,
   required DateTime earliestAt,
+  required double observedSeconds,
+  required bool allowSWave,
   required Map<String, Set<String>> adjacencyByStationId,
   required Map<String, Map<String, bool>> referencePreviousWavesByFirstWave,
+  required _NiedHypWorkerCandidateConstraints candidateConstraints,
 }) {
   final stationCount = active.length;
   if (stationCount < 5) {
@@ -12303,10 +14433,22 @@ _NiedHypWorkerResult _scoreNiedReferenceCandidate(
   }
   final weights = List<double>.generate(stationCount, (index) {
     final station = active[index];
-    final densityWeight =
-        1.0 /
-        math.sqrt(math.max(1, adjacencyByStationId[station.id]?.length ?? 0));
-    final rankRatio = (index + 1) / math.max(stationCount, 100);
+    final neighborCount = math.max(
+      1,
+      adjacencyByStationId[station.id]?.length ?? 0,
+    );
+    final densityWeight = NiedHypStartShadow.referenceStrongDensityWeight
+        ? 1.0 / neighborCount
+        : 1.0 / math.sqrt(neighborCount);
+    final useRelativeRank =
+        NiedHypStartShadow.referenceRelativeRankWeight &&
+        (NiedHypStartShadow.referenceRelativeRankMaxStations <= 0 ||
+            stationCount <=
+                NiedHypStartShadow.referenceRelativeRankMaxStations);
+    final rankDenominator = useRelativeRank
+        ? math.max(stationCount, 1)
+        : math.max(stationCount, 100);
+    final rankRatio = (index + 1) / rankDenominator;
     final rankWeight = rankRatio <= 0.2
         ? 1.0
         : rankRatio <= 0.4
@@ -12323,9 +14465,19 @@ _NiedHypWorkerResult _scoreNiedReferenceCandidate(
         : station.ascend >= 2
         ? 0.1
         : 0.0;
-    return densityWeight * rankWeight * ascendWeight;
+    final rampSeconds = NiedHypStartShadow.referenceNewStationRampSeconds;
+    var temporalWeight = 1.0;
+    if (rampSeconds > 0 && station.triggerAt != null) {
+      final triggerOffsetSeconds =
+          station.triggerAt!.difference(earliestAt).inMilliseconds / 1000.0;
+      final stationAgeSeconds = observedSeconds - triggerOffsetSeconds;
+      final progress = (stationAgeSeconds / rampSeconds).clamp(0.0, 1.0);
+      temporalWeight = 0.25 + 0.75 * progress;
+    }
+    return densityWeight * rankWeight * ascendWeight * temporalWeight;
   });
 
+  final distances = List<double>.filled(stationCount, 0.0);
   final pOrigins = List<double>.filled(stationCount, 0.0);
   final sOrigins = List<double>.filled(stationCount, 0.0);
   for (var index = 0; index < stationCount; index++) {
@@ -12336,6 +14488,7 @@ _NiedHypWorkerResult _scoreNiedReferenceCandidate(
       station.coordinate.latitude,
       station.coordinate.longitude,
     );
+    distances[index] = distanceKm;
     final observedSeconds =
         station.triggerAt!.difference(earliestAt).inMilliseconds / 1000.0;
     pOrigins[index] =
@@ -12353,8 +14506,54 @@ _NiedHypWorkerResult _scoreNiedReferenceCandidate(
           pWave: false,
         );
   }
+  final activeAzimuths = <double>[
+    for (var index = 0; index < stationCount; index++)
+      if (weights[index] > 0)
+        (() {
+          final station = active[index].coordinate;
+          final lat1 = latitude * math.pi / 180.0;
+          final lat2 = station.latitude * math.pi / 180.0;
+          final dLon = (station.longitude - longitude) * math.pi / 180.0;
+          final y = math.sin(dLon) * math.cos(lat2);
+          final x =
+              math.cos(lat1) * math.sin(lat2) -
+              math.sin(lat1) * math.cos(lat2) * math.cos(dLon);
+          final degrees = math.atan2(y, x) * 180.0 / math.pi;
+          return (degrees + 360.0) % 360.0;
+        })(),
+  ]..sort();
+  var maxAzimuthGapDegrees = 360.0;
+  if (activeAzimuths.length >= 2) {
+    maxAzimuthGapDegrees = 0.0;
+    for (var index = 0; index < activeAzimuths.length; index++) {
+      final next = index + 1 < activeAzimuths.length
+          ? activeAzimuths[index + 1]
+          : activeAzimuths.first + 360.0;
+      maxAzimuthGapDegrees = math.max(
+        maxAzimuthGapDegrees,
+        next - activeAzimuths[index],
+      );
+    }
+  }
+  final oneSidedPhaseRatio = NiedHypStartShadow.referenceOneSidedPhasePToSRatio;
+  final weightedStationCount = weights.where((weight) => weight > 0).length;
+  final effectivePhasePToSRatio =
+      oneSidedPhaseRatio != null &&
+          weightedStationCount >=
+              NiedHypStartShadow.referenceOneSidedMinStations &&
+          maxAzimuthGapDegrees >=
+              NiedHypStartShadow.referenceOneSidedPhaseMinAzimuthGapDegrees
+      ? oneSidedPhaseRatio
+      : NiedHypStartShadow.referencePhasePToSRatio;
   double originFor(int index, bool useS) =>
       useS ? sOrigins[index] : pOrigins[index];
+
+  // J2 NYAD shadow: the farthest detected station sets the same radius cap the
+  // scratch-path inactive penalty uses, so the time-based evidence stays local
+  // to the triggered cluster instead of reaching across the whole catalogue.
+  final nyadMaxDetectedDistanceKm = distances.isEmpty
+      ? 0.0
+      : distances.reduce(math.max);
 
   double? weightedOriginForIndexes(Iterable<int> indexes, List<bool?> waves) {
     var sum = 0.0;
@@ -12392,10 +14591,46 @@ _NiedHypWorkerResult _scoreNiedReferenceCandidate(
         final threshold = math.max(meanResidual * 3.0, 5.0);
         if (pDifference > threshold && sDifference > threshold) continue;
       }
-      waves[index] = pDifference <= sDifference * 2.0 ? false : true;
+      waves[index] = pDifference <= sDifference * effectivePhasePToSRatio
+          ? false
+          : true;
       orderedOriginIndexes.add(index);
     }
   }
+
+  // These distances depend only on the candidate, not the P/S scenario.
+  final palert = active.any((station) => station.palertMaxLevel != null);
+  final referenceDistances = <double>[
+    for (var index = 0; index < stationCount; index++)
+      if (palert
+          ? (active[index].palertSecondMaxLevel ?? -1) >= 9
+          : active[index].ascend >= 3 && (active[index].level ?? -1) >= 4)
+        distances[index],
+  ]..sort();
+  final referenceDistance = referenceDistances.isEmpty
+      ? null
+      : referenceDistances[math.max(
+          (referenceDistances.length * (palert ? 0.8 : 0.9)).floor() - 1,
+          0,
+        )];
+  final inactiveDistances = <double>[
+    if (referenceDistance != null)
+      for (final station in inactive)
+        if (station.hasUpdateTime &&
+            (!palert ||
+                (station.nonQuietBoundary?.isBefore(earliestAt) ?? false)))
+          _kanameishiHaversineKm(
+            latitude,
+            longitude,
+            station.coordinate.latitude,
+            station.coordinate.longitude,
+          ),
+  ]..sort();
+  final penalized = referenceDistance == null
+      ? 0
+      : inactiveDistances
+            .takeWhile((distance) => distance <= referenceDistance)
+            .length;
 
   _NiedReferenceScenario? scoreScenario(
     List<bool?> waves, {
@@ -12424,7 +14659,44 @@ _NiedHypWorkerResult _scoreNiedReferenceCandidate(
       final weight = weights[index];
       final residual = originFor(index, wave) - originSeconds;
       weightSum += weight;
-      residualSquares += weight * residual * residual;
+      final oneSidedResidualCap =
+          NiedHypStartShadow.referenceOneSidedResidualCapSeconds;
+      final capCenterLatitude =
+          candidateConstraints.referenceResidualCapCenterLatitude;
+      final capCenterLongitude =
+          candidateConstraints.referenceResidualCapCenterLongitude;
+      final withinResidualCapMove =
+          capCenterLatitude == null ||
+              capCenterLongitude == null ||
+              !NiedHypStartShadow.referenceOneSidedResidualCapMaxMoveKm.isFinite
+          ? true
+          : _kanameishiHaversineKm(
+                  latitude,
+                  longitude,
+                  capCenterLatitude,
+                  capCenterLongitude,
+                ) <=
+                NiedHypStartShadow.referenceOneSidedResidualCapMaxMoveKm;
+      final useOneSidedResidualCap =
+          candidateConstraints.referenceOneSidedRescueEligible &&
+          oneSidedResidualCap != null &&
+          oneSidedResidualCap > 0 &&
+          depthKm <=
+              NiedHypStartShadow.referenceOneSidedResidualCapMaxDepthKm &&
+          withinResidualCapMove &&
+          originIndexes.length >=
+              NiedHypStartShadow.referenceOneSidedMinStations &&
+          maxAzimuthGapDegrees >=
+              NiedHypStartShadow.referenceOneSidedPhaseMinAzimuthGapDegrees;
+      final residualSquare = residual * residual;
+      residualSquares +=
+          weight *
+          (useOneSidedResidualCap
+              ? math.min(
+                  residualSquare,
+                  oneSidedResidualCap * oneSidedResidualCap,
+                )
+              : residualSquare);
     }
     for (var index = 0; index < stationCount; index++) {
       final wave = waves[index];
@@ -12444,58 +14716,115 @@ _NiedHypWorkerResult _scoreNiedReferenceCandidate(
     final effectiveCount = pCount + sCount;
     if (weightSum <= 0 || effectiveCount == 0) return null;
 
-    final palert = active.any((station) => station.palertMaxLevel != null);
-    final referenceDistances = <double>[
-      for (final station in active)
-        if (palert
-            ? (station.palertSecondMaxLevel ?? -1) >= 9
-            : station.ascend >= 3 && (station.level ?? -1) >= 4)
-          _kanameishiHaversineKm(
-            latitude,
-            longitude,
-            station.coordinate.latitude,
-            station.coordinate.longitude,
-          ),
-    ]..sort();
     var inactivePenalty = 0.0;
-    if (referenceDistances.isNotEmpty) {
-      final referenceDistance =
-          referenceDistances[math.max(
-            (referenceDistances.length * (palert ? 0.8 : 0.9)).floor() - 1,
-            0,
-          )];
-      final inactiveDistances = <double>[
-        for (final station in inactive)
-          if (station.updateAt != null && (!palert ||
-              (station.nonQuietBoundary?.isBefore(earliestAt) ?? false)))
-            _kanameishiHaversineKm(
-              latitude,
-              longitude,
-              station.coordinate.latitude,
-              station.coordinate.longitude,
-            ),
-      ]..sort();
-      final penalized = inactiveDistances
-          .takeWhile((distance) => distance <= referenceDistance)
-          .length;
-      if (inactiveDistances.length > effectiveCount &&
-          inactiveDistances[effectiveCount] <= referenceDistance) {
+    final softInactiveMultiplier =
+        NiedHypStartShadow.referenceOneSidedInactivePenaltyMultiplier;
+    final softInactiveCenterLatitude =
+        candidateConstraints.referenceResidualCapCenterLatitude;
+    final softInactiveCenterLongitude =
+        candidateConstraints.referenceResidualCapCenterLongitude;
+    final softInactiveWithinMove =
+        softInactiveCenterLatitude == null ||
+            softInactiveCenterLongitude == null ||
+            !NiedHypStartShadow.referenceOneSidedResidualCapMaxMoveKm.isFinite
+        ? true
+        : _kanameishiHaversineKm(
+                latitude,
+                longitude,
+                softInactiveCenterLatitude,
+                softInactiveCenterLongitude,
+              ) <=
+              NiedHypStartShadow.referenceOneSidedResidualCapMaxMoveKm;
+    final useOneSidedInactiveSoftening =
+        candidateConstraints.referenceOneSidedRescueEligible &&
+        softInactiveMultiplier < 1.0 &&
+        depthKm <= NiedHypStartShadow.referenceOneSidedResidualCapMaxDepthKm &&
+        softInactiveWithinMove &&
+        effectiveCount >= NiedHypStartShadow.referenceOneSidedMinStations &&
+        maxAzimuthGapDegrees >=
+            NiedHypStartShadow.referenceOneSidedPhaseMinAzimuthGapDegrees;
+    final allowOneSidedInactiveSuppression =
+        depthKm <= NiedHypStartShadow.referenceOneSidedResidualCapMaxDepthKm &&
+        softInactiveWithinMove;
+    final inactiveEvidenceEnabled =
+        referenceDistance != null &&
+        (effectiveCount < NiedHypStartShadow.referenceOneSidedMinStations ||
+            !allowOneSidedInactiveSuppression ||
+            maxAzimuthGapDegrees <
+                NiedHypStartShadow.referenceInactiveMaxAzimuthGapDegrees);
+    if (inactiveEvidenceEnabled) {
+      final inactiveHardRejectIndex =
+          (effectiveCount * NiedHypStartShadow.referenceInactiveHardRejectRatio)
+              .floor();
+      if (!useOneSidedInactiveSoftening &&
+          inactiveDistances.length > inactiveHardRejectIndex &&
+          inactiveDistances[inactiveHardRejectIndex] <= referenceDistance) {
         return null;
       }
-      inactivePenalty = penalized / effectiveCount;
+      if (NiedHypStartShadow.nyadNegativeEvidence) {
+        // J2 shadow: swap the distance criterion for the Horiuchi 2005 NYAD
+        // inequality — a silent station whose predicted P arrival (using this
+        // scenario's own inferred [originSeconds]) is already in the past is
+        // negative evidence. Only the criterion changes; [inactiveWeight],
+        // [rmse] and the wave multiplier below stay identical.
+        final nyad = _niedHypWorkerInactivePenalty(
+          inactive,
+          latitude: latitude,
+          longitude: longitude,
+          depthKm: depthKm,
+          originSeconds: originSeconds,
+          observedSeconds: observedSeconds,
+          maxDetectedDistanceKm: nyadMaxDetectedDistanceKm,
+        );
+        inactivePenalty = nyad.penalty / effectiveCount;
+      } else {
+        inactivePenalty = penalized / effectiveCount;
+      }
+      if (useOneSidedInactiveSoftening) {
+        inactivePenalty *= softInactiveMultiplier;
+      }
     }
     final rmse = math.sqrt(residualSquares / weightSum);
     final inactiveWeight = effectiveCount >= 50
         ? 0.0
         : (palert ? 8.0 : 10.0) * (1.0 - effectiveCount / 50.0);
+    // J3 shadow: only computed when the experiment is on; otherwise the term is
+    // exactly 0 and the score stays bit-identical to production.
+    var amplitudeResidual = 0.0;
+    var amplitudeStationCount = 0;
+    if (NiedHypStartShadow.amplitudeConsistency) {
+      final amplitude = _niedReferenceAmplitudeConsistency(
+        active,
+        distances,
+        weights,
+      );
+      amplitudeStationCount = amplitude.stationCount;
+      amplitudeResidual =
+          amplitudeStationCount >= NiedHypStartShadow.amplitudeMinStations
+          ? amplitude.residual
+          : 0.0;
+    }
+    // M2 joint-likelihood shadow: weak Gaussian depth prior. Exactly 0 (and the
+    // score bit-identical to production) unless NiedHypStartShadow.depthPriorKm
+    // is set — a soft pull, never a rejection, unlike the J1 hard pin.
+    var depthPriorResidual = 0.0;
+    final shadowDepthPriorKm = NiedHypStartShadow.depthPriorKm;
+    if (shadowDepthPriorKm != null) {
+      depthPriorResidual =
+          (depthKm - shadowDepthPriorKm) / NiedHypStartShadow.depthPriorSigmaKm;
+      depthPriorResidual *= depthPriorResidual;
+    }
     final waveMultiplier = palert
-        ? 1 + (0.5 * (sCount / math.max(1, pCount) - (8 + filterStageLevel)))
-            .clamp(0.0, 2.0 - 0.5 * filterStageLevel)
-        : math.min(
-      math.max(sCount / math.max(1, pCount) - 2.0, 1.0),
-      3.0,
-    );
-    final score = (rmse + inactivePenalty * inactiveWeight) * waveMultiplier;
+        ? 1 +
+              (0.5 * (sCount / math.max(1, pCount) - (8 + filterStageLevel)))
+                  .clamp(0.0, 2.0 - 0.5 * filterStageLevel)
+        : math.min(math.max(sCount / math.max(1, pCount) - 2.0, 1.0), 3.0);
+    final score =
+        (rmse +
+            inactivePenalty * inactiveWeight +
+            NiedHypStartShadow.amplitudeWeight * amplitudeResidual +
+            NiedHypStartShadow.depthPriorWeight * depthPriorResidual) *
+        waveMultiplier;
     final qualityScore =
         3.8 + math.sqrt(effectiveCount / 10.0) * 0.2 - score * 5.0 / 3.0;
     final result = _NiedHypWorkerResult(
@@ -12536,6 +14865,45 @@ _NiedHypWorkerResult _scoreNiedReferenceCandidate(
         'reference_inactive_penalty': inactivePenalty,
         'reference_inactive_penalty_weight': inactiveWeight,
         'reference_wave_count_penalty_multiplier': waveMultiplier,
+        'reference_max_azimuth_gap_deg': maxAzimuthGapDegrees,
+        'reference_inactive_evidence_enabled': inactiveEvidenceEnabled,
+        if (NiedHypStartShadow.referenceOneSidedResidualCapSeconds != null)
+          'reference_one_sided_residual_cap_s':
+              NiedHypStartShadow.referenceOneSidedResidualCapSeconds,
+        if (NiedHypStartShadow.referenceStationResidualAudit)
+          'reference_station_residuals': <Map<String, Object?>>[
+            for (final index in originIndexes)
+              <String, Object?>{
+                'code': active[index].code,
+                'trigger_offset_s':
+                    active[index].triggerAt!
+                        .difference(earliestAt)
+                        .inMilliseconds /
+                    1000.0,
+                'distance_km': distances[index],
+                'wave': waves[index]! ? 'S' : 'P',
+                'p_origin_s': pOrigins[index],
+                's_origin_s': sOrigins[index],
+                'selected_origin_s': originFor(index, waves[index]!),
+                'residual_s': originFor(index, waves[index]!) - originSeconds,
+                'weight': weights[index],
+                'ascend': active[index].ascend,
+                'level': active[index].level,
+              },
+          ],
+        if (NiedHypStartShadow.nyadNegativeEvidence)
+          'reference_nyad_negative_evidence': true,
+        if (NiedHypStartShadow.amplitudeConsistency) ...{
+          'reference_amplitude_consistency': amplitudeResidual,
+          'reference_amplitude_station_count': amplitudeStationCount,
+          'reference_amplitude_weight': NiedHypStartShadow.amplitudeWeight,
+        },
+        if (shadowDepthPriorKm != null) ...{
+          'reference_depth_prior_km': shadowDepthPriorKm,
+          'reference_depth_prior_sigma_km':
+              NiedHypStartShadow.depthPriorSigmaKm,
+          'reference_depth_prior_residual': depthPriorResidual,
+        },
       },
     );
     return _NiedReferenceScenario(
@@ -12750,6 +15118,38 @@ _NiedHypWorkerResult _scoreNiedReferenceCandidate(
   final previousResults = <String, _NiedReferenceScenario>{};
   final previousWaves = <String, Map<String, bool>>{};
   final candidateSummaries = <Map<String, Object?>>[];
+  if (NiedHypStartShadow.referenceRespectSWaveGate && !allowSWave) {
+    final waves = <bool?>[
+      for (var index = 0; index < stationCount; index++)
+        weights[index] > 0 ? false : null,
+    ];
+    final pOnly = scoreScenario(waves, scenario: 'P_ONLY_GATE', firstWave: 'P');
+    if (pOnly == null) {
+      return _niedReferenceRejectedCandidate(
+        latitude: latitude,
+        longitude: longitude,
+        depthKm: depthKm,
+        originTime: earliestAt,
+        activeCount: stationCount,
+      );
+    }
+    return pOnly.result.copyWith(
+      referencePreviousWavesByFirstWave: <String, Map<String, bool>>{
+        'P': Map<String, bool>.from(pOnly.wavesByStationId),
+      },
+      referenceScenarioDiagnostics: <String, Object?>{
+        ...pOnly.result.referenceScenarioDiagnostics,
+        'reference_s_wave_gate_forced_p_only': true,
+        'reference_distance_station_count': referenceDistances.length,
+        'reference_distance_km': referenceDistance,
+        'inactive_within_reference_distance': penalized,
+        'reference_selected_waves': <String, String>{
+          for (final entry in pOnly.wavesByStationId.entries)
+            entry.key: entry.value ? 'S' : 'P',
+        },
+      },
+    );
+  }
   for (final firstUsesS in const [false, true]) {
     final candidates = <_NiedReferenceScenario?>[
       greedy(firstUsesS, false),
@@ -12793,6 +15193,13 @@ _NiedHypWorkerResult _scoreNiedReferenceCandidate(
       depthKm: depthKm,
       originTime: earliestAt,
       activeCount: stationCount,
+    ).copyWith(
+      referenceScenarioDiagnostics: <String, Object?>{
+        'reference_rejected': true,
+        'reference_distance_station_count': referenceDistances.length,
+        'reference_distance_km': referenceDistance,
+        'inactive_within_reference_distance': penalized,
+      },
     );
   }
   final best = previousResults.values.reduce(
@@ -12802,6 +15209,13 @@ _NiedHypWorkerResult _scoreNiedReferenceCandidate(
     referencePreviousWavesByFirstWave: previousWaves,
     referenceScenarioDiagnostics: <String, Object?>{
       ...best.result.referenceScenarioDiagnostics,
+      'reference_distance_station_count': referenceDistances.length,
+      'reference_distance_km': referenceDistance,
+      'inactive_within_reference_distance': penalized,
+      'reference_selected_waves': <String, String>{
+        for (final entry in best.wavesByStationId.entries)
+          entry.key: entry.value ? 'S' : 'P',
+      },
       'reference_scenario_candidates': candidateSummaries,
     },
   );
@@ -12823,6 +15237,7 @@ Iterable<int> _niedReferenceMiddleOutIndexes(int count) sync* {
 _NiedHypWorkerResult _scoreNiedHypWorkerCandidate(
   List<_NiedHypWorkerStation> active,
   List<_NiedHypWorkerStation> inactive, {
+  NativeHypScorer? nativeScorer,
   required DateTime observedAt,
   required DateTime earliestAt,
   required double latitude,
@@ -12852,6 +15267,16 @@ _NiedHypWorkerResult _scoreNiedHypWorkerCandidate(
     );
   }
   if (referenceAligned) {
+    if (nativeScorer != null) {
+      return _scoreNativeNiedReferenceCandidate(
+        nativeScorer,
+        active,
+        latitude: latitude,
+        longitude: longitude,
+        depthKm: depthKm,
+        earliestAt: earliestAt,
+      );
+    }
     return _scoreNiedReferenceCandidate(
       active,
       inactive,
@@ -12859,8 +15284,12 @@ _NiedHypWorkerResult _scoreNiedHypWorkerCandidate(
       longitude: longitude,
       depthKm: depthKm,
       earliestAt: earliestAt,
+      observedSeconds:
+          observedAt.difference(earliestAt).inMilliseconds / 1000.0,
+      allowSWave: allowSWave,
       adjacencyByStationId: adjacencyByStationId,
       referencePreviousWavesByFirstWave: referencePreviousWavesByFirstWave,
+      candidateConstraints: candidateConstraints,
     );
   }
   final originSamples = <double>[];
@@ -13240,6 +15669,270 @@ _niedHypWorkerInactivePenalty(
     penalty: penalty.toDouble(),
     pRadiusKm: pRadiusKm,
     referenceDistanceKm: referenceDistance,
+  );
+}
+
+/// J3 shadow: amplitude-consistency (JMA IPF) residual.
+///
+/// The production scorer is pure travel time. This adds the orthogonal
+/// amplitude channel: for a candidate hypocentre every triggered station with a
+/// finite observed intensity `I_i` and a finite hypocentral distance `R_i`
+/// yields a per-station magnitude through the production srev-kaizou
+/// intensity↔M↔D relation (with the same 20 km floor). If the geometry is
+/// right the per-station magnitudes coincide; if it is wrong the distance
+/// ratios stretch and they scatter. Returns the weighted mean-absolute
+/// deviation about the weighted median (robust to a single bad station) plus
+/// the number of stations that contributed, so a replay can prove the term is
+/// non-vacuous (count > 0) rather than silently inert.
+({double residual, int stationCount}) _niedReferenceAmplitudeConsistency(
+  List<_NiedHypWorkerStation> active,
+  List<double> distances,
+  List<double> weights,
+) {
+  final magnitudes = <double>[];
+  final magnitudeWeights = <double>[];
+  for (var index = 0; index < active.length; index++) {
+    final intensity = active[index].currentShindo;
+    if (intensity == null || !intensity.isFinite) continue;
+    final distanceKm = distances[index];
+    if (!distanceKm.isFinite || distanceKm <= 0.0) continue;
+    final magnitude = srevKaizouMagnitudeFromDistanceAndIntensity(
+      stationDistanceKm: math.max(
+        distanceKm,
+        srevKaizouMinimumStationDistanceKm,
+      ),
+      inputIntensity: intensity,
+      multipleSources: false,
+    );
+    if (magnitude == null || !magnitude.isFinite) continue;
+    magnitudes.add(magnitude);
+    magnitudeWeights.add(weights[index] > 0 ? weights[index] : 1.0);
+  }
+  if (magnitudes.length < 3) {
+    return (residual: 0.0, stationCount: magnitudes.length);
+  }
+  final order = List<int>.generate(magnitudes.length, (index) => index)
+    ..sort((a, b) => magnitudes[a].compareTo(magnitudes[b]));
+  var totalWeight = 0.0;
+  for (final weight in magnitudeWeights) {
+    totalWeight += weight;
+  }
+  var running = 0.0;
+  var median = magnitudes[order.first];
+  for (final index in order) {
+    running += magnitudeWeights[index];
+    if (running >= totalWeight / 2) {
+      median = magnitudes[index];
+      break;
+    }
+  }
+  var deviation = 0.0;
+  var weightSum = 0.0;
+  for (var index = 0; index < magnitudes.length; index++) {
+    deviation += magnitudeWeights[index] * (magnitudes[index] - median).abs();
+    weightSum += magnitudeWeights[index];
+  }
+  return (
+    residual: weightSum > 0 ? deviation / weightSum : 0.0,
+    stationCount: magnitudes.length,
+  );
+}
+
+/// 方案 C (independent project) shadow search form: a deterministic **global
+/// coarse-grid posterior + local refine**, used only when
+/// [NiedHypStartShadow.searchForm] is `'grid'`.
+///
+/// The production search is a single-trajectory six-neighbour hill climb whose
+/// fixed step order is part of the native ABI reference contract; on the flat
+/// offshore score surface it locks onto one pseudo-attractor (evidence 8 in
+/// `tmp/mag_scoreboard/OFFSHORE_EPI_ROOTCAUSE.md`). This helper instead scans a
+/// bounded `(lat, lon, depth)` box around the temporary-epicentre seed, keeps
+/// the top-K distinct local-minimum modes, refines each with a short local
+/// six-neighbour descent, and returns the globally best refined hypocentre.
+///
+/// It is fully deterministic (no RNG), so it slots under the existing
+/// replay/regression contracts without any change to the native Rust search or
+/// its ABI. [scoreNode] is the caller's candidate scorer, so the same grid runs
+/// with or without the J3 amplitude term — the search form is the only
+/// variable. Returns the best result, the number of scorer evaluations and a
+/// diagnostic map (mode list included) for the replay report.
+({
+  _NiedHypWorkerResult result,
+  int evaluationCount,
+  Map<String, Object?> diagnostics,
+})
+_runNiedGridPosteriorSearch({
+  required _NiedHypWorkerResult Function(double lat, double lng, double depthKm)
+  scoreNode,
+  required _NiedHypWorkerResult seed,
+  required double seedLatitude,
+  required double seedLongitude,
+  required double spacingDeg,
+  required double extentLatDeg,
+  required double extentLngDeg,
+  required List<double> depthLevelsKm,
+  required int topK,
+  required int refineMoveLimit,
+}) {
+  var evaluationCount = 0;
+  // The reference scorer reports rejected candidates (depth floor, inactive
+  // paradox, …) with a *finite* 1e12 sentinel, so a plain `isFinite` check lets
+  // them through and a plateau of rejects reads as a local-minimum mode
+  // (measured: 熊本 M2 triage had 3 of 4 top-K modes at the sentinel). Anything
+  // at or above this cut is treated as rejected.
+  const rejectedScoreCut = 1e11;
+  bool accepted(_NiedHypWorkerResult node) =>
+      node.score.isFinite && node.score < rejectedScoreCut;
+  _NiedHypWorkerResult score(double lat, double lng, double depthKm) {
+    evaluationCount += 1;
+    return scoreNode(lat, lng, depthKm);
+  }
+
+  final latCount = (extentLatDeg / spacingDeg).round() * 2 + 1;
+  final lngCount = (extentLngDeg / spacingDeg).round() * 2 + 1;
+  final depthCount = depthLevelsKm.length;
+  final latCenter = latCount ~/ 2;
+  final lngCenter = lngCount ~/ 2;
+
+  // Full coarse-grid sweep; a rejected (non-finite) node stays null.
+  final nodes = List<List<List<_NiedHypWorkerResult?>>>.generate(
+    latCount,
+    (_) => List<List<_NiedHypWorkerResult?>>.generate(
+      lngCount,
+      (_) => List<_NiedHypWorkerResult?>.filled(depthCount, null),
+    ),
+  );
+  for (var i = 0; i < latCount; i++) {
+    final lat = seedLatitude + (i - latCenter) * spacingDeg;
+    for (var j = 0; j < lngCount; j++) {
+      final lng = seedLongitude + (j - lngCenter) * spacingDeg;
+      for (var k = 0; k < depthCount; k++) {
+        final node = score(lat, lng, depthLevelsKm[k]);
+        if (accepted(node)) nodes[i][j][k] = node;
+      }
+    }
+  }
+
+  bool isLocalMinimum(int i, int j, int k) {
+    final center = nodes[i][j][k];
+    if (center == null) return false;
+    for (var di = -1; di <= 1; di++) {
+      for (var dj = -1; dj <= 1; dj++) {
+        for (var dk = -1; dk <= 1; dk++) {
+          if (di == 0 && dj == 0 && dk == 0) continue;
+          final ni = i + di;
+          final nj = j + dj;
+          final nk = k + dk;
+          if (ni < 0 ||
+              ni >= latCount ||
+              nj < 0 ||
+              nj >= lngCount ||
+              nk < 0 ||
+              nk >= depthCount) {
+            continue;
+          }
+          final neighbour = nodes[ni][nj][nk];
+          if (neighbour != null && neighbour.score < center.score - 1e-9) {
+            return false;
+          }
+        }
+      }
+    }
+    return true;
+  }
+
+  final minima = <_NiedHypWorkerResult>[];
+  for (var i = 0; i < latCount; i++) {
+    for (var j = 0; j < lngCount; j++) {
+      for (var k = 0; k < depthCount; k++) {
+        if (isLocalMinimum(i, j, k)) minima.add(nodes[i][j][k]!);
+      }
+    }
+  }
+  minima.sort((left, right) => left.score.compareTo(right.score));
+
+  // Keep distinct 0.1° epicentre basins so top-K does not collapse a plateau.
+  final selectedModes = <_NiedHypWorkerResult>[];
+  final seenCells = <String>{};
+  for (final mode in minima) {
+    final cell =
+        '${(mode.latitude * 10).round()}:${(mode.longitude * 10).round()}';
+    if (seenCells.add(cell)) selectedModes.add(mode);
+    if (selectedModes.length >= topK) break;
+  }
+  if (selectedModes.isEmpty) selectedModes.add(seed);
+
+  _NiedHypWorkerResult refine(_NiedHypWorkerResult start) {
+    var current = start;
+    final refineStages = <({double degree, double depth, int limit})>[
+      (degree: 0.3, depth: 20.0, limit: 60),
+      (degree: 0.1, depth: 10.0, limit: refineMoveLimit),
+    ];
+    for (final stage in refineStages) {
+      for (var move = 0; move < stage.limit; move++) {
+        _NiedHypWorkerResult? best;
+        for (final neighbour in <({double dLat, double dLng, double dDepth})>[
+          (dLat: stage.degree, dLng: 0.0, dDepth: 0.0),
+          (dLat: -stage.degree, dLng: 0.0, dDepth: 0.0),
+          (dLat: 0.0, dLng: stage.degree, dDepth: 0.0),
+          (dLat: 0.0, dLng: -stage.degree, dDepth: 0.0),
+          (dLat: 0.0, dLng: 0.0, dDepth: stage.depth),
+          (dLat: 0.0, dLng: 0.0, dDepth: -stage.depth),
+        ]) {
+          final candidate = score(
+            current.latitude + neighbour.dLat,
+            current.longitude + neighbour.dLng,
+            current.depthKm + neighbour.dDepth,
+          );
+          if (!accepted(candidate)) continue;
+          if (best == null || candidate.score < best.score) {
+            best = candidate;
+          }
+        }
+        if (best != null && best.score + 1e-9 < current.score) {
+          current = best;
+        } else {
+          break;
+        }
+      }
+    }
+    return current;
+  }
+
+  var best = seed;
+  final modes = <Map<String, Object?>>[];
+  for (final mode in selectedModes) {
+    final refined = refine(mode);
+    if (refined.score < best.score) best = refined;
+    modes.add(<String, Object?>{
+      'grid_latitude': mode.latitude,
+      'grid_longitude': mode.longitude,
+      'grid_depth_km': mode.depthKm,
+      'grid_score': mode.score,
+      'refined_latitude': refined.latitude,
+      'refined_longitude': refined.longitude,
+      'refined_depth_km': refined.depthKm,
+      'refined_score': refined.score,
+    });
+  }
+
+  return (
+    result: best,
+    evaluationCount: evaluationCount,
+    diagnostics: <String, Object?>{
+      'search_form': 'grid',
+      'grid_spacing_deg': spacingDeg,
+      'grid_extent_lat_deg': extentLatDeg,
+      'grid_extent_lng_deg': extentLngDeg,
+      'grid_depth_levels_km': depthLevelsKm,
+      'grid_node_count': latCount * lngCount * depthCount,
+      'grid_evaluation_count': evaluationCount,
+      'grid_local_minimum_count': minima.length,
+      'grid_mode_count': selectedModes.length,
+      'grid_seed_score': seed.score,
+      'grid_best_score': best.score,
+      'grid_modes': modes,
+    },
   );
 }
 
@@ -15474,6 +18167,12 @@ double? _hypPretriggerCacheSeconds(
   required DateTime earliestObserved,
   required DateTime fallbackObservedAt,
 }) {
+  if (record.observationHistory.ownsNativeWindow) {
+    return record.observationHistory.nativePretriggerSeconds(
+      earliestObserved,
+      fallbackObservedAt,
+    );
+  }
   double? cacheSeconds;
   double? previousSignal;
   int? previousDetectLevel;

@@ -1,0 +1,56 @@
+{
+  "key": "cwa_114005_3",
+  "source": "cwa_tsunami",
+  "Data": {
+    "id": "11400503",
+    "eventId": "114005",
+    "updates": 3,
+    "level": "Watch",
+    "reportType": "海嘯警訊",
+    "issueTime": "2025-07-30 09:12:00",
+    "shockTime": "2025-07-30 07:25:00",
+    "placeName": "俄羅斯 堪察加半島東部外海",
+    "latitude": 52.2,
+    "longitude": 160.0,
+    "magnitude": 8.7,
+    "depth": 74.0,
+    "headline": "海嘯警訊",
+    "description": "發布時間：民國114年07月30日09時12分 頃獲太平洋海嘯警報中心通報，２０２５年０７月３０日０７時 ２５分（臺灣時間），俄羅斯 堪察加半島東部外海發生規模８ ．７地震，震央位於東經１６０．００度、北緯５２．２０度。 經初步研判，該地震所引發海嘯預計約於０７月３０日１３時１ ８分開始影響臺灣，特此發布海嘯警訊，提醒沿海地區民眾提高 警覺嚴加防範，本署將嚴密監視海嘯的後續影響，隨時提供最新 資訊。 ",
+    "warningAreas": [
+      {
+        "areaName": "北部沿海地區",
+        "arrivalTime": "2025-07-30 13:41:00",
+        "waveHeight": "小於0.3公尺"
+      },
+      {
+        "areaName": "東北沿海地區",
+        "arrivalTime": "2025-07-30 13:24:00",
+        "waveHeight": "小於0.3公尺"
+      },
+      {
+        "areaName": "東部沿海地區",
+        "arrivalTime": "2025-07-30 13:18:00",
+        "waveHeight": "小於0.3公尺"
+      },
+      {
+        "areaName": "東南沿海地區",
+        "arrivalTime": "2025-07-30 13:19:00",
+        "waveHeight": "0.3至1公尺"
+      },
+      {
+        "areaName": "西南沿海地區",
+        "arrivalTime": "2025-07-30 13:31:00",
+        "waveHeight": "0.3至1公尺"
+      },
+      {
+        "areaName": "海峽沿海地區",
+        "arrivalTime": "2025-07-30 13:45:00",
+        "waveHeight": "小於0.3公尺"
+      }
+    ],
+    "bulletinUrl": "https://scweb.cwa.gov.tw/zh-tw/tsunami/details?fileString=11400503"
+  },
+  "original": "test/fixtures/tsunami_presentation_20261023/raw/aecdf05d32058bd4.original",
+  "url": "https://scweb.cwa.gov.tw/zh-tw/tsunami/details?fileString=11400503",
+  "sha256": "aecdf05d32058bd479f8e91a92883d919c4f7f997fe9c71d5668f655a4f7d020"
+}

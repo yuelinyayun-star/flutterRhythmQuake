@@ -1,8 +1,10 @@
 import 'dart:async';
-import 'dart:convert';
+import '../api_json_decoder.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../../../models/quake_message.dart';
+import '../../../models/information_map_data.dart';
+import '../../quake_event_adapter.dart';
 import 'eqlist_http_poll_gate.dart';
 
 /// JMA地震情报服务
@@ -30,6 +32,9 @@ class JmaEqlistService {
   static final JmaEqlistService _instance = JmaEqlistService._internal();
   factory JmaEqlistService() => _instance;
   JmaEqlistService._internal();
+  @visibleForTesting
+  JmaEqlistService.forTesting(this._client);
+  http.Client? _client;
 
   /// P2PQuake API地址
   ///
@@ -74,15 +79,15 @@ class JmaEqlistService {
   Future<void> fetch() async {
     if (_pushGate.shouldSkipHttp) return;
     try {
-      final resp = await http
-          .get(Uri.parse(_url))
+      final resp = await
+          (_client?.get(Uri.parse(_url)) ?? http.get(Uri.parse(_url)))
           .timeout(const Duration(seconds: 15));
       if (resp.statusCode != 200) {
         onStatusChanged?.call(false);
         return;
       }
 
-      final list = json.decode(resp.body) as List?;
+      final list = decodeApiJsonResponse(resp) as List?;
       onStatusChanged?.call(true);
       if (list == null || list.isEmpty) return;
 
@@ -139,10 +144,12 @@ class JmaEqlistService {
 
       final int maxScale =
           int.tryParse(earthquake['maxScale']?.toString() ?? '') ?? 0;
-      final String? jmaShindo = _scaleToShindo(maxScale) ?? (issueType == 'Foreign' ? '不明' : null);
+      final String? jmaShindo =
+          _scaleToShindo(maxScale) ?? (issueType == 'Foreign' ? '不明' : null);
       if (jmaShindo == null) return null;
 
       final String title = _getIssueTitle(issueType, item);
+      final mapEvent = QuakeEventAdapter.convert('jmaEqlist', item, 2);
 
       return QuakeMessage(
         source: QuakeSourceType.wolfx,
@@ -159,6 +166,9 @@ class JmaEqlistService {
         reportTime: reportTime,
         infoTypeName: title,
         isInfoEvent: true,
+        informationMap: mapEvent == null
+            ? null
+            : InformationMapData.fromEvent(mapEvent),
       );
     } catch (e) {
       return null;
@@ -176,7 +186,8 @@ class JmaEqlistService {
       final eqComment = eq is Map ? '${eq['freeFormComment'] ?? ''}' : '';
       final fullText = '$commentText $eqComment';
       if (fullText.contains('大規模な噴火') ||
-          (fullText.contains('噴火') && (fullText.contains('火山') || fullText.contains('VAAC')))) {
+          (fullText.contains('噴火') &&
+              (fullText.contains('火山') || fullText.contains('VAAC')))) {
         return '遠地噴火に関する情報';
       }
       return '遠地地震に関する情報';

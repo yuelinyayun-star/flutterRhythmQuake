@@ -1,19 +1,26 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart'
-    show compute, debugPrint, visibleForTesting;
+    show debugPrint, visibleForTesting, VoidCallback;
 import 'package:http/http.dart' as http;
-import 'package:image/image.dart' as img;
+import '../native_nsmc_image.dart';
+import '../native_weather_playback_catalog.dart';
 
 import 'web_source_proxy.dart';
 
 class NsmcSatelliteCloudFrame {
-  const NsmcSatelliteCloudFrame({required this.time, required this.imageBytes});
+  const NsmcSatelliteCloudFrame({required this.time, required this.imageBytes})
+    : isTiled = false,
+      onVisibleReady = null;
+  NsmcSatelliteCloudFrame.tiles({required this.time, this.onVisibleReady})
+    : imageBytes = Uint8List(0),
+      isTiled = true;
   final DateTime time;
   final Uint8List imageBytes;
+  final bool isTiled;
+  final VoidCallback? onVisibleReady;
 }
 
 class NsmcSatelliteCloudService {
@@ -83,24 +90,21 @@ class NsmcSatelliteCloudService {
               .timeout(const Duration(seconds: 20));
           if (!_started || session != _session) continue;
           if (response.statusCode != 200) continue;
-          final time = nsmcSatelliteLatestTime(
-            jsonDecode(utf8.decode(response.bodyBytes)),
+          final catalog = NativeWeatherPlaybackCatalog.parse(
+            4,
+            response.bodyBytes,
           );
+          final time = catalog.isEmpty
+              ? null
+              : DateTime.fromMillisecondsSinceEpoch(
+                  catalog.last['epochMs'] as int,
+                  isUtc: true,
+                );
           if (time == null ||
               (_latestFrame != null && !time.isAfter(_latestFrame!.time))) {
             continue;
           }
-          final responseImage = await _client
-              .get(sourceUri(nsmcSatelliteImageUri(time)))
-              .timeout(const Duration(seconds: 30));
-          if (!_started || session != _session) continue;
-          if (responseImage.statusCode != 200) continue;
-          final bytes = await compute(
-            nsmcSatelliteToMercator,
-            responseImage.bodyBytes,
-          );
-          if (!_started || session != _session) continue;
-          _latestFrame = NsmcSatelliteCloudFrame(time: time, imageBytes: bytes);
+          _latestFrame = NsmcSatelliteCloudFrame.tiles(time: time);
           _frames.add(_latestFrame);
         } catch (error) {
           debugPrint('[NsmcSatellite] fetch failed: ${error.runtimeType}');
@@ -169,41 +173,17 @@ int nsmcSatelliteSourceRow(int y, int outputHeight, int sourceHeight) {
 
 // The WMS returns EPSG:4326. Reproject rows for the map's EPSG:3857 in an
 // isolate; preserve source RGBA values, including cloud opacity, unchanged.
-Uint8List nsmcSatelliteToMercator(Uint8List bytes) {
-  final source = img.decodePng(bytes);
-  if (source == null ||
-      source.width != NsmcSatelliteCloudService.imageWidth ||
-      source.height != NsmcSatelliteCloudService.imageHeight) {
-    throw const FormatException(
-      'Unexpected NSMC cloud image dimensions or format',
-    );
-  }
-  final rgba = source
-      .convert(numChannels: 4)
-      .getBytes(order: img.ChannelOrder.rgba);
-  var hasCloudPixels = false;
-  for (var i = 3; i < rgba.length; i += 4) {
-    if (rgba[i] > 0) {
-      hasCloudPixels = true;
-      break;
-    }
-  }
-  if (!hasCloudPixels) {
-    throw const FormatException('Empty NSMC cloud image');
-  }
-  final width = source.width;
-  final stride = width * 4;
-  final output = Uint8List(width * stride);
-  for (var y = 0; y < width; y++) {
-    final row = nsmcSatelliteSourceRow(y, width, source.height);
-    output.setRange(y * stride, (y + 1) * stride, rgba, row * stride);
-  }
-  return img.encodePng(
-    img.Image.fromBytes(
-      width: width,
-      height: width,
-      bytes: output.buffer,
-      numChannels: 4,
-    ),
+Uint8List nsmcSatelliteToMercator(Uint8List bytes) =>
+    NativeNsmcImage.project(bytes);
+
+Uri nsmcSatelliteTileUri(DateTime time, int z, int x, int y) {
+  final b = NativeNsmcImage.bounds(z, x, y);
+  return nsmcSatelliteImageUri(time).replace(
+    queryParameters: {
+      ...nsmcSatelliteImageUri(time).queryParameters,
+      'bbox': b.join(','),
+      'width': '256',
+      'height': '256',
+    },
   );
 }

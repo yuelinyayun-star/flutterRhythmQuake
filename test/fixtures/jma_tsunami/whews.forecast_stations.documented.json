@@ -1,0 +1,40 @@
+{
+  "Data": {
+    "id": "20260101120000",
+    "telegramType": "VTSE41",
+    "updates": 1,
+    "createTime": "2026-01-01 12:00:00",
+    "infoTypeName": "発表",
+    "editorialOffice": "気象庁本庁",
+    "title": "津波警報・注意報・予報",
+    "headline": "...",
+    "cancel": false,
+    "cleared": false,
+    "targetDateTime": "2026-01-01 12:00:00",
+    "validDateTime": "",
+    "areas": [
+      {
+        "name": "有明・八代海",
+        "stations": [
+          {
+            "name": "大牟田市三池",
+            "code": "71201",
+            "highTide": "2026-07-28 21:04:00",
+            "arrivalTime": "2026-07-28 17:00:00",
+            "condition": ""
+          }
+        ],
+        "code": "712",
+        "kind": "津波注意報",
+        "kindCode": "62",
+        "cleared": false,
+        "arrivalTime": "",
+        "condition": "津波到達中と推測",
+        "maxHeight": "1",
+        "maxHeightDesc": ""
+      }
+    ]
+  },
+  "md5": "...",
+  "source": "jma_tsunami"
+}

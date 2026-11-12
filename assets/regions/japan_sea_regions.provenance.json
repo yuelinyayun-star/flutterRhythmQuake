@@ -1,0 +1,747 @@
+{
+  "purpose": "Offline epicentral place names only; not territorial/EEZ boundaries or map rendering",
+  "source": "0Quake/JMA_Region: third-party tracing of JMA official epicenter maps, NOT official vector data",
+  "commit": "a7ee5949d8df9879dd081eec21142a37622e9f3a",
+  "sourceSha256": "8bd26502076d77b5d440a30df2c40356ecb5d5ad62309494ade4742246084a02",
+  "sourceUrl": "https://github.com/0Quake/JMA_Region/tree/a7ee5949d8df9879dd081eec21142a37622e9f3a",
+  "officialReference": "https://www.jma.go.jp/jma/press/0609/20b/20060920bessi3.pdf",
+  "license": "CC0-1.0; JMA source attribution retained",
+  "baselineUrl": "https://www.fmprc.gov.cn/web/wjb_673085/zzjg_673183/bjhysws_674671/bhsmgb/201209/t20120910_320427.shtml",
+  "baselineSha256": "72f24d85b3c7f2bbad03e92f48acc91da86939ca6e26650905e52be8534f7663",
+  "baselineMeaning": "Area enclosed by published baseline only, not the entire territorial sea or exact island shoreline",
+  "baselineFormat": "CWR2 Float64; coordinates from official table, no Float32 rounding",
+  "geometryProcessing": "Original selected polygons/rings; no simplification or buffers; existing CWR1 Float32 storage",
+  "count": 120,
+  "regions": [
+    {
+      "code": 180,
+      "sourceName": "北海道南西沖",
+      "sourceChineseName": "北海道南西冲",
+      "displayName": "北海道西南海域"
+    },
+    {
+      "code": 181,
+      "sourceName": "北海道西方沖",
+      "sourceChineseName": "北海道西方冲",
+      "displayName": "北海道以西海域"
+    },
+    {
+      "code": 182,
+      "sourceName": "石狩湾",
+      "sourceChineseName": "石狩湾",
+      "displayName": "石狩湾"
+    },
+    {
+      "code": 183,
+      "sourceName": "北海道北西沖",
+      "sourceChineseName": "北海道北西冲",
+      "displayName": "北海道西北海域"
+    },
+    {
+      "code": 184,
+      "sourceName": "宗谷海峡",
+      "sourceChineseName": "宗谷海峡",
+      "displayName": "宗谷海峡"
+    },
+    {
+      "code": 186,
+      "sourceName": "国後島付近",
+      "sourceChineseName": "国後附近",
+      "displayName": "国后岛周边海域"
+    },
+    {
+      "code": 187,
+      "sourceName": "択捉島付近",
+      "sourceChineseName": "择捉岛附近",
+      "displayName": "择捉岛周边海域"
+    },
+    {
+      "code": 188,
+      "sourceName": "北海道東方沖",
+      "sourceChineseName": "北海道东方沖",
+      "displayName": "北海道以东海域"
+    },
+    {
+      "code": 189,
+      "sourceName": "根室半島南東沖",
+      "sourceChineseName": "根室半岛东南冲",
+      "displayName": "根室半岛东南海域"
+    },
+    {
+      "code": 190,
+      "sourceName": "釧路沖",
+      "sourceChineseName": "钏路冲",
+      "displayName": "钏路海域"
+    },
+    {
+      "code": 191,
+      "sourceName": "十勝沖",
+      "sourceChineseName": "十腾冲",
+      "displayName": "十胜海域"
+    },
+    {
+      "code": 192,
+      "sourceName": "浦河沖",
+      "sourceChineseName": "浦河冲",
+      "displayName": "浦河海域"
+    },
+    {
+      "code": 193,
+      "sourceName": "苫小牧沖",
+      "sourceChineseName": "占小牧冲",
+      "displayName": "苫小牧海域"
+    },
+    {
+      "code": 194,
+      "sourceName": "内浦湾",
+      "sourceChineseName": "内浦湾",
+      "displayName": "内浦湾"
+    },
+    {
+      "code": 195,
+      "sourceName": "宗谷東方沖",
+      "sourceChineseName": "宗谷东方冲",
+      "displayName": "宗谷以东海域"
+    },
+    {
+      "code": 196,
+      "sourceName": "網走沖",
+      "sourceChineseName": "网走冲",
+      "displayName": "网走海域"
+    },
+    {
+      "code": 197,
+      "sourceName": "択捉島南東沖",
+      "sourceChineseName": "择捉岛南东冲",
+      "displayName": "择捉岛东南海域"
+    },
+    {
+      "code": 280,
+      "sourceName": "津軽海峡",
+      "sourceChineseName": "津轻海峡",
+      "displayName": "津轻海峡"
+    },
+    {
+      "code": 281,
+      "sourceName": "山形県沖",
+      "sourceChineseName": "山形县冲",
+      "displayName": "山形县海域"
+    },
+    {
+      "code": 282,
+      "sourceName": "秋田県沖",
+      "sourceChineseName": "秋田县冲",
+      "displayName": "秋田县海域"
+    },
+    {
+      "code": 283,
+      "sourceName": "青森県西方沖",
+      "sourceChineseName": "青森县西方冲",
+      "displayName": "青森县以西海域"
+    },
+    {
+      "code": 284,
+      "sourceName": "陸奥湾",
+      "sourceChineseName": "陆奥湾",
+      "displayName": "陆奥湾"
+    },
+    {
+      "code": 285,
+      "sourceName": "青森県東方沖",
+      "sourceChineseName": "青森县东方冲",
+      "displayName": "青森县以东海域"
+    },
+    {
+      "code": 286,
+      "sourceName": "岩手県沖",
+      "sourceChineseName": "岩手县冲",
+      "displayName": "岩手县海域"
+    },
+    {
+      "code": 287,
+      "sourceName": "宮城県沖",
+      "sourceChineseName": "宫城县冲",
+      "displayName": "宫城县海域"
+    },
+    {
+      "code": 288,
+      "sourceName": "三陸沖",
+      "sourceChineseName": "三陆冲",
+      "displayName": "三陆海域"
+    },
+    {
+      "code": 289,
+      "sourceName": "福島県沖",
+      "sourceChineseName": "福岛县冲",
+      "displayName": "福岛县海域"
+    },
+    {
+      "code": 309,
+      "sourceName": "千葉県南東沖",
+      "sourceChineseName": "千叶县南东冲",
+      "displayName": "千叶县东南海域"
+    },
+    {
+      "code": 349,
+      "sourceName": "房総半島南方沖",
+      "sourceChineseName": "房总半岛南方冲",
+      "displayName": "房总半岛以南海域"
+    },
+    {
+      "code": 378,
+      "sourceName": "新潟県下越沖",
+      "sourceChineseName": "新泻县下越冲",
+      "displayName": "新泻县下越海域"
+    },
+    {
+      "code": 379,
+      "sourceName": "新潟県上中越沖",
+      "sourceChineseName": "新泻县上中越冲",
+      "displayName": "新泻县上中越海域"
+    },
+    {
+      "code": 469,
+      "sourceName": "三重県南東沖",
+      "sourceChineseName": "三重县南东冲",
+      "displayName": "三重县东南海域"
+    },
+    {
+      "code": 471,
+      "sourceName": "茨城県沖",
+      "sourceChineseName": "茨城县冲",
+      "displayName": "茨城县海域"
+    },
+    {
+      "code": 472,
+      "sourceName": "関東東方沖",
+      "sourceChineseName": "关东东方冲",
+      "displayName": "关东以东海域"
+    },
+    {
+      "code": 473,
+      "sourceName": "千葉県東方沖",
+      "sourceChineseName": "千叶县东方冲",
+      "displayName": "千叶县以东海域"
+    },
+    {
+      "code": 475,
+      "sourceName": "八丈島東方沖",
+      "sourceChineseName": "八丈岛东方冲",
+      "displayName": "八丈岛以东海域"
+    },
+    {
+      "code": 476,
+      "sourceName": "八丈島近海",
+      "sourceChineseName": "八丈岛近海",
+      "displayName": "八丈岛近海"
+    },
+    {
+      "code": 477,
+      "sourceName": "東京湾",
+      "sourceChineseName": "东京湾",
+      "displayName": "东京湾"
+    },
+    {
+      "code": 478,
+      "sourceName": "相模湾",
+      "sourceChineseName": "相模湾",
+      "displayName": "相模湾"
+    },
+    {
+      "code": 480,
+      "sourceName": "伊豆大島近海",
+      "sourceChineseName": "伊豆大岛近海",
+      "displayName": "伊豆大岛近海"
+    },
+    {
+      "code": 481,
+      "sourceName": "伊豆半島東方沖",
+      "sourceChineseName": "伊豆半岛东方冲",
+      "displayName": "伊豆半岛以东海域"
+    },
+    {
+      "code": 482,
+      "sourceName": "三宅島近海",
+      "sourceChineseName": "三宅岛近海",
+      "displayName": "三宅岛近海"
+    },
+    {
+      "code": 483,
+      "sourceName": "新島・神津島近海",
+      "sourceChineseName": "新岛、神津岛近海",
+      "displayName": "新岛、神津岛近海"
+    },
+    {
+      "code": 485,
+      "sourceName": "駿河湾",
+      "sourceChineseName": "骏河湾",
+      "displayName": "骏河湾"
+    },
+    {
+      "code": 486,
+      "sourceName": "駿河湾南方沖",
+      "sourceChineseName": "骏河湾南方冲",
+      "displayName": "骏河湾以南海域"
+    },
+    {
+      "code": 487,
+      "sourceName": "遠州灘",
+      "sourceChineseName": "远州难",
+      "displayName": "远州滩"
+    },
+    {
+      "code": 489,
+      "sourceName": "三河湾",
+      "sourceChineseName": "三河湾",
+      "displayName": "三河湾"
+    },
+    {
+      "code": 490,
+      "sourceName": "伊勢湾",
+      "sourceChineseName": "伊势湾",
+      "displayName": "伊势湾"
+    },
+    {
+      "code": 492,
+      "sourceName": "若狭湾",
+      "sourceChineseName": "若狭湾",
+      "displayName": "若狭湾"
+    },
+    {
+      "code": 493,
+      "sourceName": "福井県沖",
+      "sourceChineseName": "福井县冲",
+      "displayName": "福井县海域"
+    },
+    {
+      "code": 494,
+      "sourceName": "石川県西方沖",
+      "sourceChineseName": "石川县西方冲",
+      "displayName": "石川县以西海域"
+    },
+    {
+      "code": 495,
+      "sourceName": "能登半島沖",
+      "sourceChineseName": "能登半岛冲",
+      "displayName": "能登半岛海域"
+    },
+    {
+      "code": 497,
+      "sourceName": "富山湾",
+      "sourceChineseName": "富山湾",
+      "displayName": "富山湾"
+    },
+    {
+      "code": 498,
+      "sourceName": "佐渡付近",
+      "sourceChineseName": "佐渡附近",
+      "displayName": "佐渡周边海域"
+    },
+    {
+      "code": 499,
+      "sourceName": "東海道南方沖",
+      "sourceChineseName": "东海道南方冲",
+      "displayName": "东海道以南海域"
+    },
+    {
+      "code": 673,
+      "sourceName": "土佐湾",
+      "sourceChineseName": "土佐湾",
+      "displayName": "土佐湾"
+    },
+    {
+      "code": 674,
+      "sourceName": "紀伊水道",
+      "sourceChineseName": "纪伊水道",
+      "displayName": "纪伊水道"
+    },
+    {
+      "code": 675,
+      "sourceName": "大阪湾",
+      "sourceChineseName": "大阪湾",
+      "displayName": "大阪湾"
+    },
+    {
+      "code": 676,
+      "sourceName": "播磨灘",
+      "sourceChineseName": "播磨滩",
+      "displayName": "播磨滩"
+    },
+    {
+      "code": 677,
+      "sourceName": "瀬戸内海中部",
+      "sourceChineseName": "濑户内海中部",
+      "displayName": "濑户内海中部"
+    },
+    {
+      "code": 678,
+      "sourceName": "安芸灘",
+      "sourceChineseName": "安艺滩",
+      "displayName": "安艺滩"
+    },
+    {
+      "code": 679,
+      "sourceName": "周防灘",
+      "sourceChineseName": "周防滩",
+      "displayName": "周防滩"
+    },
+    {
+      "code": 680,
+      "sourceName": "伊予灘",
+      "sourceChineseName": "伊予滩",
+      "displayName": "伊予滩"
+    },
+    {
+      "code": 681,
+      "sourceName": "豊後水道",
+      "sourceChineseName": "丰后水道",
+      "displayName": "丰后水道"
+    },
+    {
+      "code": 682,
+      "sourceName": "山口県北西沖",
+      "sourceChineseName": "山口县北西冲",
+      "displayName": "山口县西北海域"
+    },
+    {
+      "code": 683,
+      "sourceName": "島根県沖",
+      "sourceChineseName": "岛根县冲",
+      "displayName": "岛根县海域"
+    },
+    {
+      "code": 684,
+      "sourceName": "鳥取県沖",
+      "sourceChineseName": "鸟取县冲",
+      "displayName": "鸟取县海域"
+    },
+    {
+      "code": 685,
+      "sourceName": "隠岐島近海",
+      "sourceChineseName": "隐岐岛近海",
+      "displayName": "隐岐岛近海"
+    },
+    {
+      "code": 686,
+      "sourceName": "兵庫県北方沖",
+      "sourceChineseName": "兵库县北方冲",
+      "displayName": "兵库县以北海域"
+    },
+    {
+      "code": 687,
+      "sourceName": "京都府沖",
+      "sourceChineseName": "京都府冲",
+      "displayName": "京都府海域"
+    },
+    {
+      "code": 688,
+      "sourceName": "淡路島付近",
+      "sourceChineseName": "淡路岛附近",
+      "displayName": "淡路岛周边海域"
+    },
+    {
+      "code": 689,
+      "sourceName": "和歌山県南方沖",
+      "sourceChineseName": "和歌山县南方冲",
+      "displayName": "和歌山县以南海域"
+    },
+    {
+      "code": 783,
+      "sourceName": "五島列島近海",
+      "sourceChineseName": "五岛列岛近海",
+      "displayName": "五岛列岛近海"
+    },
+    {
+      "code": 784,
+      "sourceName": "天草灘",
+      "sourceChineseName": "天草滩",
+      "displayName": "天草滩"
+    },
+    {
+      "code": 785,
+      "sourceName": "有明海",
+      "sourceChineseName": "有明海",
+      "displayName": "有明海"
+    },
+    {
+      "code": 786,
+      "sourceName": "橘湾",
+      "sourceChineseName": "橘湾",
+      "displayName": "橘湾"
+    },
+    {
+      "code": 787,
+      "sourceName": "鹿児島湾",
+      "sourceChineseName": "鹿儿岛湾",
+      "displayName": "鹿儿岛湾"
+    },
+    {
+      "code": 790,
+      "sourceName": "種子島近海",
+      "sourceChineseName": "种子岛近海",
+      "displayName": "种子岛近海"
+    },
+    {
+      "code": 791,
+      "sourceName": "日向灘",
+      "sourceChineseName": "日向滩",
+      "displayName": "日向滩"
+    },
+    {
+      "code": 793,
+      "sourceName": "奄美大島近海",
+      "sourceChineseName": "奄美大岛近海",
+      "displayName": "奄美大岛近海"
+    },
+    {
+      "code": 795,
+      "sourceName": "壱岐・対馬近海",
+      "sourceChineseName": "壹岐、对马近海",
+      "displayName": "壹岐、对马近海"
+    },
+    {
+      "code": 796,
+      "sourceName": "福岡県北西沖",
+      "sourceChineseName": "福冈县北西冲",
+      "displayName": "福冈县西北海域"
+    },
+    {
+      "code": 797,
+      "sourceName": "薩摩半島西方沖",
+      "sourceChineseName": "萨摩半岛西方冲",
+      "displayName": "萨摩半岛以西海域"
+    },
+    {
+      "code": 798,
+      "sourceName": "トカラ列島近海",
+      "sourceChineseName": "吐葛剌列岛近海",
+      "displayName": "吐葛剌列岛近海"
+    },
+    {
+      "code": 799,
+      "sourceName": "奄美大島北西沖",
+      "sourceChineseName": "奄美大岛北西冲",
+      "displayName": "奄美大岛西北海域"
+    },
+    {
+      "code": 820,
+      "sourceName": "大隅半島東方沖",
+      "sourceChineseName": "大隅半岛东方冲",
+      "displayName": "大隅半岛以东海域"
+    },
+    {
+      "code": 821,
+      "sourceName": "九州地方南東沖",
+      "sourceChineseName": "九州地方南东冲",
+      "displayName": "九州地方东南海域"
+    },
+    {
+      "code": 822,
+      "sourceName": "種子島南東沖",
+      "sourceChineseName": "种子岛南东冲",
+      "displayName": "种子岛东南海域"
+    },
+    {
+      "code": 823,
+      "sourceName": "奄美大島北東沖",
+      "sourceChineseName": "奄美大岛北东冲",
+      "displayName": "奄美大岛东北海域"
+    },
+    {
+      "code": 850,
+      "sourceName": "沖縄本島近海",
+      "sourceChineseName": "冲绳本岛近海",
+      "displayName": "冲绳本岛近海"
+    },
+    {
+      "code": 851,
+      "sourceName": "南大東島近海",
+      "sourceChineseName": "南大东岛近海",
+      "displayName": "南大东岛近海"
+    },
+    {
+      "code": 852,
+      "sourceName": "沖縄本島南方沖",
+      "sourceChineseName": "冲绳本岛南方冲",
+      "displayName": "冲绳本岛以南海域"
+    },
+    {
+      "code": 853,
+      "sourceName": "宮古島近海",
+      "sourceChineseName": "宫古岛近海",
+      "displayName": "宫古岛近海"
+    },
+    {
+      "code": 854,
+      "sourceName": "石垣島近海",
+      "sourceChineseName": "石垣岛近海",
+      "displayName": "石垣岛近海"
+    },
+    {
+      "code": 855,
+      "sourceName": "石垣島南方沖",
+      "sourceChineseName": "石垣岛南方冲",
+      "displayName": "石垣岛以南海域"
+    },
+    {
+      "code": 856,
+      "sourceName": "西表島付近",
+      "sourceChineseName": "西表岛附近",
+      "displayName": "西表岛周边海域"
+    },
+    {
+      "code": 857,
+      "sourceName": "与那国島近海",
+      "sourceChineseName": "与那国岛近海",
+      "displayName": "与那国岛近海"
+    },
+    {
+      "code": 858,
+      "sourceName": "沖縄本島北西沖",
+      "sourceChineseName": "冲绳书岛北西冲",
+      "displayName": "东海"
+    },
+    {
+      "code": 859,
+      "sourceName": "宮古島北西沖",
+      "sourceChineseName": "宫古岛北西冲",
+      "displayName": "东海"
+    },
+    {
+      "code": 860,
+      "sourceName": "石垣島北西沖",
+      "sourceChineseName": "石垣岛北西冲",
+      "displayName": "东海"
+    },
+    {
+      "code": 901,
+      "sourceName": "東シナ海",
+      "sourceChineseName": "东海",
+      "displayName": "东海"
+    },
+    {
+      "code": 902,
+      "sourceName": "四国沖",
+      "sourceChineseName": "四国冲",
+      "displayName": "四国海域"
+    },
+    {
+      "code": 903,
+      "sourceName": "鳥島近海",
+      "sourceChineseName": "鸟岛近海",
+      "displayName": "鸟岛近海"
+    },
+    {
+      "code": 904,
+      "sourceName": "鳥島東方沖",
+      "sourceChineseName": "鸟岛东方冲",
+      "displayName": "鸟岛以东海域"
+    },
+    {
+      "code": 905,
+      "sourceName": "オホーツク海南部",
+      "sourceChineseName": "鄂霍次克海南部",
+      "displayName": "鄂霍次克海南部"
+    },
+    {
+      "code": 906,
+      "sourceName": "サハリン西方沖",
+      "sourceChineseName": "萨哈林西方冲",
+      "displayName": "萨哈林岛（库页岛）西部海域"
+    },
+    {
+      "code": 907,
+      "sourceName": "日本海北部",
+      "sourceChineseName": "日本海北部",
+      "displayName": "日本海北部"
+    },
+    {
+      "code": 908,
+      "sourceName": "日本海中部",
+      "sourceChineseName": "日本海中部",
+      "displayName": "日本海中部"
+    },
+    {
+      "code": 909,
+      "sourceName": "日本海西部",
+      "sourceChineseName": "日本海西部",
+      "displayName": "日本海西部"
+    },
+    {
+      "code": 911,
+      "sourceName": "父島近海",
+      "sourceChineseName": "父岛近海",
+      "displayName": "父岛近海"
+    },
+    {
+      "code": 913,
+      "sourceName": "千島列島南東沖",
+      "sourceChineseName": "千岛列岛南东冲",
+      "displayName": "千岛列岛东南海域"
+    },
+    {
+      "code": 914,
+      "sourceName": "北海道南東沖",
+      "sourceChineseName": "北海道东南冲",
+      "displayName": "北海道东南海域"
+    },
+    {
+      "code": 915,
+      "sourceName": "東北地方東方沖",
+      "sourceChineseName": "东北地方东方冲",
+      "displayName": "东北地方以东海域"
+    },
+    {
+      "code": 916,
+      "sourceName": "小笠原諸島西方沖",
+      "sourceChineseName": "小笠原诸岛西方冲",
+      "displayName": "小笠原诸岛以西海域"
+    },
+    {
+      "code": 917,
+      "sourceName": "硫黄島近海",
+      "sourceChineseName": "硫黄岛近海",
+      "displayName": "硫黄岛近海"
+    },
+    {
+      "code": 918,
+      "sourceName": "小笠原諸島東方沖",
+      "sourceChineseName": "小笠原诸岛东方冲",
+      "displayName": "小笠原诸岛以东海域"
+    },
+    {
+      "code": 919,
+      "sourceName": "南海道南方沖",
+      "sourceChineseName": "南海道南方冲",
+      "displayName": "南海道以南海域"
+    },
+    {
+      "code": 920,
+      "sourceName": "薩南諸島東方沖",
+      "sourceChineseName": "萨南諸岛东方冲",
+      "displayName": "萨南诸岛以东海域"
+    },
+    {
+      "code": 921,
+      "sourceName": "本州南方沖",
+      "sourceChineseName": "本州南方冲",
+      "displayName": "本州以南海域"
+    },
+    {
+      "code": 939,
+      "sourceName": "サハリン近海",
+      "sourceChineseName": "萨哈林近海",
+      "displayName": "萨哈林岛（库页岛）周边海域"
+    }
+  ],
+  "outputs": {
+    "japan_sea_regions.bin": {
+      "bytes": 52680,
+      "sha256": "173fd6326379620494934d2ab814a632d261ec239fc122e779d7c99bffb4d145"
+    },
+    "diaoyu_baseline_regions.bin": {
+      "bytes": 532,
+      "sha256": "7f39c032c4a2ed232d58b4f941fd22b9178a33d001d831702ed14e6665b67cca"
+    }
+  }
+}

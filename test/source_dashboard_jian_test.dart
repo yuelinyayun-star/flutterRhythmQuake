@@ -108,6 +108,7 @@ void main() {
         const sources = [
           'Wolfx',
           'FAN',
+          'FSSN',
           'WHEWS',
           'Jian Project',
           'NowQuake',
@@ -171,7 +172,14 @@ void main() {
             }
           });
         }
-        final otherLabels = ['Wolfx', 'FAN（未认证）', 'WHEWS', 'NowQuake', 'P2PQ'];
+        final otherLabels = [
+          'Wolfx',
+          'FAN（未认证）',
+          'FSSN',
+          'WHEWS',
+          'NowQuake',
+          'P2PQ',
+        ];
         Rect? previous;
         for (final label in otherLabels) {
           final rect = tester.getRect(find.text(label));
@@ -184,7 +192,9 @@ void main() {
               rect.top > previous.top || rect.left > previous.left,
               isTrue,
             );
-            if (width >= 800) expect(rect.top, closeTo(previous.top, 0.01));
+            if (width >= 800 && otherLabels.indexOf(label) % 5 != 0) {
+              expect(rect.top, closeTo(previous.top, 0.01));
+            }
           }
           previous = rect;
         }
@@ -201,11 +211,17 @@ void main() {
         await tester.pump();
         expect(separate, findsOneWidget);
         expect(find.text('Jian（连接暂不可用）'), findsOneWidget);
-        provider.info = const SourceCredentialInfo(configured: true, errorCode: 'network');
+        provider.info = const SourceCredentialInfo(
+          configured: true,
+          errorCode: 'network',
+        );
         provider.sourceStatusListenable.value++;
         await tester.pump();
         expect(find.text('Jian（鉴权连接失败）'), findsOneWidget);
-        provider.info = const SourceCredentialInfo(configured: true, errorCode: 'conn_limit');
+        provider.info = const SourceCredentialInfo(
+          configured: true,
+          errorCode: 'conn_limit',
+        );
         provider.sourceStatusListenable.value++;
         await tester.pump();
         expect(find.text('Jian（并发已满）'), findsOneWidget);

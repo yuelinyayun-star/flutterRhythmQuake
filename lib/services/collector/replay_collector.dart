@@ -5,31 +5,46 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../core/utils/quake_time.dart';
+import '../../core/utils/replay_event_name.dart';
 import '../../models/eew_display_duration.dart';
 import '../../models/eew_event_group.dart';
 import '../../models/station_history_frame.dart';
 import '../../models/unified_quake_data.dart';
 import '../debug/history_replay.dart';
-import '../debug/station_json_archive.dart';
+import '../native_replay_history_files_io.dart';
+import '../replay_history_files.dart';
 import 'replay_file_export.dart';
-
-(Uint8List, String) _encodeFrames(List<StationHistoryFrame> frames) {
-  final bytes = Uint8List.fromList(
-    GZipCodec(
-      level: 1,
-    ).encode(JsonUtf8Encoder().convert(StationJsonArchive.encode(frames))),
-  );
-  return (bytes, sha256.convert(bytes).toString());
-}
 
 class _Capture {
   _Capture(this.group, this.end, this.directory);
   EewEventGroup group;
   DateTime end;
   final Directory directory;
-  final List<StationHistoryFrame> pending = [];
   final List<String> chunks = [];
+  final List<String> frameFiles = [];
+  final Set<String> frameSet = {};
+  final Set<String> payloadHashes = {};
   bool dirty = true;
+  int revision = 0;
+  void addFrame(String name) {
+    if (!frameSet.add(name)) return;
+    frameFiles.add(name);
+    dirty = true;
+    revision++;
+  }
+}
+
+class _LatestFrame {
+  _LatestFrame(this.name, this.receivedAt, this.kind) : seed = null;
+  _LatestFrame.seed(StationHistoryFrame frame)
+    : name = null,
+      receivedAt = frame.receivedAt,
+      kind = frame.kind,
+      seed = frame;
+  final String? name;
+  final String kind;
+  final DateTime receivedAt;
+  final StationHistoryFrame? seed;
 }
 
 /// Dedicated-process collector. No UI, user preferences or GQ ownership.
@@ -59,7 +74,9 @@ class ReplayCollector {
   final DateTime Function() _now;
   final int maxSpoolBytes;
   final Map<String, _Capture> _active = {};
-  final Map<String, StationHistoryFrame> _latest = {};
+  final Map<String, _LatestFrame> _latest = {};
+  final Set<String> _obsoleteLatest = {};
+  late ReplayHistoryFiles _writer;
   RandomAccessFile? _lock;
   bool _busy = false;
   bool _accepting = true;
@@ -72,15 +89,20 @@ class ReplayCollector {
       '${spool.path}/collector.lock',
     ).open(mode: FileMode.append);
     await _lock!.lock(FileLock.exclusive);
+    _writer = NativeReplayHistoryFiles.supported
+        ? NativeReplayHistoryFiles(spool.absolute.path)
+        : ReplayHistoryFiles(spool.absolute.path);
     await for (final entry in spool.list(followLinks: false)) {
       if (entry is! Directory ||
           !RegExp(
-            r'^[a-f0-9]{64}$',
+            r'^(?:.+_)?[a-f0-9]{64}$',
           ).hasMatch(entry.uri.pathSegments.where((s) => s.isNotEmpty).last)) {
         continue;
       }
       final manifest = File('${entry.path}/event.json');
-      if (!await manifest.exists()) continue;
+      if (!await manifest.exists()) {
+        continue;
+      }
       final value = jsonDecode(await manifest.readAsString()) as Map;
       final group = EewEventGroup.fromMap(value['group'] as Map);
       if (group.reports.any(
@@ -89,10 +111,28 @@ class ReplayCollector {
         throw StateError('GQ and ICL captures are not permitted');
       }
       final capture = _Capture(
-        group,
+        restoreCaptureReports(group, value, entry.path),
         DateTime.parse(value['end'] as String),
         entry,
       )..dirty = false;
+      capture.frameFiles.addAll(
+        (value['frames'] as List? ?? const []).cast<String>().map(
+          validateFrameName,
+        ),
+      );
+      capture.frameSet.addAll(capture.frameFiles);
+      capture.payloadHashes.addAll(
+        (value['payloadHashes'] as List? ?? const []).cast<String>(),
+      );
+      for (final report in group.reports) {
+        if (report.sourcePayload != null) {
+          capture.payloadHashes.add(
+            sha256
+                .convert(JsonUtf8Encoder().convert(report.sourcePayload))
+                .toString(),
+          );
+        }
+      }
       for (final name
           in (value['chunks'] as List? ?? const []).cast<String>()) {
         capture.chunks.add(validateChunkName(name));
@@ -117,7 +157,9 @@ class ReplayCollector {
   }
 
   bool addEvent(UnifiedQuakeData event) {
-    if (!_accepting) throw StateError('Collector is closing');
+    if (!_accepting) {
+      throw StateError('Collector is closing');
+    }
     if (excludedEventSources.contains(event.source) ||
         !event.isEew ||
         event.isReplay ||
@@ -152,12 +194,10 @@ class ReplayCollector {
         return false;
       }
     }
-    if (capture != null &&
-        capture.group.reports.any(
-          (report) =>
-              jsonEncode(report.sourcePayload) ==
-              jsonEncode(event.sourcePayload),
-        )) {
+    final payloadHash = sha256
+        .convert(JsonUtf8Encoder().convert(event.sourcePayload))
+        .toString();
+    if (capture != null && capture.payloadHashes.contains(payloadHash)) {
       return false;
     }
     if (capture == null) {
@@ -171,13 +211,27 @@ class ReplayCollector {
           firstArrivedAt: event.arrivedAt!.toUtc(),
         ),
         _end(event),
-        Directory('${spool.path}/$key'),
+        Directory('${spool.path}/${replayEventName(event)}_$key'),
       );
       _active[key] = capture;
-      for (final frame in _latest.values) {
+      for (final frame in _latest.values.toList()) {
         final age = now.difference(frame.receivedAt);
         final limit = Duration(seconds: frame.kind == 'snet' ? 180 : 90);
-        if (!age.isNegative && age <= limit) capture.pending.add(frame);
+        if (!age.isNegative && age <= limit) {
+          var name = frame.name;
+          if (name == null) {
+            name = _writer.acceptCollectorFrame(
+              '${frame.receivedAt.microsecondsSinceEpoch}_${frame.kind}_',
+              frame.seed!.toMap(),
+            );
+            _latest[frame.kind] = _LatestFrame(
+              name,
+              frame.receivedAt,
+              frame.kind,
+            );
+          }
+          capture.addFrame(name);
+        }
       }
     } else {
       if (capture.group.reports.length >= HistoryReplayPackage.maxReports) {
@@ -187,17 +241,48 @@ class ReplayCollector {
         reports: [event, ...capture.group.reports],
       );
       final end = _end(event);
-      if (end.isAfter(capture.end)) capture.end = end;
+      if (end.isAfter(capture.end)) {
+        capture.end = end;
+      }
       capture.dirty = true;
     }
+    capture.group = saveCaptureReports(
+      capture.group,
+      capture.directory.path,
+      _writer,
+      capture.directory.uri.pathSegments.where((s) => s.isNotEmpty).last,
+    );
+    capture.revision++;
+    capture.dirty = true;
+    capture.payloadHashes.add(payloadHash);
     return true;
   }
 
   void addStation(StationHistoryFrame frame) {
-    if (!_accepting || !stations.contains(frame.kind)) return;
-    _latest[frame.kind] = frame;
-    for (final capture in _active.values) {
-      if (!frame.receivedAt.isAfter(capture.end)) capture.pending.add(frame);
+    if (!_accepting || !stations.contains(frame.kind)) {
+      return;
+    }
+    if (_active.isEmpty) {
+      final previous = _latest[frame.kind]?.name;
+      if (previous != null) _obsoleteLatest.add(previous);
+      // Preserve the existing idle policy: no station files without an event.
+      // At most one seed per enabled kind, never an accumulating frame list.
+      _latest[frame.kind] = _LatestFrame.seed(frame);
+      return;
+    }
+    final name = _writer.acceptCollectorFrame(
+      '${frame.receivedAt.microsecondsSinceEpoch}_${frame.kind}_',
+      frame.toMap(),
+    );
+    final previous = _latest[frame.kind];
+    if (previous?.name != null && previous!.name != name) {
+      _obsoleteLatest.add(previous.name!);
+    }
+    _latest[frame.kind] = _LatestFrame(name, frame.receivedAt, frame.kind);
+    for (final capture in _active.values.toList()) {
+      if (!frame.receivedAt.isAfter(capture.end)) {
+        capture.addFrame(name);
+      }
     }
   }
 
@@ -207,72 +292,62 @@ class ReplayCollector {
     await temporary.rename(file.path);
   }
 
-  Future<void> _checkpoint(
-    _Capture capture,
-    List<StationHistoryFrame> frames,
-    String? chunk,
-  ) async {
+  Future<void> _checkpoint(_Capture capture) async {
     await capture.directory.create(recursive: true);
-    if (capture.dirty || chunk != null) {
+    if (capture.dirty) {
+      await _writer.flushPending();
       final group = capture.group;
       final end = capture.end;
+      final revision = capture.revision;
       await _atomicWrite(
         File('${capture.directory.path}/event.json'),
         jsonEncode({
-          'group': group.toMap(includeStationFrames: false),
+          'folderVersion': 1,
+          'group': group.toMap(includeStationFrames: false, summaryOnly: true),
+          'reports': captureReportIndex(group),
           'end': end.toIso8601String(),
-          'chunks': [...capture.chunks, ?chunk],
+          'chunks': capture.chunks,
+          'frames': capture.frameFiles,
+          'payloadHashes': capture.payloadHashes.toList(),
         }),
       );
-      capture.dirty = !identical(group, capture.group) || capture.end != end;
+      capture.dirty = capture.revision != revision;
     }
-    if (chunk != null) capture.chunks.add(chunk);
-    capture.pending.removeRange(0, frames.length);
   }
 
   Future<void> _checkpointAll() async {
-    // Freeze every window before awaiting: overlapping captures share one batch.
-    final batches = <(List<StationHistoryFrame>, List<_Capture>)>[];
-    for (final capture in _active.values) {
-      final frames = List<StationHistoryFrame>.of(capture.pending);
-      var found = false;
-      for (final batch in batches) {
-        if (batch.$1.length == frames.length &&
-            frames.indexed.every((e) => identical(e.$2, batch.$1[e.$1]))) {
-          batch.$2.add(capture);
-          found = true;
-          break;
-        }
-      }
-      if (!found) batches.add((frames, [capture]));
+    await _writer.flushPending();
+    final now = _now().toUtc();
+    _latest.removeWhere((kind, frame) {
+      final expired =
+          now.difference(frame.receivedAt) >
+          Duration(seconds: kind == 'snet' ? 180 : 90);
+      if (expired && frame.name != null) _obsoleteLatest.add(frame.name!);
+      return expired;
+    });
+    for (final capture in _active.values.toList()) {
+      await _checkpoint(capture);
     }
-    for (final (frames, captures) in batches) {
-      String? name;
-      if (frames.isNotEmpty) {
-        final (bytes, digest) = await compute(_encodeFrames, frames);
-        name =
-            '${frames.first.receivedAt.microsecondsSinceEpoch}_$digest.stations.json.gz';
-        final directory = Directory('${spool.path}/chunks');
-        await directory.create(recursive: true);
-        final file = File('${directory.path}/$name');
-        if (await file.exists()) {
-          if (sha256.convert(await file.readAsBytes()).toString() != digest) {
-            throw StateError('Station chunk collision; capture retained');
-          }
-        } else {
-          final temporary = File('${file.path}.tmp');
-          await temporary.writeAsBytes(bytes, flush: true);
-          await temporary.rename(file.path);
-        }
+    final retained = {
+      for (final capture in _active.values) ...capture.frameFiles,
+      for (final frame in _latest.values)
+        if (frame.name != null) frame.name!,
+    };
+    for (final name in _obsoleteLatest.toList()) {
+      if (!retained.contains(name)) {
+        final file = File('${spool.path}/frames/${validateFrameName(name)}');
+        if (await file.exists()) await file.delete();
       }
-      for (final capture in captures) {
-        await _checkpoint(capture, frames, name);
-      }
+      // Active captures now own their files; a later latest replacement will
+      // re-register its old name. Do not build a second full frame-name queue.
+      _obsoleteLatest.remove(name);
     }
   }
 
   Future<List<File>> tick({bool finalize = true}) async {
-    if (_busy) return const [];
+    if (_busy) {
+      return const [];
+    }
     _busy = true;
     try {
       var usage = 0;
@@ -286,7 +361,9 @@ class ReplayCollector {
               usage += await entity.length();
             } on FileSystemException {
               // The uploader may remove an acknowledged outbox file.
-              if (await entity.exists()) rethrow;
+              if (await entity.exists()) {
+                rethrow;
+              }
             }
           }
         }
@@ -298,7 +375,9 @@ class ReplayCollector {
       await _checkpointAll();
       for (final entry in _active.entries.toList()) {
         final capture = entry.value;
-        if (!finalize || _now().toUtc().isBefore(capture.end)) continue;
+        if (!finalize || _now().toUtc().isBefore(capture.end)) {
+          continue;
+        }
         final savedReportCount = capture.group.reports.length;
         final (path, hash, _) = await compute(exportCaptureFile, (
           capture.directory.path,
@@ -306,14 +385,12 @@ class ReplayCollector {
         ));
         final temporary = File(path);
         // A new report may arrive during encoding and extend the capture.
-        if (capture.dirty ||
-            capture.pending.isNotEmpty ||
-            capture.group.reports.length != savedReportCount) {
+        if (capture.dirty || capture.group.reports.length != savedReportCount) {
           await temporary.delete();
           continue;
         }
         final destination = File(
-          '${output.path}/RhythmQuake_${entry.key}_$hash.rqreplay',
+          '${output.path}/${replayEventName(capture.group.latest)}_$hash.rqreplay',
         );
         if (await destination.exists()) {
           if ((await sha256.bind(destination.openRead()).first).toString() !=
@@ -321,23 +398,38 @@ class ReplayCollector {
             throw StateError('Output name collision; capture retained');
           }
         }
-        if (capture.dirty ||
-            capture.pending.isNotEmpty ||
-            capture.group.reports.length != savedReportCount) {
+        if (capture.dirty || capture.group.reports.length != savedReportCount) {
           await temporary.delete();
           continue;
         }
         // No await in this short commit section: a late report cannot mutate
         // a capture between publication and removal from the active map.
         temporary.renameSync(destination.path);
-        // Delete only this collector's hash-named capture after durable export.
+        // Delete only this collector's capture after durable export.
         capture.directory.deleteSync(recursive: true);
         _active.remove(entry.key);
         final retained = {for (final item in _active.values) ...item.chunks};
         for (final name in capture.chunks) {
           if (!retained.contains(name)) {
             final chunk = File('${spool.path}/chunks/$name');
-            if (chunk.existsSync()) chunk.deleteSync();
+            if (chunk.existsSync()) {
+              chunk.deleteSync();
+            }
+          }
+        }
+        final retainedFrames = {
+          for (final item in _active.values) ...item.frameFiles,
+          for (final frame in _latest.values)
+            if (frame.name != null) frame.name!,
+        };
+        for (final name in capture.frameFiles) {
+          if (!retainedFrames.contains(name)) {
+            final frame = File(
+              '${spool.path}/frames/${validateFrameName(name)}',
+            );
+            if (frame.existsSync()) {
+              frame.deleteSync();
+            }
           }
         }
         completed.add(destination);
@@ -349,11 +441,18 @@ class ReplayCollector {
   }
 
   Future<void> close() async {
+    if (_lock == null) return;
     _accepting = false;
     while (_busy) {
       await Future<void>.delayed(const Duration(milliseconds: 20));
     }
+    _obsoleteLatest.addAll(
+      _latest.values.map((f) => f.name).whereType<String>(),
+    );
+    _latest.clear();
     await tick(finalize: false);
+    await _writer.flushPending();
+    _writer.dispose();
     await _lock?.unlock();
     await _lock?.close();
     _lock = null;

@@ -1,7 +1,9 @@
+import 'package:flutterrhythmquake/services/whews_authorization_policy.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutterrhythmquake/services/sources/whews_station_service.dart';
 
 void main() {
+  setUp(() => WhewsAuthorizationPolicy.storeOverride = MemoryConnectionRetryStore());
   test(
     'KMA optional PGA and PGV retain raw values outside the MMI range',
     () async {

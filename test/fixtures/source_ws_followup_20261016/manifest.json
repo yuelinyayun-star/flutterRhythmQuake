@@ -1,0 +1,105 @@
+[
+  {
+    "source": "kma",
+    "url": "wss://ws.yuelinrhythm.top/kma-station",
+    "ready": true,
+    "frames": [
+      {
+        "file": "kma_00.original.bytes",
+        "bytes": 104,
+        "sha256": "c3cbf344164b100b3a9f3d9ed248c5098f8fd7a0cb4e0406119de4257d8c2703"
+      },
+      {
+        "file": "kma_01.original.bytes",
+        "bytes": 10091,
+        "sha256": "174b477a891b9856881e0aa0f4e93f7ebffd1dd9dac130bceb6331b783fde05d"
+      },
+      {
+        "file": "kma_02.original.bytes",
+        "bytes": 908,
+        "sha256": "d78031c6f3fead696f4d26e67d7d0002a156bb076a187ec0c468f31920d3e31f"
+      },
+      {
+        "file": "kma_03.original.bytes",
+        "bytes": 926,
+        "sha256": "f086bcfdb3123f097a9e0cf0ef925dbdf41d301488a6d4beaeb901ddfa0e091e"
+      },
+      {
+        "file": "kma_04.original.bytes",
+        "bytes": 927,
+        "sha256": "ec25d97911d28782d9f3bdfdf713b5dd9e222702b2df115d56c7841f8b6ed10a"
+      },
+      {
+        "file": "kma_05.original.bytes",
+        "bytes": 904,
+        "sha256": "a4a10016aaa7ec06c9a9838f611487f0cbdfbb63c016d006c4542dded15fe9b0"
+      },
+      {
+        "file": "kma_06.original.bytes",
+        "bytes": 905,
+        "sha256": "bf9100e4077f9f34a437e1de1dd1aec0049e8540b865f29d01f38f727c198d3e"
+      },
+      {
+        "file": "kma_07.original.bytes",
+        "bytes": 907,
+        "sha256": "30b87508fcc4911f1b0a3696d2c24f9f5d6466152c21fb4b9d2521851b8d30c4"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "source": "seisjs",
+    "url": "wss://seisjs.wolfx.jp/all_seis",
+    "ready": true,
+    "frames": [
+      {
+        "file": "seisjs_00.original.bytes",
+        "bytes": 79,
+        "sha256": "09db3f370e023462b88b26fb6896237826f424cad84cb4bdb751e84c44c00ff2"
+      },
+      {
+        "file": "seisjs_01.original.bytes",
+        "bytes": 1352,
+        "sha256": "e8e1e2c4d8956df8f44f3299f30847462b7b12138729a4881bf32f0a057dfa2c"
+      },
+      {
+        "file": "seisjs_02.original.bytes",
+        "bytes": 1329,
+        "sha256": "f1c7f0d6679981960485cbaca091d8b1992659cd1ddb9926d5876ed297069352"
+      },
+      {
+        "file": "seisjs_03.original.bytes",
+        "bytes": 1338,
+        "sha256": "af0ea36309d06fa30ec47c316b936477a1b14bb54638fedfcef3f1d4e6797edf"
+      },
+      {
+        "file": "seisjs_04.original.bytes",
+        "bytes": 1371,
+        "sha256": "f8d0a6dcada3866afbbf76debcb03682cbf00e6151dca3f66c9059d88f5ae982"
+      },
+      {
+        "file": "seisjs_05.original.bytes",
+        "bytes": 1359,
+        "sha256": "bc500558b2b79630087a5aa7c71b61f0bb32e427a68d0922a5969cf494e81e13"
+      },
+      {
+        "file": "seisjs_06.original.bytes",
+        "bytes": 1347,
+        "sha256": "f197c90a939730c2909b067807a56b1e0cc8796b61498bc3a3c4cabf494a410a"
+      },
+      {
+        "file": "seisjs_07.original.bytes",
+        "bytes": 1351,
+        "sha256": "bff51e77d0c9aa748dc7d7aa39cf8fa4fa64e8e07927e7b6569e987ca456924f"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "source": "p2p",
+    "url": "wss://api.p2pquake.net/v2/ws",
+    "ready": true,
+    "frames": [],
+    "errors": []
+  }
+]

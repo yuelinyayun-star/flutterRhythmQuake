@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'native_japan_sea_regions.dart';
+import 'native_east_asia_regions.dart';
 
 /// Loads compact offline data used to turn epicenter coordinates into names.
 class EpicenterRegionService {
@@ -104,6 +106,23 @@ class EpicenterRegionResolver {
     if (!latitude.isFinite || !longitude.isFinite) return null;
     if (latitude < -90 || latitude > 90) return null;
     if (longitude < -180 || longitude > 180) return null;
+    final domestic = NativeJapanSeaRegions.lookup(
+      latitude,
+      longitude,
+      domestic: true,
+    );
+    if (domestic != null) return domestic;
+    if (NativeEastAsiaRegions.supported) {
+      // Geometry is classified against the unchanged vector basemap in Rust.
+      // Old administrative/grid shorelines must not mask the repaired water.
+      final province = NativeEastAsiaRegions.chinaLandName(latitude, longitude);
+      if (province != null) {
+        return _chinaAdmin.lookup(latitude, longitude) ??
+            _china.lookup(latitude, longitude) ??
+            province;
+      }
+      return NativeEastAsiaRegions.lookup(latitude, longitude);
+    }
     final chinaAdmin = _chinaAdmin.lookup(latitude, longitude);
     if (chinaAdmin != null) return chinaAdmin;
 
@@ -113,7 +132,8 @@ class EpicenterRegionResolver {
     // CWA sea polygons overlap a few Japanese islands. Keep Japanese land on
     // the FE grid while still using CWA town/nearshore/sea polygons elsewhere.
     if (_japanLand.lookup(latitude, longitude) != null) return null;
-    return _cwa.lookup(latitude, longitude);
+    return _cwa.lookup(latitude, longitude) ??
+        NativeJapanSeaRegions.lookup(latitude, longitude);
   }
 
   /// China lookup that prefers the most specific place name available.

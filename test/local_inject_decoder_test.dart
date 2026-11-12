@@ -3,17 +3,81 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutterrhythmquake/models/jian_sources.dart';
+import 'package:flutterrhythmquake/models/tsunami_message.dart';
 import 'package:flutterrhythmquake/models/unified_quake_data.dart';
 import 'package:flutterrhythmquake/services/debug/local_inject_decoder.dart';
 import 'package:flutterrhythmquake/services/quake_event_adapter.dart';
 import 'package:flutterrhythmquake/services/sources/mock_input_service.dart';
 import 'package:flutterrhythmquake/services/sources/fan_service.dart';
+import 'package:flutterrhythmquake/services/native_jma_tsunami.dart';
 import 'package:flutterrhythmquake/services/sources/nowquake_cenc_intensity_service.dart';
 
 Object? fixture(String path) =>
     jsonDecode(File('test/fixtures/$path').readAsStringSync());
 
 void main() {
+  test(
+    'complete tsunami Mock model carries real NOAA observations without changing the original detail',
+    () {
+      final raw =
+          fixture('tsunami_regions/ntwc_kamchatka_20250730_B12.original.json')
+              as Map;
+      final input = TsunamiMessage(
+        source: TsunamiSource.ntwc,
+        id: 't06p1k-b12',
+        eventId: 't06p1k',
+        reportNumber: 12,
+        grade: TsunamiGrade.watch,
+        reportTime: '2025-07-30T10:20:48Z',
+        officialDetail: Map<String, dynamic>.from(raw),
+      ).toMap();
+      final before = jsonEncode(input);
+      final batch = LocalInjectDecoder.decode({
+        'format': 'tsunami',
+        'payload': input,
+      });
+      expect(batch.events, isEmpty);
+      expect(batch.tsunamis.length, 1);
+      final result = batch.tsunamis.single;
+      expect(result.officialDetail, raw);
+      expect((result.waveData['stations'] as List).length, 298);
+      expect(
+        (result.waveData['stations'] as List)
+            .where((s) => s['observed'] != null)
+            .length,
+        30,
+      );
+      expect(jsonEncode(input), before);
+    },
+    skip: !NativeJmaTsunami.supported,
+  );
+
+  test(
+    'tsunami injection rejects invalid agency and preserves cancellation',
+    () {
+      expect(
+        () => LocalInjectDecoder.decode({
+          'source': 'unknown',
+          'grade': 'warning',
+        }, format: 'tsunami'),
+        throwsFormatException,
+      );
+      final message = TsunamiMessage(
+        source: TsunamiSource.jma,
+        id: 'mock-cancel',
+        grade: TsunamiGrade.none,
+        reportTime: '2026-10-22T15:00:00Z',
+        bulletinLevel: 'cancellation',
+      ).toMap();
+      expect(
+        LocalInjectDecoder.decode(
+          message,
+          format: 'tsunami',
+        ).tsunamis.single.isCancellation,
+        isTrue,
+      );
+    },
+  );
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
@@ -25,7 +89,14 @@ void main() {
       expect(batch.count, frames.length);
       expect(batch.weatherAlarms.length, 1);
       expect(batch.weatherAlarms.single.apiTypeLabel, localInjectApiName);
-      expect(batch.tsunamis.length, 4);
+      expect(batch.tsunamis.map((message) => message.source).toSet(), {
+        TsunamiSource.nmefc,
+        TsunamiSource.ntwc,
+        TsunamiSource.ptwc,
+        TsunamiSource.incois,
+        TsunamiSource.cat,
+      });
+      expect(batch.tsunamis.length, 5);
       expect(
         batch.events.every((event) => event.source != 'whews_weatheralarm'),
         isTrue,

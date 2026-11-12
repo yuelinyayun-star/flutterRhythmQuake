@@ -9,11 +9,15 @@ OBS、GQ、ICL 或 SeedLink 服务。当前录制对象与应用历史回放一�
 
 最终目标固定为 **Telegram 云盘 / RhythmQuake回放文件夹**。
 
-1. `active/`：事件进行中的本地检查点，测站使用无损 JSON 字典压缩，每 5 秒落盘。
-2. `outbox/`：事件结束后生成的标准 `.rqreplay`，等待上传，不是最终网盘。
+1. `active/`：接收后立即提交独立报文 JSON／独立帧 gzip JSON，重叠窗口共享帧文件；每 5 秒提交轻量事件索引，不再攒完整帧等待检查点。
+2. `outbox/`：事件结束后流式生成 ZIP 格式 `.rqreplay`（v3），等待上传，不是最终网盘。
 3. `upload_telegram.py`：验证实际 TGFS 别名及本机 WebDAV 地址，读取独立私有配置。
 4. 直接 `rclone copyto tgfs:RhythmQuake回放文件夹/...`，绕过 FUSE 异步写缓存。
 5. 经该远端网关重新读回并核对 SHA-256 后，写入回执、删除本地待传包。
+
+新建采集目录及输出包按事件时间（UTC+8）、震中地名、震级、来源、事件编号命名，
+附带校验标识。中文、日文保留，文件名限制按 UTF-8 字节计算。旧哈希目录和旧版
+检查点继续恢复，已有待上传文件仍按原名处理，不改写原始报文或测站读数。
 
 别名不匹配 Telegram、网关失联、上传失败、校验失败都会保留待传文件。
 不会退回本机文件夹，不调用 Telegram `sendDocument` 绕过网盘索引，不替换已有不同内容。
@@ -40,7 +44,7 @@ OBS、GQ、ICL 或 SeedLink 服务。当前录制对象与应用历史回放一�
   后续报文可以延长窗口，不会缩短；同时发生的事件分别保存各自的测站时间段。
 - 重启恢复已有检查点，不补造停机期间的数据。异常断电可能丢失最后约 5 秒未落盘数据。
 - 待传队列或采集中数据达到默认 8 GiB 时停止并报错，不自动丢弃未上传文件。
-- 超过现有回放格式 128 MiB 限制的单个事件会保留检查点并报错，不能声称已经上传。
+- v3 回放包单个报文/帧最多 128 MiB，展开总量最多 64 GiB；超限保留检查点并报错。
 
 ## 构建与运行
 
@@ -61,6 +65,11 @@ flutter pub get
 flutter build linux --release --target lib/main_collector.dart --dart-define=RQ_EDITION=personal
 ```
 
+构建现在需要 Rust/Cargo（对应 `native/station_core/Cargo.lock`）。
+Linux bundle 的 `lib/librq_station_core.so` 负责有界写入队列及文件提交。
+队列按编码字节限流，普通积压上限 8 MiB；超过该值的单个合法帧独占队列，
+单帧仍受 128 MiB 限制。写入失败会显式报错并保留待重试项，不切换旧保存方式。
+
 将专用 bundle 部署到 `/opt/rhythmquake-collector/bundle`，不要覆盖普通客户端 bundle。
 额外运行依赖为 `xvfb`、`xauth`、Python 3、现有 rclone 及 Linux bundle 依赖库。
 无桌面的 Ubuntu 24.04 还需 `libegl1`、`libegl-mesa0`、`libgles2`、
@@ -69,6 +78,8 @@ flutter build linux --release --target lib/main_collector.dart --dart-define=RQ_
 配置目录 `/etc/rhythmquake-collector` 只允许服务用户读取，使用
 `collector.env.example` 中的独立路径。`jian-token` 仅包含 Jian 长期 `rt_` 凭据；
 不要提交到 Git，不要打包进 Flutter，也不要放到公开 Web。
+systemd 同时指定 `XDG_STATE_HOME=/var/lib/rhythmquake-collector/runtime`，
+使鉴权重试记录落在服务可写目录；保留凭据指纹的暂停/退避状态，不通过重启清空。
 
 先只读核对 TG 连接，不会上传：
 

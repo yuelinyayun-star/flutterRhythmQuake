@@ -19,7 +19,7 @@ void main() {
 
     expect(find.text('模拟注入'), findsOneWidget);
     expect(find.byType(TextField), findsNWidgets(5));
-    expect(find.text('本地注入 API'), findsOneWidget);
+    expect(find.text('Mock 模拟注入 API'), findsOneWidget);
     expect(find.byType(DropdownButtonFormField<String>), findsOneWidget);
 
     final dragHandle = find.byKey(const ValueKey('mock-injection-drag-handle'));

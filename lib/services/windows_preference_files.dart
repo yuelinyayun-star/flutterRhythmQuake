@@ -93,6 +93,58 @@ class WindowsPreferenceFiles {
     return record['value'];
   }
 
+  Future<Map<String, dynamic>?> readHistorySnapshot(String key) async {
+    await _load();
+    if (!isHistoryKey(key)) throw ArgumentError.value(key, 'history key');
+    final file = _record(key);
+    if (!await file.exists()) return null;
+    const prefix = '{"snapshot":';
+    final handle = await file.open();
+    try {
+      final bytes = await handle.read(prefix.length);
+      if (ascii.decode(bytes, allowInvalid: true) != prefix) return null;
+    } finally {
+      await handle.close();
+    }
+    // JSON strings escape newlines, so the first physical line contains only
+    // the small snapshot. Cancel the stream before loading the complete body.
+    final line = await file
+        .openRead()
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .first;
+    if (!line.endsWith(',')) {
+      throw const FormatException('Invalid history snapshot header');
+    }
+    final header = jsonDecode('${line.substring(0, line.length - 1)}}') as Map;
+    final snapshot = Map<String, dynamic>.from(header['snapshot'] as Map);
+    if (snapshot['key'] != key) {
+      throw const FormatException('History snapshot key mismatch');
+    }
+    return snapshot;
+  }
+
+  Future<bool> writeHistoryWithSnapshot(
+    String key,
+    String value,
+    Map<String, dynamic> snapshot,
+  ) async {
+    await _load();
+    if (!isHistoryKey(key) || snapshot['key'] != key) {
+      throw ArgumentError.value(key, 'history snapshot key');
+    }
+    final file = _record(key);
+    await file.parent.create(recursive: true);
+    final pending = File('${file.path}.tmp');
+    await pending.writeAsString(
+      '{"snapshot":${jsonEncode(snapshot)},\n"key":${jsonEncode(key)},"value":${jsonEncode(value)}}',
+      encoding: utf8,
+      flush: true,
+    );
+    await pending.rename(file.path);
+    return true;
+  }
+
   Future<bool> setValue(String key, Object value) async {
     final settings = await _load();
     if (isHistoryKey(key)) {

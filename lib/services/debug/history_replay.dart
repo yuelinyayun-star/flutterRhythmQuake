@@ -10,9 +10,10 @@ import '../../models/unified_quake_data.dart';
 import '../../models/eew_display_duration.dart';
 import '../../models/station_history_frame.dart';
 import '../ntp_service.dart';
-import '../quake_event_adapter.dart';
+import '../native_replay_policy.dart';
 import 'station_json_archive.dart';
 import 'station_replay_blocks.dart';
+import 'replay_source_estimation.dart';
 import 'station_archive_storage_web.dart'
     if (dart.library.io) 'station_archive_storage_io.dart'
     as compression;
@@ -35,9 +36,46 @@ class HistoryReplayPackage {
   final bool usesDeviceArrivalTimeZone;
   final List<StationHistoryFrame> stationFrames;
   final StoredStationHistory? storedStations;
+  final StoredReportHistory? storedReports;
   final DateTime? captureEndedAt;
+
+  /// Imported native ZIPs own an extracted temporary directory until unloaded.
+  Future<void> Function()? releaseFiles;
   bool get manualTiming => timing == HistoryReplayTiming.manual;
   bool get usesArrivalTiming => timing == HistoryReplayTiming.arrival;
+  bool get hasFileReports =>
+      storedReports != null &&
+      storedReports!.payloads.values.every((ref) => ref.load != null);
+
+  bool needsHistoryLoading({bool storedSelection = false}) =>
+      NativeReplayPolicy.prepare({
+            'op': 'needsHistory',
+            'hasStoredReports': storedReports != null,
+            'hasFileReports': hasFileReports,
+            'hasStoredStations': storedStations?.frameKeys.isNotEmpty ?? false,
+            'storedSelection': storedSelection,
+          })
+          as bool;
+
+  factory HistoryReplayPackage.files({
+    required String name,
+    required List<UnifiedQuakeData> reports,
+    required StoredReportHistory storedReports,
+    required List<StationHistoryFrame> stationFrames,
+    required List<DateTime?> arrivals,
+    required int omittedReports,
+    DateTime? captureEndedAt,
+  }) => HistoryReplayPackage._validated(
+    name,
+    reports,
+    omittedReports,
+    storedReports: storedReports,
+    stationFrames: stationFrames,
+    arrivalInstants: arrivals,
+    captureEndedAt: captureEndedAt,
+  );
+
+  List<DateTime?> get arrivalInstants => _arrivalInstants;
 
   HistoryReplayPackage._(
     this.name,
@@ -50,6 +88,7 @@ class HistoryReplayPackage {
     this.stationFrames,
     this.captureEndedAt,
     this.storedStations,
+    this.storedReports,
   );
 
   static bool hasPayload(UnifiedQuakeData event) =>
@@ -59,13 +98,14 @@ class HistoryReplayPackage {
     EewEventGroup group, {
     bool hasArchivedStations = false,
   }) {
-    final saved = group.reports.where(hasPayload).toList();
+    final saved = group.reports.where(group.hasReportPayload).toList();
     return HistoryReplayPackage._validated(
       group.latest.hypocenter,
       saved,
       group.reports.length - saved.length,
       stationFrames: group.stationFrames,
       storedStations: group.storedStations,
+      storedReports: group.storedReports,
       captureEndedAt: group.captureEndedAt,
       hasArchivedStations: hasArchivedStations,
     );
@@ -75,18 +115,36 @@ class HistoryReplayPackage {
     return _sourceReportInstant(event) ?? event.arrivedAt?.toUtc();
   }
 
-  static DateTime? _sourceReportInstant(UnifiedQuakeData event) {
-    if (event.reportTime != null) {
-      return QuakeTime.unifiedInstantUtc(event, value: event.reportTime);
-    }
-    final rawTime = QuakeEventAdapter.savedReportTime(
-      event.sourcePayload!,
-      event.timeZone,
+  static DateTime? _sourceReportInstant(
+    UnifiedQuakeData event, [
+    StoredReportHistory? stored,
+  ]) {
+    return reportTiming(event, stored?.payloads[event]).instant;
+  }
+
+  /// Shared by package validation and directory indexes. Rust decides source
+  /// precedence/time conversion and whether an older index needs one raw body.
+  static ({DateTime? instant, bool needsPayload}) reportTiming(
+    UnifiedQuakeData event, [
+    StoredReportPayload? ref,
+  ]) {
+    final result =
+        NativeReplayPolicy.prepare({
+              'op': 'reportInstant',
+              'reportTime': event.reportTime?.toIso8601String(),
+              'timeZone': event.timeZone,
+              'hasStoredRef': ref != null,
+              'storedReportInstant': ref?.reportInstant?.microsecondsSinceEpoch,
+              'sourcePayload': event.sourcePayload,
+            })
+            as Map;
+    final micros = result['micros'] as int?;
+    return (
+      instant: micros == null
+          ? null
+          : DateTime.fromMicrosecondsSinceEpoch(micros, isUtc: true),
+      needsPayload: result['needsPayload'] as bool,
     );
-    if (rawTime != null) {
-      return QuakeTime.unifiedInstantUtc(event, value: rawTime);
-    }
-    return null;
   }
 
   static int _reportNumber(UnifiedQuakeData event) =>
@@ -103,12 +161,18 @@ class HistoryReplayPackage {
     for (var i = 0; i < reports.length; i++) {
       final event = reports[i];
       final time = times[i];
-      if (time == null) return false;
+      if (time == null) {
+        return false;
+      }
       if (event.originTime != null) {
         final age = time.difference(QuakeTime.unifiedInstantUtc(event));
-        if (age.isNegative || age > maxDuration) return false;
+        if (age.isNegative || age > maxDuration) {
+          return false;
+        }
       }
-      if (event.hasReportSequence && _reportNumber(event) > 0) {
+      if (!event.isCanceled &&
+          event.hasReportSequence &&
+          _reportNumber(event) > 0) {
         final key = '${event.source}:${event.eventId}';
         (sequences[key] ??= []).add((_reportNumber(event), time));
       }
@@ -116,7 +180,9 @@ class HistoryReplayPackage {
     for (final sequence in sequences.values) {
       sequence.sort((a, b) => a.$1.compareTo(b.$1));
       for (var i = 1; i < sequence.length; i++) {
-        if (sequence[i].$2.isBefore(sequence[i - 1].$2)) return false;
+        if (sequence[i].$2.isBefore(sequence[i - 1].$2)) {
+          return false;
+        }
       }
     }
     return true;
@@ -130,6 +196,7 @@ class HistoryReplayPackage {
     bool importedLegacy = false,
     List<StationHistoryFrame> stationFrames = const [],
     StoredStationHistory? storedStations,
+    StoredReportHistory? storedReports,
     DateTime? captureEndedAt,
     HistoryReplayTiming? forcedTiming,
     bool hasArchivedStations = false,
@@ -138,7 +205,8 @@ class HistoryReplayPackage {
       throw const FormatException('回放报文数量无效');
     }
     for (final event in reports) {
-      if (!hasPayload(event) ||
+      if ((!hasPayload(event) &&
+              storedReports?.payloads[event]?.isNotEmpty != true) ||
           event.isEmpty ||
           event.source.isEmpty ||
           event.eventId.isEmpty ||
@@ -153,7 +221,9 @@ class HistoryReplayPackage {
         throw const FormatException('回放报文缺少原始数据或事件字段无效');
       }
     }
-    final sourceTimes = reports.map(_sourceReportInstant).toList();
+    final sourceTimes = reports
+        .map((report) => _sourceReportInstant(report, storedReports))
+        .toList();
     final arrivalTimes =
         arrivalInstants ??
         reports.map((event) => event.arrivedAt?.toUtc()).toList();
@@ -193,7 +263,12 @@ class HistoryReplayPackage {
         final time = manual
             ? 0
             : selectedTimes[a.$1]!.compareTo(selectedTimes[b.$1]!);
-        if (time != 0) return time;
+        if (time != 0) {
+          return time;
+        }
+        if (a.$2.isCanceled != b.$2.isCanceled) {
+          return a.$2.isCanceled ? 1 : -1;
+        }
         final number = _reportNumber(a.$2).compareTo(_reportNumber(b.$2));
         return number == 0 ? a.$1.compareTo(b.$1) : number;
       });
@@ -235,6 +310,7 @@ class HistoryReplayPackage {
             ),
       captureEndedAt?.toUtc(),
       storedStations,
+      storedReports,
     );
   }
 
@@ -255,6 +331,7 @@ class HistoryReplayPackage {
         arrivalInstants: _arrivalInstants,
         stationFrames: stationFrames,
         storedStations: storedStations,
+        storedReports: storedReports,
         captureEndedAt: captureEndedAt,
         forcedTiming: timing,
       );
@@ -266,7 +343,9 @@ class HistoryReplayPackage {
       final expiry = QuakeTime.unifiedInstantUtc(
         last,
       ).add(eewDisplayDuration(last));
-      if (expiry.isAfter(end)) end = expiry;
+      if (expiry.isAfter(end)) {
+        end = expiry;
+      }
     }
     if (captureEndedAt != null && captureEndedAt!.isAfter(end)) {
       end = captureEndedAt!;
@@ -275,12 +354,16 @@ class HistoryReplayPackage {
       final stationEnd = StationReplayFrames.describe(
         stationFrames,
       ).last.receivedAt.add(const Duration(seconds: 30));
-      if (stationEnd.isAfter(end)) end = stationEnd;
+      if (stationEnd.isAfter(end)) {
+        end = stationEnd;
+      }
     }
     final storedEnd = storedStations?.lastReceivedAt?.add(
       const Duration(seconds: 30),
     );
-    if (storedEnd != null && storedEnd.isAfter(end)) end = storedEnd;
+    if (storedEnd != null && storedEnd.isAfter(end)) {
+      end = storedEnd;
+    }
     return end.difference(times.first);
   }
 
@@ -289,6 +372,9 @@ class HistoryReplayPackage {
   }
 
   Uint8List encodeBytes() {
+    if (storedReports != null) {
+      throw StateError('Load saved reports before exporting');
+    }
     if (storedStations?.frameKeys.isNotEmpty ?? false) {
       throw StateError('Load saved station data before exporting');
     }
@@ -325,18 +411,23 @@ class HistoryReplayPackage {
   };
 
   /// Shared metadata for regular and incremental native-file exports.
-  Map<String, dynamic> exportMetadata() => {
-    'format': format,
-    'version': version,
-    'name': name,
-    'omittedReports': omittedReports,
-    'arrivalInstantsUtc': _arrivalInstants
-        .map((time) => time?.toUtc().toIso8601String())
-        .toList(),
-    'reports': reports.map((e) => e.toMap()).toList(),
-    if (captureEndedAt != null)
-      'captureEndedAt': captureEndedAt!.toIso8601String(),
-  };
+  Map<String, dynamic> exportMetadata() {
+    if (storedReports != null) {
+      throw StateError('Load saved reports before exporting');
+    }
+    return {
+      'format': format,
+      'version': version,
+      'name': name,
+      'omittedReports': omittedReports,
+      'arrivalInstantsUtc': _arrivalInstants
+          .map((time) => time?.toUtc().toIso8601String())
+          .toList(),
+      'reports': reports.map((e) => e.toMap()).toList(),
+      if (captureEndedAt != null)
+        'captureEndedAt': captureEndedAt!.toIso8601String(),
+    };
+  }
 
   factory HistoryReplayPackage.decode(String text) {
     if (utf8.encode(text).length > maxBytes) {
@@ -363,7 +454,9 @@ class HistoryReplayPackage {
           throw const FormatException('接收时间元数据无效');
         }
         arrivalInstants = arrivals.map<DateTime?>((time) {
-          if (time == null) return null;
+          if (time == null) {
+            return null;
+          }
           final instant = time is String ? DateTime.tryParse(time) : null;
           if (instant == null || !instant.isUtc) {
             throw const FormatException('接收时间必须标明 UTC 或时区');
@@ -412,6 +505,8 @@ class _ReplayPlan {
   final int skipped;
   final bool missingAnchorTime;
   final bool usesArrivalTiming;
+  final Map<UnifiedQuakeData, Future<UnifiedQuakeData> Function()>
+  reportReaders;
 
   _ReplayPlan({
     required this.reports,
@@ -424,6 +519,7 @@ class _ReplayPlan {
     this.skipped = 0,
     this.missingAnchorTime = false,
     this.usesArrivalTiming = false,
+    this.reportReaders = const {},
   });
 
   factory _ReplayPlan.single(
@@ -442,6 +538,12 @@ class _ReplayPlan {
     eventCount: 1,
     missingAnchorTime: missingAnchorTime,
     usesArrivalTiming: package.usesArrivalTiming,
+    reportReaders: {
+      for (final entry
+          in package.storedReports?.payloads.entries ??
+              const <MapEntry<UnifiedQuakeData, StoredReportPayload>>[])
+        if (entry.value.load != null) entry.key: entry.value.load!,
+    },
   );
 
   factory _ReplayPlan.linked(
@@ -467,7 +569,9 @@ class _ReplayPlan {
     final seen = {primary.identity};
     // Match the clicked event's window, not an unbounded chain of overlaps.
     for (final candidate in candidates) {
-      if (seen.contains(candidate.identity)) continue;
+      if (seen.contains(candidate.identity)) {
+        continue;
+      }
       try {
         final timed = candidate._withTiming(basis);
         seen.add(candidate.identity);
@@ -483,11 +587,21 @@ class _ReplayPlan {
     final frames = <String, StationReplayEntry>{};
     final releases = <void Function()>[];
     final expiries = <(HistoryReplayPackage, DateTime)>[];
+    final readers = <UnifiedQuakeData, Future<UnifiedQuakeData> Function()>{};
     var end = anchorEnd;
     for (final package in selected) {
+      for (final entry
+          in package.storedReports?.payloads.entries ??
+              const <MapEntry<UnifiedQuakeData, StoredReportPayload>>[]) {
+        if (entry.value.load != null) {
+          readers[entry.key] = entry.value.load!;
+        }
+      }
       final expiry = package.times.first.add(package.playbackDuration);
       expiries.add((package, expiry));
-      if (expiry.isAfter(end)) end = expiry;
+      if (expiry.isAfter(end)) {
+        end = expiry;
+      }
       final initial = <String, UnifiedQuakeData>{};
       for (var i = 0; i < package.reports.length; i++) {
         final report = package.reports[i];
@@ -508,9 +622,27 @@ class _ReplayPlan {
         final previous = frames[key];
         if (previous != null &&
             (previous.identity != frame.identity || frame.identity == null)) {
-          if (jsonEncode(previous.load().toMap()) !=
-              jsonEncode(frame.load().toMap())) {
-            throw const FormatException('联动回放的同一时刻测站记录冲突');
+          if (previous.filePath != null || frame.filePath != null) {
+            frames[key] = StationReplayEntry.file(
+              frame.receivedAt,
+              frame.kind,
+              '${previous.identity}:${frame.identity}',
+              filePath: null,
+              load: () async {
+                final a = await previous.loadAsync();
+                final b = await frame.loadAsync();
+                if (jsonEncode(a.toMap()) != jsonEncode(b.toMap())) {
+                  throw const FormatException('联动回放的同一时刻测站记录冲突');
+                }
+                return a;
+              },
+            );
+            continue;
+          } else {
+            if (jsonEncode(previous.load().toMap()) !=
+                jsonEncode(frame.load().toMap())) {
+              throw const FormatException('联动回放的同一时刻测站记录冲突');
+            }
           }
         }
         frames[key] = previous ?? frame;
@@ -535,6 +667,7 @@ class _ReplayPlan {
       eventCount: selected.length,
       skipped: skipped,
       usesArrivalTiming: basis == HistoryReplayTiming.arrival,
+      reportReaders: readers,
     );
   }
 }
@@ -563,6 +696,12 @@ class HistoryReplayController extends ChangeNotifier {
   String? _session;
   Timer? _timer;
   Timer? _stationTimer;
+  Timer? _stationPublishTimer;
+  bool _stationDelivering = false;
+  static const _stationUiPublishInterval = Duration(milliseconds: 80);
+  Map<String, StationHistoryFrame> _stationDisplayCurrent = const {};
+  Map<String, StationHistoryFrame>? _pendingStationSnapshot;
+  DateTime? _lastStationSnapshotPublishedAt;
   String? playbackError;
   final List<Timer> _expiryTimers = [];
   final Map<String, HistoryReplayPackage> _imports = {};
@@ -586,16 +725,22 @@ class HistoryReplayController extends ChangeNotifier {
       List.unmodifiable(_imports.values);
 
   void restoreTimelineLinked(bool value) {
-    if (_timelineSettingChanged || _timelineLinked == value) return;
+    if (_timelineSettingChanged || _timelineLinked == value) {
+      return;
+    }
     _timelineLinked = value;
     notifyListeners();
   }
 
   void setTimelineLinked(bool value) {
-    if (_timelineLinked == value) return;
+    if (_timelineLinked == value) {
+      return;
+    }
     _timelineSettingChanged = true;
     _timelineLinked = value;
-    if (!active) _plan = null;
+    if (!active) {
+      _plan = null;
+    }
     notifyListeners();
     unawaited(
       SharedPreferences.getInstance()
@@ -611,8 +756,14 @@ class HistoryReplayController extends ChangeNotifier {
   }
 
   void importPackages(List<HistoryReplayPackage> values) {
-    if (values.isEmpty) return;
+    if (values.isEmpty) {
+      return;
+    }
     for (final value in values) {
+      final previous = _imports[value.identity];
+      if (previous != null && !identical(previous, value)) {
+        unawaited(previous.releaseFiles?.call());
+      }
       _imports[value.identity] = value;
     }
     load(values.first);
@@ -625,6 +776,7 @@ class HistoryReplayController extends ChangeNotifier {
   int _sequence = 0;
   int played = 0;
   Duration _clockOffset = Duration.zero;
+  Duration get clockOffset => _clockOffset;
   DateTime get position => now().subtract(_clockOffset);
   bool get active => _session != null;
   bool get holding => active && played == totalReports;
@@ -636,8 +788,12 @@ class HistoryReplayController extends ChangeNotifier {
     EewEventGroup? storedGroup,
   }) {
     stop();
-    if (remember) _imports[value.identity] = value;
-    if (relatedHistory != null) _relatedHistory = relatedHistory;
+    if (remember) {
+      _imports[value.identity] = value;
+    }
+    if (relatedHistory != null) {
+      _relatedHistory = relatedHistory;
+    }
     _package = value;
     _storedAnchor = storedGroup;
     _plan = null;
@@ -647,6 +803,45 @@ class HistoryReplayController extends ChangeNotifier {
 
   int _preparation = 0;
   bool preparing = false;
+
+  /// Keep only the provider's current summaries while a local selection is idle.
+  /// In-flight playback owns its originals through _plan until stop().
+  void refreshStoredSelection() {
+    final groups = historyGroups?.call();
+    if (groups == null) {
+      return;
+    }
+    _relatedHistory = List.unmodifiable(groups);
+    final anchor = _storedAnchor;
+    if (anchor == null) {
+      return;
+    }
+    final current = _findStoredAnchor(anchor, _relatedHistory);
+    if (current != null) {
+      _storedAnchor = current;
+    }
+    if (active || preparing) {
+      return;
+    }
+    _storedAnchor = current;
+    _package = current == null || current.savedReportCount == 0
+        ? null
+        : HistoryReplayPackage.fromGroup(current);
+    notifyListeners();
+  }
+
+  EewEventGroup? _findStoredAnchor(
+    EewEventGroup anchor,
+    Iterable<EewEventGroup> groups,
+  ) {
+    for (final group in groups) {
+      if (group.eventId == anchor.eventId &&
+          group.latest.source == anchor.latest.source) {
+        return group;
+      }
+    }
+    return null;
+  }
 
   Future<void> playPrepared() async {
     final loader = loadHistoryGroup;
@@ -659,11 +854,15 @@ class HistoryReplayController extends ChangeNotifier {
     preparing = true;
     notifyListeners();
     try {
-      if (value.storedStations?.frameKeys.isNotEmpty ?? false) {
+      if (value.needsHistoryLoading(storedSelection: _storedAnchor != null)) {
         final anchor = _storedAnchor;
-        if (anchor == null) throw StateError('Missing saved replay selection');
+        if (anchor == null) {
+          throw StateError('Missing saved replay selection');
+        }
         final loaded = await loader(anchor);
-        if (_preparation != generation) return;
+        if (_preparation != generation) {
+          return;
+        }
         value = HistoryReplayPackage.fromGroup(loaded);
         _package = value;
       }
@@ -697,7 +896,9 @@ class HistoryReplayController extends ChangeNotifier {
           continue;
         }
         prepared.add(await loader(entry.value));
-        if (_preparation != generation) return;
+        if (_preparation != generation) {
+          return;
+        }
       }
       if (_preparation == generation) {
         play(preparedHistory: prepared, preparedSkipped: preview.skipped);
@@ -712,7 +913,9 @@ class HistoryReplayController extends ChangeNotifier {
 
   void play({List<EewEventGroup>? preparedHistory, int preparedSkipped = 0}) {
     final value = package;
-    if (value == null) return;
+    if (value == null) {
+      return;
+    }
     var skipped = preparedSkipped;
     final candidates = <HistoryReplayPackage>[];
     if (timelineLinked) {
@@ -729,10 +932,8 @@ class HistoryReplayController extends ChangeNotifier {
     final plan = timelineLinked
         ? _ReplayPlan.linked(value, candidates, skipped: skipped)
         : _ReplayPlan.single(value);
-    if ((value.storedStations?.frameKeys.isNotEmpty ?? false) ||
-        plan.expiries.any(
-          (entry) => entry.$1.storedStations?.frameKeys.isNotEmpty ?? false,
-        )) {
+    if (value.needsHistoryLoading() ||
+        plan.expiries.any((entry) => entry.$1.needsHistoryLoading())) {
       throw StateError('Load saved station data before playback');
     }
     stop();
@@ -744,29 +945,46 @@ class HistoryReplayController extends ChangeNotifier {
     played = 0;
     final clockOffset = started.difference(plan.start);
     _clockOffset = clockOffset;
+    ReplaySourceEstimation.instance.start(session, () => position);
     var stationIndex = 0;
     final stationEntries = StationReplayFrames.describe(
       plan.stationFrames,
     ).toList();
-    void deliverStations() {
-      if (_session != session) return;
+    Future<void> deliverStations() async {
+      if (_session != session) {
+        return;
+      }
+      _stationDelivering = true;
       final current = Map<String, StationHistoryFrame>.of(
-        stationSnapshots.value,
+        _stationDisplayCurrent,
       );
       final position = now().subtract(clockOffset);
       try {
         while (stationIndex < stationEntries.length &&
             !stationEntries[stationIndex].receivedAt.isAfter(position)) {
-          final frame = stationEntries[stationIndex++].load();
+          final entry = stationEntries[stationIndex++];
+          final frame = entry.cachedFrame ?? await entry.loadAsync();
+          if (_session != session) {
+            return;
+          }
+          unawaited(ReplaySourceEstimation.instance.processEntry(entry));
           current[frame.kind] = frame;
         }
       } catch (error) {
+        if (_session != session) {
+          return;
+        }
         stop();
         playbackError = '回放失败：$error';
         notifyListeners();
         return;
+      } finally {
+        if (_session == session) {
+          _stationDelivering = false;
+        }
       }
-      stationSnapshots.value = Map.unmodifiable(current);
+      _stationDisplayCurrent = current;
+      _queueStationSnapshotPublish(session);
       if (_session != session || stationIndex == plan.stationFrames.length) {
         return;
       }
@@ -778,11 +996,52 @@ class HistoryReplayController extends ChangeNotifier {
       );
     }
 
-    deliverStations();
-    if (_session != session) return;
-    void deliver() {
-      if (_session != session) return;
-      final report = plan.reports[played].$1;
+    unawaited(deliverStations());
+    if (_session != session) {
+      return;
+    }
+    void finishAfterInference() {
+      if (_session != session) {
+        return;
+      }
+      if (_stationDelivering ||
+          stationIndex < stationEntries.length ||
+          !ReplaySourceEstimation.instance.isIdle) {
+        _timer = Timer(const Duration(milliseconds: 100), finishAfterInference);
+        return;
+      }
+      stop();
+    }
+
+    var deliveringReport = false;
+    void deliver() async {
+      if (_session != session) {
+        return;
+      }
+      if (deliveringReport) {
+        return;
+      }
+      deliveringReport = true;
+      var report = plan.reports[played].$1;
+      try {
+        final reader = plan.reportReaders[report];
+        if (reader != null) {
+          report = await reader();
+        }
+      } catch (error) {
+        if (_session != session) {
+          return;
+        }
+        stop();
+        playbackError = '回放报文读取失败：$error';
+        notifyListeners();
+        return;
+      } finally {
+        deliveringReport = false;
+      }
+      if (_session != session) {
+        return;
+      }
       onReport(
         report.copyWith(
           eventId: '$session:${report.eventId}',
@@ -791,20 +1050,24 @@ class HistoryReplayController extends ChangeNotifier {
           arrivedAt: now(),
           isHistory: false,
           isSnapshot: false,
-          apiTypeLabel: '本地注入 · 回放',
+          apiTypeLabel: 'Mock · 回放',
         ),
       );
-      if (_session != session) return;
+      if (_session != session) {
+        return;
+      }
       played++;
       notifyListeners();
-      if (_session != session) return;
+      if (_session != session) {
+        return;
+      }
       if (played == plan.reports.length) {
         final remaining = plan.end.add(clockOffset).difference(now());
         _timer = Timer(
           remaining < const Duration(seconds: 30)
               ? const Duration(seconds: 30)
               : remaining,
-          stop,
+          finishAfterInference,
         );
       } else if (!plan.manual) {
         final due = started.add(plan.reports[played].$2.difference(plan.start));
@@ -819,13 +1082,17 @@ class HistoryReplayController extends ChangeNotifier {
       for (final expiry in plan.expiries) {
         _expiryTimers.add(
           Timer(expiry.$2.add(clockOffset).difference(now()), () {
-            if (_session != session) return;
+            if (_session != session) {
+              return;
+            }
             final latest = <String, UnifiedQuakeData>{};
             for (final report in expiry.$1.reports) {
               latest[jsonEncode([report.source, report.eventId])] = report;
             }
             for (final report in latest.values) {
-              if (_session != session) return;
+              if (_session != session) {
+                return;
+              }
               onEventExpired!(session, report);
             }
           }),
@@ -835,7 +1102,9 @@ class HistoryReplayController extends ChangeNotifier {
   }
 
   void next() {
-    if (active && _plan!.manual && !holding) _advance?.call();
+    if (active && _plan!.manual && !holding) {
+      _advance?.call();
+    }
   }
 
   void stop() {
@@ -845,18 +1114,38 @@ class HistoryReplayController extends ChangeNotifier {
     _timer = null;
     _stationTimer?.cancel();
     _stationTimer = null;
+    _stationPublishTimer?.cancel();
+    _stationPublishTimer = null;
+    _stationDelivering = false;
     for (final timer in _expiryTimers) {
       timer.cancel();
     }
     _expiryTimers.clear();
     _advance = null;
     final frames = _plan?.stationFrames;
-    if (frames is StationReplayFrames) frames.release();
+    if (frames is StationReplayFrames) {
+      frames.release();
+    }
     _plan = null;
-    final anchor = _storedAnchor;
-    if (anchor != null) _package = HistoryReplayPackage.fromGroup(anchor);
     final session = _session;
     _session = null;
+    if (session != null && ReplaySourceEstimation.instance.session == session) {
+      ReplaySourceEstimation.instance.stop();
+    }
+    final anchor = _storedAnchor;
+    if (anchor != null) {
+      if (historyGroups != null) {
+        _relatedHistory = List.unmodifiable(historyGroups!.call());
+        _storedAnchor = _findStoredAnchor(anchor, _relatedHistory);
+      }
+      final current = _storedAnchor;
+      _package = current == null || current.savedReportCount == 0
+          ? null
+          : HistoryReplayPackage.fromGroup(current);
+    }
+    _stationDisplayCurrent = const {};
+    _pendingStationSnapshot = null;
+    _lastStationSnapshotPublishedAt = null;
     stationSnapshots.value = const {};
     if (session != null) {
       onClear(session);
@@ -864,24 +1153,81 @@ class HistoryReplayController extends ChangeNotifier {
     }
   }
 
+  void _queueStationSnapshotPublish(String session) {
+    if (_session != session) {
+      return;
+    }
+    _pendingStationSnapshot = Map.unmodifiable(_stationDisplayCurrent);
+    final current = now();
+    final last = _lastStationSnapshotPublishedAt;
+    final elapsed = last == null
+        ? _stationUiPublishInterval
+        : current.difference(last);
+    if (last == null || elapsed >= _stationUiPublishInterval) {
+      _publishStationSnapshot(session);
+      return;
+    }
+    if (_stationPublishTimer != null) {
+      return;
+    }
+    _stationPublishTimer = Timer(
+      _stationUiPublishInterval - elapsed,
+      () => _publishStationSnapshot(session),
+    );
+  }
+
+  void _publishStationSnapshot(String session) {
+    _stationPublishTimer = null;
+    if (_session != session) {
+      return;
+    }
+    final snapshot = _pendingStationSnapshot;
+    if (snapshot == null) {
+      return;
+    }
+    _pendingStationSnapshot = null;
+    _lastStationSnapshotPublishedAt = now();
+    stationSnapshots.value = snapshot;
+  }
+
   @override
   void dispose() {
     final frames = _plan?.stationFrames;
-    if (frames is StationReplayFrames) frames.release();
+    if (frames is StationReplayFrames) {
+      frames.release();
+    }
     _preparation++;
+    preparing = false;
     _timer?.cancel();
+    _timer = null;
     _stationTimer?.cancel();
+    _stationTimer = null;
+    _stationPublishTimer?.cancel();
+    _stationPublishTimer = null;
+    _stationDelivering = false;
     for (final timer in _expiryTimers) {
       timer.cancel();
     }
     _expiryTimers.clear();
+    final session = _session;
+    _session = null;
+    // Dispose only this controller's inference owner. A newer replay may have
+    // taken over; do not invoke stop() and its history/onClear UI side effects.
+    if (session != null && ReplaySourceEstimation.instance.session == session) {
+      ReplaySourceEstimation.instance.stop();
+    }
+    _stationDisplayCurrent = const {};
+    _pendingStationSnapshot = null;
+    _lastStationSnapshotPublishedAt = null;
     stationSnapshots.dispose();
     _advance = null;
-    _session = null;
     _plan = null;
     _package = null;
     _storedAnchor = null;
     _relatedHistory = const [];
+    for (final package in _imports.values.toSet()) {
+      unawaited(package.releaseFiles?.call());
+    }
     _imports.clear();
     super.dispose();
   }

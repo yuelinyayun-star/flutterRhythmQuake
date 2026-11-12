@@ -15,6 +15,7 @@ import 'cmt_moment_tensor.dart';
 import 'cmt_solution_metadata.dart';
 import 'volcano_event_data.dart';
 import 'jma_lpgm_bulletin.dart';
+import '../services/native_jma_eew.dart';
 
 class UnifiedQuakeData {
   final String source;
@@ -26,6 +27,11 @@ class UnifiedQuakeData {
   final String reportNumText;
   final bool useShindo;
   final String maxIntensity;
+
+  /// Derived badge value kept in lightweight history summaries only. The
+  /// reported intensity and original payload remain unchanged.
+  final String? displayEstimatedIntensity;
+  final bool displayEstimateResolved;
   final String className;
   final String hypocenter;
   final DateTime? originTime;
@@ -86,6 +92,8 @@ class UnifiedQuakeData {
     required this.reportNumText,
     required this.useShindo,
     required this.maxIntensity,
+    this.displayEstimatedIntensity,
+    this.displayEstimateResolved = false,
     required this.className,
     required this.hypocenter,
     this.originTime,
@@ -136,11 +144,69 @@ class UnifiedQuakeData {
 
   bool get isEmpty => origin == -1;
 
+  static final _longPeriodClasses = Expando<({int? value})>();
+
+  /// Read-only EEW display metadata. Never becomes ordinary intensity/isWarn.
+  int? get eewLongPeriodClass {
+    if (source != 'jmaEew' || !isEew) return null;
+    final cached = _longPeriodClasses[this];
+    if (cached != null) return cached.value;
+    final raw = sourcePayload;
+    // Local Mock injection retains the original WHEWS/JIAN envelope in
+    // sourcePayload. Read its Data body without changing the stored report.
+    final data = raw?['Data'] is Map ? raw!['Data'] as Map : raw;
+    final value = NativeJmaEew.longPeriodClass(
+      source: source,
+      isEew: isEew,
+      value: data?.containsKey('maxLgInt') == true
+          ? data!['maxLgInt']
+          : data?['lgIntensity'],
+    );
+    final displayValue = value != null && value >= 1 ? value : null;
+    _longPeriodClasses[this] = (value: displayValue);
+    return displayValue;
+  }
+
+  /// Presentation metadata only; PLUM keeps all existing EEW behavior.
+  bool get isJmaPlumEew => source == 'jmaEew' && isEew && isAssumption;
+  static const plumAssumedHypocenterLabel = 'PLUM所得假定震源';
+  String get displayTitleText => isJmaPlumEew && !titleText.contains('PLUM')
+      ? '$titleText（PLUM）'
+      : titleText;
+  String? get plumMissingParametersText =>
+      isJmaPlumEew &&
+          (!magnitude.isFinite || magnitude < 0 || !depth.isFinite || depth < 0)
+      ? plumAssumedHypocenterLabel
+      : null;
+
   bool get isRed =>
       className == 'red' || className == 'dark-red' || className == 'purple';
   bool get isOrange => className == 'orange' || className == 'dark-orange';
   bool get isDarkGray => className == 'dark-gray';
   bool get isVolcanoEvent => volcanoEvent != null;
+
+  /// Source review metadata stays in the original payload across handoff.
+  /// Read it before display titles, which may only name the reporting agency.
+  String? get reviewType {
+    final statuses = [
+      if (apiTypeLabel == 'Jian Project') sourcePayload?['infoTypeName'],
+      '$reportNumText $titleText',
+    ];
+    for (final status in statuses) {
+      final text = status?.toString().toLowerCase() ?? '';
+      if (text.contains('自动') ||
+          text.contains('待核实') ||
+          RegExp(r'\b(automatic|unverified)\b').hasMatch(text)) {
+        return 'automatic';
+      }
+      if (text.contains('正式') ||
+          text.contains('已核实') ||
+          RegExp(r'\b(reviewed|confirmed)\b').hasMatch(text)) {
+        return 'reviewed';
+      }
+    }
+    return null;
+  }
 
   /// 跨 isolate 传递统一事件时使用的结构化表示。
   ///
@@ -156,6 +222,9 @@ class UnifiedQuakeData {
     'reportNumText': reportNumText,
     'useShindo': useShindo,
     'maxIntensity': maxIntensity,
+    if (displayEstimatedIntensity != null)
+      'displayEstimatedIntensity': displayEstimatedIntensity,
+    if (displayEstimateResolved) 'displayEstimateResolved': true,
     'className': className,
     'hypocenter': hypocenter,
     'originTime': originTime?.toIso8601String(),
@@ -188,7 +257,10 @@ class UnifiedQuakeData {
     'sourcePayload': sourcePayload,
   };
 
-  factory UnifiedQuakeData.fromMap(Map<String, dynamic> map) {
+  factory UnifiedQuakeData.fromMap(
+    Map<String, dynamic> map, {
+    bool compactHistoricalPayload = false,
+  }) {
     DateTime? parseTime(Object? value) {
       final text = value?.toString();
       if (text == null || text.trim().isEmpty) return null;
@@ -217,6 +289,8 @@ class UnifiedQuakeData {
       reportNumText: map['reportNumText']?.toString() ?? '',
       useShindo: map['useShindo'] == true,
       maxIntensity: map['maxIntensity']?.toString() ?? '-',
+      displayEstimatedIntensity: map['displayEstimatedIntensity']?.toString(),
+      displayEstimateResolved: map['displayEstimateResolved'] == true,
       className: map['className']?.toString() ?? 'gray',
       hypocenter: map['hypocenter']?.toString() ?? '',
       originTime: parseTime(map['originTime']),
@@ -229,7 +303,16 @@ class UnifiedQuakeData {
       isWarn: map['isWarn'] == true,
       isFinal: map['isFinal'] == true,
       isCanceled: map['isCanceled'] == true,
-      isAssumption: map['isAssumption'] == true,
+      isAssumption: map['source'] == 'jmaEew' && map['isEew'] == true
+          ? NativeJmaEew.isPlum(
+              source: 'jmaEew',
+              isEew: true,
+              isAssumption: map['isAssumption'] == true,
+              wireIsPlum:
+                  map['sourcePayload'] is Map &&
+                  (map['sourcePayload'] as Map)['isPLUM'] == true,
+            )
+          : map['isAssumption'] == true,
       warnArea: map['warnArea']?.toString() ?? '',
       apiTypeLabel: map['apiTypeLabel']?.toString() ?? '',
       nodalPlane1: map['nodalPlane1']?.toString(),
@@ -265,7 +348,9 @@ class UnifiedQuakeData {
       hasReportSequence: map['hasReportSequence'] != false,
       useSourceTimeForExpiry: map['useSourceTimeForExpiry'] == true,
       sourcePayload: map['sourcePayload'] is Map
-          ? snapshotSourcePayload(
+          ? (compactHistoricalPayload && map['source'] == 'globalQuakeEew'
+                ? compactSourcePayload
+                : snapshotSourcePayload)(
               Map<String, dynamic>.from(map['sourcePayload'] as Map),
             )
           : null,
@@ -282,6 +367,8 @@ class UnifiedQuakeData {
     String? reportNumText,
     bool? useShindo,
     String? maxIntensity,
+    String? displayEstimatedIntensity,
+    bool? displayEstimateResolved,
     String? className,
     String? hypocenter,
     DateTime? originTime,
@@ -312,6 +399,7 @@ class UnifiedQuakeData {
     bool? hasReportSequence,
     bool? useSourceTimeForExpiry,
     Map<String, dynamic>? sourcePayload,
+    bool clearSourcePayload = false,
     String? replaySessionId,
     Duration? replayClockOffset,
   }) {
@@ -325,6 +413,10 @@ class UnifiedQuakeData {
       reportNumText: reportNumText ?? this.reportNumText,
       useShindo: useShindo ?? this.useShindo,
       maxIntensity: maxIntensity ?? this.maxIntensity,
+      displayEstimatedIntensity:
+          displayEstimatedIntensity ?? this.displayEstimatedIntensity,
+      displayEstimateResolved:
+          displayEstimateResolved ?? this.displayEstimateResolved,
       className: className ?? this.className,
       hypocenter: hypocenter ?? this.hypocenter,
       originTime: originTime ?? this.originTime,
@@ -355,7 +447,9 @@ class UnifiedQuakeData {
       hasReportSequence: hasReportSequence ?? this.hasReportSequence,
       useSourceTimeForExpiry:
           useSourceTimeForExpiry ?? this.useSourceTimeForExpiry,
-      sourcePayload: sourcePayload ?? this.sourcePayload,
+      sourcePayload: clearSourcePayload
+          ? null
+          : sourcePayload ?? this.sourcePayload,
       replaySessionId: replaySessionId ?? this.replaySessionId,
       replayClockOffset: replayClockOffset ?? this.replayClockOffset,
     );

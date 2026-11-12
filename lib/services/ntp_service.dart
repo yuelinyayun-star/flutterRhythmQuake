@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:convert';
+import 'sources/api_json_decoder.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -56,8 +56,17 @@ class NtpService {
   Future<void>? _syncTask;
   Timer? _periodicTimer;
   Timer? _retryTimer;
+  final ValueNotifier<int> clockRevision = ValueNotifier(0);
 
   int get deviceOffset => _deviceOffset;
+
+  /// Preserve the host's actual clock sample when starting a data isolate.
+  void restoreClockSample(int offset, DateTime? syncedAt, bool synced) {
+    _deviceOffset = offset;
+    _lastSyncedAt = syncedAt;
+    _isSynced = synced;
+  }
+
   DateTime? get lastSyncedAt => _lastSyncedAt;
   bool get hasUsableOffset => _hasUsableOffset;
   bool get isSynced => syncState == NtpSyncState.synced;
@@ -149,6 +158,7 @@ class NtpService {
     } catch (e) {
       debugPrint('--- 时间同步失败: $e ---');
       _isSynced = false;
+      clockRevision.value++;
       _scheduleRetry();
     }
   }
@@ -161,7 +171,7 @@ class NtpService {
       throw StateError('HTTP ${response.statusCode}');
     }
 
-    final decoded = jsonDecode(response.body);
+    final decoded = decodeApiJsonResponse(response);
     if (decoded is! Map<String, dynamic>) {
       throw const FormatException('时间接口返回格式无效');
     }
@@ -183,6 +193,7 @@ class NtpService {
     _deviceOffset = offset;
     _isSynced = true;
     _lastSyncedAt = DateTime.now();
+    clockRevision.value++;
   }
 
   void _scheduleRetry() {

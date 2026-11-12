@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:convert';
+import 'api_json_decoder.dart';
 
 import 'package:http/http.dart' as http;
 
@@ -81,7 +81,7 @@ class ChinaEewIclService extends BaseSourceService {
       if (response.statusCode != 200) {
         throw StateError('HTTP ${response.statusCode}');
       }
-      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      final decoded = decodeApiJsonBytes(response.bodyBytes);
       if (decoded is! Map || decoded['code'] != 0 || decoded['data'] is! List) {
         throw const FormatException('Invalid ICL warning list');
       }
@@ -142,7 +142,7 @@ class ChinaEewIclService extends BaseSourceService {
           .get(uri)
           .timeout(const Duration(seconds: 15));
       if (response.statusCode != 200) return null;
-      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      final decoded = decodeApiJsonBytes(response.bodyBytes);
       if (decoded is! Map || decoded['code'] != 0 || decoded['data'] is! List) {
         return null;
       }

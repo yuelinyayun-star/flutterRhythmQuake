@@ -1,4 +1,6 @@
+import 'source_http_client.dart';
 import 'dart:async';
+import 'api_json_decoder.dart';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -54,7 +56,7 @@ class ChinaWeatherCurrent {
   String get time => raw['time']?.toString() ?? '';
 }
 
-ChinaWeatherCurrent parseChinaWeatherCurrent(String source, String areaId) {
+ChinaWeatherCurrent parseChinaWeatherCurrent(Object source, String areaId) {
   final raw = chinaWeatherJsonVariable(source, 'dataSK');
   if (raw['city']?.toString() != areaId ||
       raw['weather'] is! String ||
@@ -65,46 +67,27 @@ ChinaWeatherCurrent parseChinaWeatherCurrent(String source, String areaId) {
 }
 
 // Extract one JSON assignment without executing any remote JavaScript.
-Map<String, dynamic> chinaWeatherJsonVariable(String source, String name) {
+Map<String, dynamic> chinaWeatherJsonVariable(Object source, String name) {
   final value = chinaWeatherJsonValue(source, name);
   if (value is! Map) throw FormatException('Expected JSON object: $name');
   return Map<String, dynamic>.from(value);
 }
 
-Object? chinaWeatherJsonValue(String source, String name) {
-  final match = RegExp(
-    '(?:^|[;\\s])var\\s+${RegExp.escape(name)}\\s*=\\s*',
-  ).firstMatch(source);
-  if (match == null ||
-      match.end >= source.length ||
-      !['{', '['].contains(source[match.end])) {
-    throw FormatException('Missing JSON variable: $name');
-  }
-  var depth = 0;
-  var quoted = false;
-  var escaped = false;
-  for (var i = match.end; i < source.length; i++) {
-    final char = source[i];
-    if (quoted) {
-      if (escaped) {
-        escaped = false;
-      } else if (char == r'\') {
-        escaped = true;
-      } else if (char == '"') {
-        quoted = false;
-      }
-      continue;
-    }
-    if (char == '"') quoted = true;
-    if (char == '{' || char == '[') depth++;
-    if ((char == '}' || char == ']') && --depth == 0) {
-      return jsonDecode(source.substring(match.end, i + 1));
-    }
-  }
-  throw const FormatException('Incomplete JSON assignment');
-}
+Object? chinaWeatherJsonValue(Object source, String name) => switch (source) {
+  String() => decodeApiJsonEnvelope(source, JsonWireEnvelope.assignment, name),
+  List<int>() => decodeApiJsonEnvelopeBytes(
+    source,
+    JsonWireEnvelope.assignment,
+    name,
+  ),
+  _ => throw ArgumentError.value(
+    source,
+    'source',
+    'Expected String or UTF-8 bytes',
+  ),
+};
 
-List<ChinaWeatherHour> parseChinaWeatherHours(String source) {
+List<ChinaWeatherHour> parseChinaWeatherHours(Object source) {
   final rows = chinaWeatherJsonVariable(source, 'fc1h_24')['jh'];
   if (rows is! List || rows.isEmpty) {
     throw const FormatException('Missing hourly forecast');
@@ -217,7 +200,7 @@ class ChinaWeatherOutlook {
       indexDate == _localDay(now) ? indices : const [];
 }
 
-ChinaWeatherOutlook parseChinaWeatherOutlook(String source) {
+ChinaWeatherOutlook parseChinaWeatherOutlook(Object source) {
   final rawDays = chinaWeatherJsonValue(source, 'fc40');
   if (rawDays is! List) throw const FormatException('Missing daily forecast');
   final days = <ChinaWeatherDay>[];
@@ -255,7 +238,7 @@ ChinaWeatherOutlook parseChinaWeatherOutlook(String source) {
 
 class ChinaWeatherHourlyService {
   ChinaWeatherHourlyService({http.Client? client, DateTime Function()? now})
-    : _client = client ?? http.Client(),
+    : _client = client ?? createSourceHttpClient(),
       _now = now ?? DateTime.now;
 
   static const refreshInterval = Duration(minutes: 10);
@@ -288,14 +271,14 @@ class ChinaWeatherHourlyService {
     }
   }
 
-  Future<String> _get(Uri uri) async {
+  Future<Uint8List> _get(Uri uri) async {
     final response = await _client
         .get(sourceUri(uri), headers: sourceHeaders(_headers))
         .timeout(const Duration(seconds: 15));
     if (response.statusCode != 200) {
       throw StateError('HTTP ${response.statusCode}');
     }
-    return utf8.decode(response.bodyBytes);
+    return response.bodyBytes;
   }
 
   Future<void> refresh() async {
@@ -334,14 +317,11 @@ class ChinaWeatherHourlyService {
           }),
         );
         if (!current()) return;
-        final match = RegExp(
-          r'^\s*getData\((.*)\)\s*;?\s*$',
-          dotAll: true,
-        ).firstMatch(text);
-        if (match == null) {
-          throw const FormatException('Invalid station response');
-        }
-        final payload = jsonDecode(match[1]!);
+        final payload = decodeApiJsonEnvelopeBytes(
+          text,
+          JsonWireEnvelope.jsonpTight,
+          'getData',
+        );
         if (payload['status'] != 'success') {
           throw const FormatException('Station lookup failed');
         }

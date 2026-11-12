@@ -1,3 +1,4 @@
+import 'package:flutterrhythmquake/services/whews_authorization_policy.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -6,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutterrhythmquake/services/sources/whews_socket_client.dart';
 
 void main() {
+  setUp(() => WhewsAuthorizationPolicy.storeOverride = MemoryConnectionRetryStore());
   test('empty API token never opens a socket', () {
     final states = <WhewsSocketState>[];
     final client = WhewsSocketClient(
@@ -42,7 +44,7 @@ void main() {
           }
         });
         if (request.uri.queryParameters['token'] == 'rejected') {
-          await socket.close(4401);
+          await socket.close(4401, 'controlled_auth_rejection');
         }
       });
       final client = WhewsSocketClient(
@@ -71,14 +73,14 @@ void main() {
       expect(client.authorizationRejected, isTrue);
       client.reconnect();
       await Future<void>.delayed(const Duration(milliseconds: 100));
-      expect(queries, ['rejected', null]);
+      expect(queries, ['rejected']);
       client.setApiToken('replacement');
       await connected.future.timeout(const Duration(seconds: 5));
       expect(queries.last, 'replacement');
       client.setApiToken('');
       expect(client.isRunning, isFalse);
       expect(client.aliveConfirmed, isFalse);
-      expect(queries, hasLength(3));
+      expect(queries, hasLength(2));
     },
   );
 

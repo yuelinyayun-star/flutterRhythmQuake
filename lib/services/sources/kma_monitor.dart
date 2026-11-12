@@ -1,10 +1,16 @@
 import 'dart:async';
-import 'dart:convert';
+import 'api_json_decoder.dart';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'source_socket.dart';
 import 'shake_alert_gate.dart';
+import 'native_station_runtime.dart';
+import 'native_station_display.dart';
+import '../foreground_station_payload.dart';
+import '../station_history_capture.dart';
+import '../obs_automation_input_service.dart';
 
 class KmaStation {
   final int id;
@@ -33,6 +39,18 @@ class KmaStation {
   }) {
     holdLevel = intensity + 2;
     activityLevel = intensity + 2;
+  }
+
+  /// Display transport contains values, never the producer's hold timer/history.
+  KmaStation.displaySnapshot(KmaStation source)
+    : id = source.id,
+      coordinate = source.coordinate,
+      intensity = source.intensity,
+      lastUpdate = source.lastUpdate {
+    activityLevel = source.activityLevel;
+    holdLevel = source.holdLevel;
+    ascend = source.ascend;
+    isActive = source.isActive;
   }
 
   void update(int newIntensity, {int holdFrames = 1}) {
@@ -100,7 +118,69 @@ class KmaStation {
 class KmaMonitorService {
   static final KmaMonitorService _instance = KmaMonitorService._internal();
   factory KmaMonitorService() => _instance;
-  KmaMonitorService._internal();
+  KmaMonitorService._internal() : this.detached();
+
+  @visibleForTesting
+  KmaMonitorService.detached({WebSocketChannel Function(Uri)? socketFactory})
+    : _socketFactory = socketFactory ?? ((uri) => connectSourceSocket(uri));
+
+  final WebSocketChannel Function(Uri) _socketFactory;
+  NativeStationRuntime? _native;
+  String? _nativeSource, _nativeToken;
+  bool get nativeActive => _native != null;
+  String nativeLayerSignature = '';
+  String nativeStatus = '';
+  List<NativeStationGrid> nativeGrids = const [];
+  List<ObsStationInputSample> nativeAutomationSamples = const [];
+
+  /// The Windows UI passes settings only. All selected KMA upstreams terminate
+  /// in one Rust actor, including their authentication and reconnection logic.
+  void startNativeSource(String source, String token) {
+    if (_native != null && _nativeSource == source && _nativeToken == token) {
+      return;
+    }
+    disconnect();
+    resetRealtimeState();
+    _nativeSource = source;
+    _nativeToken = token;
+    final runtime = _native = NativeStationRuntime();
+    runtime.onFrame = (frame) {
+      if (!identical(_native, runtime)) return;
+      _isConnected = frame['status'] == 'connected';
+      if (nativeStatus != frame['status']) {
+        nativeStatus = frame['status'] as String;
+        onStatusChanged?.call(_isConnected);
+      }
+      final rawTime = frame['dataTime'] as String?;
+      dataTimeNotifier.value = rawTime == null ? null : DateTime.parse(rawTime);
+      nativeLayerSignature = frame['signature'] as String;
+      nativeGrids = NativeStationGrid.read(frame);
+      nativeAutomationSamples = nativeStationAutomation(frame);
+      _stations = ForegroundStationPayload.decodeKma(frame['stations']);
+      for (final signal in frame['signals'] as List) {
+        if (signal == -1) {
+          onShakeExpired?.call();
+        } else {
+          onShakeDetected?.call(signal as int);
+        }
+      }
+      final time = DateTime.parse(frame['receivedAt'] as String);
+      StationHistoryCapture.instance.publish(
+        'kma',
+        () => runtime.archive!,
+        originalJsonLoader: () => runtime.original,
+        receivedAt: time,
+      );
+      _stationController.add(_stations);
+    };
+    runtime.start({
+      'kind': 'kma',
+      'source': source,
+      'token': token,
+      'sensitivity': _sensitivity,
+      'hold': _intensityHoldFrames,
+    });
+  }
 
   static const List<String> _pewsWsUrls = [
     'wss://ws.yuelinrhythm.top/kma-station',
@@ -119,6 +199,8 @@ class KmaMonitorService {
   List<KmaStation> get stations => _stations;
 
   WebSocketChannel? _channel;
+  StreamSubscription<dynamic>? _socketSubscription;
+  int _connectionSerial = 0;
   Timer? _reconnectTimer;
   Timer? _heartbeatTimer;
   int _reconnectAttempts = 0;
@@ -143,10 +225,12 @@ class KmaMonitorService {
 
   void setSensitivity(int level) {
     _sensitivity = level.clamp(1, 3);
+    _native?.settings({'sensitivity': _sensitivity});
   }
 
   void setIntensityHoldFrames(int frames) {
     _intensityHoldFrames = frames.clamp(1, KmaStation.recentSeconds);
+    _native?.settings({'hold': _intensityHoldFrames});
   }
 
   final _stationController = StreamController<List<KmaStation>>.broadcast();
@@ -169,10 +253,16 @@ class KmaMonitorService {
   void connect() {
     _connectionRequested = true;
     if (_channel != null) return;
-    _doConnect(_currentUrlIndex);
+    _reconnectTimer?.cancel();
+    unawaited(_doConnect(_currentUrlIndex));
   }
 
-  void _doConnect(int urlIndex) {
+  bool _current(WebSocketChannel channel, int serial) =>
+      _connectionRequested &&
+      serial == _connectionSerial &&
+      identical(_channel, channel);
+
+  Future<void> _doConnect(int urlIndex) async {
     if (!_connectionRequested) return;
     if (urlIndex >= _wsUrls.length) {
       debugPrint('KMA: 所有WebSocket地址连接失败，${_reconnectAttempts + 1}秒后重试');
@@ -181,41 +271,51 @@ class KmaMonitorService {
       return;
     }
 
+    final serial = ++_connectionSerial;
+    _closeSocket();
     try {
       final uri = Uri.parse(_wsUrls[urlIndex]);
-      _channel = WebSocketChannel.connect(uri);
-
-      _isConnected = true;
+      final channel = _socketFactory(uri);
+      _channel = channel;
       _currentUrlIndex = urlIndex;
       _lastMessageAt = DateTime.now();
-      _reconnectAttempts = 0;
-      debugPrint('KMA: WebSocket已连接 -> ${_wsUrls[urlIndex]}');
-
-      _startHeartbeat();
-
-      _channel!.stream.listen(
+      _socketSubscription = channel.stream.listen(
         (data) {
+          if (!_current(channel, serial)) return;
           _lastMessageAt = DateTime.now();
           _handleMessage(data, urlIndex);
         },
         onError: (error) {
+          if (!_current(channel, serial)) return;
           debugPrint('KMA WebSocket错误: $error');
-          _reconnect(urlIndex);
+          _reconnect(urlIndex, serial: serial);
         },
         onDone: () {
+          if (!_current(channel, serial)) return;
           debugPrint('KMA WebSocket连接关闭');
-          _reconnect(urlIndex);
+          _reconnect(urlIndex, serial: serial);
         },
+        cancelOnError: true,
       );
+      await channel.ready.timeout(const Duration(seconds: 20));
+      if (!_current(channel, serial)) return;
+      _isConnected = true;
+      _reconnectAttempts = 0;
+      debugPrint('KMA: WebSocket已连接 -> ${_wsUrls[urlIndex]}');
+      _startHeartbeat(channel, serial);
     } catch (e) {
+      if (!_connectionRequested || serial != _connectionSerial) return;
       debugPrint('KMA WebSocket连接失败: $e');
-      _doConnect(urlIndex + 1);
+      _reconnect(urlIndex, serial: serial);
     }
   }
 
   void _handleMessage(dynamic data, int urlIndex) {
     try {
-      final message = json.decode(data.toString());
+      final message = data is List<int>
+          ? decodeApiJsonBytes(data)
+          : decodeApiJson(data as String);
+      if (message is! Map) return;
       final type = message['type'] as String?;
 
       switch (type) {
@@ -234,15 +334,7 @@ class KmaMonitorService {
           debugPrint('KMA FAN 服务端错误: ${message['message']}');
           final errorMsg = message['message']?.toString() ?? '';
           if (errorMsg.contains('连接数超限')) {
-            _heartbeatTimer?.cancel();
-            _channel?.sink.close();
-            _channel = null;
-            _isConnected = false;
-            _hasRealtimeData = false;
-            dataTimeNotifier.value = null;
-            onStatusChanged?.call(false);
-            final nextUrlIndex = (urlIndex + 1) % _wsUrls.length;
-            _scheduleReconnect(3, nextUrlIndex);
+            _reconnect(urlIndex, serial: _connectionSerial, seconds: 3);
           }
           break;
         case 'pong':
@@ -658,51 +750,78 @@ class KmaMonitorService {
     return 7;
   }
 
-  void _reconnect(int failedUrlIndex) {
-    if (!_connectionRequested) return;
-    _heartbeatTimer?.cancel();
-    _channel?.sink.close();
-    _channel = null;
+  void _reconnect(int failedUrlIndex, {int? serial, int seconds = 10}) {
+    if (!_connectionRequested ||
+        serial != null && serial != _connectionSerial) {
+      return;
+    }
+    ++_connectionSerial;
+    _closeSocket();
     _isConnected = false;
     _hasRealtimeData = false;
     dataTimeNotifier.value = null;
     onStatusChanged?.call(false);
     _reconnectAttempts++;
     final nextUrlIndex = (failedUrlIndex + 1) % _wsUrls.length;
-    _scheduleReconnect(10, nextUrlIndex);
+    _scheduleReconnect(seconds, nextUrlIndex);
   }
 
   void _scheduleReconnect(int seconds, int nextUrlIndex) {
     if (!_connectionRequested) return;
     _reconnectTimer?.cancel();
+    final serial = _connectionSerial;
     _reconnectTimer = Timer(Duration(seconds: seconds), () {
-      if (!_connectionRequested) return;
-      _doConnect(nextUrlIndex);
+      if (!_connectionRequested || serial != _connectionSerial) return;
+      _reconnectTimer = null;
+      unawaited(_doConnect(nextUrlIndex));
     });
   }
 
-  void _startHeartbeat() {
+  void _startHeartbeat(WebSocketChannel channel, int serial) {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = Timer.periodic(const Duration(seconds: 25), (_) {
-      if (_channel == null) return;
+      if (!_current(channel, serial)) return;
       final idle = DateTime.now().difference(_lastMessageAt).inSeconds;
       if (idle > 70) {
         debugPrint('KMA: 心跳超时，触发重连');
-        _reconnect(_currentUrlIndex);
+        _reconnect(_currentUrlIndex, serial: serial);
         return;
       }
       try {
-        _channel!.sink.add('ping');
-      } catch (_) {}
+        channel.sink.add('ping');
+      } catch (_) {
+        _reconnect(_currentUrlIndex, serial: serial);
+      }
     });
   }
 
-  void disconnect() {
-    _connectionRequested = false;
-    _reconnectTimer?.cancel();
+  void _closeSocket() {
     _heartbeatTimer?.cancel();
-    _channel?.sink.close();
+    _heartbeatTimer = null;
+    final subscription = _socketSubscription;
+    final channel = _channel;
+    _socketSubscription = null;
     _channel = null;
+    if (subscription != null) unawaited(subscription.cancel());
+    if (channel != null) {
+      unawaited(channel.sink.close().catchError((Object _) {}));
+    }
+  }
+
+  void disconnect() {
+    if (_native != null) StationHistoryCapture.instance.clearLatest('kma');
+    _native?.stop();
+    _native = null;
+    _nativeSource = _nativeToken = null;
+    nativeAutomationSamples = const [];
+    nativeLayerSignature = '';
+    nativeStatus = '';
+    nativeGrids = const [];
+    _connectionRequested = false;
+    ++_connectionSerial;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _closeSocket();
     _isConnected = false;
     _hasRealtimeData = false;
     dataTimeNotifier.value = null;
@@ -716,4 +835,7 @@ class KmaMonitorService {
       s.dispose();
     }
   }
+
+  @visibleForTesting
+  void handleOriginalForTesting(String original) => _handleMessage(original, 0);
 }

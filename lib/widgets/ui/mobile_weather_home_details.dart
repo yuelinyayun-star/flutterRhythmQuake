@@ -78,10 +78,12 @@ class MobileWeatherHomeDetails extends StatelessWidget {
     required this.state,
     this.observation,
     this.now,
+    this.showTopDivider = true,
   });
   final ChinaWeatherHourlyState state;
   final CmaLocalWeatherObservation? observation;
   final DateTime? now;
+  final bool showTopDivider;
 
   @override
   Widget build(BuildContext context) {
@@ -122,11 +124,12 @@ class MobileWeatherHomeDetails extends StatelessWidget {
       (Icons.speed, '气压', number(observation?.pressure, 'hPa', digits: 0), ''),
     ];
     return DefaultTextStyle(
-      style: const TextStyle(color: Colors.white, fontSize: 13, height: 1.35),
+      style: (Theme.of(context).textTheme.bodyMedium ?? const TextStyle())
+          .copyWith(color: Colors.white, fontSize: 13, height: 1.35),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const _Heading('每日预报'),
+          _Heading('每日预报', showDivider: showTopDivider),
           Text('${state.areaName} · 北京时间 UTC+8', style: _muted),
           if (state.failed) const Text('更新失败，显示上次有效预报', style: _muted),
           if (days.isEmpty)
@@ -262,13 +265,15 @@ class MobileWeatherHomeDetails extends StatelessWidget {
 const _muted = TextStyle(color: Colors.white60, fontSize: 11, height: 1.4);
 
 class _Heading extends StatelessWidget {
-  const _Heading(this.text);
+  const _Heading(this.text, {this.showDivider = true});
   final String text;
+  final bool showDivider;
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      const Divider(color: Colors.white24, height: 24),
+      if (showDivider)
+        const Divider(color: Colors.white24, height: 24),
       Text(
         text,
         style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),

@@ -1,0 +1,596 @@
+import 'dart:math' as math hide Point;
+import 'dart:math' show Point;
+import 'dart:ui';
+
+import 'package:flutter_map/src/misc/extensions.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:meta/meta.dart';
+import 'package:proj4dart/proj4dart.dart' as proj4;
+
+/// An abstract representation of a
+/// [Coordinate Reference System](https://bit.ly/3iVKpja).
+///
+/// The main objective of a CRS is to handle the conversion between surface
+/// points of objects of different dimensions. In our case 3D and 2D objects.
+@immutable
+abstract class Crs {
+  /// The code
+  @nonVirtual
+  final String code;
+
+  /// Set to true if the CRS has no bounds.
+  @nonVirtual
+  final bool infinite;
+
+  /// Wrap the longitude to fit inside the bounds of the [Crs].
+  @nonVirtual
+  final (double, double)? wrapLng;
+
+  /// Wrap the latitude to fit inside the bounds of the [Crs].
+  @nonVirtual
+  final (double, double)? wrapLat;
+
+  /// Constant base constructor that sets all values for the abstract [Crs].
+  const Crs({
+    required this.code,
+    required this.infinite,
+    this.wrapLng,
+    this.wrapLat,
+  });
+
+  /// Project a spherical LatLng coordinate into planar space (unscaled).
+  Projection get projection;
+
+  /// Scale planar coordinate to scaled map point.
+  (double, double) transform(double x, double y, double scale);
+
+  /// Scale map point to planar coordinate.
+  (double, double) untransform(double x, double y, double scale);
+
+  /// Converts a point on the sphere surface (with a certain zoom) to a
+  /// scaled map point.
+  (double, double) latLngToXY(LatLng latlng, double scale);
+
+  /// Similar to [latLngToXY] but converts the XY coordinates to an [Offset].
+  Offset latLngToOffset(LatLng latlng, double zoom) {
+    final (x, y) = latLngToXY(checkLatLng(latlng), scale(zoom));
+    return Offset(x, y);
+  }
+
+  /// Converts a map point to the sphere coordinate (at a certain zoom).
+  LatLng offsetToLatLng(Offset point, double zoom);
+
+  /// Zoom to Scale function.
+  double scale(double zoom) => 256.0 * math.pow(2, zoom);
+
+  /// Scale to Zoom function.
+  double zoom(double scale) => math.log(scale / 256) / math.ln2;
+
+  /// Rescales the bounds to a given zoom value.
+  Rect? getProjectedBounds(double zoom);
+
+  /// Whether this CRS supports repeating worlds: repeated (feature) layers and
+  /// unbounded horizontal scrolling along the longitude axis
+  bool get replicatesWorldLongitude => false;
+
+  /// Throws if [latlng] is not finite (e.g. either NaN or infinite), which may
+  /// cause memory leak.
+  /// cf. https://github.com/fleaflet/flutter_map/issues/2178
+  @protected
+  LatLng checkLatLng(LatLng latlng) {
+    if (!(latlng.latitude.isFinite && latlng.longitude.isFinite)) {
+      throw Exception('LatLng is not finite: $latlng');
+    }
+    return latlng;
+  }
+}
+
+/// Internal base class for CRS with a single zoom-level independent transformation.
+@immutable
+@internal
+abstract class CrsWithStaticTransformation extends Crs {
+  @nonVirtual
+  @protected
+  final _Transformation _transformation;
+
+  @override
+  final Projection projection;
+
+  const CrsWithStaticTransformation._({
+    required _Transformation transformation,
+    required this.projection,
+    required super.code,
+    required super.infinite,
+    super.wrapLng,
+    super.wrapLat,
+  }) : _transformation = transformation;
+
+  /// Exact coefficients for optional projected-coordinate batch processing.
+  (double, double, double, double) get projectedTransformCoefficients =>
+      (_transformation.a, _transformation.b, _transformation.c, _transformation.d);
+
+  @override
+  (double, double) transform(double x, double y, double scale) =>
+      _transformation.transform(x, y, scale);
+
+  @override
+  (double, double) untransform(double x, double y, double scale) =>
+      _transformation.untransform(x, y, scale);
+
+  @override
+  (double, double) latLngToXY(LatLng latlng, double scale) {
+    final (x, y) = projection.projectXY(checkLatLng(latlng));
+    return _transformation.transform(x, y, scale);
+  }
+
+  @override
+  LatLng offsetToLatLng(Offset point, double zoom) {
+    final (x, y) = _transformation.untransform(
+      point.dx,
+      point.dy,
+      scale(zoom),
+    );
+    return projection.unprojectXY(x, y);
+  }
+
+  @override
+  Rect? getProjectedBounds(double zoom) {
+    if (infinite) return null;
+
+    final b = projection.bounds!;
+    final s = scale(zoom);
+    final (minx, miny) = _transformation.transform(b.min.dx, b.min.dy, s);
+    final (maxx, maxy) = _transformation.transform(b.max.dx, b.max.dy, s);
+    return Rect.fromPoints(
+      Offset(minx, miny),
+      Offset(maxx, maxy),
+    );
+  }
+}
+
+/// Custom CRS for non geographical maps
+@immutable
+class CrsSimple extends CrsWithStaticTransformation {
+  /// Create a new [CrsSimple].
+  const CrsSimple()
+      : super._(
+          code: 'CRS.SIMPLE',
+          transformation: const _Transformation(1, 0, -1, 0),
+          projection: const _LonLat(),
+          infinite: false,
+          wrapLat: null,
+          wrapLng: null,
+        );
+}
+
+/// EPSG:3857, The most common CRS used for rendering maps.
+@immutable
+class Epsg3857 extends CrsWithStaticTransformation {
+  static const double _scale = 0.5 / (math.pi * SphericalMercator.r);
+
+  /// Create a new [Epsg3857] object.
+  const Epsg3857()
+      : super._(
+          code: 'EPSG:3857',
+          transformation: const _Transformation(_scale, 0.5, -_scale, 0.5),
+          projection: const SphericalMercator(),
+          infinite: false,
+          wrapLng: const (-180, 180),
+        );
+
+  @override
+  (double, double) latLngToXY(LatLng latlng, double scale) {
+    checkLatLng(latlng);
+    return _transformation.transform(
+      SphericalMercator.projectLng(latlng.longitude),
+      SphericalMercator.projectLat(latlng.latitude),
+      scale,
+    );
+  }
+
+  @override
+  Offset latLngToOffset(LatLng latlng, double zoom) {
+    checkLatLng(latlng);
+    final (x, y) = _transformation.transform(
+      SphericalMercator.projectLng(latlng.longitude),
+      SphericalMercator.projectLat(latlng.latitude),
+      scale(zoom),
+    );
+    return Offset(x, y);
+  }
+
+  @override
+  bool get replicatesWorldLongitude => true;
+}
+
+/// EPSG:4326, A common CRS among GIS enthusiasts.
+/// Uses simple Equirectangular projection.
+@immutable
+class Epsg4326 extends CrsWithStaticTransformation {
+  /// Create a new [Epsg4326] CRS instance.
+  const Epsg4326()
+      : super._(
+          projection: const _LonLat(),
+          transformation: const _Transformation(1 / 180, 1, -1 / 180, 0.5),
+          code: 'EPSG:4326',
+          infinite: false,
+          wrapLng: const (-180, 180),
+        );
+}
+
+/// Custom CRS
+@immutable
+class Proj4Crs extends Crs {
+  @override
+  final Projection projection;
+  final List<_Transformation> _transformations;
+  final List<double> _scales;
+
+  const Proj4Crs._({
+    required super.code,
+    required this.projection,
+    required super.infinite,
+    required List<_Transformation> transformations,
+    required List<double> scales,
+  })  : _transformations = transformations,
+        _scales = scales,
+        super(wrapLat: null, wrapLng: null);
+
+  /// Create a new [Crs] that has projection.
+  factory Proj4Crs.fromFactory({
+    required String code,
+    required proj4.Projection proj4Projection,
+    List<Point<double>>? origins,
+    Rect? bounds,
+    List<double>? scales,
+    List<double>? resolutions,
+  }) {
+    final projection = _Proj4Projection(
+      proj4Projection: proj4Projection,
+      bounds: bounds,
+    );
+
+    List<double> finalScales;
+    if (null != scales && scales.isNotEmpty) {
+      finalScales = scales;
+    } else if (null != resolutions && resolutions.isNotEmpty) {
+      finalScales = resolutions.map((r) => 1 / r).toList(growable: false);
+    } else {
+      throw Exception(
+          'Please provide scales or resolutions to determine scales');
+    }
+
+    List<_Transformation> transformations;
+    if (null == origins || origins.isEmpty) {
+      transformations = [const _Transformation(1, 0, -1, 0)];
+    } else {
+      if (origins.length == 1) {
+        final origin = origins[0];
+        transformations = [_Transformation(1, -origin.x, -1, origin.y)];
+      } else {
+        transformations =
+            origins.map((p) => _Transformation(1, -p.x, -1, p.y)).toList();
+      }
+    }
+
+    return Proj4Crs._(
+      code: code,
+      projection: projection,
+      infinite: null == bounds,
+      transformations: transformations,
+      scales: finalScales,
+    );
+  }
+
+  @override
+  (double, double) transform(double x, double y, double scale) =>
+      _getTransformationByZoom(zoom(scale)).transform(x, y, scale);
+
+  @override
+  (double, double) untransform(double x, double y, double scale) =>
+      _getTransformationByZoom(zoom(scale)).untransform(x, y, scale);
+
+  /// Converts a point on the sphere surface (with a certain zoom) in a
+  /// map point.
+  @override
+  (double, double) latLngToXY(LatLng latlng, double scale) {
+    final (x, y) = projection.projectXY(checkLatLng(latlng));
+    final transformation = _getTransformationByZoom(zoom(scale));
+    return transformation.transform(x, y, scale);
+  }
+
+  /// Converts a map point to the sphere coordinate (at a certain zoom).
+  @override
+  LatLng offsetToLatLng(Offset point, double zoom) {
+    final (x, y) = _getTransformationByZoom(zoom).untransform(
+      point.dx,
+      point.dy,
+      scale(zoom),
+    );
+    return projection.unprojectXY(x, y);
+  }
+
+  /// Rescales the bounds to a given zoom value.
+  @override
+  Rect? getProjectedBounds(double zoom) {
+    if (infinite) return null;
+
+    final b = projection.bounds!;
+    final zoomScale = scale(zoom);
+
+    final transformation = _getTransformationByZoom(zoom);
+    final (minx, miny) =
+        transformation.transform(b.min.dx, b.min.dy, zoomScale);
+    final (maxx, maxy) =
+        transformation.transform(b.max.dx, b.max.dy, zoomScale);
+    return Rect.fromPoints(Offset(minx, miny), Offset(maxx, maxy));
+  }
+
+  /// Zoom to Scale function.
+  @override
+  double scale(double zoom) {
+    final iZoom = zoom.floor();
+    if (zoom == iZoom) {
+      return _scales[iZoom];
+    } else {
+      // Non-integer zoom, interpolate
+      final baseScale = _scales[iZoom];
+      final nextScale = _scales[iZoom + 1];
+      final scaleDiff = nextScale - baseScale;
+      final zDiff = zoom - iZoom;
+      return baseScale + scaleDiff * zDiff;
+    }
+  }
+
+  /// Scale to Zoom function.
+  @override
+  double zoom(double scale) {
+    // Find closest number in _scales, down
+    final downScale = _closestElement(_scales, scale);
+    if (downScale == null) {
+      return double.negativeInfinity;
+    }
+    final downZoom = _scales.indexOf(downScale);
+    // Check if scale is downScale => return array index
+    if (scale == downScale) {
+      return downZoom.toDouble();
+    }
+    // Interpolate
+    final nextZoom = downZoom + 1;
+    final nextScale = _scales[nextZoom];
+
+    final scaleDiff = nextScale - downScale;
+    return (scale - downScale) / scaleDiff + downZoom;
+  }
+
+  /// Get the closest lowest element in an array
+  double? _closestElement(List<double> array, double element) {
+    double? low;
+    for (var i = array.length - 1; i >= 0; i--) {
+      final curr = array[i];
+
+      if (curr <= element && (null == low || low < curr)) {
+        low = curr;
+      }
+    }
+    return low;
+  }
+
+  /// returns Transformation object based on zoom
+  _Transformation _getTransformationByZoom(double zoom) {
+    final iZoom = zoom.round();
+    final lastIdx = _transformations.length - 1;
+    return _transformations[iZoom > lastIdx ? lastIdx : iZoom];
+  }
+}
+
+/// The abstract base [Projection] class, used for coordinate reference
+/// systems like [Epsg3857].
+/// Inherit from this class if you want to create or implement your own CRS.
+@immutable
+abstract class Projection {
+  /// The bounds for the coordinates of this [Projection].
+  final Rect? bounds;
+
+  /// Base constructor for the abstract [Projection] class that sets the
+  /// required fields.
+  const Projection(this.bounds);
+
+  /// Converts a [LatLng] to a coordinates and returns them as an [Offset].
+  @nonVirtual
+  Offset project(LatLng latlng) {
+    final (x, y) = projectXY(latlng);
+    return Offset(x, y);
+  }
+
+  /// Converts a [LatLng] to geometry coordinates.
+  (double, double) projectXY(LatLng latlng);
+
+  /// unproject a cartesian Point to [LatLng].
+  @nonVirtual
+  LatLng unproject(Point point) =>
+      unprojectXY(point.x.toDouble(), point.y.toDouble());
+
+  /// unproject cartesian x,y coordinates to [LatLng].
+  LatLng unprojectXY(double x, double y);
+
+  /// Returns the width of the world in geometry coordinates.
+  ///
+  /// Is used at least in 2 cases:
+  /// * my polyline crosses longitude 180, and I somehow need to "add a world"
+  /// to the coordinates in order to display a continuous polyline
+  /// * when my map scrolls around longitude 180 and I have a marker in this
+  /// area, the marker may be projected a world away, depending on the map being
+  /// centered either in the 179 or the -179 part - again, we can "add a world"
+  double getWorldWidth() {
+    final (x0, _) = projectXY(const LatLng(0, 0));
+    final (x180, _) = projectXY(const LatLng(0, 180));
+    return 2 * (x0 > x180 ? x0 - x180 : x180 - x0);
+  }
+
+  /// Projects a list of [LatLng]s into geometry coordinates.
+  ///
+  /// All resulting points gather somehow around the first point, or the
+  /// optional [referencePoint] if provided.
+  /// The typical use-case is when you display the whole world: you don't want
+  /// longitudes -179 and 179 to be projected each on one side.
+  /// [referencePoint] is used for polygon holes: we want the holes to be
+  /// displayed close to the polygon, not on the other side of the world.
+  List<Offset> projectList(
+    List<LatLng> points, {
+    LatLng? referencePoint,
+    bool projectToSingleWorld = false,
+  }) {
+    late double previousX;
+    final worldWidth = getWorldWidth();
+    return List<Offset>.generate(
+      points.length,
+      (j) {
+        if (j == 0 && referencePoint != null) {
+          (previousX, _) = projectXY(referencePoint);
+        }
+        var (x, y) = projectXY(points[j]);
+        if (projectToSingleWorld) {
+          return Offset(x, y);
+        }
+        if (j > 0 || referencePoint != null) {
+          if (x - previousX > worldWidth / 2) {
+            x -= worldWidth;
+          } else if (x - previousX < -worldWidth / 2) {
+            x += worldWidth;
+          }
+        }
+        previousX = x;
+        return Offset(x, y);
+      },
+      growable: false,
+    );
+  }
+}
+
+class _LonLat extends Projection {
+  static const _bounds = Rect.fromLTRB(-180, -90, 180, 90);
+
+  const _LonLat() : super(_bounds);
+
+  @override
+  (double, double) projectXY(LatLng latlng) =>
+      (latlng.longitude, latlng.latitude);
+
+  @override
+  LatLng unprojectXY(double x, double y) =>
+      LatLng(_inclusiveLat(y), _inclusiveLng(x));
+}
+
+/// Spherical mercator projection
+@immutable
+class SphericalMercator extends Projection {
+  /// The radius
+  static const int r = 6378137;
+
+  /// The maximum latitude
+  static const double maxLatitude = 85.0511287798;
+
+  static const double _boundsD = r * math.pi;
+
+  /// The constant Bounds of the [SphericalMercator] projection.
+  static const Rect _bounds = Rect.fromLTRB(
+    -_boundsD,
+    -_boundsD,
+    _boundsD,
+    _boundsD,
+  );
+
+  /// Constant constructor for the [SphericalMercator] projection.
+  const SphericalMercator() : super(_bounds);
+
+  /// Project the latitude for this [Crs]
+  static double projectLat(double latitude) {
+    final lat = _clampSym(latitude, maxLatitude);
+    final sin = math.sin(lat * math.pi / 180);
+
+    return r / 2 * math.log((1 + sin) / (1 - sin));
+  }
+
+  /// Project the longitude for this [Crs]
+  static double projectLng(double longitude) {
+    return r * math.pi / 180 * longitude;
+  }
+
+  @override
+  (double, double) projectXY(LatLng latlng) {
+    return (
+      projectLng(latlng.longitude),
+      projectLat(latlng.latitude),
+    );
+  }
+
+  @override
+  LatLng unprojectXY(double x, double y) {
+    const d = 180 / math.pi;
+    return LatLng(
+      _inclusiveLat((2 * math.atan(math.exp(y / r)) - (math.pi / 2)) * d),
+      _inclusiveLng(x * d / r),
+    );
+  }
+}
+
+@immutable
+class _Proj4Projection extends Projection {
+  final proj4.Projection epsg4326;
+  final proj4.Projection proj4Projection;
+
+  _Proj4Projection({
+    required this.proj4Projection,
+    required Rect? bounds,
+  })  : epsg4326 = proj4.Projection.WGS84,
+        super(bounds);
+
+  @override
+  (double, double) projectXY(LatLng latlng) {
+    final point = epsg4326.transform(
+        proj4Projection, proj4.Point(x: latlng.longitude, y: latlng.latitude));
+
+    return (point.x, point.y);
+  }
+
+  @override
+  LatLng unprojectXY(double x, double y) {
+    final point = proj4Projection.transform(epsg4326, proj4.Point(x: x, y: y));
+
+    return LatLng(
+      _inclusiveLat(point.y),
+      _inclusiveLng(point.x),
+    );
+  }
+}
+
+@immutable
+class _Transformation {
+  final double a;
+  final double b;
+  final double c;
+  final double d;
+
+  const _Transformation(this.a, this.b, this.c, this.d);
+
+  @nonVirtual
+  (double, double) transform(double x, double y, double scale) => (
+        scale * (a * x + b),
+        scale * (c * y + d),
+      );
+
+  @nonVirtual
+  (double, double) untransform(double x, double y, double scale) => (
+        (x / scale - b) / a,
+        (y / scale - d) / c,
+      );
+}
+
+// Num.clamp is slow due to virtual function overhead.
+double _clampSym(double value, double limit) =>
+    value < -limit ? -limit : (value > limit ? limit : value);
+
+double _inclusiveLat(double value) => _clampSym(value, 90);
+
+double _inclusiveLng(double value) => _clampSym(value, 180);

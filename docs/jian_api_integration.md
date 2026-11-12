@@ -4,15 +4,27 @@ Protocol reference: https://api.sismotide.top/api/#overview
 
 ## Scope
 
-- One `wss://api.sismotide.top/all` connection, with independent Jian auth
+- One logical `/all` connection, preferring `wss://api.sismotide.top/all`
+  with failover to `wss://api.jianproject.cloud/all`, with independent Jian auth
   (not WAuth). Business feeds and `/all` require authentication. Without a saved
   credential, no socket or retry timer is started; settings show auth required.
+- Access-ticket exchange is paired with the selected business host:
+  `auth.sismotide.top/api/access` or `auth.jianproject.cloud/api/access`.
+  Both use the saved RT in an Authorization header; each native business
+  handshake uses its newly exchanged AT in a Bearer header. See
+  [failover validation](jian_failover_20261101.md).
 - Settings: API and data sources -> Jian Project earthquake warnings/information.
   Stored as `api_source_jian_enabled`, initially off. Existing API preferences
   remain unchanged.
 - 46 earthquake feed types: six EEW feeds and 40 information/rapid-location feeds.
   `early-est` is information, not an EEW alarm.
 - CENC/CWA/JMA/KMA/USGS/EMSC history requests share the same connection.
+- JMA tsunami (`jma-tsunami`, VTSE41) also uses this connection and the existing
+  `TsunamiMessage` pipeline on desktop and Android. It shares the JMA agency slot
+  with P2PQuake/WHEWS; it is not converted into an earthquake information card.
+  Forecasts (若干の海面変動, JMA codes 71/72) use the existing blue coastline
+  style and tsunami sidebar, with source validity time, without warning audio.
+  Original payload, event ID, serial, issue epoch and validity epoch are retained.
 - Weather, GDACS, JMA volcano, IFRC, USGS volcano and VONA are deliberately not
   coerced into earthquake models. CENC intensity-report and station endpoints
   are separate protocols and are not enabled by this switch.
@@ -37,6 +49,24 @@ Protocol reference: https://api.sismotide.top/api/#overview
   fabricated first report: changed live bodies on the same API may update the
   shared active slot. Duplicates, reconnect snapshots and undated cross-API
   revisions cannot roll it backward. This rule is shared by both processors.
+- Jian SA supplies a fixed `number = 1`, not an increasing sequence. Its original
+  first-report label is retained, while changed live bodies on the same API use
+  the unsequenced revision rule. Cached snapshots and undated cross-API copies
+  cannot roll back an active revision. Warning/final/assumption flags also count
+  as body changes on both processors.
+- Jian CENC `_M` IDs share the normalized native bulletin identity in active UI
+  and Android, as in history. The complete-second original is preferred over
+  its otherwise identical minute-only copy in either arrival order; its original
+  ID and API provenance remain together. Precision enrichment is silent in the
+  foreground and retains the original arrival time.
+- Review metadata comes from the retained original Jian `infoTypeName`, before
+  generic agency titles. Automatic/reviewed status reaches history tags, report
+  dedupe keys and foreground/background revision checks. The first reviewed
+  bulletin may replace a closed automatic report once. Automatic copies cannot
+  replace a reviewed card or history row; replay without a report clock can
+  still enrich an automatic row with an explicit reviewed status.
+- Ordinary Jian JMA information displays source correction/cancellation status,
+  following the existing JMA information rule that hides ordinary report serials.
 
 ## Replay and timestamps
 
@@ -49,6 +79,10 @@ Protocol reference: https://api.sismotide.top/api/#overview
   An undated replay cannot replace an existing record with no ordering evidence.
 - Epoch milliseconds are absolute instants, localized once into the existing
   source-wall-clock model. JMA/KMA use UTC+9; other sources use UTC+8.
+- Unified card/notification display converts the stored source clock to the
+  computer's local timezone. The zone label uses the displayed instant's local
+  offset, including historical daylight-saving changes. Identity, ordering and
+  expiry continue to use the original source clock and offset.
 - No fabricated issue time, event-ID-derived origin time or local-time fallback.
   Unknown EEW origin time is expired under the source-time policy.
 - Original payload is retained in `sourcePayload`, including JMA telegram,
@@ -108,10 +142,17 @@ Reference: https://api.sismotide.top/api/#auth
   cooldown for `conn_limit`; a healthy socket is not rotated when its ticket expires.
 - Authentication status travels alongside existing source connection status;
   Android UI attachment can request the current status without reconnecting.
-- A newly redeemed refresh token and its estimated expiry are saved together
-  in one secure record, using the returned lifetime and request-start UTC time.
-  Older raw tokens and manually imported tokens retain unknown expiry. Access
-  ticket renewal does not extend the stored refresh-token expiry.
+- Both `/api/refresh` and `/api/access` can return the RT's
+  `refresh_expires_at` (UTC Unix seconds) and `refresh_expires_after_min`.
+  The absolute time takes precedence; remaining minutes are converted using
+  request-start UTC time. Legacy refresh responses retain `expires_after_min`
+  support. The AT's `expires_after_sec` never determines the RT's expiry.
+- A newly redeemed refresh token and its expiry are saved together in one
+  secure record. After each access exchange, returned RT expiry updates source
+  status and the matching saved credential, including imported/legacy tokens.
+  Missing RT-expiry metadata preserves the saved value; late responses from
+  an abandoned connection cannot update it. A failed metadata save does not
+  discard the credential or prevent the authenticated connection.
 - The map dashboard places configured/authenticated Jian on its own line,
   retaining that line on temporary disconnect or credential failure. Other
   enabled APIs retain their order and five-per-row grouping. Remaining lifetime
@@ -122,12 +163,46 @@ Reference: https://api.sismotide.top/api/#auth
   earthquake frames. Live authenticated access requires the user's personal
   credential and is not claimed by automated tests.
 
+### Offline recovery correction (2026-10-16)
+
+- A failed HTTP request or response stream is a retryable network failure.
+  Non-JSON/invalid UTF-8 responses, malformed tickets and unknown rejection
+  envelopes are retryable `invalid_response` failures. None of these prove
+  that the saved refresh token is invalid or expired.
+- Missing/malformed/rejected/expired access-token responses obtain a fresh
+  access token after the existing five-minute cooldown. Explicit invalid or
+  expired refresh tokens and account bans still stop automatic retries.
+- The saved refresh token and its expiry remain unchanged during recovery.
+  Every new socket uses a newly exchanged access token; old-generation frames
+  cannot invalidate the recovered connection. Disable cancels pending retries.
+- Controlled regressions reproduce an established connection failing, an auth
+  outage, and recovery after cooldown. These are fault-injection tests with
+  non-working credentials, not an upstream outage capture. Windows native
+  decoding/transport and Jian integration/settings/dashboard regression:
+  162 tests passed; targeted static analysis has no issues.
+
 A separate bounded live check on 2026-09-21 successfully redeemed the user's
 login key, obtained an access token (3600 seconds, max 3 connections), and
 received an `all` snapshot with 52 source entries using the Authorization
 handshake header. The verification socket was closed. No credential or response
 body was saved in this repository. This is a protocol check, not an Android
 physical-device or packaged-app end-to-end test.
+
+## Unified UI correction (2026-10-10)
+
+CEA/provincial CEA/SA missing-value estimates now drive badge, header and border
+colors through the application's existing reported-intensity palette. CWA EEW
+uses the same existing CWA palette for the entire card. Estimates remain labeled
+as estimates and never overwrite `maxIntensity`, `className` or `sourcePayload`.
+
+Validation: 398 tests passed across 27 relevant test files, including original
+Jian captures, mobile/desktop card colors, CENC arrival order and dismissal,
+review upgrades, fixed-number SA revisions, Android handoff, EMSC voice lifetime,
+USGS/ShakeMap filters and CWA history. New lifecycle/contract states are explicitly
+separate from unchanged captured wire data. Four previews generated from original
+captures are in `build/test-previews/jian_fixed_*.png`; CEA and CWA were visually
+checked. No real-time warning was injected and no physical-device verification
+or newly built installer is claimed. Multi-hazard scope above remains unchanged.
 
 The authentication regression run passed 202 tests across Jian protocol/UI,
 dashboard layout, background reload planning, multi-API catalog handling and

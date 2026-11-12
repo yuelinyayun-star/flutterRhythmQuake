@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:convert';
+import 'api_json_decoder.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -277,7 +277,7 @@ class JmaVolcanoMapService extends ChangeNotifier {
     if (resp.statusCode != 200) {
       throw Exception('HTTP ${resp.statusCode} for $url');
     }
-    return jsonDecode(utf8.decode(resp.bodyBytes, allowMalformed: true));
+    return decodeApiJsonIngressBytes(resp.bodyBytes, allowMalformed: true);
   }
 
   Map<String, dynamic> _mapOf(Map raw) => Map<String, dynamic>.from(raw);

@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'api_json_decoder.dart';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'source_socket.dart';
 
 import 'base_source.dart';
 import 'sasmex_report_sequence.dart';
@@ -60,7 +62,7 @@ class SasmexService extends BaseSourceService {
     try {
       await _loadReports();
       if (!_running || generation != _generation) return;
-      final channel = WebSocketChannel.connect(Uri.parse(url));
+      final channel = connectSourceSocket(Uri.parse(url));
       _channel = channel;
       await channel.ready.timeout(const Duration(seconds: 20));
       if (!_current(channel, generation)) return;
@@ -81,10 +83,9 @@ class SasmexService extends BaseSourceService {
   void _receive(WebSocketChannel channel, int generation, dynamic message) {
     if (!_current(channel, generation)) return;
     try {
-      final text = message is String
-          ? message
-          : utf8.decode(message as List<int>);
-      final decoded = jsonDecode(text);
+      final decoded = message is String
+          ? decodeApiJson(message)
+          : decodeApiJsonBytes(message as List<int>);
       if (decoded is! Map) return;
       final frame = Map<String, dynamic>.from(decoded);
       final event = _acceptRelayFrame(frame);

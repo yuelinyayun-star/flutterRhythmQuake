@@ -1,0 +1,111 @@
+[
+  {
+    "api": "whews-domestic",
+    "route": "direct",
+    "connected": true,
+    "frames": 1,
+    "eewSnapshot": true
+  },
+  {
+    "api": "chinaeew-icl",
+    "route": "direct",
+    "httpStatus": 200,
+    "events": 20
+  },
+  {
+    "api": "jian",
+    "route": "direct",
+    "connected": true,
+    "frames": 1,
+    "eewSnapshot": true,
+    "accessExchange": "accepted"
+  },
+  {
+    "api": "fan",
+    "route": "direct",
+    "connected": true,
+    "frames": 4,
+    "eewSnapshot": true,
+    "alive": true,
+    "auth": "accepted"
+  },
+  {
+    "api": "whews-overseas",
+    "route": "direct",
+    "connected": true,
+    "frames": 1,
+    "eewSnapshot": true
+  },
+  {
+    "api": "jian-icl",
+    "route": "direct",
+    "connected": true,
+    "frames": 1,
+    "eewSnapshot": true,
+    "observation": "completed"
+  },
+  {
+    "api": "wolfx",
+    "route": "direct",
+    "connected": true,
+    "frames": 2,
+    "eewSnapshot": true,
+    "alive": true,
+    "observation": "completed"
+  },
+  {
+    "api": "sasmex",
+    "route": "direct",
+    "connected": true,
+    "frames": 2,
+    "eewSnapshot": false,
+    "alive": true,
+    "observation": "completed"
+  },
+  {
+    "api": "wolfx-http",
+    "source": "sc_eew",
+    "httpStatus": 200,
+    "id": "202610091221.0001_2"
+  },
+  {
+    "api": "wolfx-http",
+    "source": "jma_eew",
+    "httpStatus": 200,
+    "id": "20261013112730"
+  },
+  {
+    "api": "wolfx-http",
+    "source": "cwa_eew",
+    "httpStatus": 403
+  },
+  {
+    "api": "wolfx-root",
+    "route": "direct",
+    "errorType": "InvalidStatus"
+  },
+  {
+    "api": "wolfx-http",
+    "source": "cq_eew",
+    "httpStatus": 200,
+    "id": "202609260757.0001"
+  },
+  {
+    "api": "wolfx-http",
+    "source": "fj_eew",
+    "httpStatus": 200,
+    "id": "202609150258_1"
+  },
+  {
+    "api": "wolfx-http",
+    "source": "cenc_eew",
+    "httpStatus": 200,
+    "id": "202610131615.0001"
+  },
+  {
+    "api": "globalquake",
+    "route": "direct",
+    "connected": true,
+    "bytes": 926
+  }
+]

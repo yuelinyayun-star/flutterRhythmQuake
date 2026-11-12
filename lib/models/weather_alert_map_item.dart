@@ -1,4 +1,4 @@
-import 'dart:convert';
+import '../services/sources/api_json_decoder.dart';
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 
@@ -387,11 +387,22 @@ class WeatherAlertDetail {
       final jsonEnd = rawJs.lastIndexOf('}');
       if (jsonStart == -1 || jsonEnd == -1 || jsonEnd <= jsonStart) return null;
       final jsonStr = rawJs.substring(jsonStart, jsonEnd + 1);
-      final decoded = json.decode(jsonStr);
+      final decoded = decodeApiJson(jsonStr);
       if (decoded is Map<String, dynamic>) {
         return WeatherAlertDetail.fromJson(decoded, fileId);
       }
     } catch (_) {}
     return null;
+  }
+
+  static WeatherAlertDetail? fromRawJsBytes(List<int> rawJs, String fileId) {
+    try {
+      final decoded = decodeApiJsonIngressBytes(rawJs, allowMalformed: true,
+          envelope: JsonWireEnvelope.firstObject);
+      return decoded is Map<String, dynamic>
+          ? WeatherAlertDetail.fromJson(decoded, fileId) : null;
+    } on FormatException {
+      return null;
+    }
   }
 }

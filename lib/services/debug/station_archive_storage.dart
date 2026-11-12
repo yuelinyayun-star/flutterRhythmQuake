@@ -11,8 +11,15 @@ class StationArchiveStorage {
 
   static String encode(Map archive) {
     final bytes = JsonUtf8Encoder().convert(archive);
-    return '$prefix${base64.encode(platform.compress(bytes))}';
+    return encodeBytes(bytes);
   }
+
+  static String encodeBytes(List<int> bytes) {
+    return wrapCompressed(platform.compress(bytes));
+  }
+
+  static String wrapCompressed(List<int> gzipBytes) =>
+      '$prefix${base64.encode(gzipBytes)}';
 
   static Map decode(String text) {
     if (!text.startsWith(prefix)) return jsonDecode(text) as Map;

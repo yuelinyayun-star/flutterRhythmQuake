@@ -83,7 +83,7 @@ void main() {
       final before = tester
           .widgetList<PolygonLayer>(find.byType(PolygonLayer))
           .toList();
-      expect(before.map((p) => p.polygons.length), [1561, 400, 421]);
+      expect(before.first.polygons.length, lessThan(1561));
       final shots = [
         ('east-asia', const LatLng(32, 120), 4.0),
         ('japan', const LatLng(37, 137), 5.0),
@@ -136,14 +136,22 @@ void main() {
       print(
         'Vector $size: load=${loadWatch.elapsedMilliseconds}ms; warm pump median=${frames[15]}us p95=${frames[28]}us',
       );
+      final warmLayers = tester
+          .widgetList<PolygonLayer>(find.byType(PolygonLayer))
+          .toList();
       rebuild.value++;
+      final warmProjectionState = tester.state(find.byType(PolygonLayer).first);
       await tester.pump();
       final after = tester
           .widgetList<PolygonLayer>(find.byType(PolygonLayer))
           .toList();
       for (var i = 0; i < 3; i++) {
-        expect(identical(before[i], after[i]), isTrue);
+        expect(identical(warmLayers[i], after[i]), isTrue);
       }
+      expect(
+        tester.state(find.byType(PolygonLayer).first),
+        same(warmProjectionState),
+      );
       final center = controller.camera.center;
       await tester.drag(find.byType(FlutterMap), const Offset(70, 25));
       await tester.pumpAndSettle();

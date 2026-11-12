@@ -34,6 +34,17 @@ class _DisplayProvider extends QuakeProvider {
   List<UnifiedQuakeData> get unifiedEvents => List.unmodifiable(cards);
 }
 
+List<QuakeMessage> cencRows() => QuakeEventAdapter.convertWolfxCencEqlist(
+  Map<String, dynamic>.from(
+    jsonDecode(
+          File(
+            'test/fixtures/cenc_history_20261009/wolfx.original.json',
+          ).readAsStringSync(encoding: utf8),
+        )
+        as Map,
+  ),
+);
+
 List<UnifiedQuakeData> capturedCards() => [
   for (final file in const [
     'us6000u0xi.detail.original.geojson',
@@ -103,6 +114,59 @@ void main() {
   );
 
   for (final size in [const Size(390, 844), const Size(1280, 900)]) {
+    testWidgets('selected CENC row does not block another CENC card at $size', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = size;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final rows = cencRows();
+      final newer = rows.first;
+      final older = rows.firstWhere((e) => e.eventId != newer.eventId);
+      expect(newer.originTime.isAfter(older.originTime), isTrue);
+      final original = jsonEncode(older.toMap());
+      final live = QuakeEventAdapter.catalogInfo(newer, 'cencEqlist');
+      final provider = (await tester.runAsync(
+        () async => _DisplayProvider([live]),
+      ))!;
+      final map = MapStateProvider();
+      map.selectHistoryEvent(older);
+      provider.selectHistoryMapProducts(older);
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider<QuakeProvider>.value(value: provider),
+            ChangeNotifierProvider<MapStateProvider>.value(value: map),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(body: SingleChildScrollView(child: AlertModule())),
+          ),
+        ),
+      );
+      expect(provider.unifiedDisplayEvents, hasLength(2));
+      if (size.shortestSide < 600) {
+        await tester.pump(const Duration(seconds: 5));
+      }
+      expect(
+        find.byKey(
+          ValueKey(
+            'unified_card_${live.source}_${live.eventId}_${live.reportNumText}',
+          ),
+        ),
+        findsOneWidget,
+      );
+      expect(map.isSelectedHistoryEvent(older), isTrue);
+      provider.selectHistoryMapProducts(null);
+      await tester.pump();
+      expect(provider.unifiedDisplayEvents, [live]);
+      expect(jsonEncode(older.toMap()), original);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      provider.dispose();
+      map.dispose();
+    });
+
     testWidgets('selected real history joins existing info carousel at $size', (
       tester,
     ) async {

@@ -1,6 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+/// Official JMA VXSE62 bulletin title (a report serial is not part of it).
+const String jmaLpgmObservationTitle = '長周期地震動に関する観測情報';
+
 @immutable
 class JmaLpgmPeriodValue {
   const JmaLpgmPeriodValue({required this.band, required this.value});

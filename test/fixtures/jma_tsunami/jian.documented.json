@@ -1,0 +1,23 @@
+{
+  "type": "jma-tsunami",
+  "Data": {
+    "id": "jma_tsu_20240101120000_1",
+    "title": "三陸沖",
+    "level": "津波警報",
+    "headline": "20240101120000",
+    "number": 1,
+    "originTime": 1704078000000,
+    "endTime": 1704099600000,
+    "latitude": 38.666666666666664,
+    "longitude": 142,
+    "depth": 10,
+    "magnitude": 7.5,
+    "place": "三陸沖",
+    "area": "北海道太平洋沿岸東部 津波警報；青森県太平洋沿岸 津波注意報；関東地方 津波予報（若干の海面変動） ０．２ｍ未満",
+    "orgUnit": "気象庁",
+    "telegram": "VTSE41",
+    "description": "级别分布：津波警報 1 津波注意報 1 若干の海面変動 1；全域最大预估波高：０．２ｍ未満（関東地方）；津波予報区域（3）；• 北海道太平洋沿岸東部 [津波警報] (不明)；…；有效期至：2024年01月01日 17时00分00秒 (UTC+8)",
+    "htmlUrl": "https://www.data.jma.go.jp/developer/xml/data/VTSE41_….xml"
+  },
+  "md5": "example"
+}

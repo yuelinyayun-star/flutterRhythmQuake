@@ -1,0 +1,36 @@
+{
+  "key": "captured_ntwc",
+  "source": "ntwc",
+  "Data": {
+    "id": "PAAQ-1-tlegq7",
+    "updates": 1,
+    "shockTime": "2026-09-15 17:51:43",
+    "latitude": 69.551,
+    "longitude": -144.491,
+    "depth": 39.0,
+    "magnitude": 4.3,
+    "placeName": "阿拉斯加州北部",
+    "agency": "NTWC",
+    "bulletinUrl": "http://www.tsunami.gov/events/PAAQ/2026/09/15/tlegq7/1/WEAK53/WEAK53.txt",
+    "capUrl": "https://www.tsunami.gov/events/xml/PAAQCAP.xml",
+    "certainty": "Unlikely",
+    "description": "This is a Tsunami Information Statement for Alaska and the Canadian Arctic region.  - Event details: Preliminary magnitude 4.3 (Ml) earthquake / Lat: 69.551, Lon: -144.491 at 2026-09-15T09:51:43 UTC An information statement indicates that an earthquake has occurred, but does not pose a tsunami threat, or that a tsunami warning, advisory, or watch has been issued for another section of the ocean.",
+    "eventId": "tlegq7",
+    "expires": "2026-09-15 18:56:33",
+    "headline": "This is a Tsunami Information Statement for Alaska and the Canadian Arctic region.",
+    "instruction": "There is NO tsunami danger from this earthquake.  This will be the only U.S. National Tsunami Warning Center    message issued for this event unless additional information    becomes available.   The location and magnitude are based on preliminary information.   Further information will be issued by the United States    Geological Survey (earthquake.usgs.gov) or the appropriate    regional seismic network.",
+    "issueTime": "2026-09-15 17:56:33",
+    "jsonUrl": "http://www.tsunami.gov/events/PAAQ/2026/09/15/tlegq7/1/WEAK53/PAAQ.json",
+    "level": "Information",
+    "magType": "Ml",
+    "maps": {
+      "energyMapUrl": "",
+      "travelTimeMapUrl": ""
+    },
+    "severity": "Minor",
+    "urgency": "Unknown"
+  },
+  "original": "test/fixtures/tsunami_presentation_20261023/raw/f69c83e0ed636684.original",
+  "url": "",
+  "sha256": "f69c83e0ed636684264840061ffa6873aecf769db5bd2a2146ba3c4799cda5db"
+}

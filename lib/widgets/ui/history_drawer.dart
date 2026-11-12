@@ -2,12 +2,14 @@ import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show ValueListenable;
 
 import 'history_panel.dart';
 import 'settings_controls.dart';
 
 class HistoryDrawer extends StatelessWidget {
-  const HistoryDrawer({super.key});
+  const HistoryDrawer({super.key, this.isOpen});
+  final ValueListenable<bool>? isOpen;
 
   @override
   Widget build(BuildContext context) => Drawer(
@@ -66,7 +68,15 @@ class HistoryDrawer extends StatelessWidget {
                   ),
                 ),
                 const Divider(height: 1, color: SettingsControlStyle.divider),
-                const Expanded(child: HistoryPanel()),
+                Expanded(
+                  child: isOpen == null
+                      ? const HistoryPanel()
+                      : ValueListenableBuilder<bool>(
+                          valueListenable: isOpen!,
+                          builder: (context, active, _) =>
+                              HistoryPanel(active: active),
+                        ),
+                ),
               ],
             ),
           ),

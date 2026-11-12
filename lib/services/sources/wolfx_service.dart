@@ -25,6 +25,7 @@
 /// 5. 通过回调通知上层应用
 
 import 'dart:async';
+import 'api_json_decoder.dart';
 import 'dart:convert';
 
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -207,7 +208,7 @@ class WolfxService extends BaseSourceService {
   /// - [data]: 原始消息数据
   void _dispatch(dynamic data, WebSocketChannel channel, int connectionSerial) {
     try {
-      final json = jsonDecode(data);
+      final json = decodeApiJson(data);
       if (json is! Map<String, dynamic>) return;
       final rawPayload = data is String ? data : jsonEncode(json);
 

@@ -183,6 +183,7 @@ def _build_polygon_features(
     features_source: list[dict[str, Any]],
     destination: Path,
     display_name: Callable[[dict[str, Any]], str],
+    *, double_precision: bool = False,
 ) -> None:
     features: list[dict[str, Any]] = []
     polygons: list[tuple[int, int]] = []
@@ -234,7 +235,7 @@ def _build_polygon_features(
     for feature in features:
         data.extend(
             struct.pack(
-                "<4f4I",
+                "<4d4I" if double_precision else "<4f4I",
                 *feature["bbox"],
                 name_indices[feature["name"]],
                 feature["polygon_start"],
@@ -250,13 +251,13 @@ def _build_polygon_features(
         data.extend(struct.pack("<2I", point_start, point_count))
     point_offset = len(data)
     for lon, lat in points:
-        data.extend(struct.pack("<2f", lon, lat))
+        data.extend(struct.pack("<2d" if double_precision else "<2f", lon, lat))
 
     struct.pack_into(
         "<4s14I",
         data,
         0,
-        MAGIC_CWA,
+        b"CWR2" if double_precision else MAGIC_CWA,
         VERSION,
         len(features),
         len(polygons),
@@ -268,7 +269,7 @@ def _build_polygon_features(
         polygon_offset,
         ring_offset,
         point_offset,
-        32,
+        48 if double_precision else 32,
         8,
         8,
     )
@@ -405,21 +406,45 @@ def main() -> None:
         type=Path,
         default=Path("lib/utils/fe_regions.dart"),
     )
+    parser.add_argument(
+        "--taiwan-official-zip", type=Path,
+        default=Path("references/region_data/official/township_nlsc_1120317.original.zip"),
+    )
     args = parser.parse_args()
+    if not args.taiwan_official_zip.is_file():
+        raise FileNotFoundError("The pinned official township ZIP is required; see tool/region_data/README.md")
+    from build_japan_sea_assets import build as build_japan_seas, checked, GEOJSON_SHA256, BASELINE_SHA256
+    jma_source = args.source_dir / "jma/震央地名.geojson"
+    china_baselines = args.source_dir / "official/diaoyu_baselines_20120910.original.html"
+    checked(jma_source, GEOJSON_SHA256)
+    checked(china_baselines, BASELINE_SHA256)
+    from build_korea_official_assets import build as build_korea_land, SOURCE_SHA256 as KOREA_SHA256
+    korea_source = args.source_dir / "kma/geo_sido_2025.original.js"
+    checked(korea_source, KOREA_SHA256)
+    from build_diaoyu_official_assets import build as build_diaoyu_official, COORDINATES_SHA256, NAMES_SHA256, LAW_SHA256
+    for filename,sha in [('diaoyu_coordinates_20120915.original.html',COORDINATES_SHA256),('diaoyu_names_20120302.original.html',NAMES_SHA256),('territorial_sea_law.original.html',LAW_SHA256)]:
+        checked(args.source_dir/'official'/filename,sha)
 
     build_china(
         args.source_dir / "china_place_index.json",
         args.output_dir / "china_place_index.bin",
     )
-    build_china_admin(
-        args.map_dir / "中华人民共和国.geojson",
-        args.source_dir / "china_place_index.json",
-        args.output_dir / "china_admin_regions.bin",
+    from build_taiwan_official_assets import build as build_official_taiwan
+    manifest = build_official_taiwan(
+        args.taiwan_official_zip, args.source_dir, args.map_dir, args.output_dir,
+    )
+    (args.output_dir / "taiwan_regions.provenance.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
     )
     build_japan_land(
         args.map_dir / "japan_prefectures.geojson",
         args.output_dir / "japan_land_regions.bin",
     )
+    build_japan_seas(jma_source, china_baselines, args.output_dir)
+    build_diaoyu_official(args.source_dir,args.map_dir,args.output_dir)
+    build_korea_land(korea_source, args.output_dir)
+    from build_east_asia_names import build as build_effective_names
+    build_effective_names(args.map_dir, args.output_dir)
     build_bbox(
         args.source_dir / "korea_region_data.json",
         args.output_dir / "korea_regions.bin",
@@ -427,10 +452,6 @@ def main() -> None:
     build_bbox(
         args.source_dir / "us_mexico_region_data.json",
         args.output_dir / "us_mexico_regions.bin",
-    )
-    build_cwa(
-        args.source_dir / "CWA震央名.geojson",
-        args.output_dir / "cwa_epicenter_regions.bin",
     )
     update_embedded_fe(
         args.source_dir / "fe_fix_region_data.json",

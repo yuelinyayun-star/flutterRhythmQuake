@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutterrhythmquake/services/jian_auth_service.dart';
+import 'package:flutterrhythmquake/services/jian_auth_retry_policy.dart';
 import 'package:flutterrhythmquake/services/sources/jian_service.dart';
 import 'package:flutterrhythmquake/services/sources/source_manager.dart';
 import 'package:flutterrhythmquake/models/source_status.dart';
@@ -33,6 +34,7 @@ class BrokenStore extends JianCredentialStore {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() {
+    JianAuthRetryPolicy.storeOverride = MemoryConnectionRetryStore();
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
   });
@@ -483,13 +485,17 @@ void main() {
     },
   );
 
-  testWidgets('socket failures keep credentials and report transport failure', (tester) async {
+  testWidgets('socket failures keep credentials and report transport failure', (
+    tester,
+  ) async {
     final expiry = DateTime.utc(2026, 10, 1);
     await JianCredentialStore().write('rt_test', expiresAt: expiry);
     final channel = FakeChannel();
     final service = JianService(
       now: tester.binding.clock.now,
-      authService: JianAuthService(client: MockClient((_) async => ticket('at_test'))),
+      authService: JianAuthService(
+        client: MockClient((_) async => ticket('at_test')),
+      ),
       socketFactory: (_, {headers}) => channel,
     );
     addTearDown(service.dispose);
@@ -504,5 +510,196 @@ void main() {
     expect(service.lastError, isNot(contains('secret')));
     expect(await JianCredentialStore().read(), 'rt_test');
     service.dispose();
+  });
+
+  // Controlled fault responses, not captured earthquake data or real tokens.
+  final transientResponses = <String, Future<http.Response> Function()>{
+    'HTML gateway response': () async =>
+        http.Response('<html>rt_secret</html>', 403),
+    'redirect response': () async => http.Response('', 302),
+    'unknown rejection': () async =>
+        http.Response('{"ok":false,"error":"at_secret"}', 401),
+    'unexpected JSON shape': () async => http.Response('[]', 200),
+    'invalid ticket response': () async => ticket('rt_wrong_kind'),
+    'invalid UTF-8': () async => http.Response.bytes([0xff], 200),
+    'transport exception': () async => throw http.ClientException('rt_secret'),
+    'other transport exception': () async => throw StateError('at_secret'),
+  };
+  for (final fault in transientResponses.entries) {
+    testWidgets('outage recovers after ${fault.key} without invalidating rt', (
+      tester,
+    ) async {
+      final expiry = tester.binding.clock.now().toUtc().add(
+        const Duration(days: 164),
+      );
+      final store = JianCredentialStore();
+      await store.write('rt_test', expiresAt: expiry);
+      var exchanges = 0;
+      final channels = <FakeChannel>[];
+      final headersSeen = <Map<String, dynamic>?>[];
+      final authHeaders = <String?>[];
+      final service = JianService(
+        now: tester.binding.clock.now,
+        authService: JianAuthService(
+          client: MockClient((request) async {
+            authHeaders.add(request.headers['Authorization']);
+            exchanges++;
+            if (exchanges == 2) return fault.value();
+            return ticket('at_test$exchanges');
+          }),
+        ),
+        socketFactory: (_, {headers}) {
+          headersSeen.add(headers);
+          final channel = FakeChannel();
+          channels.add(channel);
+          return channel;
+        },
+      );
+      addTearDown(service.dispose);
+      service.connect();
+      await tester.pump();
+      expect(authHeaders, ['Bearer rt_test']);
+      expect(service.authStatus, JianAuthStatus.authenticated);
+      channels.single.frames.addError(StateError('offline'));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 45));
+      expect(exchanges, 2);
+      expect(channels, hasLength(1));
+      expect(service.authStatus, JianAuthStatus.unavailable);
+      expect(service.lastError, isNot(contains('secret')));
+      expect(service.credentialInfo.expiresAt, expiry);
+      expect(await store.read(), 'rt_test');
+      await tester.pump(const Duration(minutes: 4, seconds: 59));
+      expect(exchanges, 2);
+      await tester.pump(const Duration(seconds: 1));
+      expect(exchanges, 3);
+      expect(channels, hasLength(2));
+      expect(headersSeen.last, {'Authorization': 'Bearer at_test3'});
+      expect(service.authStatus, JianAuthStatus.authenticated);
+      expect(service.connectionStatus, SourceStatus.connected);
+      expect(service.credentialInfo.errorCode, isNull);
+      // Late frames from the abandoned connection cannot invalidate recovery.
+      channels.first.frames.add('{"ok":false,"code":4202}');
+      await tester.pump();
+      expect(service.authStatus, JianAuthStatus.authenticated);
+      service.disconnect();
+      await tester.pump(const Duration(minutes: 10));
+      expect(exchanges, 3);
+      expect(service.connectionStatus, SourceStatus.disconnected);
+    });
+  }
+
+  testWidgets(
+    'unknown socket auth rejection retries instead of invalidating rt',
+    (tester) async {
+      await JianCredentialStore().write('rt_test');
+      var exchanges = 0;
+      final channels = <FakeChannel>[];
+      final service = JianService(
+        now: tester.binding.clock.now,
+        authService: JianAuthService(
+          client: MockClient((_) async => ticket('at_test${++exchanges}')),
+        ),
+        socketFactory: (_, {headers}) {
+          final channel = FakeChannel();
+          channels.add(channel);
+          return channel;
+        },
+      );
+      addTearDown(service.dispose);
+      service.connect();
+      await tester.pump();
+      channels.single.frames.add('{"ok":false,"error":"unknown","code":4999}');
+      await tester.pump();
+      expect(service.authStatus, JianAuthStatus.unavailable);
+      await tester.pump(const Duration(minutes: 5));
+      expect(exchanges, 2);
+      expect(channels, hasLength(2));
+      expect(service.authStatus, JianAuthStatus.authenticated);
+      service.disconnect();
+    },
+  );
+
+  for (final code in [4001, 4002, 4003, 4004]) {
+    testWidgets('access-token rejection $code renews only an invalid or expired access token', (
+      tester,
+    ) async {
+      await JianCredentialStore().write('rt_test');
+      var exchanges = 0;
+      final channels = <FakeChannel>[];
+      final service = JianService(
+        now: tester.binding.clock.now,
+        authService: JianAuthService(
+          client: MockClient((_) async => ticket('at_test${++exchanges}')),
+        ),
+        socketFactory: (_, {headers}) {
+          final channel = FakeChannel();
+          channels.add(channel);
+          return channel;
+        },
+      );
+      addTearDown(service.dispose);
+      service.connect();
+      await tester.pump();
+      channels.single.frames.add(jsonEncode({'ok': false, 'code': code}));
+      await tester.pump();
+      final renews = code == 4003 || code == 4004;
+      expect(service.authStatus, renews ? JianAuthStatus.unavailable : JianAuthStatus.invalid);
+      await tester.pump(Duration(minutes: renews ? 5 : 10));
+      expect(exchanges, renews ? 2 : 1);
+      service.disconnect();
+    });
+  }
+
+  for (final code in [4201, 4202, 4006]) {
+    testWidgets('explicit terminal rejection $code still stops retries', (
+      tester,
+    ) async {
+      await JianCredentialStore().write('rt_test');
+      var exchanges = 0;
+      final service = JianService(
+        now: tester.binding.clock.now,
+        authService: JianAuthService(
+          client: MockClient((_) async {
+            exchanges++;
+            return http.Response(jsonEncode({'ok': false, 'code': code}), 401);
+          }),
+        ),
+        socketFactory: (_, {headers}) => throw StateError('must not open'),
+      );
+      addTearDown(service.dispose);
+      service.connect();
+      await tester.pump();
+      expect(service.authStatus, JianAuthStatus.invalid);
+      await tester.pump(const Duration(hours: 2));
+      expect(exchanges, 1);
+      expect(await JianCredentialStore().read(), 'rt_test');
+      service.disconnect();
+    });
+  }
+
+  testWidgets('disconnect during auth cooldown cancels all automatic retries', (
+    tester,
+  ) async {
+    await JianCredentialStore().write('rt_test');
+    var exchanges = 0;
+    final service = JianService(
+      now: tester.binding.clock.now,
+      authService: JianAuthService(
+        client: MockClient((_) async {
+          exchanges++;
+          return http.Response('<html>gateway error</html>', 403);
+        }),
+      ),
+      socketFactory: (_, {headers}) => throw StateError('must not open'),
+    );
+    addTearDown(service.dispose);
+    service.connect();
+    await tester.pump();
+    expect(service.authStatus, JianAuthStatus.unavailable);
+    service.disconnect();
+    await tester.pump(const Duration(hours: 2));
+    expect(exchanges, 1);
+    expect(service.connectionStatus, SourceStatus.disconnected);
   });
 }

@@ -14,6 +14,35 @@ import 'package:flutterrhythmquake/services/foreground_station_payload.dart';
 import 'package:flutterrhythmquake/services/station_history_capture.dart';
 import 'package:flutterrhythmquake/services/quake_event_adapter.dart';
 import 'package:flutterrhythmquake/services/debug/station_json_archive.dart';
+import 'package:flutterrhythmquake/models/eew_event_group.dart';
+import 'package:flutterrhythmquake/services/debug/history_replay_directory_io.dart';
+import 'package:flutterrhythmquake/services/debug/station_replay_blocks.dart';
+
+// Hydrate only in assertions so each comparison covers unchanged original data.
+Future<HistoryReplayPackage> exportedReplay(File file) async {
+  final value = await importReplayFile(file.path);
+  try {
+    final reports = [
+      for (final report in value.reports)
+        await value.storedReports?.payloads[report]?.load?.call() ?? report,
+    ];
+    final frames = [
+      for (final entry in StationReplayFrames.describe(value.stationFrames))
+        await entry.loadAsync(),
+    ];
+    return HistoryReplayPackage.fromGroup(
+      EewEventGroup(
+        eventId: reports.first.eventId,
+        reports: reports,
+        firstArrivedAt: reports.first.arrivedAt!,
+        stationFrames: frames,
+        captureEndedAt: value.captureEndedAt,
+      ),
+    );
+  } finally {
+    await value.releaseFiles?.call();
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -54,6 +83,10 @@ void main() {
         expect(collector.addEvent(report), isFalse);
       }
       expect(await collector.tick(finalize: false), isEmpty);
+      final savedFolder = await Directory(
+        '${temporary.path}/active',
+      ).list().where((entity) => entity is Directory).first;
+      expect(savedFolder.path, contains(fixture.reports.first.hypocenter));
       await collector.close();
       collector = create();
       await collector.open();
@@ -61,9 +94,9 @@ void main() {
       now = now.add(const Duration(hours: 1));
       final files = await collector.tick();
       expect(files, hasLength(1));
-      final replay = HistoryReplayPackage.decode(
-        await files.single.readAsString(),
-      );
+      expect(files.single.path, contains(fixture.reports.last.hypocenter));
+      expect(files.single.path, contains('1150074'));
+      final replay = await exportedReplay(files.single);
       expect(
         replay.reports.map((e) => e.sourcePayload),
         unorderedEquals(fixture.reports.map((e) => e.sourcePayload)),
@@ -72,6 +105,29 @@ void main() {
       expect(await collector.tick(), isEmpty);
     },
   );
+
+  test('legacy hash-only capture folders still resume', () async {
+    expect(collector.addEvent(fixture.reports.first), isTrue);
+    await collector.close();
+    final folder = await Directory(
+      '${temporary.path}/active',
+    ).list().where((entity) => entity is Directory).first;
+    final oldName = folder.uri.pathSegments
+        .where((part) => part.isNotEmpty)
+        .last
+        .split('_')
+        .last;
+    await folder.rename('${temporary.path}/active/$oldName');
+    collector = create();
+    await collector.open();
+    expect(collector.activeCount, 1);
+    now = now.add(const Duration(hours: 1));
+    final replay = await exportedReplay((await collector.tick()).single);
+    expect(
+      replay.reports.single.sourcePayload,
+      fixture.reports.first.sourcePayload,
+    );
+  });
 
   test(
     'nonempty S-net model fixture survives capture, compact file and map playback',
@@ -112,13 +168,9 @@ void main() {
       );
       await collector.tick(finalize: false);
       now = now.add(const Duration(hours: 1));
-      final text = await (await collector.tick()).single.readAsString();
-      expect(
-        jsonDecode(text)['stationArchive']['format'],
-        'station-json-gzip-blocks-v1',
-      );
-      expect(text, isNot(contains('imageBytes')));
-      final replay = HistoryReplayPackage.decode(text);
+      final file = (await collector.tick()).single;
+      expect((await file.readAsBytes()).take(2), [0x50, 0x4b]);
+      final replay = await exportedReplay(file);
       expect(
         replay.stationFrames.map((e) => e.kind),
         containsAll(['snet', 'lpgm']),
@@ -165,9 +217,7 @@ void main() {
       expect(ReplayCollector.excludedEventSources, contains(icl.source));
       expect(collector.addEvent(icl), isFalse);
       now = now.add(const Duration(hours: 1));
-      final replay = HistoryReplayPackage.decode(
-        await (await collector.tick()).single.readAsString(),
-      );
+      final replay = await exportedReplay((await collector.tick()).single);
       expect(replay.stationFrames, isEmpty);
     },
   );
@@ -225,62 +275,59 @@ void main() {
     expect(files, hasLength(2));
     final sources = <String>{};
     for (final file in files) {
-      sources.add(
-        HistoryReplayPackage.decode(
-          await file.readAsString(),
-        ).reports.first.source,
-      );
+      sources.add((await exportedReplay(file)).reports.first.source);
     }
     expect(sources, {'cwaEew', 'ceaEew'});
   });
 
-  test('overlapping windows share compressed chunks across restart', () async {
-    final cea = HistoryReplayPackage.decode(
-      await File(
-        'test/fixtures/history_replay/cea_202609290220.rqreplay',
-      ).readAsString(),
-    );
-    collector.addEvent(fixture.reports.first);
-    for (final event in cea.reports) {
-      collector.addEvent(event);
-    }
-    final frame = StationHistoryFrame(
-      receivedAt: now,
-      snapshot: {'kind': 'snet', 'stations': []},
-    );
-    collector.addStation(frame);
-    await collector.tick(finalize: false);
-    final chunks = await Directory(
-      '${collector.spool.path}/chunks',
-    ).list().where((e) => e is File).toList();
-    expect(chunks, hasLength(1));
-    expect(chunks.single.path, endsWith('.stations.json.gz'));
-    final bytes = await File(chunks.single.path).readAsBytes();
-    expect(
-      StationJsonArchive.decode(
-        jsonDecode(utf8.decode(gzip.decode(bytes))) as Map,
-      ).single.toMap(),
-      frame.toMap(),
-    );
-    await collector.close();
-    collector = create();
-    await collector.open();
-    now = now.add(const Duration(hours: 1));
-    final files = await collector.tick();
-    expect(files, hasLength(2));
-    for (final file in files) {
+  test(
+    'overlapping windows share individual frame files across restart',
+    () async {
+      final cea = HistoryReplayPackage.decode(
+        await File(
+          'test/fixtures/history_replay/cea_202609290220.rqreplay',
+        ).readAsString(),
+      );
+      collector.addEvent(fixture.reports.first);
+      for (final event in cea.reports) {
+        collector.addEvent(event);
+      }
+      final frame = StationHistoryFrame(
+        receivedAt: now,
+        snapshot: {'kind': 'snet', 'stations': []},
+      );
+      collector.addStation(frame);
+      await collector.tick(finalize: false);
+      final chunks = await Directory(
+        '${collector.spool.path}/frames',
+      ).list().where((e) => e is File).toList();
+      expect(chunks, hasLength(1));
+      expect(chunks.single.path, endsWith('.json.gz'));
+      final bytes = await File(chunks.single.path).readAsBytes();
       expect(
-        HistoryReplayPackage.decode(
-          await file.readAsString(),
-        ).stationFrames.single.toMap(),
+        StationHistoryFrame.fromMap(
+          jsonDecode(utf8.decode(gzip.decode(bytes))) as Map,
+        ).toMap(),
         frame.toMap(),
       );
-    }
-    expect(
-      await Directory('${collector.spool.path}/chunks').list().toList(),
-      isEmpty,
-    );
-  });
+      await collector.close();
+      collector = create();
+      await collector.open();
+      now = now.add(const Duration(hours: 1));
+      final files = await collector.tick();
+      expect(files, hasLength(2));
+      for (final file in files) {
+        expect(
+          (await exportedReplay(file)).stationFrames.single.toMap(),
+          frame.toMap(),
+        );
+      }
+      expect(
+        await Directory('${collector.spool.path}/frames').list().toList(),
+        isEmpty,
+      );
+    },
+  );
 
   test(
     'old uncompressed checkpoints still export with their original values',
@@ -302,9 +349,7 @@ void main() {
         encoding: utf8,
       );
       now = now.add(const Duration(hours: 1));
-      final replay = HistoryReplayPackage.decode(
-        await (await collector.tick()).single.readAsString(),
-      );
+      final replay = await exportedReplay((await collector.tick()).single);
       expect(replay.stationFrames.single.toMap(), frame.toMap());
     },
   );
@@ -373,9 +418,7 @@ void main() {
       expect(await collector.tick(finalize: false), isEmpty);
       now = now.add(const Duration(hours: 1));
       final saved = (await collector.tick()).single;
-      final replay = HistoryReplayPackage.decode(
-        await saved.readAsString(encoding: utf8),
-      );
+      final replay = await exportedReplay(saved);
       expect(replay.reports.single.sourcePayload, original);
       expect(jsonEncode(original), originalJson);
       expect(replay.reports.single.arrivedAt, isNotNull);

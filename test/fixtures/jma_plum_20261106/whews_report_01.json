@@ -1,0 +1,23 @@
+{
+  "id": "20261106194044",
+  "updates": 1,
+  "shockTime": "2026-11-06 19:40:42",
+  "createTime": "2026-11-06 19:40:51",
+  "latitude": 37.4,
+  "longitude": 140.4,
+  "depth": 10,
+  "magnitude": "",
+  "placeName": "福島県中通り",
+  "epiIntensity": "3",
+  "cancel": false,
+  "editorialOffice": "気象庁本庁",
+  "final": false,
+  "infoTypeName": "予報",
+  "isIPF": false,
+  "isPLUM": true,
+  "isSea": false,
+  "isTraining": false,
+  "landOrSea": "",
+  "maxLgInt": "",
+  "warningAreas": []
+}

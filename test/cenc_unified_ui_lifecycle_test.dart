@@ -1,9 +1,15 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutterrhythmquake/models/cenc_ir_data.dart';
+import 'package:flutterrhythmquake/models/quake_message.dart';
 import 'package:flutterrhythmquake/models/unified_quake_data.dart';
 import 'package:flutterrhythmquake/providers/quake_provider.dart';
 import 'package:flutterrhythmquake/services/background_event_processor.dart';
 import 'package:flutterrhythmquake/services/sound_effect_service.dart';
+import 'package:flutterrhythmquake/services/native_unified_event_owner.dart';
+import 'package:flutterrhythmquake/services/sources/nowquake_cenc_intensity_service.dart';
 import 'package:flutterrhythmquake/services/sources/eqlist/eqlist_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -17,6 +23,62 @@ void main() {
   });
 
   tearDown(() => SoundEffectService().enabled = true);
+
+  for (final rejected in [false, true]) {
+    test(
+      'original Zaduo stations wait for native admission: rejected=$rejected',
+      () async {
+        final raw =
+            jsonDecode(
+                  File(
+                    'test/fixtures/cenc_ir_zaduo_20261024163952.original.json',
+                  ).readAsStringSync(),
+                )
+                as Map<String, dynamic>;
+        final data = CencIrData.fromNowQuakeJson(raw);
+        final event = NowQuakeCencIntensityService.unifiedInfoFromJson(raw)!;
+        final provider = QuakeProvider(
+          nativeUnifiedEvents: true,
+          startCatalogServices: false,
+        );
+        addTearDown(provider.dispose);
+        // Keep the original report times; stale-report display is explicit.
+        provider.setShowStaleInfoEvent(true);
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        if (rejected) {
+          provider.setSourceInfoMagFilter(QuakeSourceType.cenc, 9);
+        }
+        provider.updateRealtimeCencIrDataForTest(
+          data,
+          requireUnifiedEvent: true,
+        );
+        // Reproduce worker latency crossing the old Timer.run cleanup.
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(provider.cencIrData, isNull);
+        expect(provider.realtimeCencIrData, same(data));
+        provider.handleUnifiedEventForTest(event, suppressEffects: true);
+        expect(provider.unifiedEvents, rejected ? isEmpty : hasLength(1));
+        if (rejected) {
+          expect(provider.realtimeCencIrData, isNull);
+        } else {
+          final displayed = provider.cencIrData!;
+          expect(displayed.instrumentIntensities, hasLength(21));
+          final original = raw['stations'] as List;
+          for (var i = 0; i < original.length; i++) {
+            final station = displayed.instrumentIntensities[i];
+            expect(station.stationName, original[i]['name']);
+            expect(station.latitude, original[i]['latitude']);
+            expect(station.longitude, original[i]['longitude']);
+            expect(station.intensity, original[i]['int']);
+          }
+          provider.dismissUnifiedEventForTest(event);
+          expect(provider.cencIrData, isNull);
+          expect(provider.realtimeCencIrData, isNull);
+        }
+      },
+      skip: !NativeUnifiedEventOwner.supported,
+    );
+  }
 
   test('expired CENC current report does not reopen UI or mutate history', () {
     final provider = QuakeProvider();

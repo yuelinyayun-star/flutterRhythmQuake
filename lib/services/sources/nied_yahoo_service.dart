@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:convert';
+import 'api_json_decoder.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
@@ -127,7 +127,7 @@ class NiedYahooService {
           .timeout(const Duration(seconds: 10));
       if (!_isCurrentRun(generation)) return;
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final data = decodeApiJsonResponse(response) as Map<String, dynamic>;
         final siteConfigId = data['siteConfigId'] as String?;
         final items = data['items'] as List<dynamic>?;
         if (items != null && (forceRebuild || _stations == null)) {
@@ -326,7 +326,7 @@ class NiedYahooService {
           return;
         }
 
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final data = decodeApiJsonResponse(response) as Map<String, dynamic>;
         final rtData = data['realTimeData'] as Map<String, dynamic>?;
         if (rtData == null) {
           debugPrint('$_tag: ⚠ realTimeData 为 null');
@@ -425,7 +425,7 @@ class NiedYahooService {
         return;
       }
 
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final data = decodeApiJsonResponse(response) as Map<String, dynamic>;
       final rtData = data['realTimeData'] as Map<String, dynamic>?;
       if (rtData == null) {
         debugPrint('$_tag: Replay realTimeData is null for $timeKey');

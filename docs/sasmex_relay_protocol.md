@@ -2,6 +2,26 @@
 
 ## 1. 这是什么
 
+### 2026-10-17 主源切换
+
+当前 APP 的 WS 地址不变，主源改为 SASNO Firestore `app/events` 文档。
+服务端每 5 秒通过 REST 读取，原始 Firestore Value 按实际类型解包，再进入已有 JSON
+格式及统一 UI。首次当前文档仅建基线；内容变化且在有效期内才广播，重复、旧报及
+过期内容不会刷新显示寿命。`snapshot` 与 `query_response` 只返回未过期的当前主源缓存。
+不再返回独立 CAP 缓存。原 Socket.IO 保留为对照观察，不参与 APP 自动切换。
+
+文档 `SASNOEVENTDATA.unix` 转为 `epochMs` 和稳定事件 ID，震中取其 `epicenter`，
+地点取 `region`。已有强度文字转换用于本项目格式：Leve → Minor、Moderado → Moderate、
+Fuerte → Severe；没有原始 severity 时明确标记 `severityOrigin: intensity`，不把推导值
+说成原文。`intensidad`、`grado`、`severidad` 与 `original` 继续保留。`updated` 取原始
+Firestore `updateTime`，不会替换事件时间。中转补齐已有英文报文类型字段 `msgType`：
+普通事件为 `Alert`，上游已有类型时保留原值。`msgType` 不表示警报等级，
+不增加 `msgTypeOrigin` 字段；`original` 始终保留上游事件原值。
+APP 标题仍由 `severity` 判断，`Severe` 为警报，`Minor / Moderate` 为检出。
+APP 继续直接显示现有 JSON 字段，不增加映射。震级或深度缺失时保持未知。
+
+下文 Socket.IO 字段说明保留为切换前及对照源的协议参考，不代表当前主源。
+
 SASMEX 是墨西哥的地震预警系统。客户端 WebSocket 只转发网页正在使用的实时事件，
 并转换成 RhythmQuake 已使用的 JSON 格式，供桌面端、移动端和 Web 端使用。
 
@@ -253,16 +273,23 @@ APP 的报数是同一 `eventId` 的本地有效修订序号，当前上游没�
 APP 仍只连接 `/sasmex-eew`，保持现有真实 Sidesis 事件通道。
 
 独立对照服务同时连接网页 Socket.IO 根命名空间与历史 Firestore `sasno-d79e1`
-`app/events`。Firestore 每秒轮询，原始响应先保存，再仅解码 REST Value；
+`app/events`。Firestore 正常每 5 秒轮询，原始响应先保存，再仅解码 REST Value；
 不执行旧显示等级映射，不参与 APP 广播，也不把启动时已有文档当作新预警。
 旧轮询代码和实际 Firestore 文档均备份到服务器并归档到 TG。
 
 TG 目录为 `SASMEX原始归档/双连接对照/YYYY-MM-DD/`。每个记录均标明
 `transport`、`recordKind`、`recordedAtUtc` 和 `publishedToApp: false`。
-Socket.IO 保留每个实际接收帧；Firestore 保留首个原文和后续变化原文、失败响应，
-相同响应只累计成功轮询数。每 60 秒记录双方连接状态、最后成功时刻、实际收包数、
+2026-10-12 起只将真实且未重复的 Socket.IO 地震报文及 Firestore 事件字段变化送入
+TG 上传队列。握手、心跳、连接／断开、错误／恢复、启动备份和旧文档不会触发上传。
+Firestore 首个／最近文档和最近错误响应原文留在服务器，相同内容只累计成功轮询数。
+每 60 秒在服务器状态文件记录双方连接状态、最后成功时刻、实际收包数、
 业务消息数、符合当前 APP 解析条件的帧数、FireStore 文档时间和变化数。
 上传后回读核验 SHA-256 与字节数，失败时保留本地原始包。
+
+HTTP 429 从 60 秒指数退避至最多 900 秒，其他错误从 5 秒退避至最多 300 秒；
+上游 Retry-After 要求更长等待时遵守其要求。成功后恢复 5 秒轮询。
+状态字段 `consecutiveFailures`、`retryDelaySeconds`、`nextAttemptAtUtc` 显示实际重试计划。
+上传 timer 仍每分钟检查队列，空队列只结束检查，不上传状态包。
 
 这些指标用于分别判断传输可达和事件数据是否更新。文档返回 HTTP 200 或 Socket.IO
 握手成功不表示已有新事件；没有收到真实业务数据时不得推断哪一路更有效。

@@ -1,0 +1,796 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+ <head>
+  <title>自然资源部海啸预警中心</title>
+  <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+  <style type="text/css">
+<!--
+body {
+	margin: 0px;
+	padding: 0px;
+	color: rgb(51, 51, 51);
+	font-size: 12px;
+}
+
+td {
+	font-size: 12px;
+}
+
+form {
+	margin: 0px;
+	padding: 0px;
+}
+
+html {
+	color: rgb(51, 102, 153);
+	scrollbar-face-color: rgb(183, 234, 251);
+	scrollbar-3dlight-color: rgb(183, 234, 251);
+	scrollbar-shadow-color: rgb(255, 255, 255);
+	scrollbar-highlight-color: rgb(255, 255, 255);
+	scrollbar-darkshadow-color: rgb(183, 234, 251);
+	scrollbar-arrow-color: rgb(255, 255, 255);
+	scrollbar-track-color: rgb(255, 255, 255);
+	background-color: rgb(255, 255, 255);
+}
+
+a:link {
+	color: rgb(51, 51, 51);
+	text-transform: none;
+	text-decoration: none;
+}
+
+a:visited {
+	color: rgb(51, 51, 51);
+	text-transform: none;
+	text-decoration: none;
+}
+
+a:hover {
+	color: rgb(102, 102, 102);
+	text-decoration: underline;
+}
+
+a.link01:link {
+	color: rgb(217, 244, 253);
+	text-decoration: none;
+}
+
+a.link01:visited {
+	color: rgb(217, 244, 253);
+	text-decoration: none;
+}
+
+a.link01:hover {
+	color: rgb(255, 255, 255);
+	text-decoration: underline;
+}
+
+a.link02:link {
+	color: rgb(51, 51, 51);
+	text-decoration: none;
+}
+
+a.link02:visited {
+	color: rgb(51, 51, 51);
+	text-decoration: none;
+}
+
+a.link02:hover {
+	color: rgb(102, 102, 102);
+	text-decoration: underline;
+}
+
+a.link03:link {
+	color: rgb(255, 255, 255);
+	text-decoration: none;
+}
+
+a.link03:visited {
+	color: rgb(255, 255, 255);
+	text-decoration: none;
+}
+
+a.link03:hover {
+	color: rgb(255, 255, 255);
+	text-decoration: underline;
+}
+
+a.link04:link {
+	color: rgb(0, 102, 153);
+	text-decoration: none;
+}
+
+a.link04:visited {
+	color: rgb(0, 102, 153);
+	text-decoration: none;
+}
+
+a.link04:hover {
+	color: rgb(0, 85, 125);
+	text-decoration: underline;
+}
+
+a.link05:link {
+	color: rgb(3, 103, 166);
+	text-decoration: none;
+}
+
+a.link05:visited {
+	color: rgb(3, 103, 166);
+	text-decoration: none;
+}
+
+a.link05:hover {
+	color: rgb(0, 44, 64);
+	text-decoration: underline;
+}
+
+a.link06:link {
+	color: rgb(102, 102, 102);
+	text-decoration: none;
+}
+
+a.link06:visited {
+	color: rgb(102, 102, 102);
+	text-decoration: none;
+}
+
+a.link06:hover {
+	color: rgb(51, 51, 51);
+	text-decoration: underline;
+}
+.fc_table_tr_td{
+	width: 34.8000pt; padding: 0.0000pt 5.4000pt 0.0000pt 5.4000pt;
+}
+.fc_table_tr_td_p{
+	margin-bottom: 0pt; margin-top: 0pt; line-height: 150%;
+}
+.fc_table_tr_td_p_span{
+	mso-spacerun: 'yes'; font-size: 11.0000pt; font-family: '宋体'; 
+}
+.hui_12 {
+	color: rgb(102, 102, 102);
+}
+
+.hui_12_01 {
+	padding: 6px;
+	color: rgb(102, 102, 102);
+	line-height: 150%;
+}
+
+.hui_12_02 {
+	color: rgb(102, 102, 102);
+	line-height: 180%;
+}
+
+.hui_12_cu {
+	color: rgb(51, 51, 51);
+	font-weight: bold;
+}
+
+.hui_14 {
+	padding: 6px 12px 22px 22px;
+	color: rgb(51, 51, 51);
+	line-height: 190%;
+	font-size: 14px;
+}
+
+.hui_14-1 {
+	color: rgb(51, 51, 51);
+	font-size: 14px;
+}
+
+.hui_14-2 {
+	color: rgb(51, 51, 51);
+	padding-top: 22px;
+	padding-bottom: 42px;
+	font-size: 14px;
+	text-decoration: none;
+}
+
+.hui_14-3 {
+	color: rgb(51, 51, 51);
+	line-height: 180%;
+	padding-top: 22px;
+	padding-bottom: 42px;
+	font-size: 14px;
+	text-decoration: none;
+}
+
+.hui_14-4 {
+	background-position: left;
+	color: rgb(51, 51, 51);
+	padding-right: 32px;
+	padding-left: 8px;
+	font-size: 12px;
+	background-image: url("../images/d.jpg");
+	background-repeat: no-repeat;
+}
+
+.hui_14_03 {
+	text-align: center;
+	color: rgb(102, 102, 102);
+	padding-top: 60px;
+	padding-bottom: 100px;
+	font-size: 14px;
+}
+
+.hui_14_cu {
+	color: rgb(102, 102, 102);
+	font-size: 14px;
+	font-weight: bold;
+}
+
+.hui_18_cu {
+	color: rgb(102, 102, 102);
+	padding-top: 32px;
+	padding-bottom: 14px;
+	font-size: 18px;
+	font-weight: bold;
+}
+
+.hui_24_cu {
+	color: rgb(51, 51, 51);
+	padding-bottom: 12px;
+	font-size: 24px;
+	font-weight: bold;
+}
+
+.hui_28_cu {
+	color: rgb(51, 51, 51);
+	padding-bottom: 12px;
+	font-size: 28px;
+	font-weight: bold;
+}
+
+.hui_38_cu {
+	color: rgb(51, 51, 51);
+	padding-bottom: 12px;
+	font-size: 42px;
+	font-weight: bold;
+}
+
+.bai_12 {
+	color: rgb(255, 255, 255);
+	line-height: 143%;
+	font-size: 12px;
+}
+
+.lan_12 {
+	color: rgb(217, 244, 253);
+	font-size: 12px;
+}
+
+.lan_14_cu {
+	color: rgb(0, 102, 153);
+	font-size: 14px;
+	font-weight: bold;
+}
+
+.hong_12_cu {
+	color: rgb(205, 51, 1);
+	font-weight: bold;
+}
+
+.hong_14_cu {
+	color: rgb(190, 95, 0);
+	font-size: 14px;
+	font-weight: bold;
+}
+
+.hong_14_cu_2 {
+	color: rgb(205, 51, 1);
+	font-size: 14px;
+	font-weight: bold;
+}
+
+.bj_01 {
+	background-position: bottom;
+	border: 1px solid rgb(204, 204, 204);
+	padding-top: 5px;
+	padding-bottom: 340px;
+	background-image: url("../images/i_04.jpg");
+	background-repeat: no-repeat;
+}
+
+.bj_01-2 {
+	background-position: bottom;
+	border: 1px solid rgb(204, 204, 204);
+	padding-top: 5px;
+	padding-bottom: 340px;
+	background-image: url("../images/i_04-2.jpg");
+	background-repeat: no-repeat;
+}
+
+.bj_02-1 {
+	background-position: 11px;
+	color: rgb(51, 51, 51);
+	line-height: 130%;
+	padding-left: 26px;
+	border-bottom-color: rgb(239, 203, 171);
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+	background-image: url("../images/i_06.jpg");
+	background-repeat: no-repeat;
+	background-color: rgb(250, 239, 229);
+}
+
+.bj_02-2 {
+	background-position: 11px;
+	color: rgb(255, 255, 255);
+	line-height: 130%;
+	padding-left: 26px;
+	font-weight: bold;
+	border-bottom-color: rgb(239, 203, 171);
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+	background-image: url("../images/i_06-1.jpg");
+	background-repeat: no-repeat;
+	background-color: rgb(218, 142, 65);
+}
+
+.bj_02-3 {
+	background-position: 11px;
+	color: rgb(51, 51, 51);
+	padding-left: 26px;
+	border-bottom-color: rgb(239, 203, 171);
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+	background-image: url("../images/i_06-2.jpg");
+	background-repeat: no-repeat;
+	background-color: rgb(245, 224, 204);
+}
+
+.bj_02-4 {
+	background-position: 18px;
+	color: rgb(51, 51, 51);
+	padding-left: 33px;
+	border-bottom-color: rgb(239, 203, 171);
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+	background-image: url("../images/d.jpg");
+	background-repeat: no-repeat;
+}
+
+.bj_02-4-1 {
+	background-position: 18px;
+	color: rgb(51, 51, 51);
+	padding-left: 33px;
+	font-weight: bold;
+	border-bottom-color: rgb(239, 203, 171);
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+	background-image: url("../images/d.jpg");
+	background-repeat: no-repeat;
+}
+
+.bj_03 {
+	background-position: center;
+	color: rgb(0, 102, 153);
+	background-image: url("../images/i_08-9.jpg");
+	background-repeat: no-repeat;
+}
+
+.bj_04 {
+	background-position: left;
+	color: rgb(0, 102, 153);
+	padding-right: 22px;
+	padding-left: 20px;
+	font-size: 14px;
+	background-image: url("../images/i_10.jpg");
+	background-repeat: no-repeat;
+}
+
+.bj_04-1 {
+	background-position: left;
+	color: rgb(0, 102, 153);
+	padding-right: 22px;
+	padding-left: 20px;
+	font-size: 14px;
+	font-weight: bold;
+	background-image: url("../images/i_10-1.jpg");
+	background-repeat: no-repeat;
+}
+
+.bj_05 {
+	background-position: left;
+	color: rgb(3, 103, 166);
+	padding-right: 12px;
+	font-family: Arial, Helvetica, sans-serif;
+	font-size: 14px;
+	background-image: url("../images/i_11.jpg");
+	background-repeat: no-repeat;
+}
+
+.bj_05-1 {
+	background-position: left;
+	color: rgb(255, 255, 255);
+	padding-right: 12px;
+	font-family: Arial, Helvetica, sans-serif;
+	font-size: 14px;
+	background-image: url("../images/i_11-1.jpg");
+	background-repeat: no-repeat;
+}
+
+.bj_06 {
+	background-position: bottom;
+	color: rgb(255, 255, 255);
+	font-size: 14px;
+	background-image: url("../images/i_12.jpg");
+	background-repeat: no-repeat;
+}
+
+.bj_06-1 {
+	background-position: bottom;
+	color: rgb(51, 51, 51);
+	font-size: 14px;
+	font-weight: bold;
+	background-image: url("../images/i_12-1.jpg");
+	background-repeat: no-repeat;
+}
+
+.bj_07 {
+	background-position: center;
+	color: rgb(255, 255, 255);
+	font-size: 14px;
+	background-image: url("../images/zj_03-2.jpg");
+	background-repeat: no-repeat;
+}
+
+.bj_07-1 {
+	background-position: center;
+	color: rgb(51, 51, 51);
+	font-size: 14px;
+	font-weight: bold;
+	background-image: url("../images/zj_03-3.jpg");
+	background-repeat: no-repeat;
+}
+
+.bj_08 {
+	background-position: left;
+	color: rgb(102, 102, 102);
+	padding-left: 8px;
+	background-image: url("../../images/d.jpg");
+	background-repeat: no-repeat;
+}
+
+.bj_09 {
+	background-position: center;
+	color: rgb(3, 103, 166);
+	font-family: Arial, Helvetica, sans-serif;
+	font-size: 14px;
+	background-image: url("../images/k-1.jpg");
+	background-repeat: no-repeat;
+}
+
+.bj_09-1 {
+	background-position: center;
+	color: rgb(255, 255, 255);
+	font-family: Arial, Helvetica, sans-serif;
+	font-size: 14px;
+	background-image: url("../images/k-2.jpg");
+	background-repeat: no-repeat;
+}
+
+.bj_10 {
+	background-position: top;
+	background-image: url("../images/i_34-7.jpg");
+	background-repeat: no-repeat;
+}
+
+.bk_01 {
+	padding-top: 10px;
+	padding-bottom: 10px;
+	background-color: rgb(255, 255, 255);
+}
+
+.bk_02 {
+	padding-top: 7px;
+	padding-bottom: 7px;
+	background-color: rgb(217, 244, 253);
+}
+
+.bk_03 {
+	padding-top: 12px;
+	padding-bottom: 12px;
+	background-color: rgb(255, 255, 255);
+}
+
+.bk_04 {
+	color: rgb(51, 51, 51);
+	padding-bottom: 5px;
+	padding-left: 22px;
+	font-size: 14px;
+	border-bottom-color: rgb(204, 204, 204);
+	border-bottom-width: 2px;
+	border-bottom-style: solid;
+}
+
+.bk_05 {
+	padding-top: 6px;
+	padding-bottom: 14px;
+	background-color: rgb(71, 174, 224);
+}
+
+.bk_06 {
+	border-top-color: rgb(6, 106, 168);
+	border-top-width: 3px;
+	border-top-style: solid;
+}
+
+.bk_07 {
+	padding-top: 10px;
+	padding-bottom: 20px;
+	background-color: rgb(255, 255, 255);
+}
+
+.bk_08 {
+	padding-top: 18px;
+	padding-bottom: 10px;
+	border-right-color: rgb(217, 244, 253);
+	border-bottom-color: rgb(217, 244, 253);
+	border-left-color: rgb(217, 244, 253);
+	border-right-width: 1px;
+	border-bottom-width: 1px;
+	border-left-width: 1px;
+	border-right-style: solid;
+	border-bottom-style: solid;
+	border-left-style: solid;
+}
+
+.bk_09 {
+	padding: 2px;
+	border: 1px solid rgb(205, 240, 252);
+}
+
+.bk_10-1 {
+	border-bottom-color: rgb(231, 233, 233);
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+}
+
+.bk_10-2 {
+	color: rgb(102, 102, 102);
+	font-size: 14px;
+	border-bottom-color: rgb(231, 233, 233);
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+}
+
+.bk_10-3 {
+	color: rgb(102, 102, 102);
+	font-family: Arial, Helvetica, sans-serif;
+	font-size: 12px;
+	border-bottom-color: rgb(231, 233, 233);
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+}
+
+.bk_11 {
+	border: 1px solid rgb(223, 223, 223);
+	background-color: rgb(239, 239, 239);
+}
+
+.bk_12 {
+	border: 1px solid rgb(217, 244, 253);
+	font-family: Arial, Helvetica, sans-serif;
+	font-size: 12px;
+	font-weight: bold;
+	background-color: rgb(247, 251, 255);
+}
+
+.bk_13 {
+	padding-bottom: 22px;
+}
+
+.bk_14 {
+	border-right-color: rgb(204, 204, 204);
+	border-left-color: rgb(204, 204, 204);
+	border-right-width: 1px;
+	border-left-width: 1px;
+	border-right-style: solid;
+	border-left-style: solid;
+}
+
+.bk_14-1 {
+	border: 1px solid rgb(204, 204, 204);
+}
+
+.bk_15 {
+	padding: 14px 14px 22px;
+	line-height: 180%;
+}
+
+.bk_16 {
+	padding: 2px;
+	border: 1px solid rgb(204, 204, 204);
+}
+
+.bk_17 {
+	padding: 3px;
+	border: 1px solid rgb(205, 240, 252);
+	background-color: rgb(243, 251, 254);
+}
+
+.bk_18 {
+	border-bottom-color: rgb(51, 51, 51);
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+}
+
+.bk_19 {
+	padding: 8px;
+	border: 1px solid rgb(51, 51, 51);
+	font-size: 32px;
+	font-weight: bold;
+}
+
+.bk_27-1 {
+	border-top-color: rgb(204, 204, 204);
+	border-left-color: rgb(204, 204, 204);
+	border-top-width: 1px;
+	border-left-width: 1px;
+	border-top-style: solid;
+	border-left-style: solid;
+}
+
+.bk_27-2 {
+	border-right-color: rgb(204, 204, 204);
+	border-bottom-color: rgb(204, 204, 204);
+	border-right-width: 1px;
+	border-bottom-width: 1px;
+	border-right-style: solid;
+	border-bottom-style: solid;
+}
+
+.zjnr01 {
+	font-family: "宋体";
+	font-size: 14px;
+}
+
+.zjbt03 {
+	font-family: "宋体";
+	font-size: 14px;
+}
+
+.gd_03 {
+	width: 700px;
+	height: 130px;
+	text-align: left;
+	overflow: auto;
+	z-index: auto;
+}
+-->
+</style>
+  <link href="images/style1.css" rel="stylesheet" type="text/css">
+ </head>
+ <body>
+  <table align="center" border="0" cellpadding="0" cellspacing="0" width="100">
+   <tbody>
+    <tr>
+     <td height="30"></td>
+    </tr>
+   </tbody>
+  </table>
+  <table align="center" border="0" cellpadding="0" cellspacing="0" width="660">
+   <tbody>
+    <tr>
+     <td class="hui_28_cu">自然资源部海啸预警中心 <br><br></td>
+    </tr>
+   </tbody>
+  </table>
+  <table align="center" border="0" cellpadding="0" cellspacing="0" width="660">
+   <tbody>
+    <tr>
+     <td align="center" class="hui_38_cu"><p align="center">海啸信息</p></td>
+    </tr>
+   </tbody>
+  </table>
+  <table align="center" border="0" cellpadding="0" cellspacing="0" width="660">
+   <tbody>
+    <tr>
+     <td align="left" class="hui_12" height="30" valign="middle">时间：2026年10月24日10时37分</td>
+     <td align="right" class="hui_14_cu" valign="middle"></td>
+    </tr>
+    <tr>
+     <td align="left" class="hui_12" height="30" valign="middle">编号：海啸2026-1024-1031-1</td>
+     <td align="right" class="hui_12" valign="middle">签发： <img height="40" src="sig.jpg" width="85"></td>
+    </tr>
+   </tbody>
+  </table>
+  <table align="center" border="0" cellpadding="0" cellspacing="0" width="680">
+   <tbody>
+    <tr>
+     <td height="6"></td>
+    </tr>
+    <tr>
+     <td class="bk_06"></td>
+    </tr>
+   </tbody>
+  </table>
+  <table align="center" border="0" cellpadding="0" cellspacing="0">
+   <tbody>
+    <tr>
+     <td align="center" class="hui_18_cu" height="42" nowrap valign="middle">海啸信息</td>
+    </tr>
+   </tbody>
+  </table>
+  <div><br>
+   <div name="mydeftab"><mydeftab></mydeftab>
+    <div name="mydefpic"><mydefpic></mydefpic>
+    </div>
+   </div>
+   <table align="center" border="0" cellpadding="0" cellspacing="0" width="680">
+    <tbody>
+     <tr>
+      <td align="left" class="hui_14" valign="top">&nbsp;&nbsp;据自然资源部海啸预警中心初步测定，2026年10月24日10时31分（北京时间），瓦努阿图群岛海域（14.21°S,165.54°E）发生6.8级地震，震源深度为15千米。地震确切信息以中国地震台网测定为准。自然资源部海啸预警中心根据初步地震参数判断，地震可能会在震源周围引发局地海啸，但不会对我国沿岸造成影响。</td>
+     </tr>
+    </tbody>
+   </table>
+   <table align="center" border="0" cellpadding="0" cellspacing="0" width="680">
+    <tbody>
+     <tr>
+      <td align="left" class="hui_14" valign="top">&nbsp;&nbsp;自然资源部海啸预警中心将继续跟踪分析地震和海啸监测数据，并及时发布信息。</td>
+     </tr>
+    </tbody>
+   </table>
+   <table align="center" border="0" cellpadding="0" cellspacing="0" width="660">
+    <tbody>
+     <tr>
+      <td class="hui_14_cu">地震位置图如下: <br></td>
+     </tr>
+     <tr align="center">
+      <td align="center"><img width="430" height="411" onload="if(this.width>650){this.width=650}" src="Earthquake_Pos.jpg"></td>
+     </tr>
+    </tbody>
+   </table><br>
+   <table align="center" border="0" cellpadding="0" cellspacing="0" width="680">
+    <tbody>
+     <tr>
+      <td><span style="mso-spacerun:'yes'; font-weight:bold; text-decoration:underline ;font-size:12.0000pt; font-family:'宋体'; ">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span></td>
+     </tr>
+    </tbody>
+   </table>
+   <table align="center" border="0" cellpadding="0" cellspacing="0" width="680">
+    <tbody>
+     <tr>
+      <td align="left" class="hui_14" valign="top">注：根据地震参数测定结果和海啸波幅预报结论，海啸预警产品分为海啸信息和海啸警报两类。其中，海啸信息指发生的地震事件预计不会产生海啸，或不会对我国沿岸造成重要影响；海啸警报指发生的地震事件预计会对我国沿岸造成重要影响。根据《海洋灾害应急预案》标准，海啸警报按照沿岸最大海啸波幅预报结果和可能造成的灾害性影响可分为黄色、橙色和红色三级。</td>
+     </tr>
+    </tbody>
+   </table><br>
+   <table align="center" border="0" cellpadding="0" cellspacing="0" width="100">
+    <tbody>
+     <tr>
+      <td height="20"></td>
+     </tr>
+    </tbody>
+   </table>
+   <table align="center" border="0" cellpadding="0" cellspacing="0" width="620">
+    <tbody>
+     <tr>
+      <td align="left" class="hui_14-1" height="42" valign="middle">值班咨询人员：王培涛 010-62104561</td>
+     </tr>
+    </tbody>
+   </table>
+   <table align="center" border="0" cellpadding="0" cellspacing="0" width="680">
+    <tbody>
+     <tr>
+      <td class="bk_18"></td>
+     </tr>
+     <tr>
+      <td></td>
+     </tr>
+    </tbody>
+   </table>
+   <table align="center" border="0" cellpadding="0" cellspacing="0" width="640">
+    <tbody>
+     <tr>
+      <td align="right" class="hui_14_cu" height="42" valign="middle">自然资源部 监制</td>
+     </tr>
+    </tbody>
+   </table>
+  </div>
+  <div>
+  </div>
+ </body>
+</html>

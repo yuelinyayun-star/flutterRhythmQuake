@@ -1,0 +1,46 @@
+{
+  "name": "projects/sasno-d79e1/databases/(default)/documents/app/events",
+  "fields": {
+    "SASNOEVENTDATA": {
+      "mapValue": {
+        "fields": {
+          "unix": {
+            "integerValue": "1792150811"
+          },
+          "region": {
+            "stringValue": "Huixtla, Chis."
+          },
+          "metadata": {
+            "mapValue": {
+              "fields": {
+                "source": {
+                  "stringValue": "SASNO"
+                },
+                "version": {
+                  "stringValue": "6.1.0"
+                }
+              }
+            }
+          },
+          "intensity": {
+            "stringValue": "Leve"
+          },
+          "epicenter": {
+            "mapValue": {
+              "fields": {
+                "longitude": {
+                  "doubleValue": -92.46365
+                },
+                "latitude": {
+                  "doubleValue": 15.1385
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "createTime": "2026-04-22T00:17:50.294874Z",
+  "updateTime": "2026-10-16T11:40:23.825569Z"
+}

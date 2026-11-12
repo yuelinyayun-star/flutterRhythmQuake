@@ -1,0 +1,24 @@
+{
+  "key": "ptwc_25210002_12",
+  "source": "ptwc",
+  "Data": {
+    "id": "25210002-12",
+    "eventId": "25210002",
+    "updates": 12,
+    "level": "Advisory",
+    "issueTime": "2025-07-30T11:06:17Z",
+    "shockTime": "2025-07-29T23:24:52Z",
+    "latitude": 52.209,
+    "longitude": 159.979,
+    "magnitude": 8.8,
+    "depth": 74,
+    "placeName": "OFF THE EAST COAST OF KAMCHATKA  RUSSIA",
+    "headline": "PTWC Advisory",
+    "description": "",
+    "jsonUrl": "https://www.tsunami.gov/events/PHEB/2025/07/29/25210002/12/WEHW40/PHEB.json",
+    "bulletinUrl": "https://www.tsunami.gov/events/PHEB/2025/07/29/25210002/12/WEHW40/PHEB.json"
+  },
+  "original": "test/fixtures/tsunami_presentation_20261023/raw/26d6a12cb311e980.original",
+  "url": "https://www.tsunami.gov/events/PHEB/2025/07/29/25210002/12/WEHW40/PHEB.json",
+  "sha256": "26d6a12cb311e9803fa15f83803c5ea031db5895da4baa307790551d9a6c75d4"
+}

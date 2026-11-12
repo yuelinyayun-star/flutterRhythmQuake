@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>APP 地名逐点检查</title>
+<style>
+.maritime-dashes{fill:var(--land);stroke:var(--muted);stroke-width:.65;vector-effect:non-scaling-stroke}
+:root{color-scheme:light dark;--bg:light-dark(#fafafa,#211f22);--fg:light-dark(#202124,#e8e5e9);--muted:light-dark(#646169,#b8b2bd);--line:light-dark(#c9c4ce,#57515e);--land:light-dark(#d7cedd,#3a303b);--water:light-dark(#fff0d5,#493927);--taiwan:light-dark(#dcefe9,#243f3c);--cn:light-dark(#dfdae5,#39313b);--priority:light-dark(#f7e5bc,#6a5329);--point:light-dark(#c32136,#ff7b83)}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px system-ui,"Microsoft YaHei",sans-serif}.wrap{padding:16px;max-width:1500px;margin:auto}h1{font-size:18px;margin:0 0 12px;font-weight:600}.controls{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px}button,input{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:7px 10px}button{cursor:pointer}button[aria-pressed="true"]{background:var(--fg);color:var(--bg)}label{display:inline-flex;align-items:center;gap:6px}input{width:130px}.result{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;min-height:36px;margin:8px 0}.result strong{font-size:19px}.secondary{color:var(--muted);font-size:12px}.error{color:var(--point)}svg{display:block;width:100%;touch-action:none;background:var(--bg);border:1px solid var(--line)}.context{fill:var(--land);stroke:var(--muted);stroke-width:.65;vector-effect:non-scaling-stroke;fill-rule:evenodd}.region{fill:var(--water);fill-opacity:.6;stroke:var(--line);stroke-width:.6;vector-effect:non-scaling-stroke;fill-rule:evenodd}.region[data-kind="chinaLand"],.region[data-kind="japanLand"],.region[data-kind="koreaLand"],.region[data-kind="countryLand"],.region[data-kind="neutralLand"]{fill:var(--cn);fill-opacity:1}.region[data-kind="taiwanSea"]{fill:var(--taiwan)}.region[data-kind="diaoyu"]{fill:var(--priority)}.region[data-zone="territorialSea"]{stroke-dasharray:4 3;fill-opacity:.35}.grid{fill:none;stroke:var(--line);stroke-opacity:.3;stroke-width:.5;vector-effect:non-scaling-stroke}.baseline{fill:none;stroke:var(--fg);stroke-width:1.2;vector-effect:non-scaling-stroke}.label{fill:var(--fg);font-size:12px;paint-order:stroke;stroke:var(--bg);stroke-width:3px;stroke-linejoin:round}.marker-hit{fill:transparent;cursor:grab}.marker-core{fill:var(--point);stroke:var(--bg);stroke-width:2}.marker-ring{fill:none;stroke:var(--point);stroke-width:2}.caption{margin-top:8px;color:var(--muted);font-size:12px}.legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--muted)}@media(max-width:500px){.wrap{padding:10px}.controls{gap:6px}input{width:108px}button{min-height:40px}.result strong{font-size:17px}}
+</style>
+<div class="wrap" id="inspector">
+  <h1>APP 地名逐点检查</h1>
+  <div class="controls" id="views">
+    <button type="button" data-view="east">东亚近海</button>
+    <button type="button" data-view="taiwan">台湾及东海</button>
+    <button type="button" data-view="japan">日韩近海</button>
+    <button type="button" data-view="coast">大陆沿岸</button>
+    <button type="button" data-view="diaoyu">钓鱼岛及附属岛屿</button>
+  </div>
+  <form class="controls" id="coordinates">
+    <label>纬度 <input name="lat" id="lat" type="number" step="any" min="-90" max="90" value="29"></label>
+    <label>经度 <input name="lon" id="lon" type="number" step="any" min="-180" max="180" value="124"></label>
+    <button type="submit">查询该点</button>
+    <span class="secondary">拖动红色标记或点击地图；拖动空白处平移，滚轮缩放。</span>
+  </form>
+  <div class="result" aria-live="polite"><strong id="name">正在连接 APP 查询入口…</strong><span id="position" class="secondary"></span></div>
+  <svg id="map" role="img" aria-label="可拖动标记查询真实APP地名的地图"></svg>
+  <div class="caption">海域色块为地名查询分区，不表示海上国界。钓鱼岛实线为官方基线，虚线为既有12海里计算范围。</div>
+  <div class="secondary" id="revision"></div>
+</div>
+<script src="/d3.js"></script>
+<script>
+(async()=>{
+  const root=document.getElementById('inspector'),svg=d3.select('#map'),name=document.getElementById('name'),position=document.getElementById('position'),latInput=document.getElementById('lat'),lonInput=document.getElementById('lon');
+  const getJSON=async url=>{const response=await fetch(url,{cache:'no-store'});const value=await response.json();if(!response.ok)throw new Error(value.error||`HTTP ${response.status}`);return value;};
+  let data,health;
+  try{
+    [data,health]=await Promise.all([getJSON('/regions.json'),getJSON('/api/health')]);
+    if(data.datasetSha256!==health.datasetSha256)throw new Error('地图和 APP 查询数据版本不一致');
+    document.getElementById('revision').textContent=`APP 入口：${health.entry} · 数据 ${health.datasetSha256.slice(0,12)}`;
+  }catch(error){name.textContent=error.message;name.classList.add('error');return;}
+  let point=[124,29],view='taiwan',projection,transform=d3.zoomIdentity,width,height,marker,labels,drawn,frame,queryTimer,abort,sequence=0;
+  function markerPosition(){if(marker&&projection){const p=transform.apply(projection(point));marker.attr('transform',`translate(${p[0]},${p[1]})`);}}
+  function setPoint(coordinate,query=true){
+    point=coordinate;latInput.value=point[1].toFixed(6);lonInput.value=point[0].toFixed(6);markerPosition();
+    position.textContent=`${point[1].toFixed(6)}, ${point[0].toFixed(6)}`;
+    if(query){clearTimeout(queryTimer);abort?.abort();name.textContent='查询中…';queryTimer=setTimeout(queryPoint,100);}
+  }
+  async function queryPoint(){
+    const id=++sequence,current=[...point];abort?.abort();abort=new AbortController();
+    try{
+      const response=await fetch(`/api/place?lat=${encodeURIComponent(current[1])}&lon=${encodeURIComponent(current[0])}`,{signal:abort.signal,cache:'no-store'});
+      const result=await response.json();if(!response.ok)throw new Error(result.error||`HTTP ${response.status}`);
+      if(id!==sequence||point[0]!==current[0]||point[1]!==current[1])return;
+      if(result.datasetSha256!==data.datasetSha256)throw new Error('APP 查询数据版本已改变，请重新打开检查图');
+      name.textContent=result.displayName;name.classList.remove('error');
+      root.dataset.lastResult=result.displayName;root.dataset.lastLatitude=String(result.lat);root.dataset.lastLongitude=String(result.lon);
+    }catch(error){if(error.name==='AbortError')return;if(id===sequence){name.textContent=`查询失败：${error.message}`;name.classList.add('error');}}
+  }
+  function labelPositions(path){
+    labels.selectAll('*').remove();const occupied=[];
+    const candidates=[...data.regions].filter(f=>f.properties.point&&f.properties.area>.005).sort((a,b)=>b.properties.area-a.properties.area);
+    if(view==='diaoyu')for(const p of data.diaoyuPoints)candidates.unshift({properties:{name:p.name,point:[p.lon,p.lat],reference:true}});
+    for(const feature of candidates){
+      const p=feature.properties,[x,y]=transform.apply(projection(p.viewPoints?.[view]||p.point));if(x<12||x>width-12||y<20||y>height-12)continue;
+      if(!p.reference){const b=path.bounds(feature);if((b[1][0]-b[0][0])*transform.k<Math.min(100,p.name.length*7))continue;}
+      const node=labels.append('text').attr('class','label').attr('text-anchor','middle').attr('x',x).attr('y',y).text(p.name);
+      const b=node.node().getBBox(),box={x:b.x-4,y:b.y-3,w:b.width+8,h:b.height+6};
+      if(b.x<4||b.x+b.width>width-4||occupied.some(v=>box.x<v.x+v.w&&box.x+box.w>v.x&&box.y<v.y+v.h&&box.y+box.h>v.y)){node.remove();continue;}occupied.push(box);
+    }
+  }
+  function render(){
+    width=Math.max(280,svg.node().getBoundingClientRect().width);height=Math.min(740,Math.max(480,width*.72));
+    svg.attr('viewBox',`0 0 ${width} ${height}`).attr('height',height).selectAll('*').remove();transform=d3.zoomIdentity;
+    projection=d3.geoMercator().fitExtent([[20,20],[width-20,height-20]],{type:'MultiPoint',coordinates:data.views[view]});
+    const planar=d3.geoTransform({point(lon,lat){const p=projection([lon,lat]);this.stream.point(p[0],p[1]);}}),path=d3.geoPath(planar);
+    svg.append('defs').append('clipPath').attr('id','map-clip').append('rect').attr('width',width).attr('height',height);
+    const viewport=svg.append('g').attr('clip-path','url(#map-clip)');drawn=viewport.append('g');
+    drawn.append('g').selectAll('path').data(data.context).join('path').attr('class','context').attr('d',path);
+    drawn.append('g').selectAll('path').data(data.regions).join('path').attr('class','region').attr('data-kind',f=>f.properties.kind).attr('data-zone',f=>f.properties.zoneKind||null).attr('d',path);
+    if(data.maritimeDashes)drawn.append('path').datum(data.maritimeDashes).attr('class','maritime-dashes').attr('d',path);
+    drawn.append('path').datum(d3.geoGraticule().step([5,5]).extent([[70,0],[180,65]])()).attr('class','grid').attr('d',path);
+    drawn.append('g').selectAll('path').data(data.baselines).join('path').attr('class','baseline').attr('d',ring=>path({type:'LineString',coordinates:ring}));
+    labels=viewport.append('g').attr('pointer-events','none');marker=viewport.append('g').attr('data-marker','true');
+    marker.append('circle').attr('class','marker-hit').attr('r',23);marker.append('circle').attr('class','marker-ring').attr('r',13).attr('pointer-events','none');marker.append('circle').attr('class','marker-core').attr('r',6).attr('pointer-events','none');
+    marker.call(d3.drag().on('start',event=>event.sourceEvent?.stopPropagation()).on('drag',event=>{const p=d3.pointer(event.sourceEvent,svg.node());setPoint(projection.invert(transform.invert(p)));}).on('end',()=>{clearTimeout(queryTimer);queryPoint();}));
+    const zoom=d3.zoom().filter(event=>!event.target.closest('[data-marker]')&&(!event.button||event.type==='wheel')).scaleExtent([.6,60]).on('zoom',event=>{transform=event.transform;drawn.attr('transform',transform);markerPosition();cancelAnimationFrame(frame);frame=requestAnimationFrame(()=>labelPositions(path));});
+    svg.call(zoom).on('dblclick.zoom',null).on('click.inspect',event=>{if(event.defaultPrevented||event.target.closest('[data-marker]'))return;setPoint(projection.invert(transform.invert(d3.pointer(event,svg.node()))));});
+    markerPosition();labelPositions(path);document.querySelectorAll('[data-view]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.view===view)));
+  }
+  document.getElementById('coordinates').addEventListener('submit',event=>{event.preventDefault();const lat=Number(latInput.value),lon=Number(lonInput.value);setPoint([lon,lat]);clearTimeout(queryTimer);queryPoint();});
+  document.querySelectorAll('[data-view]').forEach(button=>button.addEventListener('click',()=>{view=button.dataset.view;render();const bounds=data.views[view];setPoint([(bounds[0][0]+bounds[1][0])/2,(bounds[0][1]+bounds[1][1])/2]);}));
+  let resizeFrame;new ResizeObserver(()=>{cancelAnimationFrame(resizeFrame);resizeFrame=requestAnimationFrame(render);}).observe(svg.node());
+  render();setPoint(point);
+})();
+</script>
+</html>

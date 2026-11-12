@@ -1,3 +1,4 @@
+import 'package:flutterrhythmquake/services/whews_authorization_policy.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -17,6 +18,7 @@ import 'package:flutterrhythmquake/services/sources/whews_service.dart';
 import 'package:flutterrhythmquake/utils/catalog_location.dart';
 
 void main() {
+  setUp(() => WhewsAuthorizationPolicy.storeOverride = MemoryConnectionRetryStore());
   TestWidgetsFlutterBinding.ensureInitialized();
   final examples =
       (jsonDecode(

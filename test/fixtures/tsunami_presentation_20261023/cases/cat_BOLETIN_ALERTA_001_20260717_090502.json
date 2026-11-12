@@ -1,0 +1,28 @@
+{
+  "key": "cat_BOLETIN_ALERTA_001_20260717_090502",
+  "source": "cat_tsunami",
+  "Data": {
+    "id": "BOLETIN_ALERTA_001_20260717_090502",
+    "eventId": "BOLETIN_ALERTA_001_20260717_090502",
+    "updates": 1,
+    "level": "Warning",
+    "headline": "BOLETIN ALERTA 001 20260717 090502",
+    "issueTime": "2026-07-17T09:05:02.976-06:00",
+    "shockTime": "2026-07-17T08:49:00",
+    "latitude": 14.59,
+    "longitude": -93.15,
+    "magnitude": 7.4,
+    "depth": 10.0,
+    "placeName": "135 km al Suroeste de Ciudad Hidalgo, Chiapas",
+    "description": "En base a la informacion preliminar del sismo y a datos historicos de\ntsunamis generados en Mexico, se esperan variaciones anomalas del nivel\ndel mar de hasta 105 centimetros sobre el nivel de la marea en la region de\ngeneracion del sismo.",
+    "instruction": "Mantener a la poblacion alejada de las playas hasta la cancelacion de\nla alerta; se esperan corrientes fuertes en la entrada de los puertos.",
+    "severity": "Moderate",
+    "urgency": "Expected",
+    "certainty": "Possible",
+    "capUrl": "https://diredimoat.semar.gob.mx/cat/rss/BOLETIN_ALERTA_001_20260717_090502.xml",
+    "bulletinUrl": "https://diredimoat.semar.gob.mx/cat/Boletines/BOLETIN_ALERTA_001_20260717_090502.txt"
+  },
+  "original": "test/fixtures/tsunami_presentation_20261023/raw/ac11debbba5738d4.original",
+  "url": "https://diredimoat.semar.gob.mx/cat/rss/BOLETIN_ALERTA_001_20260717_090502.xml",
+  "sha256": "ac11debbba5738d4018ac7271c09d77b7aa996b7d0c831420cc4ed33fba5ec09"
+}

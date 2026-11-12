@@ -1,4 +1,4 @@
-import 'dart:convert';
+import 'sources/api_json_decoder.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -16,8 +16,8 @@ class ChinaFaultLine {
 }
 
 /// Decode the original KA TopoJSON without modifying or simplifying source data.
-List<ChinaFaultLine> parseChinaFaults(String source) {
-  final data = jsonDecode(source) as Map<String, dynamic>;
+List<ChinaFaultLine> parseChinaFaults(Object source) {
+  final data = decodeApiJsonDocument(source) as Map<String, dynamic>;
   if (data['type'] != 'Topology') {
     throw const FormatException('Expected Topology');
   }
@@ -94,11 +94,14 @@ List<ChinaFaultLine> parseChinaFaults(String source) {
 
 class ChinaFaultService {
   ChinaFaultService({Future<String> Function()? loadAsset})
-    : _loadAsset = loadAsset ?? (() => rootBundle.loadString(assetPath));
+    : _loadAsset = loadAsset ?? (() async {
+        final data = await rootBundle.load(assetPath);
+        return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+      });
 
   static const assetPath = 'assets/maps/cn.fault.topo.json';
   static final instance = ChinaFaultService();
-  final Future<String> Function() _loadAsset;
+  final Future<Object> Function() _loadAsset;
   Future<List<ChinaFaultLine>>? _loading;
 
   Future<List<ChinaFaultLine>> load() =>

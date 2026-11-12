@@ -1,0 +1,447 @@
+import 'dart:math' as math;
+
+import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:flutter_map/src/map/inherited_model.dart';
+import 'package:flutter_map/src/misc/deg_rad_conversions.dart';
+import 'package:flutter_map/src/misc/extensions.dart';
+import 'package:latlong2/latlong.dart';
+
+/// Describes the view of a map. This includes the size/zoom/position/crs as
+/// well as the minimum/maximum zoom. This class is mostly immutable but has
+/// some fields that get calculated lazily, changes to the map view may occur
+/// via the [MapController] or user interactions which will result in a
+/// new [MapCamera] value.
+class MapCamera {
+  /// During Flutter startup the native platform resolution is not immediately
+  /// available which can cause constraints to be zero before they are updated
+  /// in a subsequent build to the actual constraints. We set the size to this
+  /// impossible (negative) value initially and only change it once Flutter
+  /// provides real constraints.
+  static const kImpossibleSize =
+      Size(double.negativeInfinity, double.negativeInfinity);
+
+  /// The used coordinate reference system
+  final Crs crs;
+
+  /// The minimum allowed zoom level.
+  final double? minZoom;
+
+  /// The maximum allowed zoom level.
+  final double? maxZoom;
+
+  /// The [LatLng] which corresponds with the center of this camera.
+  final LatLng center;
+
+  /// How far zoomed this camera is.
+  final double zoom;
+
+  /// The rotation, in degrees, of the camera. See [rotationRad] for the same
+  /// value in radians.
+  final double rotation;
+
+  /// The size of the map view ignoring rotation. This will be the size of the
+  /// FlutterMap widget.
+  final Size nonRotatedSize;
+
+  /// Lazily calculated field
+  Size? _cameraSize;
+
+  /// Lazily calculated field
+  Rect? _pixelBounds;
+
+  /// Lazily calculated field
+  LatLngBounds? _bounds;
+
+  /// Lazily calculated field
+  Offset? _pixelOrigin;
+
+  /// This is the [LatLngBounds] corresponding to four corners of this camera.
+  /// This takes rotation into account.
+  LatLngBounds get visibleBounds => _bounds ??= _computeVisibleBounds();
+
+  LatLngBounds _computeVisibleBounds() {
+    final bottomLeft = unprojectAtZoom(pixelBounds.bottomLeft, zoom);
+    final topRight = unprojectAtZoom(pixelBounds.topRight, zoom);
+    final worldWidth = getWorldWidthAtZoom(zoom);
+    if (worldWidth == 0) {
+      return LatLngBounds(bottomLeft, topRight);
+    }
+    final center = unprojectAtZoom(pixelBounds.center, zoom);
+    return LatLngBounds.worldSafe(
+      south: bottomLeft.latitude,
+      north: topRight.latitude,
+      longitudeWidth: pixelBounds.width * 360 / worldWidth,
+      longitudeCenter: center.longitude,
+    );
+  }
+
+  /// The size of bounding box of this camera taking in to account its
+  /// rotation. When the rotation is zero this will equal [nonRotatedSize],
+  /// otherwise it will be the size of the rectangle which contains this
+  /// camera.
+  Size get size => _cameraSize ??= calculateRotatedSize(
+        rotation,
+        nonRotatedSize,
+      );
+
+  /// The offset of the top-left corner of the bounding rectangle of this
+  /// camera. This will not equal the offset of the top-left visible pixel when
+  /// the map is rotated.
+  /* (jaffaketchup) This is used for painters & hit testing extensively. We want
+     to convert [position], which is in the canvas' coordinate space to a
+     [coordinate]. See `screenOffsetToLatLng` - it uses `nonRotatedSize` then
+     does more rotations after. We don't want to do this. So we copy the
+     implementation, and replace/remove the necessary parts, resulting in the
+     code below.
+
+      final pointCenterDistance = camera.size.center(Offset.zero) - position;
+      final a = camera.crs.latLngToOffset(camera.center, camera.zoom);
+      final coordinate = camera.crs.offsetToLatLng(
+        a - pointCenterDistance,
+        camera.zoom,
+      );
+     
+     `camera.crs.latLngToOffset` is longhand for `projectAtZoom`. So we have
+     `a - (b - c)`, where `c` is [position]. This is equivalent to `(a - b) + c`.
+     `(a - b)` is this.
+
+     This was provided in [FeatureLayerUtils.origin] for a few versions. It has
+     been removed, because this exists, so I'm not sure why it needed to be
+     duplicated. See [HitDetectablePainter.hitTest] for an easy usage example.
+  */
+  Offset get pixelOrigin =>
+      _pixelOrigin ??= projectAtZoom(center, zoom) - size.center(Offset.zero);
+
+  /// The camera of the closest [FlutterMap] ancestor. If this is called from a
+  /// context with no [FlutterMap] ancestor null, is returned.
+  static MapCamera? maybeOf(BuildContext context) =>
+      MapInheritedModel.maybeCameraOf(context);
+
+  /// The camera of the closest [FlutterMap] ancestor. If this is called from a
+  /// context with no [FlutterMap] ancestor a [StateError] will be thrown.
+  static MapCamera of(BuildContext context) =>
+      maybeOf(context) ??
+      (throw StateError(
+          '`MapCamera.of()` should not be called outside a `FlutterMap` and its descendants'));
+
+  /// Create an instance of [MapCamera]. The [pixelOrigin], [bounds], and
+  /// [pixelBounds] may be set if they are known already. Otherwise if left
+  /// null they will be calculated lazily when they are used.
+  MapCamera({
+    required this.crs,
+    required this.center,
+    required this.zoom,
+    required this.rotation,
+    required this.nonRotatedSize,
+    this.minZoom,
+    this.maxZoom,
+    Size? size,
+    Rect? pixelBounds,
+    LatLngBounds? bounds,
+    Offset? pixelOrigin,
+  })  : _cameraSize = size,
+        _pixelBounds = pixelBounds,
+        _bounds = bounds,
+        _pixelOrigin = pixelOrigin,
+        assert(
+          zoom.isFinite,
+          'Camera `zoom` must be finite (and usually positive).\n'
+          '(This may occur if the map tried to fit to a zero-area bounds, such '
+          'as a bounds defined by only a single point.)',
+        );
+
+  /// Initializes [MapCamera] from the given [options] and with the
+  /// [nonRotatedSize] set to [kImpossibleSize].
+  MapCamera.initialCamera(MapOptions options)
+      : this(
+          crs: options.crs,
+          minZoom: options.minZoom,
+          maxZoom: options.maxZoom,
+          center: options.initialCenter,
+          zoom: options.initialZoom,
+          rotation: options.initialRotation,
+          nonRotatedSize: kImpossibleSize,
+        );
+
+  /// Returns a new instance of [MapCamera] with the given [nonRotatedSize].
+  MapCamera withNonRotatedSize(Size nonRotatedSize) {
+    if (nonRotatedSize == this.nonRotatedSize) return this;
+
+    return MapCamera(
+      crs: crs,
+      center: center,
+      zoom: zoom,
+      rotation: rotation,
+      nonRotatedSize: nonRotatedSize,
+      minZoom: minZoom,
+      maxZoom: maxZoom,
+    );
+  }
+
+  /// Returns a new instance of [MapCamera] with the given [rotation].
+  MapCamera withRotation(double rotation) {
+    if (rotation == this.rotation) return this;
+
+    return MapCamera(
+      crs: crs,
+      center: center,
+      zoom: zoom,
+      nonRotatedSize: nonRotatedSize,
+      rotation: rotation,
+      minZoom: minZoom,
+      maxZoom: maxZoom,
+    );
+  }
+
+  /// Returns a new instance of [MapCamera] with the given [options].
+  MapCamera withOptions(MapOptions options) {
+    if (options.crs == crs &&
+        options.minZoom == minZoom &&
+        options.maxZoom == maxZoom) {
+      return this;
+    }
+
+    return MapCamera(
+      crs: options.crs,
+      minZoom: options.minZoom,
+      maxZoom: options.maxZoom,
+      center: center,
+      zoom: zoom,
+      rotation: rotation,
+      nonRotatedSize: nonRotatedSize,
+      size: _cameraSize,
+    );
+  }
+
+  /// Returns a new instance of [MapCamera] with the given [center]/[zoom].
+  MapCamera withPosition({
+    LatLng? center,
+    double? zoom,
+  }) =>
+      MapCamera(
+        crs: crs,
+        minZoom: minZoom,
+        maxZoom: maxZoom,
+        center: _adjustPositionForSeamlessScrolling(center),
+        zoom: zoom ?? this.zoom,
+        rotation: rotation,
+        nonRotatedSize: nonRotatedSize,
+        size: _cameraSize,
+      );
+
+  /// Jumps camera to opposite side of the world to enable seamless scrolling
+  /// between 180 and -180 longitude.
+  LatLng _adjustPositionForSeamlessScrolling(LatLng? position) {
+    if (!crs.replicatesWorldLongitude) {
+      return position ?? center;
+    }
+    if (position == null) {
+      return center;
+    }
+    double adjustedLongitude = position.longitude;
+    if (adjustedLongitude >= 180.0) {
+      adjustedLongitude -= 360.0;
+    } else if (adjustedLongitude <= -180.0) {
+      adjustedLongitude += 360.0;
+    }
+    return adjustedLongitude == position.longitude
+        ? position
+        : LatLng(position.latitude, adjustedLongitude);
+  }
+
+  /// Calculates the size of a bounding box which surrounds a box of size
+  /// [nonRotatedSize] which is rotated by [rotation].
+  static Size calculateRotatedSize(
+    double rotation,
+    Size nonRotatedSize,
+  ) {
+    if (rotation == 0.0) return nonRotatedSize;
+
+    final rotationRad = degrees2Radians * rotation;
+    final cosAngle = math.cos(rotationRad).abs();
+    final sinAngle = math.sin(rotationRad).abs();
+    final width =
+        (nonRotatedSize.width * cosAngle) + (nonRotatedSize.height * sinAngle);
+    final height =
+        (nonRotatedSize.height * cosAngle) + (nonRotatedSize.width * sinAngle);
+
+    return Size(width, height);
+  }
+
+  /// The current rotation value in radians
+  double get rotationRad => rotation * degrees2Radians;
+
+  /// Calculates point value for the given [latlng] using this camera's
+  /// [crs] and [zoom] (or the provided [zoom]).
+  Offset projectAtZoom(LatLng latlng, [double? zoom]) =>
+      crs.latLngToOffset(latlng, zoom ?? this.zoom);
+
+  /// Calculates the [LatLng] for the given [point] using this camera's
+  /// [crs] and [zoom] (or the provided [zoom]).
+  LatLng unprojectAtZoom(Offset point, [double? zoom]) =>
+      crs.offsetToLatLng(point, zoom ?? this.zoom);
+
+  /// Returns the width of the world at the current zoom, or 0 if irrelevant.
+  double getWorldWidthAtZoom([double? zoom]) {
+    if (!crs.replicatesWorldLongitude) {
+      return 0;
+    }
+    final offset0 = projectAtZoom(const LatLng(0, 0), zoom ?? this.zoom);
+    final offset180 = projectAtZoom(const LatLng(0, 180), zoom ?? this.zoom);
+    return 2 * (offset180.dx - offset0.dx).abs();
+  }
+
+  /// Calculates the scale for a zoom from [fromZoom] to [toZoom] using this
+  /// camera\s [crs].
+  double getZoomScale(double toZoom, double fromZoom) =>
+      crs.scale(toZoom) / crs.scale(fromZoom);
+
+  /// Calculates the scale for this camera's [zoom].
+  double getScaleZoom(double scale) => crs.zoom(scale * crs.scale(zoom));
+
+  /// Calculates the pixel bounds of this camera's [crs].
+  Rect? getPixelWorldBounds(double? zoom) =>
+      crs.getProjectedBounds(zoom ?? this.zoom);
+
+  /// Calculates the [Offset] from the [pos] to this camera's [pixelOrigin].
+  Offset getOffsetFromOrigin(LatLng pos) => projectAtZoom(pos) - pixelOrigin;
+
+  /// Calculates the pixel origin of this [MapCamera] at the given
+  /// [center]/[zoom].
+  Offset getNewPixelOrigin(LatLng center, [double? zoom]) {
+    return (projectAtZoom(center, zoom) - size.center(Offset.zero)).round();
+  }
+
+  /// Calculates the pixel bounds of this [MapCamera]. This value is cached.
+  Rect get pixelBounds =>
+      _pixelBounds ?? (_pixelBounds = pixelBoundsAtZoom(zoom));
+
+  /// Calculates the pixel bounds of this [MapCamera] at the given [zoom].
+  Rect pixelBoundsAtZoom(double zoom) {
+    Size cameraSize = size;
+    if (zoom != this.zoom) {
+      final scale = getZoomScale(this.zoom, zoom);
+      cameraSize = size / (scale * 2);
+    }
+    final pixelCenter = projectAtZoom(center, zoom).floor();
+
+    return Rect.fromCenter(
+        center: pixelCenter,
+        width: cameraSize.width,
+        height: cameraSize.height);
+  }
+
+  /// This will convert a latLng to a position that we could use with a widget
+  /// outside of FlutterMap layer space. Eg using a Positioned Widget.
+  Offset latLngToScreenOffset(LatLng latLng) {
+    final nonRotatedPixelOrigin =
+        projectAtZoom(center, zoom) - nonRotatedSize.center(Offset.zero);
+
+    var point = crs.latLngToOffset(latLng, zoom);
+
+    final mapCenter = crs.latLngToOffset(center, zoom);
+
+    if (rotation != 0.0) {
+      point = rotatePoint(mapCenter, point, counterRotation: false);
+    }
+
+    return point - nonRotatedPixelOrigin;
+  }
+
+  /// Calculate the [LatLng] coordinates for a [offset].
+  LatLng screenOffsetToLatLng(Offset offset) {
+    final localPointCenterDistance =
+        nonRotatedSize.center(Offset.zero) - offset;
+    final mapCenter = crs.latLngToOffset(center, zoom);
+
+    var point = mapCenter - localPointCenterDistance;
+
+    if (rotation != 0.0) {
+      point = rotatePoint(mapCenter, point);
+    }
+
+    return crs.offsetToLatLng(point, zoom);
+  }
+
+  /// Sometimes we need to make allowances that a rotation already exists, so
+  /// it needs to be reversed (pointToLatLng), and sometimes we want to use
+  /// the same rotation to create a new position (latLngToScreenpoint).
+  /// counterRotation just makes allowances this for this.
+  Offset rotatePoint(
+    Offset mapCenter,
+    Offset point, {
+    bool counterRotation = true,
+  }) {
+    //TODO what is the difference between this and the extension method on Offset.rotate?????!?!?!
+    final counterRotationFactor = counterRotation ? -1 : 1;
+
+    final m = Matrix4.identity()
+      // ignore: deprecated_member_use
+      ..translate(mapCenter.dx, mapCenter.dy)
+      ..rotateZ(rotationRad * counterRotationFactor)
+      // ignore: deprecated_member_use
+      ..translate(-mapCenter.dx, -mapCenter.dy);
+
+    return MatrixUtils.transformPoint(m, point);
+  }
+
+  /// Clamps the provided [zoom] to the range specified by [minZoom] and
+  /// [maxZoom], if set.
+  double clampZoom(double zoom) => zoom.clamp(
+        minZoom ?? double.negativeInfinity,
+        maxZoom ?? double.infinity,
+      );
+
+  /// Calculate the [LatLng] coordinates for a given [Offset] and an optional
+  /// zoom level. If [zoom] is not provided the current zoom level of the
+  /// [MapCamera] gets used.
+  LatLng offsetToCrs(Offset offset, [double? zoom]) {
+    final focalStartPt = projectAtZoom(center, zoom ?? this.zoom);
+    final point =
+        (offset - nonRotatedSize.center(Offset.zero)).rotate(rotationRad);
+
+    final newCenterPt = focalStartPt + point;
+    final worldWidth = getWorldWidthAtZoom(zoom ?? this.zoom);
+    double bestX = newCenterPt.dx;
+    if (worldWidth != 0) {
+      while (bestX > worldWidth) {
+        bestX -= worldWidth;
+      }
+      while (bestX < 0) {
+        bestX += worldWidth;
+      }
+    }
+    return unprojectAtZoom(Offset(bestX, newCenterPt.dy), zoom ?? this.zoom);
+  }
+
+  /// Calculate the center point which would keep the same point of the map
+  /// visible at the given [cursorPos] with the zoom set to [zoom].
+  LatLng focusedZoomCenter(Offset cursorPos, double zoom) {
+    // Calculate offset of mouse cursor from viewport center
+    final offset =
+        (cursorPos - nonRotatedSize.center(Offset.zero)).rotate(rotationRad);
+    // Match new center coordinate to mouse cursor position
+    final scale = getZoomScale(zoom, this.zoom);
+    final newOffset = offset * (1.0 - 1.0 / scale);
+    final mapCenter = projectAtZoom(center);
+    final newCenter = unprojectAtZoom(mapCenter + newOffset);
+    return newCenter;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+      crs, minZoom, maxZoom, center, zoom, rotation, nonRotatedSize);
+
+  @override
+  bool operator ==(Object other) =>
+      identical(other, this) ||
+      (other is MapCamera &&
+          other.crs == crs &&
+          other.minZoom == minZoom &&
+          other.maxZoom == maxZoom &&
+          other.center == center &&
+          other.zoom == zoom &&
+          other.rotation == rotation &&
+          other.nonRotatedSize == nonRotatedSize);
+}

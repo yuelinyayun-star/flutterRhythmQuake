@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:convert';
+import 'api_json_decoder.dart';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -318,10 +318,13 @@ class SnetService {
   Future<Map<String, String>?> _fetchTargetTimes() async {
     try {
       final response = await _client
-          .get(Uri.parse('$_baseUrl/targetTimes.json'), headers: kIsWeb ? null : _headers)
+          .get(
+            Uri.parse('$_baseUrl/targetTimes.json'),
+            headers: kIsWeb ? null : _headers,
+          )
           .timeout(const Duration(seconds: 20));
       if (response.statusCode != 200) return null;
-      final List<dynamic> times = jsonDecode(response.body);
+      final List<dynamic> times = decodeApiJsonResponse(response);
       if (times.isEmpty) return null;
       final latest = times.last as Map<String, dynamic>;
       return {
@@ -394,7 +397,8 @@ class SnetService {
       }
       if (StationImageDecoder.cpuOnly) {
         final decoded = await StationImageDecoder.decodeCpu(response.bodyBytes);
-        if (decoded == null || decoded.width != _tileSize ||
+        if (decoded == null ||
+            decoded.width != _tileSize ||
             decoded.height != _tileSize) {
           return null;
         }

@@ -29,7 +29,7 @@ String speak(UnifiedQuakeData data, {String phase = 'first'}) =>
 void main() {
   test('EEW puts critical information first and omits long detail reading', () {
     final text = speak(event);
-    expect(text, '紧急地震警报，堪察加半岛附近，震级6.2，预计最大震度5强，深度30公里。日本气象厅，第3报。');
+    expect(text, '紧急地震警报，堪察加半岛附近，震级6.2，预计最大震度5强。日本气象厅，第3报。');
     expect(text, isNot(contains(event.warnArea)));
     expect(text, isNot(contains('。，')));
   });
@@ -92,6 +92,7 @@ void main() {
       );
       final text = AlertVoiceHelper.generateLegacyAlertText(data, 12, 3);
       expect(text, contains('堪察加半岛附近，震级6.2，最大震度5强'));
+      expect(text, isNot(contains('深度')));
       expect(text, endsWith('预计12秒后到达，第3报。'));
       expect(data.location, event.hypocenter);
     }
@@ -187,5 +188,24 @@ void main() {
       ),
     );
     expect(text, '紧急地震警报，震源待定。日本气象厅，第3报。');
+  });
+
+  test('EEW never reads depth', () {
+    for (final depth in [0.0, 30.0]) {
+      expect(speak(event.copyWith(depth: depth)), isNot(contains('深度')));
+    }
+  });
+
+  test('non-EEW zero-kilometre depth is spoken as the source value', () {
+    final text = speak(
+      event.copyWith(
+        source: 'usgsEqlist',
+        isEew: false,
+        depth: 0,
+        depthText: '0 km',
+      ),
+    );
+    expect(text, contains('深度0公里'));
+    expect(text, isNot(contains('很浅')));
   });
 }

@@ -35,6 +35,10 @@ void main(List<String> args) {
     }
   }
   watch.stop();
+  final rssAfterProcessing = ProcessInfo.currentRss;
+  for (final stream in streams) {
+    stream.dispose();
+  }
   final duration =
       records.last.$3.difference(records.first.$3).inMicroseconds / 1e6 +
       records.last.$1.length / records.last.$2;
@@ -48,8 +52,9 @@ void main(List<String> args) {
       'observation_seconds': duration,
       'processing_ms': watch.elapsedMicroseconds / 1000,
       'ms_per_observation_second': watch.elapsedMicroseconds / 1000 / duration,
-      'rss_delta_mb': (ProcessInfo.currentRss - rssBefore) / 1048576,
-      'process_rss_mb': ProcessInfo.currentRss / 1048576,
+      'rss_delta_mb': (rssAfterProcessing - rssBefore) / 1048576,
+      'process_rss_mb': rssAfterProcessing / 1048576,
+      'rss_after_dispose_mb': ProcessInfo.currentRss / 1048576,
       'checksum': checksum,
     }),
   );

@@ -60,7 +60,10 @@ class _LocalInjectSettingsState extends State<LocalInjectSettings> {
       if (enabled == null) {
         await LocalInjectServer.setPort(port!);
       } else {
-        await LocalInjectServer.setEnabled(enabled, port: enabled ? port : null);
+        await LocalInjectServer.setEnabled(
+          enabled,
+          port: enabled ? port : null,
+        );
       }
       if (mounted && enabled != null) setState(() => _enabled = enabled);
     } catch (error) {
@@ -95,7 +98,7 @@ class _LocalInjectSettingsState extends State<LocalInjectSettings> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      '本地注入 API',
+                      'Mock 模拟注入 API',
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,

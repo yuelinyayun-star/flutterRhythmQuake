@@ -1,1010 +1,495 @@
 import 'dart:convert';
-import 'dart:ui' show PointerDeviceKind;
-
-import 'package:flutter/gestures.dart' show kMiddleMouseButton;
+import 'dart:io';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutterrhythmquake/models/obs_automation_builtin_presets.dart';
+import 'package:flutterrhythmquake/models/obs_automation_preset.dart';
 import 'package:flutterrhythmquake/providers/page_background_provider.dart';
 import 'package:flutterrhythmquake/services/obs_automation_runtime_service.dart';
 import 'package:flutterrhythmquake/services/obs_websocket_service.dart';
 import 'package:flutterrhythmquake/widgets/ui/obs_automation_presets_page.dart';
+import 'package:flutterrhythmquake/widgets/ui/app_page_background.dart';
+import 'package:flutterrhythmquake/widgets/ui/obs_recording_form.dart';
+import 'package:flutterrhythmquake/widgets/ui/settings_page.dart';
+import 'package:flutterrhythmquake/providers/map_state_provider.dart';
+import 'package:flutterrhythmquake/providers/quake_provider.dart';
+import 'package:flutterrhythmquake/providers/notification_settings_provider.dart';
+import 'package:flutterrhythmquake/providers/background_settings_provider.dart';
+import 'support/unified_ui_fonts.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-
+  setUpAll(() async {
+    await loadUnifiedUiFonts();
+    await AppPageBackground.cachedBytes();
+    await (FontLoader('MaterialIcons')..addFont(
+          File(
+            'build/unit_test_assets/fonts/MaterialIcons-Regular.otf',
+          ).readAsBytes().then(ByteData.sublistView),
+        ))
+        .load();
+  });
+  var sequence = 0;
+  ObsAutomationPreset builtIn() =>
+      buildEewRecordingPreset(nextId: (prefix) => '$prefix-${sequence++}');
   Future<void> pumpPage(
     WidgetTester tester,
     Size size, {
-    Map<String, Object> preferences = const {},
-    bool seedBlankPreset = true,
+    ObsAutomationPreset? preset,
   }) async {
-    final effectivePreferences = preferences.isEmpty && seedBlankPreset
-        ? <String, Object>{
-            'obs_automation_presets_v1': jsonEncode({
-              'schemaVersion': 3,
-              'presets': [
-                {
-                  'id': 'test-blank-preset',
-                  'name': '测试空白预设',
-                  'enabled': false,
-                  'stacks': const [],
-                },
-              ],
-            }),
-          }
-        : preferences;
-    SharedPreferences.setMockInitialValues(effectivePreferences);
+    FlutterSecureStorage.setMockInitialValues({});
+    SharedPreferences.setMockInitialValues(
+      preset == null
+          ? {}
+          : {
+              obsAutomationPresetsPreferenceKey: jsonEncode(
+                ObsAutomationPresetDocument(presets: [preset]).toJson(),
+              ),
+            },
+    );
     await tester.binding.setSurfaceSize(size);
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
       ChangeNotifierProvider(
         create: (_) => PageBackgroundProvider(),
-        child: MaterialApp(
-          theme: ThemeData.dark(useMaterial3: true),
-          home: const ObsAutomationPresetsPage(),
+        child: RepaintBoundary(
+          key: const ValueKey('obs-page-render'),
+          child: MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: unifiedUiTestTheme(),
+            home: const ObsAutomationPresetsPage(),
+          ),
         ),
       ),
     );
     await tester.pumpAndSettle();
   }
 
-  Future<void> dragTo(WidgetTester tester, Finder source, Offset target) async {
-    final start = tester.getCenter(source);
-    await tester.dragFrom(start, target - start, touchSlopY: 0, touchSlopX: 0);
+  Future<void> savedAutomatically(WidgetTester tester) async {
+    await tester.pump(const Duration(milliseconds: 500));
     await tester.pumpAndSettle();
   }
 
-  Future<void> dragValueTo(
-    WidgetTester tester,
-    Finder source,
-    Offset target,
-  ) async {
-    final gesture = await tester.startGesture(tester.getCenter(source));
-    await gesture.moveBy(const Offset(2, 2));
-    await tester.pump(const Duration(milliseconds: 50));
-    await gesture.moveTo(target, timeStamp: const Duration(milliseconds: 350));
-    await tester.pump(const Duration(milliseconds: 100));
-    await gesture.up();
-    await tester.pumpAndSettle();
-  }
-
-  Future<void> scrollPaletteCategoryIntoView(
-    WidgetTester tester,
-    String label,
-  ) async {
-    final categoryNames = <String, String>{
-      '事件': 'events',
-      '逻辑': 'logic',
-      '运算': 'operators',
-      'UI 数据': 'uiConditions',
-      '测站数据': 'stationConditions',
-      '变量': 'variables',
-      '控制': 'control',
-      'OBS': 'obs',
-    };
-    final category = find.byKey(
-      ValueKey('palette-category-${categoryNames[label]}'),
-    );
-    final categoryStrip = find.byKey(const ValueKey('palette-category-scroll'));
-    await tester.drag(categoryStrip, const Offset(1000, 0));
-    await tester.pumpAndSettle();
-    for (
-      var attempt = 0;
-      attempt < 10 && category.hitTestable().evaluate().isEmpty;
-      attempt++
-    ) {
-      await tester.drag(categoryStrip, const Offset(-100, 0));
-      await tester.pumpAndSettle();
-    }
-    expect(category.hitTestable(), findsOneWidget);
-  }
-
-  Future<void> selectPaletteCategory(WidgetTester tester, String label) async {
-    await scrollPaletteCategoryIntoView(tester, label);
-    final categoryNames = <String, String>{
-      '事件': 'events',
-      '逻辑': 'logic',
-      '运算': 'operators',
-      'UI 数据': 'uiConditions',
-      '测站数据': 'stationConditions',
-      '变量': 'variables',
-      '控制': 'control',
-      'OBS': 'obs',
-    };
-    await tester.tap(
-      find
-          .byKey(ValueKey('palette-category-${categoryNames[label]}'))
-          .hitTestable(),
-    );
-    await tester.pumpAndSettle();
-  }
-
-  Finder valueSocket({required Finder within, required String parameter}) {
-    return find.descendant(
-      of: within,
-      matching: find.byWidgetPredicate((widget) {
-        final key = widget.key;
-        return key is ValueKey<String> &&
-            key.value.startsWith('value-socket-') &&
-            !key.value.startsWith('value-socket-picker-') &&
-            key.value.endsWith('-$parameter');
-      }),
-    );
-  }
-
-  Finder expressionSocket({required Finder within, required String path}) {
-    return find.descendant(
-      of: within,
-      matching: find.byWidgetPredicate((widget) {
-        final key = widget.key;
-        return key is ValueKey<String> &&
-            key.value.startsWith('expression-socket-') &&
-            key.value.endsWith('-$path');
-      }),
-    );
-  }
-
-  testWidgets('desktop palette blocks drag, snap and save as one stack', (
-    tester,
-  ) async {
-    await pumpPage(tester, const Size(1280, 800));
-
-    final eventTemplate = find.byKey(const ValueKey('palette-unifiedEvent'));
-    expect(eventTemplate, findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('palette-networkDetection')),
-      findsOneWidget,
-    );
-    expect(find.byKey(const ValueKey('palette-stationChange')), findsOneWidget);
-    await dragTo(tester, eventTemplate, const Offset(560, 250));
-
-    final eventBlock = find.byKey(const ValueKey('canvas-block-unifiedEvent'));
-    expect(eventBlock, findsOneWidget);
-    expect(
-      find.descendant(
-        of: eventBlock,
-        matching: find.byType(DropdownButton<String>),
-      ),
-      findsNothing,
-    );
-
-    await selectPaletteCategory(tester, 'OBS');
-    final recordTemplate = find.byKey(const ValueKey('palette-startRecord'));
-    expect(recordTemplate, findsOneWidget);
-    final eventTopLeft = tester.getTopLeft(eventBlock);
-    await dragTo(tester, recordTemplate, eventTopLeft + const Offset(92, 78));
-
-    expect(
-      find.byKey(const ValueKey('canvas-block-startRecord')),
-      findsOneWidget,
-    );
-    expect(tester.takeException(), isNull);
-
-    final attachedAction = find.byKey(
-      const ValueKey('canvas-block-startRecord'),
-    );
-    final detachHandle = find.descendant(
-      of: attachedAction,
-      matching: find.byTooltip('从这里拆开并拖动'),
-    );
-    await dragTo(tester, detachHandle, const Offset(1030, 430));
-    expect(tester.getTopLeft(attachedAction).dx, greaterThan(850));
-
-    final looseHandle = find.descendant(
-      of: attachedAction,
-      matching: find.byTooltip('拖动积木堆'),
-    );
-    await dragTo(
-      tester,
-      looseHandle,
-      tester.getTopLeft(eventBlock) + const Offset(48, 78),
-    );
-    expect(
-      (tester.getTopLeft(attachedAction).dx - tester.getTopLeft(eventBlock).dx)
-          .abs(),
-      lessThan(2),
-    );
-
-    await tester.tap(find.widgetWithText(FilledButton, '保存'));
-    await tester.pumpAndSettle();
+  Future<Map<String, dynamic>> saved() async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('obs_automation_presets_v1');
-    expect(raw, isNotNull);
-    final root = jsonDecode(raw!) as Map<String, dynamic>;
-    final presets = root['presets'] as List<dynamic>;
-    final savedPreset = presets.cast<Map<String, dynamic>>().singleWhere(
-      (item) => item['id'] == 'test-blank-preset',
-    );
-    final stacks = savedPreset['stacks'] as List<dynamic>;
-    expect(stacks, hasLength(1));
-    final blocks =
-        (stacks.single as Map<String, dynamic>)['blocks'] as List<dynamic>;
-    expect(blocks.map((item) => (item as Map<String, dynamic>)['type']), [
-      'unifiedEvent',
-      'startRecord',
-    ]);
-  });
+    return jsonDecode(prefs.getString(obsAutomationPresetsPreferenceKey)!)
+        as Map<String, dynamic>;
+  }
 
-  testWidgets('station input hats fit inside desktop canvas blocks', (
-    tester,
-  ) async {
-    await pumpPage(tester, const Size(1280, 800));
-
-    await dragTo(
-      tester,
-      find.byKey(const ValueKey('palette-networkDetection')),
-      const Offset(560, 250),
+  Future<void> capture(WidgetTester tester, String name) async {
+    final boundary = tester.renderObject<RenderRepaintBoundary>(
+      find.byKey(const ValueKey('obs-page-render')),
     );
-    await dragTo(
-      tester,
-      find.byKey(const ValueKey('palette-stationChange')),
-      const Offset(560, 390),
-    );
-
-    final networkBlock = find.byKey(
-      const ValueKey('canvas-block-networkDetection'),
-    );
-    final stationBlock = find.byKey(
-      const ValueKey('canvas-block-stationChange'),
-    );
-    expect(networkBlock, findsOneWidget);
-    expect(stationBlock, findsOneWidget);
-    expect(tester.takeException(), isNull);
-
-    expect(
-      find.descendant(
-        of: networkBlock,
-        matching: find.byType(DropdownButton<String>),
-      ),
-      findsOneWidget,
-    );
-
-    final stationDropdowns = find.descendant(
-      of: stationBlock,
-      matching: find.byType(DropdownButton<String>),
-    );
-    expect(stationDropdowns, findsOneWidget);
-    await tester.tap(stationDropdowns.first);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('FDSN/SeedLink').last);
-    await tester.pumpAndSettle();
-
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('condition branches connect as input AND conditions OR input', (
-    tester,
-  ) async {
-    await pumpPage(tester, const Size(1280, 800));
-
-    await dragTo(
-      tester,
-      find.byKey(const ValueKey('palette-networkDetection')),
-      const Offset(560, 210),
-    );
-    final networkBlock = find.byKey(
-      const ValueKey('canvas-block-networkDetection'),
-    );
-    final stackTopLeft = tester.getTopLeft(networkBlock);
-
-    await selectPaletteCategory(tester, '测站数据');
-    await selectPaletteCategory(tester, '逻辑');
-    await dragTo(
-      tester,
-      find.byKey(const ValueKey('palette-compareValues')),
-      stackTopLeft + const Offset(92, 78),
-    );
-    expect(find.byKey(const ValueKey('palette-andBranch')), findsOneWidget);
-    await dragTo(
-      tester,
-      find.byKey(const ValueKey('palette-orBranch')),
-      stackTopLeft + const Offset(92, 130),
-    );
-
-    await selectPaletteCategory(tester, '事件');
-    await dragTo(
-      tester,
-      find.byKey(const ValueKey('palette-unifiedEvent')),
-      stackTopLeft + const Offset(92, 182),
-    );
-
-    await selectPaletteCategory(tester, 'UI 数据');
-    await selectPaletteCategory(tester, '逻辑');
-    await dragTo(
-      tester,
-      find.byKey(const ValueKey('palette-compareValues')),
-      stackTopLeft + const Offset(92, 234),
-    );
-
-    await selectPaletteCategory(tester, 'OBS');
-    await dragTo(
-      tester,
-      find.byKey(const ValueKey('palette-startRecord')),
-      stackTopLeft + const Offset(92, 286),
-    );
-
-    expect(find.byKey(const ValueKey('canvas-block-orBranch')), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('canvas-block-compareValues')),
-      findsNWidgets(2),
-    );
-    expect(tester.takeException(), isNull);
-
-    await tester.tap(find.widgetWithText(FilledButton, '保存'));
-    await tester.pumpAndSettle();
-    final prefs = await SharedPreferences.getInstance();
-    final root =
-        jsonDecode(prefs.getString('obs_automation_presets_v1')!)
-            as Map<String, dynamic>;
-    final preset = (root['presets'] as List<dynamic>)
-        .cast<Map<String, dynamic>>()
-        .singleWhere((item) => item['id'] == 'test-blank-preset');
-    final stacks = preset['stacks'] as List<dynamic>;
-    expect(stacks, hasLength(1));
-    final blocks =
-        (stacks.single as Map<String, dynamic>)['blocks'] as List<dynamic>;
-    expect(blocks.map((item) => (item as Map<String, dynamic>)['type']), [
-      'networkDetection',
-      'compareValues',
-      'orBranch',
-      'unifiedEvent',
-      'compareValues',
-      'startRecord',
-    ]);
-  });
-
-  testWidgets('EEW agency condition lists every normalized institution', (
-    tester,
-  ) async {
-    final raw = jsonEncode({
-      'schemaVersion': 3,
-      'presets': [
-        {
-          'id': 'preset-eew-agency',
-          'name': 'EEW 机构测试',
-          'enabled': false,
-          'stacks': [
-            {
-              'id': 'stack-eew-agency',
-              'x': 40.0,
-              'y': 40.0,
-              'blocks': [
-                {
-                  'id': 'block-eew-agency',
-                  'type': 'eewAgency',
-                  'parameters': {'operator': 'equals', 'value': 'jma'},
-                },
-              ],
-            },
-          ],
-        },
-      ],
+    await tester.runAsync(() async {
+      final image = await boundary.toImage(pixelRatio: 1);
+      final data = (await image.toByteData(format: ui.ImageByteFormat.png))!;
+      final file = File('tmp/obs_settings_table_20261103/$name.png');
+      await file.parent.create(recursive: true);
+      await file.writeAsBytes(data.buffer.asUint8List());
+      image.dispose();
     });
-    await pumpPage(
-      tester,
-      const Size(1280, 800),
-      preferences: {'obs_automation_presets_v1': raw},
-    );
-
-    final agencyBlock = find.byKey(const ValueKey('canvas-block-eewAgency'));
-    final dropdowns = find.descendant(
-      of: agencyBlock,
-      matching: find.byType(DropdownButton<String>),
-    );
-    expect(dropdowns, findsNWidgets(2));
-    await tester.tap(dropdowns.last);
-    await tester.pumpAndSettle();
-
-    for (final label in const [
-      'JMA',
-      'CWA',
-      'CEA',
-      '四川省地震局',
-      '福建省地震局',
-      '重庆市地震局',
-      'ICL',
-      'KMA',
-      'ShakeAlert',
-      'GlobalQuake',
-    ]) {
-      expect(find.text(label), findsWidgets, reason: label);
-    }
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('value reporters feed variable and comparison sockets', (
-    tester,
-  ) async {
-    await pumpPage(tester, const Size(1280, 800));
-
-    await selectPaletteCategory(tester, '变量');
-    expect(find.byKey(const ValueKey('palette-variableValue')), findsOneWidget);
-    await dragTo(
-      tester,
-      find.byKey(const ValueKey('palette-setVariable')),
-      const Offset(560, 210),
-    );
-    final setVariable = find.byKey(const ValueKey('canvas-block-setVariable'));
-    final setValueSocket = valueSocket(
-      within: setVariable,
-      parameter: 'valueKind',
-    );
-    expect(setValueSocket, findsOneWidget);
-    expect(
-      find.descendant(of: setVariable, matching: find.text('拖入数值')),
-      findsOneWidget,
-    );
-
-    await selectPaletteCategory(tester, 'UI 数据');
-    final uiReporter = find.byKey(
-      const ValueKey('palette-uiConditions-inputFieldValue'),
-    );
-    expect(uiReporter, findsOneWidget);
-    expect(uiReporter.hitTestable(), findsOneWidget);
-    final uiSelector = find.byKey(
-      const ValueKey('palette-field-selector-unified'),
-    );
-    expect(uiSelector.hitTestable(), findsOneWidget);
-    await tester.tap(find.text('事件类型').hitTestable().last);
-    await tester.pumpAndSettle();
-    expect(find.text('震级'), findsWidgets);
-    expect(find.text('最大震度/烈度'), findsWidgets);
-    expect(find.text('测站编号'), findsNothing);
-    await tester.tap(find.text('震级').last);
-    await tester.pumpAndSettle();
-    await dragValueTo(tester, uiReporter, tester.getCenter(setValueSocket));
-    expect(
-      find.descendant(of: setVariable, matching: find.text('拖入数值')),
-      findsNothing,
-    );
-    final insertedKindLabel = find.descendant(
-      of: setVariable,
-      matching: find.text('字段'),
-    );
-    final insertedValueLabel = find.descendant(
-      of: setVariable,
-      matching: find.text('震级'),
-    );
-    expect(insertedKindLabel, findsOneWidget);
-    expect(insertedValueLabel, findsOneWidget);
-    expect(tester.getSize(insertedKindLabel).width, greaterThan(20));
-    expect(tester.getSize(insertedValueLabel).width, greaterThan(20));
-    final setVariableRect = tester.getRect(setVariable);
-    expect(
-      setVariableRect.contains(tester.getCenter(insertedKindLabel)),
-      isTrue,
-    );
-    expect(
-      setVariableRect.contains(tester.getCenter(insertedValueLabel)),
-      isTrue,
-    );
-    expect(tester.takeException(), isNull);
-
-    await selectPaletteCategory(tester, '逻辑');
-    expect(find.byKey(const ValueKey('palette-compareValues')), findsOneWidget);
-    await dragTo(
-      tester,
-      find.byKey(const ValueKey('palette-compareValues')),
-      const Offset(560, 390),
-    );
-    final compare = find.byKey(const ValueKey('canvas-block-compareValues'));
-    expect(
-      find.descendant(of: compare, matching: find.text('拖入数值')),
-      findsNWidgets(2),
-    );
-    final leftSocket = valueSocket(within: compare, parameter: 'leftKind');
-    await tester.tap(leftSocket);
-    await tester.pumpAndSettle();
-    expect(find.text('常量'), findsOneWidget);
-    expect(find.text('输入字段'), findsOneWidget);
-    expect(find.text('变量'), findsWidgets);
-    await tester.tap(find.text('常量'));
-    await tester.pumpAndSettle();
-    expect(
-      find.descendant(of: compare, matching: find.text('拖入数值')),
-      findsOneWidget,
-    );
-    final rightSocket = valueSocket(within: compare, parameter: 'rightKind');
-    expect(rightSocket, findsOneWidget);
-
-    await selectPaletteCategory(tester, '变量');
-    await dragValueTo(
-      tester,
-      find.byKey(const ValueKey('palette-variableValue')),
-      tester.getCenter(rightSocket),
-    );
-    expect(
-      find.descendant(of: compare, matching: find.text('拖入数值')),
-      findsNothing,
-    );
-
-    await selectPaletteCategory(tester, '测站数据');
-    expect(
-      find.byKey(
-        const ValueKey('palette-stationConditions-inputFieldCondition'),
-      ),
-      findsOneWidget,
-    );
-    final stationReporter = find.byKey(
-      const ValueKey('palette-stationConditions-inputFieldValue'),
-    );
-    expect(stationReporter, findsOneWidget);
-    final stationSelector = find.byKey(
-      const ValueKey('palette-field-selector-station'),
-    );
-    expect(stationSelector.hitTestable(), findsOneWidget);
-    await tester.tap(find.text('台网').hitTestable().last);
-    await tester.pumpAndSettle();
-    expect(find.text('测站编号'), findsWidgets);
-    expect(find.text('当前测站震度'), findsWidgets);
-    await tester.tapAt(const Offset(1000, 700));
-    await tester.pumpAndSettle();
-    await dragValueTo(tester, stationReporter, const Offset(1040, 650));
-    expect(
-      find.byKey(const ValueKey('canvas-block-inputFieldValue')),
-      findsNothing,
-    );
-
-    await tester.tap(find.widgetWithText(FilledButton, '保存'));
-    await tester.pumpAndSettle();
-    final prefs = await SharedPreferences.getInstance();
-    final root =
-        jsonDecode(prefs.getString('obs_automation_presets_v1')!)
-            as Map<String, dynamic>;
-    final preset = (root['presets'] as List<dynamic>)
-        .cast<Map<String, dynamic>>()
-        .singleWhere((item) => item['id'] == 'test-blank-preset');
-    final stacks = preset['stacks'] as List<dynamic>;
-    final blocks = stacks
-        .expand(
-          (stack) => (stack as Map<String, dynamic>)['blocks'] as List<dynamic>,
-        )
-        .cast<Map<String, dynamic>>()
-        .toList();
-    final setParameters = blocks.singleWhere(
-      (block) => block['type'] == 'setVariable',
-    )['parameters'];
-    expect(setParameters['valueKind'], 'inputField');
-    expect(setParameters['value'], 'magnitude');
-    expect(setParameters['valueFamily'], 'unified');
-    final compareParameters = blocks.singleWhere(
-      (block) => block['type'] == 'compareValues',
-    )['parameters'];
-    expect(compareParameters['rightKind'], 'variable');
-    expect(compareParameters['rightValue'], '变量');
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('OBS text action accepts exact UI field reporters', (
-    tester,
-  ) async {
-    await pumpPage(tester, const Size(1280, 800));
-
-    await selectPaletteCategory(tester, 'OBS');
-    expect(
-      find.byKey(const ValueKey('palette-setTextSourceText')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('palette-setCurrentProgramScene')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('palette-setSceneItemEnabled')),
-      findsOneWidget,
-    );
-    await dragTo(
-      tester,
-      find.byKey(const ValueKey('palette-setTextSourceText')),
-      const Offset(560, 230),
-    );
-    final textAction = find.byKey(
-      const ValueKey('canvas-block-setTextSourceText'),
-    );
-    final textSocket = valueSocket(within: textAction, parameter: 'textKind');
-    expect(textSocket, findsOneWidget);
-    expect(
-      find.descendant(of: textAction, matching: find.text('拖入数值')),
-      findsOneWidget,
-    );
-
-    await selectPaletteCategory(tester, 'UI 数据');
-    await tester.tap(find.text('事件类型').hitTestable().last);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('UI 顶部标题').last);
-    await tester.pumpAndSettle();
-    await dragValueTo(
-      tester,
-      find.byKey(const ValueKey('palette-uiConditions-inputFieldValue')),
-      tester.getCenter(textSocket),
-    );
-
-    expect(
-      find.descendant(of: textAction, matching: find.text('UI 顶部标题')),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(of: textAction, matching: find.text('拖入数值')),
-      findsNothing,
-    );
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('Scratch operators nest fields and operators in value sockets', (
-    tester,
-  ) async {
-    await pumpPage(tester, const Size(1280, 800));
-
-    await selectPaletteCategory(tester, '变量');
-    await dragTo(
-      tester,
-      find.byKey(const ValueKey('palette-setVariable')),
-      const Offset(620, 210),
-    );
-    final setVariable = find.byKey(const ValueKey('canvas-block-setVariable'));
-    final rootSocket = valueSocket(within: setVariable, parameter: 'valueKind');
-
-    await selectPaletteCategory(tester, '运算');
-    for (final type in const [
-      'arithmeticValue',
-      'randomValue',
-      'moduloValue',
-      'roundValue',
-      'mathValue',
-      'textJoinValue',
-      'textLengthValue',
-      'textContainsValue',
-      'comparisonValue',
-      'booleanValue',
-      'notValue',
-    ]) {
-      expect(find.byKey(ValueKey('palette-$type')), findsOneWidget);
-    }
-    await dragValueTo(
-      tester,
-      find.byKey(const ValueKey('palette-arithmeticValue')),
-      tester.getCenter(rootSocket),
-    );
-    expect(expressionSocket(within: setVariable, path: '0'), findsOneWidget);
-    expect(expressionSocket(within: setVariable, path: '1'), findsOneWidget);
-
-    await selectPaletteCategory(tester, 'UI 数据');
-    final uiReporter = find.byKey(
-      const ValueKey('palette-uiConditions-inputFieldValue'),
-    );
-    await tester.tap(find.text('事件类型').hitTestable().last);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('震级').last);
-    await tester.pumpAndSettle();
-    await dragValueTo(
-      tester,
-      uiReporter,
-      tester.getCenter(expressionSocket(within: setVariable, path: '0')),
-    );
-    expect(
-      find.descendant(of: setVariable, matching: find.text('震级')),
-      findsOneWidget,
-    );
-
-    await selectPaletteCategory(tester, '运算');
-    await dragValueTo(
-      tester,
-      find.byKey(const ValueKey('palette-roundValue')),
-      tester.getCenter(expressionSocket(within: setVariable, path: '1')),
-    );
-    expect(expressionSocket(within: setVariable, path: '1-0'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-
-    await tester.tap(find.widgetWithText(FilledButton, '保存'));
-    await tester.pumpAndSettle();
-    final prefs = await SharedPreferences.getInstance();
-    final root =
-        jsonDecode(prefs.getString('obs_automation_presets_v1')!)
-            as Map<String, dynamic>;
-    final preset = (root['presets'] as List<dynamic>)
-        .cast<Map<String, dynamic>>()
-        .singleWhere((item) => item['id'] == 'test-blank-preset');
-    final stacks = preset['stacks'] as List<dynamic>;
-    final blocks = stacks
-        .expand(
-          (stack) => (stack as Map<String, dynamic>)['blocks'] as List<dynamic>,
-        )
-        .cast<Map<String, dynamic>>();
-    final parameters =
-        blocks.singleWhere(
-              (block) => block['type'] == 'setVariable',
-            )['parameters']
-            as Map<String, dynamic>;
-    expect(parameters['valueKind'], 'expression');
-    final expression = jsonDecode(parameters['value'] as String);
-    expect(expression['value'], 'arithmetic');
-    expect(expression['arguments'][0]['kind'], 'inputField');
-    expect(expression['arguments'][0]['value'], 'magnitude');
-    expect(expression['arguments'][1]['value'], 'round');
-  });
-
-  testWidgets('all second-layer condition editors render without overflow', (
-    tester,
-  ) async {
-    const conditionTypes = [
-      'orBranch',
-      'unifiedPhase',
-      'isEew',
-      'isInformation',
-      'eewAgency',
-      'informationAgency',
-      'informationReviewType',
-      'sameEarthquakeAsVariable',
-      'valueVariableCondition',
-      'inputFieldMatchesVariable',
-      'inputFieldCondition',
-      'compareValues',
-      'networkPhase',
-      'stationPhase',
-      'eventType',
-      'source',
-      'magnitude',
-      'estimatedIntensity',
-      'reportNumber',
-      'isFinal',
-      'networkMaxIntensity',
-      'detectedStationCount',
-      'stationId',
-      'stationName',
-      'currentStationIntensity',
-      'previousStationIntensity',
-    ];
-    final stacks = [
-      for (var index = 0; index < conditionTypes.length; index++)
-        {
-          'id': 'stack-$index',
-          'x': 40.0,
-          'y': 40.0 + index * 68.0,
-          'blocks': [
-            {'id': 'block-$index', 'type': conditionTypes[index]},
-          ],
-        },
-    ];
-    final raw = jsonEncode({
-      'schemaVersion': 3,
-      'presets': [
-        {
-          'id': 'preset-conditions',
-          'name': '条件布局测试',
-          'enabled': false,
-          'stacks': stacks,
-        },
-      ],
-    });
-
-    await pumpPage(
-      tester,
-      const Size(1280, 800),
-      preferences: {'obs_automation_presets_v1': raw},
-    );
-
-    for (final type in conditionTypes) {
-      expect(find.byKey(ValueKey('canvas-block-$type')), findsOneWidget);
-    }
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('generic data blocks render without overflow', (tester) async {
-    const dataTypes = [
-      'setEventVariable',
-      'setValueVariable',
-      'setVariable',
-      'changeVariable',
-      'valueVariableCondition',
-      'inputFieldMatchesVariable',
-      'inputFieldCondition',
-      'createRecordChapter',
-    ];
-    final raw = jsonEncode({
-      'schemaVersion': 3,
-      'presets': [
-        {
-          'id': 'preset-data-blocks',
-          'name': '数据积木布局测试',
-          'enabled': false,
-          'stacks': [
-            for (var index = 0; index < dataTypes.length; index++)
-              {
-                'id': 'data-stack-$index',
-                'x': 40.0,
-                'y': 40.0 + index * 68.0,
-                'blocks': [
-                  {'id': 'data-block-$index', 'type': dataTypes[index]},
-                ],
-              },
-          ],
-        },
-      ],
-    });
-
-    await pumpPage(
-      tester,
-      const Size(1280, 800),
-      preferences: {'obs_automation_presets_v1': raw},
-    );
-
-    for (final type in dataTypes) {
-      expect(find.byKey(ValueKey('canvas-block-$type')), findsOneWidget);
-    }
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('built-in EEW recording preset is added disabled and saved', (
-    tester,
-  ) async {
-    await pumpPage(tester, const Size(1280, 800), seedBlankPreset: false);
-
-    expect(find.text('EEW 分机构自动录制'), findsOneWidget);
-    final enabledSwitch = tester.widget<Switch>(find.byType(Switch));
-    expect(enabledSwitch.value, isFalse);
-    expect(
-      find.byKey(const ValueKey('canvas-block-startRecord')),
-      findsNWidgets(9),
-    );
-    expect(
-      find.byKey(const ValueKey('canvas-block-stopRecord')),
-      findsNWidgets(9),
-    );
-    expect(tester.takeException(), isNull);
-
-    await tester.tap(find.byTooltip('添加 EEW 分机构自动录制预设'));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.widgetWithText(FilledButton, '保存'));
-    await tester.pumpAndSettle();
-    final prefs = await SharedPreferences.getInstance();
-    final root =
-        jsonDecode(prefs.getString('obs_automation_presets_v1')!)
-            as Map<String, dynamic>;
-    final presets = root['presets'] as List<dynamic>;
-    expect(
-      presets.cast<Map<String, dynamic>>().where(
-        (item) => item['name'] == 'EEW 分机构自动录制',
-      ),
-      hasLength(1),
-    );
-    final preset = presets.cast<Map<String, dynamic>>().singleWhere(
-      (item) => item['name'] == 'EEW 分机构自动录制',
-    );
-    expect(preset['enabled'], isFalse);
-    expect(preset['stacks'], hasLength(9));
-    final gqStack = (preset['stacks'] as List)
-        .cast<Map<String, dynamic>>()
-        .singleWhere(
-          (stack) => (stack['blocks'] as List).cast<Map<String, dynamic>>().any(
-            (block) =>
-                block['type'] == 'eewAgency' &&
-                block['parameters']['value'] == 'globalQuake',
-          ),
-        );
-    final blocks = (gqStack['blocks'] as List).cast<Map<String, dynamic>>();
-    expect(blocks.first['parameters']['oncePerEvent'], 'true');
-    expect(
-      blocks.singleWhere(
-        (block) => block['type'] == 'wait',
-      )['parameters']['seconds'],
-      '3600',
-    );
-  });
+  }
 
   testWidgets(
-    'every block used by the built-in preset is available in palette',
+    'recording form uses fixed institutions, one unit selector, one end selector and autosave',
     (tester) async {
-      await pumpPage(tester, const Size(1280, 800), seedBlankPreset: false);
-
-      await selectPaletteCategory(tester, 'UI 数据');
-      for (final type in const [
-        'inputFieldCondition',
-        'unifiedPhase',
-        'isEew',
-        'isInformation',
-        'eewAgency',
-        'informationAgency',
-        'informationReviewType',
-        'eventType',
-        'magnitude',
-      ]) {
-        final key = type == 'inputFieldCondition'
-            ? 'palette-uiConditions-$type'
-            : 'palette-$type';
-        expect(find.byKey(ValueKey(key)), findsOneWidget);
-      }
-
-      await selectPaletteCategory(tester, '变量');
-      for (final type in const [
-        'setEventVariable',
-        'setValueVariable',
-        'sameEarthquakeAsVariable',
-      ]) {
-        expect(find.byKey(ValueKey('palette-$type')), findsOneWidget);
-      }
-
-      await selectPaletteCategory(tester, '控制');
+      await pumpPage(tester, const Size(1600, 1000));
+      await savedAutomatically(tester);
+      final table = tester.widget<DataTable>(
+        find.byKey(const ValueKey('obs-rules-table')),
+      );
+      expect(table.rows.length, builtIn().stacks.length + 1);
+      expect(table.columns, hasLength(5));
+      expect(find.text('CEA-EEW'), findsOneWidget);
+      expect(find.text('JMA-EEW'), findsOneWidget);
+      expect(find.text('ShakeAlert-EEW'), findsOneWidget);
+      expect(find.text('CENC 自动测定'), findsOneWidget);
+      expect(find.byType(Switch), findsNWidgets(table.rows.length));
       expect(
-        find.byKey(const ValueKey('palette-waitForUnifiedEvent')),
+        find.byType(DropdownButton<ObsAutomationBlockType>),
+        findsNWidgets(table.rows.length - 1),
+      );
+      expect(find.byKey(const ValueKey('obs-save')), findsNothing);
+      expect(find.text('保存'), findsNothing);
+      for (final removed in [
+        '自动化预设',
+        '启用预设',
+        '添加规则',
+        '添加阈值',
+        '事件阶段',
+        '同事件一次',
+        '触发频次',
+        '同震时差 / 秒',
+        '同震距离 / km',
+      ]) {
+        expect(find.text(removed), findsNothing, reason: removed);
+      }
+      expect(find.text('连接●录制设置'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await capture(tester, 'obs-settings-desktop');
+    },
+  );
+
+  testWidgets(
+    'SASMEX exposes detection and warning options instead of numeric thresholds and autosaves only its trigger',
+    (tester) async {
+      final preset = builtIn();
+      final original = preset.stacks.singleWhere(obsRecordingUsesAlertTrigger);
+      await pumpPage(tester, const Size(1600, 1000), preset: preset);
+      await savedAutomatically(tester);
+      expect(
+        find.byKey(ValueKey('obs-trigger-unit-${original.id}')),
+        findsNothing,
+      );
+      final selector = find.byKey(ValueKey('obs-alert-trigger-${original.id}'));
+      expect(
+        find.descendant(of: selector, matching: find.text('检出或警报')),
         findsOneWidget,
+      );
+      for (final choice in ['warning', 'detection', 'all']) {
+        await tester.tap(selector);
+        await tester.pumpAndSettle();
+        if (choice == 'warning') {
+          await capture(tester, 'obs-sasmex-options');
+        }
+        await tester.tap(find.text(obsRecordingAlertTriggers[choice]!).last);
+        await savedAutomatically(tester);
+        final after = ObsAutomationPresetDocument.fromJson(
+          await saved(),
+        ).presets.single;
+        final changed = after.stacks.singleWhere(obsRecordingUsesAlertTrigger);
+        expect(obsRecordingAlertTrigger(changed), choice);
+        final start = changed.blocks.indexWhere(
+          (block) => block.type == ObsAutomationBlockType.startRecord,
+        );
+        final originalStart = original.blocks.indexWhere(
+          (block) => block.type == ObsAutomationBlockType.startRecord,
+        );
+        expect(
+          changed.blocks.skip(start).map((b) => b.toJson()).toList(),
+          original.blocks.skip(originalStart).map((b) => b.toJson()).toList(),
+        );
+        for (final other in preset.stacks.where(
+          (rule) => rule.id != original.id,
+        )) {
+          expect(
+            after.stacks.singleWhere((rule) => rule.id == other.id).toJson(),
+            other.toJson(),
+          );
+        }
+      }
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'OBS recording is a main settings category above advanced and renders inside the shared settings panel',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({'tts_enabled': false});
+      FlutterSecureStorage.setMockInitialValues({});
+      await tester.binding.setSurfaceSize(const Size(1600, 1000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final quake = QuakeProvider();
+      final map = MapStateProvider();
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: quake),
+            ChangeNotifierProvider.value(value: map),
+            ChangeNotifierProvider(create: (_) => PageBackgroundProvider()),
+            ChangeNotifierProvider(
+              create: (_) => NotificationSettingsProvider(),
+            ),
+            ChangeNotifierProvider(create: (_) => BackgroundSettingsProvider()),
+          ],
+          child: RepaintBoundary(
+            key: const ValueKey('obs-page-render'),
+            child: MaterialApp(
+              debugShowCheckedModeBanner: false,
+              theme: unifiedUiTestTheme(),
+              home: const SettingsPage(),
+            ),
+          ),
+        ),
+      );
+      for (var i = 0; i < 40 && find.text('OBS 录制').evaluate().isEmpty; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 50)),
+        );
+        await tester.pump();
+      }
+      await tester.pumpAndSettle();
+      expect(find.text('OBS 录制'), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.text('OBS 录制')).dy,
+        lessThan(tester.getTopLeft(find.text('高级')).dy),
+      );
+      await tester.tap(find.text('OBS 录制'));
+      await savedAutomatically(tester);
+      expect(find.byKey(const ValueKey('obs-rules-table')), findsOneWidget);
+      expect(
+        tester
+            .widget<ObsAutomationPresetsPage>(
+              find.byType(ObsAutomationPresetsPage),
+            )
+            .embedded,
+        isTrue,
+      );
+      expect(find.text('自动保存'), findsNothing);
+      expect(find.text('OBS 自动录制'), findsNothing);
+      expect(find.text('应用设置'), findsOneWidget);
+      await capture(tester, 'obs-in-main-settings');
+      await tester.tap(find.text('高级'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ObsAutomationPresetsPage), findsNothing);
+      expect(find.text('录制设置'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      quake.dispose();
+      map.dispose();
+    },
+  );
+
+  testWidgets(
+    'one click enables one agency without affecting another agency or its fixed steps',
+    (tester) async {
+      final preset = builtIn();
+      await pumpPage(tester, const Size(1600, 1000), preset: preset);
+      await savedAutomatically(tester);
+      expect(
+        tester
+            .widgetList<Switch>(find.byType(Switch))
+            .every((widget) => !widget.value),
+        isTrue,
+      );
+      await tester.tap(
+        find.byKey(ValueKey('obs-rule-enabled-${preset.stacks.first.id}')),
+      );
+      await savedAutomatically(tester);
+      final after = ObsAutomationPresetDocument.fromJson(
+        await saved(),
+      ).presets.single;
+      expect(after.enabled, isTrue);
+      expect(after.stacks.first.enabled, isTrue);
+      expect(after.stacks.skip(1).every((stack) => !stack.enabled), isTrue);
+      for (var index = 0; index < preset.stacks.length; index++) {
+        expect(
+          after.stacks[index].blocks.map((block) => block.toJson()).toList(),
+          preset.stacks[index].blocks.map((block) => block.toJson()).toList(),
+        );
+      }
+      expect(tester.takeException(), isNull);
+      ObsAutomationRuntimeService().runner.configure(const []);
+    },
+  );
+
+  testWidgets(
+    'trigger unit and value autosave to one existing condition only',
+    (tester) async {
+      final preset = builtIn();
+      final first = preset.stacks.first;
+      await pumpPage(tester, const Size(1600, 1000), preset: preset);
+      await savedAutomatically(tester);
+      await tester.tap(find.byKey(ValueKey('obs-trigger-unit-${first.id}')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('烈度').last);
+      await tester.pumpAndSettle();
+      final field = find.byKey(
+        ValueKey('obs-trigger-${first.id}-estimatedIntensity'),
+      );
+      await tester.enterText(field, '6.0');
+      await savedAutomatically(tester);
+      final after = ObsAutomationPresetDocument.fromJson(
+        await saved(),
+      ).presets.single.stacks.first;
+      expect(
+        after.blocks.where(
+          (block) => block.type == ObsAutomationBlockType.magnitude,
+        ),
+        isEmpty,
+      );
+      final condition = after.blocks.singleWhere(
+        (block) => block.type == ObsAutomationBlockType.estimatedIntensity,
+      );
+      expect(condition.parameters, {
+        'operator': 'greaterThanOrEqual',
+        'value': '6.0',
+      });
+      expect(
+        after.blocks
+            .where((block) => block.id != condition.id)
+            .map((block) => block.toJson())
+            .toList(),
+        first.blocks.map((block) => block.toJson()).toList(),
       );
       expect(tester.takeException(), isNull);
     },
   );
 
-  testWidgets('middle mouse drag pans the canvas on both axes', (tester) async {
-    await pumpPage(tester, const Size(1280, 800), seedBlankPreset: false);
-
-    final surface = find.byKey(const ValueKey('automation-canvas-pan-surface'));
-    final scrollables = find.descendant(
-      of: surface,
-      matching: find.byWidgetPredicate(
-        (widget) => widget is Scrollable && widget.restorationId == null,
-      ),
-    );
-    expect(scrollables, findsNWidgets(2));
-    for (var index = 0; index < 2; index++) {
-      expect(
-        tester.state<ScrollableState>(scrollables.at(index)).position.pixels,
-        0,
+  testWidgets(
+    'end type is single-select and changing to CENC CMT preserves matching, delay and stop steps',
+    (tester) async {
+      final preset = builtIn();
+      final first = preset.stacks.first;
+      await pumpPage(tester, const Size(1600, 1000), preset: preset);
+      await savedAutomatically(tester);
+      await tester.tap(find.byKey(ValueKey('obs-end-${first.id}')));
+      await tester.pumpAndSettle();
+      expect(find.text('CENC-CMT'), findsOneWidget);
+      expect(find.text('USGS ShakeMap 烈度速报'), findsNothing);
+      await tester.tap(
+        find.ancestor(
+          of: find.text('CENC-CMT'),
+          matching: find.byType(CheckedPopupMenuItem<String>),
+        ),
       );
-    }
-
-    final gesture = await tester.startGesture(
-      tester.getCenter(surface),
-      kind: PointerDeviceKind.mouse,
-      buttons: kMiddleMouseButton,
-    );
-    await gesture.moveBy(const Offset(-120, -90));
-    await tester.pump();
-    await gesture.up();
-    await tester.pumpAndSettle();
-
-    for (var index = 0; index < 2; index++) {
+      await savedAutomatically(tester);
+      final after = ObsAutomationPresetDocument.fromJson(
+        await saved(),
+      ).presets.single.stacks.first;
+      expect(after.endConditionId, 'cencCmt');
       expect(
-        tester.state<ScrollableState>(scrollables.at(index)).position.pixels,
-        greaterThan(0),
+        after.blocks
+            .singleWhere((block) => block.type == ObsAutomationBlockType.source)
+            .parameters,
+        {'operator': 'equals', 'value': 'cencCmt'},
       );
-    }
+      for (final type in [
+        ObsAutomationBlockType.sameEarthquakeAsVariable,
+        ObsAutomationBlockType.wait,
+        ObsAutomationBlockType.stopRecord,
+        ObsAutomationBlockType.stopScript,
+      ]) {
+        expect(
+          after.blocks.singleWhere((block) => block.type == type).toJson(),
+          first.blocks.singleWhere((block) => block.type == type).toJson(),
+        );
+      }
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'connection recording settings autosave matching, timeout and expanded source selection',
+    (tester) async {
+      final preset = builtIn();
+      await pumpPage(tester, const Size(1600, 1000), preset: preset);
+      await savedAutomatically(tester);
+      await tester.tap(find.text('连接●录制设置'));
+      await tester.pumpAndSettle();
+      expect(find.text('保存'), findsNothing);
+      await capture(tester, 'obs-connection-recording-settings');
+      await tester.tap(find.byKey(const ValueKey('obs-expand-end-sources')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('obs-common-maxSeconds')),
+        '120',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('obs-common-maxDistanceKm')),
+        '80',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('obs-common-timeoutSeconds')),
+        '1800',
+      );
+      await savedAutomatically(tester);
+      await capture(tester, 'obs-connection-recording-settings-edited');
+      await tester.tap(find.text('关闭'));
+      await savedAutomatically(tester);
+      final after = ObsAutomationPresetDocument.fromJson(
+        await saved(),
+      ).presets.single;
+      for (final rule in after.stacks) {
+        for (final block in rule.blocks) {
+          if (block.type == ObsAutomationBlockType.sameEarthquakeAsVariable) {
+            expect(block.parameters['maxSeconds'], '120');
+            expect(block.parameters['maxDistanceKm'], '80');
+          }
+          if (block.type == ObsAutomationBlockType.waitForUnifiedEvent) {
+            expect(block.parameters['timeoutSeconds'], '1800');
+          }
+        }
+      }
+      final gq = after.stacks.singleWhere(
+        (rule) => obsRecordingAgency(rule) == 'globalQuake',
+      );
+      expect(
+        gq.blocks
+            .singleWhere((block) => block.type == ObsAutomationBlockType.wait)
+            .parameters['seconds'],
+        '1800',
+      );
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getBool('obs_recording_extended_end_sources'), isTrue);
+      await tester.tap(
+        find.byKey(ValueKey('obs-end-${after.stacks.first.id}')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('USGS ShakeMap 烈度速报'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.tapAt(const Offset(15, 15));
+      await tester.pumpAndSettle();
+    },
+  );
+
+  testWidgets(
+    'CENC information row has the requested defaults and only information trigger',
+    (tester) async {
+      await pumpPage(tester, const Size(1600, 1000));
+      await savedAutomatically(tester);
+      final preset = ObsAutomationPresetDocument.fromJson(
+        await saved(),
+      ).presets.single;
+      final rule = preset.stacks.singleWhere(obsIsCencInformationRule);
+      expect(rule.enabled, isFalse);
+      expect(
+        rule.blocks
+            .singleWhere(
+              (block) => block.type == ObsAutomationBlockType.magnitude,
+            )
+            .parameters['value'],
+        '5.0',
+      );
+      expect(
+        rule.blocks.where(
+          (block) => block.type == ObsAutomationBlockType.isEew,
+        ),
+        isEmpty,
+      );
+      expect(rule.endConditionId, 'cenc-reviewed');
+      expect(obsRecordingDelay(rule), '20');
+      final field = find.byKey(ValueKey('obs-trigger-${rule.id}-magnitude'));
+      expect(tester.widget<TextFormField>(field).initialValue, '5.0');
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('narrow settings table scrolls without overflow', (tester) async {
+    await pumpPage(tester, const Size(430, 900));
+    await savedAutomatically(tester);
+    expect(find.text('OBS 自动录制'), findsOneWidget);
+    expect(find.byKey(const ValueKey('obs-rules-table')), findsOneWidget);
     expect(tester.takeException(), isNull);
+    await capture(tester, 'obs-settings-narrow');
   });
 
-  testWidgets('toolbar shows live OBS connection state', (tester) async {
+  testWidgets('OBS connection state remains live', (tester) async {
     final notifier = ObsAutomationRuntimeService().obs.connectionStateNotifier;
     notifier.value = ObsConnectionState.connected;
     addTearDown(() => notifier.value = ObsConnectionState.disconnected);
-
     await pumpPage(tester, const Size(1280, 800));
-
-    expect(find.byKey(const ValueKey('obs-connection-status')), findsOneWidget);
+    await savedAutomatically(tester);
     expect(find.text('OBS 已连接'), findsOneWidget);
-
     notifier.value = ObsConnectionState.reconnecting;
     await tester.pump();
     expect(find.text('OBS 重连中'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('mobile keeps the module palette left of the canvas', (
-    tester,
-  ) async {
-    await pumpPage(tester, const Size(420, 820));
-
-    final eventTemplate = find.byKey(const ValueKey('palette-unifiedEvent'));
-    expect(eventTemplate, findsOneWidget);
-    expect(find.text('画布为空'), findsOneWidget);
-    expect(
-      tester.getTopLeft(eventTemplate).dx,
-      lessThan(tester.getTopLeft(find.text('画布为空')).dx),
-    );
-
-    expect(find.text('OBS'), findsNothing);
-    await scrollPaletteCategoryIntoView(tester, 'OBS');
-    expect(find.text('OBS'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

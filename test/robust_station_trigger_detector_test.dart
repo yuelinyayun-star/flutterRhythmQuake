@@ -139,4 +139,70 @@ void main() {
       );
     });
   }
+
+  for (final fractional in [false, true]) {
+    test(
+      'retained median survives growth, wrap and disorder, fractional=$fractional',
+      () {
+        final detector = RobustStationTriggerDetector(
+          config: const RobustStationTriggerConfig(
+            historySeconds: 2,
+            minimumBaselineSamples: 1,
+            risingFrames: 10000,
+            triggeredFrames: 10000,
+          ),
+        );
+        final retained = <({DateTime time, double value})>[];
+        final start = DateTime.utc(2026, 6, 20);
+        for (var index = 0; index < 400; index++) {
+          final offset = index % 31 == 0 ? index - 7 : index;
+          final time = start.add(Duration(milliseconds: offset * 100));
+          final value = (index % 29) / (fractional ? 3 : 1);
+          final sorted = retained.map((sample) => sample.value).toList()
+            ..sort();
+          final median = sorted.isEmpty
+              ? value
+              : (sorted[(sorted.length - 1) ~/ 2] +
+                        sorted[sorted.length ~/ 2]) /
+                    2;
+          final expectedAscend = retained.isEmpty
+              ? 0
+              : (value - retained.last.value).round();
+          final snapshot = detector.update(
+            StationObservationFrame(
+              stationId: 'STA001',
+              code: 'STA001',
+              sourceId: 'test',
+              observedAt: time,
+              intensity: value,
+            ),
+          );
+          expect(
+            snapshot.activity,
+            value > median ? value - median : 0,
+            reason: 'sample $index',
+          );
+          expect(snapshot.ascend, expectedAscend, reason: 'sample $index');
+          retained.add((time: time, value: value));
+          retained.removeWhere(
+            (sample) =>
+                sample.time.isBefore(time.subtract(const Duration(seconds: 2))),
+          );
+        }
+        detector.resetStation('STA001');
+        final reset = detector.update(
+          StationObservationFrame(
+            stationId: 'STA001',
+            code: 'STA001',
+            sourceId: 'test',
+            observedAt: start,
+            intensity: 42.5,
+          ),
+        );
+        expect(reset.activity, 0);
+        expect(reset.ascend, 0);
+        expect(reset.reasonCodes, contains('warming_up'));
+      },
+    );
+  }
 }

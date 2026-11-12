@@ -7,6 +7,9 @@ import 'package:image/image.dart' as image_lib;
 
 import 'shindo_color_util.dart';
 import 'nied_detection_rules.dart';
+import 'native_station_image_decoder.dart';
+import 'native_ka_detector.dart';
+import 'lpgm_monitor_service.dart';
 
 class NiedScanConfig {
   final int pixelX;
@@ -17,19 +20,28 @@ class NiedScanConfig {
 
 class NiedPixelSample {
   final double? surfacePosition;
+  // The original palette lookup can provide shindo without a color position.
+  final double? surfaceShindo;
+  final String? missingReason;
 
-  const NiedPixelSample({required this.surfacePosition});
+  const NiedPixelSample({
+    required this.surfacePosition,
+    this.surfaceShindo,
+    this.missingReason,
+  });
 }
 
 class NiedFrameScanResult {
   final int width;
   final int height;
   final List<NiedPixelSample> samples;
+  final String backend;
 
   const NiedFrameScanResult({
     required this.width,
     required this.height,
     required this.samples,
+    this.backend = 'dart',
   });
 }
 
@@ -61,6 +73,49 @@ class NiedDetectionResult {
   });
 }
 
+/// The full NIED data owner calls the already verified Rust detector directly.
+/// Its catalogue/buffers stay in that isolate, without another async hop or a
+/// duplicate Dart distance matrix. Policy matches the existing NIED worker.
+class NiedLocalDetectionSession {
+  NiedLocalDetectionSession(List<List<Object?>> stations) {
+    if (!NativeKaDetector.supported) {
+      throw UnsupportedError(
+        'NIED local detection requires the native backend',
+      );
+    }
+    expireSeconds = _state._configureDetector({'stations': stations});
+  }
+  final _state = _NiedWorkerState();
+  late final List<int> expireSeconds;
+  NiedDetectionResult detect(
+    List<NiedDetectionInput> stations, {
+    required int sensitivity,
+    required bool hadActiveGrid,
+  }) {
+    final result = _state._detect({
+      'stations': [
+        for (final s in stations)
+          [
+            s.kaLevel,
+            s.activity,
+            s.ascend,
+            s.isActive,
+            s.continuousShindo,
+            s.triggerStamp,
+          ],
+      ],
+      'sensitivity': sensitivity,
+      'hadActiveGrid': hadActiveGrid,
+    });
+    return NiedDetectionResult(
+      activeIndices: (result['activeIndices'] as List).cast<int>(),
+      strongestIndex: result['strongestIndex'] as int?,
+    );
+  }
+
+  void dispose() => _state.dispose();
+}
+
 class NiedBackgroundWorker {
   NiedBackgroundWorker._();
 
@@ -77,6 +132,46 @@ class NiedBackgroundWorker {
 
   bool get supported => !kIsWeb;
 
+  Future<LpgmSnapshot?> processLpgmFrame({
+    required Uint8List imageBytes,
+    required DateTime dataTime,
+  }) async {
+    await _ensureStarted();
+    return await _request('lpgmFrame', {
+          'image': TransferableTypedData.fromList([imageBytes]),
+          'time': dataTime,
+        })
+        as LpgmSnapshot?;
+  }
+
+  Future<void> resetLpgm() async {
+    if (_sendPort == null && _starting == null) return;
+    try {
+      await _ensureStarted();
+      await _request('resetLpgm', const {});
+    } on StateError {
+      // A shared-worker shutdown already disposes the LPGM state. Its pending
+      // reset is an expected cancellation, not an unhandled async exception.
+      if (_sendPort != null) rethrow;
+    }
+  }
+
+  @visibleForTesting
+  Future<Map<String, Object?>> imageDecoderDiagnostics() async {
+    if (_sendPort == null) return const {'backend': 'not-started'};
+    return Map<String, Object?>.from(
+      (await _request('imageDiagnostics', const {})) as Map,
+    );
+  }
+
+  @visibleForTesting
+  Future<Map<String, Object?>> detectorDiagnostics() async {
+    if (_sendPort == null) return const {'backend': 'not-started'};
+    return Map<String, Object?>.from(
+      (await _request('detectorDiagnostics', const {})) as Map,
+    );
+  }
+
   /// 释放后台 isolate 及其台站配置缓存；下次请求时会按需重建。
   void stop() {
     _reset();
@@ -86,6 +181,7 @@ class NiedBackgroundWorker {
     required Uint8List surfaceBytes,
     required List<NiedScanConfig> configs,
     required String configSignature,
+    bool physicalValues = false,
   }) async {
     if (!supported) return null;
     try {
@@ -100,6 +196,7 @@ class NiedBackgroundWorker {
       }
       final response = await _request('scanFrame', {
         'surface': TransferableTypedData.fromList([surfaceBytes]),
+        'physicalValues': physicalValues,
       });
       if (response is! Map) return null;
       final packed = response['samples'];
@@ -107,17 +204,32 @@ class NiedBackgroundWorker {
       final values = packed.materialize().asFloat64List();
       if (values.length != configs.length) return null;
       final samples = <NiedPixelSample>[];
+      final fallback = response['shindoFallback'] as Map?;
+      final quality = (response['quality'] as TransferableTypedData?)
+          ?.materialize()
+          .asUint8List();
       for (var i = 0; i < configs.length; i++) {
         samples.add(
-          NiedPixelSample(surfacePosition: _finitePosition(values[i])),
+          NiedPixelSample(
+            surfacePosition: _finitePosition(values[i]),
+            surfaceShindo: (fallback?[i] as num?)?.toDouble(),
+            missingReason: switch (quality?[i]) {
+              1 => 'pixel_transparent',
+              2 => 'pixel_undecodable',
+              3 => 'pixel_out_of_bounds',
+              _ => null,
+            },
+          ),
         );
       }
       return NiedFrameScanResult(
         width: response['width'] as int? ?? 0,
         height: response['height'] as int? ?? 0,
         samples: samples,
+        backend: response['backend'] as String? ?? 'dart',
       );
-    } catch (_) {
+    } catch (error) {
+      debugPrint('[NIED] Background image scan failed: $error');
       return null;
     }
   }
@@ -136,7 +248,8 @@ class NiedBackgroundWorker {
       if (response is! List) return null;
       _detectorConfigSignature = signature;
       return response.cast<int>();
-    } catch (_) {
+    } catch (error) {
+      debugPrint('[NIED] Background detector configuration failed: $error');
       return null;
     }
   }
@@ -149,18 +262,21 @@ class NiedBackgroundWorker {
     if (!supported) return null;
     try {
       await _ensureStarted();
+      final packed = Int64List(stations.length * 6);
+      final floating = Float64List.view(packed.buffer);
+      for (var index = 0; index < stations.length; index++) {
+        final station = stations[index], offset = index * 6;
+        packed[offset] = station.kaLevel;
+        floating[offset + 1] = station.activity;
+        packed[offset + 2] = station.ascend;
+        packed[offset + 3] = station.isActive ? 1 : 0;
+        floating[offset + 4] = station.continuousShindo;
+        packed[offset + 5] = station.triggerStamp;
+      }
       final response = await _request('detect', {
-        'stations': [
-          for (final station in stations)
-            [
-              station.kaLevel,
-              station.activity,
-              station.ascend,
-              station.isActive,
-              station.continuousShindo,
-              station.triggerStamp,
-            ],
-        ],
+        'packedStations': TransferableTypedData.fromList([
+          packed.buffer.asUint8List(),
+        ]),
         'sensitivity': sensitivity,
         'hadActiveGrid': hadActiveGrid,
       });
@@ -170,7 +286,8 @@ class NiedBackgroundWorker {
             (response['activeIndices'] as List?)?.cast<int>() ?? const [],
         strongestIndex: response['strongestIndex'] as int?,
       );
-    } catch (_) {
+    } catch (error) {
+      debugPrint('[NIED] Background KA detection failed: $error');
       return null;
     }
   }
@@ -270,7 +387,13 @@ class NiedBackgroundWorker {
   }
 
   void _reset() {
-    _isolate?.kill(priority: Isolate.immediate);
+    // Finish the current synchronous call, explicitly free FFI buffers, then
+    // exit. Never abandon a native allocation by killing a configured worker.
+    if (_sendPort != null) {
+      _sendPort!.send({'command': 'close'});
+    } else {
+      _isolate?.kill(priority: Isolate.immediate);
+    }
     _isolate = null;
     _sendPort = null;
     _receivePort?.close();
@@ -295,6 +418,11 @@ void _niedWorkerMain(SendPort mainPort) {
   final state = _NiedWorkerState();
   receivePort.listen((dynamic message) {
     if (message is! Map) return;
+    if (message['command'] == 'close') {
+      state.dispose();
+      receivePort.close();
+      Isolate.exit();
+    }
     final id = message['id'];
     if (id is! int) return;
     try {
@@ -311,17 +439,61 @@ class _NiedWorkerState {
   static const double _denseNearbyKm = 30.0;
   static const double _sparseFallbackNearbyKm = 40.0;
   List<List<Object?>> _scanConfigs = const [];
+  NativeStationImageDecoder? _nativeDecoder;
   List<_DetectorStationConfig> _detectorConfigs = const [];
   List<List<int>> _adjacentStationIds = const [];
+  NativeKaDetector? _nativeKaDetector;
+  LpgmFrameProcessor? _lpgmProcessor;
+
+  void dispose() {
+    _lpgmProcessor?.dispose();
+    _lpgmProcessor = null;
+    _nativeKaDetector?.dispose();
+    _nativeKaDetector = null;
+    _nativeDecoder?.dispose();
+    _nativeDecoder = null;
+  }
 
   Object? handle(Map<dynamic, dynamic> message) {
     switch (message['command']) {
+      case 'lpgmFrame':
+        final bytes = (message['image'] as TransferableTypedData)
+            .materialize()
+            .asUint8List();
+        return (_lpgmProcessor ??= LpgmFrameProcessor()).process(
+          bytes,
+          message['time'] as DateTime,
+        );
+      case 'resetLpgm':
+        _lpgmProcessor?.dispose();
+        _lpgmProcessor = null;
+        return true;
       case 'configureScan':
         _scanConfigs =
             (message['configs'] as List?)?.cast<List<Object?>>() ?? const [];
+        _nativeDecoder?.dispose();
+        _nativeDecoder = NativeStationImageDecoder.supported
+            ? NativeStationImageDecoder([
+                for (final config in _scanConfigs) ...[
+                  config[0] as int,
+                  config[1] as int,
+                ],
+              ])
+            : null;
         return true;
       case 'scanFrame':
         return _scanFrame(message);
+      case 'imageDiagnostics':
+        return {
+          'backend': _nativeDecoder == null ? 'dart' : 'rust-abi-1',
+          'bufferCapacityBytes': _nativeDecoder?.bufferCapacityBytes ?? 0,
+          if (_nativeDecoder != null) ...NativeStationImageDecoder.memoryStats,
+        };
+      case 'detectorDiagnostics':
+        return {
+          'backend': _nativeKaDetector == null ? 'dart' : 'rust-abi-1',
+          if (_nativeKaDetector != null) ...NativeKaDetector.diagnostics,
+        };
       case 'configureDetector':
         return _configureDetector(message);
       case 'detect':
@@ -332,40 +504,108 @@ class _NiedWorkerState {
   }
 
   Map<String, Object?> _scanFrame(Map<dynamic, dynamic> message) {
+    final physical = message['physicalValues'] == true;
     final surfaceBytes = (message['surface'] as TransferableTypedData)
         .materialize()
         .asUint8List();
+    final native = _nativeDecoder;
+    final fallback = <int, double>{};
+    if (native != null) {
+      final frame = native.sampleNied(surfaceBytes, physical: physical);
+      final values = Float64List(_scanConfigs.length);
+      final quality = Uint8List(_scanConfigs.length);
+      for (var i = 0; i < values.length; i++) {
+        final offset = i * 3;
+        values[i] = frame.values[offset];
+        quality[i] = frame.values[offset + 2].toInt();
+        if (!physical &&
+            values[i].isNaN &&
+            frame.values[offset + 1].isFinite &&
+            quality[i] == 0) {
+          fallback[i] = frame.values[offset + 1];
+        }
+      }
+      return {
+        'width': frame.width,
+        'height': frame.height,
+        'backend': 'rust-abi-1',
+        'shindoFallback': fallback,
+        'quality': TransferableTypedData.fromList([quality]),
+        'samples': TransferableTypedData.fromList([
+          values.buffer.asUint8List(),
+        ]),
+      };
+    }
     final surface = image_lib.decodeImage(surfaceBytes);
     if (surface == null) throw StateError('Unable to decode NIED surface GIF');
 
     final values = Float64List(_scanConfigs.length);
+    final quality = Uint8List(_scanConfigs.length);
     for (var i = 0; i < _scanConfigs.length; i++) {
       final config = _scanConfigs[i];
       final x = config[0] as int;
       final y = config[1] as int;
-      values[i] = _samplePosition(surface, x, y) ?? double.nan;
+      if (x < 0 ||
+          x >= surface.width ||
+          y < 0 ||
+          y >= surface.height ||
+          surface.getPixel(x, y).a == 0) {
+        values[i] = double.nan;
+        quality[i] = x < 0 || x >= surface.width || y < 0 || y >= surface.height
+            ? 3
+            : 1;
+        continue;
+      }
+      values[i] =
+          _samplePosition(surface, x, y, physical: physical) ?? double.nan;
+      if (!physical &&
+          values[i].isNaN &&
+          x >= 0 &&
+          x < surface.width &&
+          y >= 0 &&
+          y < surface.height) {
+        final p = surface.getPixel(x, y);
+        final a = p.a.toInt();
+        final shindo = ShindoColorUtil.rgbaToShindo(
+          (p.r.toInt() * a + 127) ~/ 255,
+          (p.g.toInt() * a + 127) ~/ 255,
+          (p.b.toInt() * a + 127) ~/ 255,
+        );
+        if (shindo != null) fallback[i] = shindo;
+      }
+      if (values[i].isNaN && !fallback.containsKey(i)) quality[i] = 2;
     }
     return {
       'width': surface.width,
       'height': surface.height,
+      'shindoFallback': fallback,
+      'quality': TransferableTypedData.fromList([quality]),
       'samples': TransferableTypedData.fromList([values.buffer.asUint8List()]),
     };
   }
 
-  double? _samplePosition(image_lib.Image image, int x, int y) {
+  double? _samplePosition(
+    image_lib.Image image,
+    int x,
+    int y, {
+    bool physical = false,
+  }) {
     if (x < 0 || x >= image.width || y < 0 || y >= image.height) {
       return null;
     }
     final pixel = image.getPixel(x, y);
-    final r = pixel.r.toInt();
-    final g = pixel.g.toInt();
-    final b = pixel.b.toInt();
+    final alpha = pixel.a.toInt();
+    final r = (pixel.r.toInt() * alpha + 127) ~/ 255;
+    final g = (pixel.g.toInt() * alpha + 127) ~/ 255;
+    final b = (pixel.b.toInt() * alpha + 127) ~/ 255;
     final shindo = ShindoColorUtil.rgbaToShindo(r, g, b);
-    if (shindo == null) return null;
+    if (!physical && shindo == null) return null;
     return ShindoColorUtil.rgbaToPosition(r, g, b);
   }
 
   List<int> _configureDetector(Map<dynamic, dynamic> message) {
+    _nativeKaDetector?.dispose();
+    _nativeKaDetector = null;
     final source = (message['stations'] as List?) ?? const [];
     _detectorConfigs = [
       for (final row in source)
@@ -377,16 +617,72 @@ class _NiedWorkerState {
             clusterKey: row[3] as String,
           ),
     ];
-    _buildAdjacency();
-    return List<int>.filled(_adjacentStationIds.length, 10);
+    if (NativeKaDetector.supported) {
+      _nativeKaDetector = NativeKaDetector.niedCoordinates([
+        for (final station in _detectorConfigs) ...[
+          station.latitude,
+          station.longitude,
+        ],
+      ]);
+      // The native session is the sole owner of adjacency and working sets.
+      _adjacentStationIds = const [];
+    } else {
+      _buildAdjacency();
+    }
+    return List<int>.filled(_detectorConfigs.length, 10);
   }
 
   Map<String, Object?> _detect(Map<dynamic, dynamic> message) {
     final rows = (message['stations'] as List?) ?? const [];
-    if (rows.length != _detectorConfigs.length) {
+    final packed = message['packedStations'] as TransferableTypedData?;
+    final words = packed?.materialize().asInt64List();
+    if (words != null && words.length % 6 != 0)
+      throw StateError('Invalid KA frame size');
+    final count = words == null ? rows.length : words.length ~/ 6;
+    if (count != _detectorConfigs.length) {
       throw StateError('NIED detector station count changed');
     }
+    final native = _nativeKaDetector;
+    if (native != null) {
+      if (words != null) {
+        native.writePacked(words);
+      } else {
+        for (var index = 0; index < rows.length; index++) {
+          final row = rows[index] as List;
+          native.writeInput(
+            index,
+            kaLevel: row[0] as int,
+            activity: (row[1] as num).toDouble(),
+            ascend: row[2] as int,
+            isActive: row[3] as bool,
+            triggerStamp: row[5] as int,
+            continuousShindo: (row[4] as num).toDouble(),
+          );
+        }
+      }
+      final result = native.process(
+        sensitivity: message['sensitivity'] as int? ?? 2,
+        hadActiveGrid: message['hadActiveGrid'] == true,
+      );
+      return {
+        'activeIndices': result.activeIndices,
+        'strongestIndex': result.strongestIndex,
+      };
+    }
+    final floating = words == null
+        ? null
+        : Float64List.view(words.buffer, words.offsetInBytes);
     final states = [
+      if (words != null)
+        for (var index = 0; index < count; index++)
+          _DetectorStationState(
+            kaLevel: words[index * 6],
+            activity: floating![index * 6 + 1],
+            ascend: words[index * 6 + 2],
+            isActive: words[index * 6 + 3] == 1,
+            continuousShindo: floating[index * 6 + 4],
+            triggerStamp: words[index * 6 + 5],
+          ),
       for (final row in rows)
         if (row is List)
           _DetectorStationState(

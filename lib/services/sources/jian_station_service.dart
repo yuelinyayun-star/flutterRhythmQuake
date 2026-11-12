@@ -1,14 +1,19 @@
 import 'dart:async';
-import 'dart:convert';
+import 'api_json_decoder.dart';
 import '../station_history_capture.dart';
+import '../native_jian_connection.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:web_socket_channel/io.dart';
+import 'source_socket.dart';
+import 'source_socket_error.dart';
+import 'source_connection_lifecycle.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'whews_socket_client.dart';
 import 'whews_station_service.dart';
+import 'station_json_decoder.dart';
+import 'station_json_values.dart';
 
 typedef JianStationSocketFactory = WebSocketChannel Function(Uri uri);
 
@@ -16,18 +21,18 @@ class JianStationService {
   JianStationService({
     required this.kind,
     JianStationSocketFactory? socketFactory,
+    StationJsonDecoder? jsonDecoder,
     this.reconnectDelay = const Duration(seconds: 15),
     this.observationTimeout = const Duration(seconds: 90),
-  }) : _socketFactory = socketFactory ?? _connectSocket;
+  }) : _socketFactory = socketFactory ?? _connectSocket,
+       _jsonDecoder = jsonDecoder ?? StationJsonDecoder();
 
   static WebSocketChannel _connectSocket(Uri uri) => kIsWeb
       ? WebSocketChannel.connect(uri)
-      : IOWebSocketChannel.connect(
-          uri,
-          connectTimeout: const Duration(seconds: 15),
-        );
+      : connectSourceSocket(uri, connectTimeout: const Duration(seconds: 15));
 
   final WhewsStationKind kind;
+  final StationJsonDecoder _jsonDecoder;
   final JianStationSocketFactory _socketFactory;
   final Duration reconnectDelay;
   final Duration observationTimeout;
@@ -40,9 +45,13 @@ class JianStationService {
   Stream<WhewsStationFrame> get frameStream => _frames.stream;
 
   WebSocketChannel? _socket;
+  final _closing = SourceConnectionBarrier();
+  bool _blocked = false;
+  Future<void> get closed => _closing.wait();
   StreamSubscription<dynamic>? _subscription;
   Timer? _retryTimer;
   Timer? _observationTimer;
+  DateTime? _observationDeadline;
   List<LatLng> _coordinates = const [];
   List<String> _codes = const [];
   List<String> _names = const [];
@@ -52,6 +61,16 @@ class JianStationService {
   bool _hasPublishedFrame = false;
   bool _running = false;
   int _generation = 0;
+  int _endpointIndex = 0;
+  Uri get activeEndpoint => Uri.parse(
+    (NativeJianConnection.prepare({
+              'op': 'endpoint',
+              'index': _endpointIndex,
+              'path': '/$_path',
+            })
+            as Map)['url']
+        as String,
+  );
 
   String get _path => switch (kind) {
     WhewsStationKind.nied => 'kmoni',
@@ -67,46 +86,75 @@ class JianStationService {
   void start() {
     if (_running) return;
     _running = true;
+    _endpointIndex = 0;
+    _blocked = false;
     _open();
   }
 
   Future<void> _open() async {
-    if (!_running || _socket != null) return;
+    if (!_running || _blocked || _socket != null) return;
     final generation = ++_generation;
     stateNotifier.value = WhewsSocketState.connecting;
     try {
-      final socket = _socketFactory(
-        Uri.parse('wss://api.sismotide.top/$_path'),
-      );
+      await _closing.wait();
+      if (!_running || _blocked || generation != _generation) return;
+      final socket = _socketFactory(activeEndpoint);
       _socket = socket;
       _subscription = socket.stream.listen(
         (message) {
           if (_running && generation == _generation) _handleMessage(message);
         },
         onDone: () => _failed(generation),
-        onError: (Object error) => _failed(generation),
+        onError: (Object error) =>
+            _failed(generation, code: sourceSocketStatusCode(error)),
         cancelOnError: true,
       );
-      await socket.ready.timeout(const Duration(seconds: 15));
+      await sourceReady(socket.ready, const Duration(seconds: 15));
       if (_running && generation == _generation && _lastDataTime == null) {
         _observationTimer?.cancel();
-        _observationTimer = Timer(
-          observationTimeout,
-          () => _failed(generation),
-        );
+        _armObservationTimer(generation);
       }
     } catch (_) {
       _failed(generation);
     }
   }
 
-  void _failed(int generation) {
-    if (!_running || generation != _generation) return;
+  void _armObservationTimer(int generation, [Duration? delay]) {
+    final wait = delay ?? observationTimeout;
+    _observationTimer?.cancel();
+    _observationDeadline = DateTime.now().add(wait);
+    _observationTimer = Timer(wait, () {
+      if (!_running || generation != _generation) return;
+      if (DateTime.now().difference(_observationDeadline!) >
+          const Duration(seconds: 5)) {
+        _armObservationTimer(generation, const Duration(seconds: 20));
+      } else {
+        _failed(generation);
+      }
+    });
+  }
+
+  void _failed(int generation, {int? code}) {
+    if (!_running || _blocked || generation != _generation) return;
+    final status = code ?? _socket?.closeCode;
+    if (const {401, 403, 429, 1008, 4008, 4401, 4403}.contains(status))
+      _blocked = true;
     ++_generation;
     _clearPublishedFrame();
     _closeSocket();
     stateNotifier.value = WhewsSocketState.error;
     _retryTimer?.cancel();
+    if (_blocked) return;
+    _endpointIndex =
+        (NativeJianConnection.prepare({
+                  'op': 'retry',
+                  'index': _endpointIndex,
+                  'failures': 0,
+                  'cooldownMs': reconnectDelay.inMilliseconds,
+                  'switchEndpoint': true,
+                })
+                as Map)['index']
+            as int;
     _retryTimer = Timer(reconnectDelay, () {
       _retryTimer = null;
       _open();
@@ -115,14 +163,26 @@ class JianStationService {
 
   void _handleMessage(dynamic message) {
     try {
-      final decoded = jsonDecode(
-        message is String ? message : utf8.decode(message as List<int>),
-      );
+      final decoded = _coordinates.isEmpty
+          ? (message is String
+                ? decodeApiJson(message)
+                : decodeApiJsonBytes(message as List<int>))
+          : (message is String
+                ? _jsonDecoder.decode(message)
+                : _jsonDecoder.decodeUtf8(message as List<int>));
       if (decoded is! Map) return;
       final frame = Map<String, dynamic>.from(decoded);
+      if (frame['type'] == 'error' || frame['ok'] == false) {
+        _failed(_generation, code: 4403);
+        return;
+      }
       if (frame['type'] != _path) return;
       if (frame['stations'] is List) {
-        StationHistoryCapture.instance.retainOriginal('jian.${kind.name}', 'metadata', frame);
+        StationHistoryCapture.instance.retainOriginal(
+          'jian.${kind.name}',
+          'metadata',
+          frame,
+        );
         _readStations(frame['stations'] as List);
         return;
       }
@@ -140,40 +200,41 @@ class JianStationService {
               const Duration(seconds: 15)) {
         return;
       }
-      final values = <double>[];
-      for (final item in rawValues) {
-        if (item is! num) return;
-        final value = item.toDouble();
-        final valid =
-            value.isFinite &&
-            value >= -3 &&
-            value <=
-                (kind == WhewsStationKind.snet
-                    ? 99
-                    : kind == WhewsStationKind.kma
-                    ? 11
-                    : 7);
-        if (!valid) return;
-        values.add(value);
-      }
+      final values = readStationJsonNumbers(
+        rawValues,
+        minimum: -3,
+        maximum: kind == WhewsStationKind.snet
+            ? 99
+            : kind == WhewsStationKind.kma
+            ? 11
+            : 7,
+        allowStrings: false,
+      );
+      if (values == null) return;
       _lastDataTime = dataTime;
-      StationHistoryCapture.instance.retainOriginal('jian.${kind.name}', 'data', frame);
+      StationHistoryCapture.instance.retainOriginal(
+        'jian.${kind.name}',
+        'data',
+        frame,
+      );
       _hasPublishedFrame = true;
       _observationTimer?.cancel();
-      _observationTimer = Timer(observationTimeout, () => _failed(_generation));
+      _armObservationTimer(_generation);
       stateNotifier.value = WhewsSocketState.connected;
       _frames.add(
         WhewsStationFrame(
           kind: kind,
           dataTime: dataTime,
           coordinates: _coordinates,
-          values: List.unmodifiable(values),
+          values: values,
           source: 'jian',
           codes: _codes,
           names: _names,
           regions: _regions,
           stationTypes: _stationTypes,
-          originalJson: StationHistoryCapture.instance.original('jian.${kind.name}'),
+          originalJson: StationHistoryCapture.instance.original(
+            'jian.${kind.name}',
+          ),
         ),
       );
     } catch (_) {
@@ -258,12 +319,19 @@ class JianStationService {
   }
 
   void _closeSocket() {
+    _jsonDecoder.dispose();
     _observationTimer?.cancel();
     _observationTimer = null;
-    _subscription?.cancel();
+    final subscription = _subscription;
+    final socket = _socket;
     _subscription = null;
-    _socket?.sink.close();
     _socket = null;
+    if (socket != null)
+      _closing.close(() async {
+        final closed = socket.sink.close();
+        cancelSourceSubscription(subscription);
+        await closed;
+      });
     _coordinates = const [];
     _codes = const [];
     _names = const [];

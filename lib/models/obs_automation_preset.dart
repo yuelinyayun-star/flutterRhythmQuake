@@ -118,23 +118,37 @@ class ObsAutomationStack {
     required this.x,
     required this.y,
     required this.blocks,
+    this.enabled = true,
+    this.triggerField,
+    this.endConditionId,
   });
 
   final String id;
   final double x;
   final double y;
   final List<ObsAutomationBlock> blocks;
+  final bool enabled;
+
+  /// Form selections only; execution still uses the existing ordered blocks.
+  final String? triggerField;
+  final String? endConditionId;
 
   ObsAutomationStack copyWith({
     double? x,
     double? y,
     List<ObsAutomationBlock>? blocks,
+    bool? enabled,
+    String? triggerField,
+    String? endConditionId,
   }) {
     return ObsAutomationStack(
       id: id,
       x: x ?? this.x,
       y: y ?? this.y,
       blocks: blocks ?? this.blocks,
+      enabled: enabled ?? this.enabled,
+      triggerField: triggerField ?? this.triggerField,
+      endConditionId: endConditionId ?? this.endConditionId,
     );
   }
 
@@ -143,6 +157,9 @@ class ObsAutomationStack {
     'x': x,
     'y': y,
     'blocks': blocks.map((block) => block.toJson()).toList(),
+    if (!enabled) 'enabled': false,
+    if (triggerField != null) 'triggerField': triggerField,
+    if (endConditionId != null) 'endConditionId': endConditionId,
   };
 
   factory ObsAutomationStack.fromJson(Map<String, dynamic> json) {
@@ -150,6 +167,9 @@ class ObsAutomationStack {
       id: json['id']?.toString() ?? '',
       x: _toDouble(json['x']),
       y: _toDouble(json['y']),
+      enabled: json['enabled'] != false,
+      triggerField: json['triggerField'] as String?,
+      endConditionId: json['endConditionId'] as String?,
       blocks: _mapList(json['blocks'])
           .map(ObsAutomationBlock.fromJson)
           .where((block) => block.id.isNotEmpty)

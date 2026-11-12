@@ -1,11 +1,14 @@
+import 'source_http_client.dart';
 import 'dart:async';
-import 'dart:convert';
+import 'dart:typed_data';
+import 'api_json_decoder.dart';
 
 import 'package:flutter/foundation.dart'
     show debugPrint, kIsWeb, visibleForTesting;
 import 'package:http/http.dart' as http;
 
 import 'web_source_proxy.dart';
+import 'native_jma_tile_owner.dart';
 
 class JmaRadarFrame {
   const JmaRadarFrame({
@@ -22,14 +25,28 @@ class JmaRadarFrame {
 }
 
 class JmaRadarService {
-  static final JmaRadarService _instance = JmaRadarService._(http.Client());
+  static final JmaRadarService _instance = JmaRadarService._();
   factory JmaRadarService() => _instance;
 
   @visibleForTesting
   JmaRadarService.forTest({http.Client? client})
-    : _client = client ?? http.Client();
+    : _client = client ?? createSourceHttpClient(),
+      _nativeMode = false,
+      _testEndpoint = null,
+      _testTimeout = null;
 
-  JmaRadarService._(this._client);
+  JmaRadarService._()
+    : _nativeMode = NativeJmaTileOwner.supported,
+      _client = NativeJmaTileOwner.supported ? null : createSourceHttpClient(),
+      _testEndpoint = null,
+      _testTimeout = null;
+
+  @visibleForTesting
+  JmaRadarService.forNativeTest({required Uri endpoint, Duration? timeout})
+    : _client = null,
+      _nativeMode = true,
+      _testEndpoint = endpoint,
+      _testTimeout = timeout;
 
   static const Duration refreshInterval = Duration(minutes: 5);
   static const String targetTimesUrl =
@@ -41,7 +58,37 @@ class JmaRadarService {
     'User-Agent': 'flutterrhythmquake/1.0',
   };
 
-  final http.Client _client;
+  final http.Client? _client;
+  final bool _nativeMode;
+  final Uri? _testEndpoint;
+  final Duration? _testTimeout;
+  NativeJmaTileOwner? _native;
+  bool get usesNativeBackend => _nativeMode;
+  Future<Uint8List?> loadNativeTile(Uri url, Future<void> cancel) =>
+      _native?.tile(url.path, cancel) ?? Future.value(null);
+  Future<Map<String, dynamic>> nativeDiagnostics() async =>
+      await _native?.diagnostics() ?? {};
+
+  void _bindNativeFrame(Map<String, dynamic>? value) {
+    if (value == null) {
+      if (_latestFrame != null) {
+        _latestFrame = null;
+        _frameController.add(null);
+      }
+      return;
+    }
+    final frame = JmaRadarFrame(
+      basetime: value['basetime'] as String,
+      validtime: value['validtime'] as String,
+      time: DateTime.fromMillisecondsSinceEpoch(
+        value['epochMs'] as int,
+        isUtc: false,
+      ),
+    );
+    _latestFrame = frame;
+    _frameController.add(frame);
+  }
+
   final StreamController<JmaRadarFrame?> _frameController =
       StreamController<JmaRadarFrame?>.broadcast();
 
@@ -64,12 +111,39 @@ class JmaRadarService {
       return;
     }
     _started = true;
+    if (_nativeMode) {
+      (_native ??= NativeJmaTileOwner(
+        satellite: false,
+        onFrame: _bindNativeFrame,
+      )).start(
+        interval: interval,
+        attempts: startupAttempts,
+        testEndpoint: _testEndpoint,
+        testTimeout: _testTimeout,
+      );
+      return;
+    }
     _timer?.cancel();
     _timer = Timer.periodic(interval, (_) => unawaited(fetchNow()));
     unawaited(fetchNow(maxAttempts: startupAttempts));
   }
 
   void stop({bool clear = false}) {
+    if (_nativeMode) {
+      if (!_started && (!clear || (_native == null && _latestFrame == null)))
+        return;
+      _started = false;
+      _native?.stop(clear: clear);
+      if (clear) {
+        _native?.dispose();
+        _native = null;
+      }
+      if (clear && _latestFrame != null) {
+        _latestFrame = null;
+        _frameController.add(null);
+      }
+      return;
+    }
     _session++;
     _timer?.cancel();
     _timer = null;
@@ -82,6 +156,10 @@ class JmaRadarService {
   }
 
   Future<void> fetchNow({int maxAttempts = 1}) async {
+    if (_nativeMode) {
+      if (_started) await _native?.fetch(attempts: maxAttempts);
+      return;
+    }
     final attempts = maxAttempts < 1 ? 1 : maxAttempts;
     if (_fetching) {
       _fetchQueued = true;
@@ -108,7 +186,7 @@ class JmaRadarService {
 
   Future<bool> _fetchOnce(int session) async {
     try {
-      final response = await _client
+      final response = await _client!
           .get(
             sourceUri(Uri.parse(targetTimesUrl)),
             headers: sourceHeaders(_headers),
@@ -119,7 +197,7 @@ class JmaRadarService {
         debugPrint('[JmaRadar] HTTP ${response.statusCode}');
         return false;
       }
-      final json = jsonDecode(utf8.decode(response.bodyBytes));
+      final json = decodeApiJsonBytes(response.bodyBytes);
       final frame = jmaRadarFrameFromTargetTimes(json);
       if (frame == null) {
         debugPrint('[JmaRadar] no usable target time');
@@ -140,6 +218,14 @@ class JmaRadarService {
       debugPrint('[JmaRadar] fetch error: $e');
       return false;
     }
+  }
+
+  Future<void> dispose() async {
+    stop(clear: true);
+    _native?.dispose();
+    _native = null;
+    _client?.close();
+    await _frameController.close();
   }
 }
 

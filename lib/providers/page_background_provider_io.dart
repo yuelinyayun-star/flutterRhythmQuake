@@ -25,8 +25,6 @@ class PageBackgroundProvider with ChangeNotifier {
   Uint8List? get customBytes => _customBytes;
   int get revision => _revision;
   bool get hasCustomImage =>
-      _customBytes != null &&
-      _customBytes!.isNotEmpty &&
       _customPath != null &&
       _customPath!.trim().isNotEmpty &&
       File(_customPath!).existsSync();
@@ -46,8 +44,10 @@ class PageBackgroundProvider with ChangeNotifier {
     _customPath = (saved == null || saved.isEmpty) ? null : saved;
     final name = prefs.getString(_customNameKey)?.trim();
     _customDisplayName = (name == null || name.isEmpty) ? null : name;
-    await _reloadCustomBytes();
-    if (_useCustom && !hasCustomImage) {
+    await _evictCachedFile(_customPath);
+    _customBytes = null;
+    if (_useCustom) await _reloadCustomBytes();
+    if (_useCustom && (_customBytes == null || !hasCustomImage)) {
       _useCustom = false;
     }
     _revision++;
@@ -77,7 +77,7 @@ class PageBackgroundProvider with ChangeNotifier {
     await _evictCachedFile(_customPath);
     _customPath = target.path;
     _customDisplayName = originalName;
-    _customBytes = Uint8List.fromList(bytes);
+    _customBytes = bytes;
     _useCustom = true;
     await prefs.setString(_customPathKey, target.path);
     await prefs.setString(_customNameKey, originalName);
@@ -92,6 +92,8 @@ class PageBackgroundProvider with ChangeNotifier {
   Future<void> restoreDefault() async {
     final prefs = await SharedPreferences.getInstance();
     _useCustom = false;
+    await _evictCachedFile(_customPath);
+    _customBytes = null;
     await prefs.setBool(_useCustomKey, false);
     _revision++;
     notifyListeners();
@@ -100,7 +102,7 @@ class PageBackgroundProvider with ChangeNotifier {
   Future<void> enableSavedCustom() async {
     if (_customPath == null) return;
     await _reloadCustomBytes();
-    if (!hasCustomImage) return;
+    if (!hasCustomImage || _customBytes == null) return;
     final prefs = await SharedPreferences.getInstance();
     _useCustom = true;
     await prefs.setBool(_useCustomKey, true);
@@ -132,7 +134,7 @@ class PageBackgroundProvider with ChangeNotifier {
       if (!await file.exists()) return;
       final bytes = await file.readAsBytes();
       if (bytes.isEmpty) return;
-      _customBytes = Uint8List.fromList(bytes);
+      _customBytes = bytes;
       _customDisplayName ??= p.basename(path);
     } catch (_) {
       _customBytes = null;
@@ -163,6 +165,10 @@ class PageBackgroundProvider with ChangeNotifier {
   Future<void> _evictCachedFile(String? path) async {
     if (path == null || path.trim().isEmpty) return;
     try {
+      final bytes = _customBytes;
+      if (path == _customPath && bytes != null) {
+        await MemoryImage(bytes).evict();
+      }
       await FileImage(File(path)).evict();
     } catch (_) {}
   }

@@ -1,0 +1,62 @@
+[
+  {
+    "file": "chinaeew-icl.original.json",
+    "sha256": "fea7491f2523194b0264389fdccee9b835112deaf4673f4b7cbe97bd29369ff6",
+    "bytes": 4217
+  },
+  {
+    "file": "fan-direct-345cfb3e25ad.original.json",
+    "sha256": "345cfb3e25adce59b8a6a81f097e87f8b6f7eab470c8a54355f5116269088730",
+    "bytes": 8070
+  },
+  {
+    "file": "jian-direct-e595525be7e1.original.json",
+    "sha256": "e595525be7e1a434e8519656c5c7e556d3152f0510d2b5db3dfd11d57149d6bc",
+    "bytes": 22372
+  },
+  {
+    "file": "jian-icl-direct-409c775b04dc.original.json",
+    "sha256": "409c775b04dc78772941a7623a99b375c951cb8030d2a0121ae9c59c4d34c96a",
+    "bytes": 265
+  },
+  {
+    "file": "whews-domestic-direct-5f91cb1c91b1.original.json",
+    "sha256": "5f91cb1c91b1191ba8f6916c227e47768a1e6a7a746a81c8c89a0115c5fc1576",
+    "bytes": 313
+  },
+  {
+    "file": "whews-overseas-direct-5ef600e95e1e.original.json",
+    "sha256": "5ef600e95e1e14d1b69daeed0b843db4f535b5cbd85e0fc50e0ac9f7aa45137f",
+    "bytes": 34120
+  },
+  {
+    "file": "wolfx-direct-6eb35c2a401a.original.json",
+    "sha256": "6eb35c2a401adc515d1e88fbdd30be2e0322a1496b01814d158a5b0bc50e7567",
+    "bytes": 971
+  },
+  {
+    "file": "wolfx-http-cenc.original.json",
+    "sha256": "0abbd5ad8d0c3dc7b5464c26a8c7e470a5fd94a73efd864df5a676afb35efddf",
+    "bytes": 274
+  },
+  {
+    "file": "wolfx-http-cq.original.json",
+    "sha256": "f0f8962af1c446d974aa8e9c05c4b08adca2cde716b875e75575c8a3633662eb",
+    "bytes": 256
+  },
+  {
+    "file": "wolfx-http-fj.original.json",
+    "sha256": "c7a6c4410a71f0655bfad7f8e676c9eb024841b335252d44585adf08c88bddef",
+    "bytes": 232
+  },
+  {
+    "file": "wolfx-http-jma.original.json",
+    "sha256": "2b5184164795c70700bb8f8c0523d0486543339932ca9304e2ad7815ba15effc",
+    "bytes": 954
+  },
+  {
+    "file": "wolfx-http-sc.original.json",
+    "sha256": "ef726a027bad36c7e78c307b89b3bd5e3868c8527e96dd46df3dfa50bcdacaca",
+    "bytes": 268
+  }
+]

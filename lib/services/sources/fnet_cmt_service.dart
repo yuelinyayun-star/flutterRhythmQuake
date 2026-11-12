@@ -1,3 +1,4 @@
+import 'source_http_client.dart';
 import 'dart:async';
 
 import 'package:euc/euc.dart';
@@ -22,7 +23,7 @@ class FnetCmtService {
   static final FnetCmtService _instance = FnetCmtService._internal();
   factory FnetCmtService() => _instance;
   FnetCmtService._internal()
-    : _clientFactory = http.Client.new,
+    : _clientFactory = createSourceHttpClient,
       _retryDelay = const Duration(seconds: 3);
 
   @visibleForTesting

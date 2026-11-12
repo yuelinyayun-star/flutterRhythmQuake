@@ -14,9 +14,11 @@ import 'package:flutterrhythmquake/models/jian_sources.dart';
 import 'package:flutterrhythmquake/models/quake_message.dart';
 import 'package:flutterrhythmquake/models/unified_quake_data.dart';
 import 'package:flutterrhythmquake/models/source_status.dart';
+import 'package:flutterrhythmquake/models/tsunami_message.dart';
 import 'package:flutterrhythmquake/providers/quake_provider.dart';
 import 'package:flutterrhythmquake/services/background_event_processor.dart';
 import 'package:flutterrhythmquake/services/jian_auth_service.dart';
+import 'package:flutterrhythmquake/services/jian_auth_retry_policy.dart';
 import 'package:flutterrhythmquake/services/quake_event_adapter.dart';
 import 'package:flutterrhythmquake/services/sound_effect_service.dart';
 import 'package:flutterrhythmquake/services/sources/jian_service.dart';
@@ -57,6 +59,7 @@ void main() {
       jsonDecode(File('test/fixtures/jian/all.json').readAsStringSync()) as Map;
 
   setUp(() {
+    JianAuthRetryPolicy.storeOverride = MemoryConnectionRetryStore();
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({
       JianCredentialStore.storageKey: 'rt_test',
@@ -444,6 +447,44 @@ void main() {
     },
   );
 
+  testWidgets('Jian tsunami snapshot and live use existing socket tsunami stream', (tester) async {
+    final channel = FakeChannel();
+    final service = JianService(
+      authService: transportAuth(),
+      socketFactory: (_, {headers}) => channel,
+    );
+    final events = <TsunamiMessage>[];
+    final subscription = service.onTsunamiEvent.listen(events.add);
+    Future<void> waitForNativeDelivery(int count) async {
+      // The supported production path parses in the asynchronous Rust owner;
+      // pumping a single fake frame does not wait for its native port result.
+      for (var i = 0; i < 100 && events.length < count; i++) {
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+        await tester.pump();
+      }
+    }
+    final rawText = File('test/fixtures/jma_tsunami/jian.documented.json').readAsStringSync();
+    final frame = jsonDecode(rawText) as Map<String, dynamic>;
+    service.connect();
+    await tester.pump();
+    channel.frames.add(jsonEncode({'type': 'all', 'source：jma-tsunami': frame}));
+    await tester.pump();
+    await waitForNativeDelivery(1);
+    expect(events, hasLength(1));
+    expect(events.single.isInitialSnapshot, isTrue);
+    expect(events.single.sourcePayload, frame['Data']);
+    channel.frames.add(rawText);
+    await tester.pump();
+    await waitForNativeDelivery(2);
+    expect(events, hasLength(2));
+    expect(events.last.isInitialSnapshot, isFalse);
+    expect(events.last.reportNumber, frame['Data']['number']);
+    expect(service.ignoredTypes, isNot(contains('jma-tsunami')));
+    service.disconnect();
+    unawaited(subscription.cancel());
+    service.dispose();
+  });
+
   testWidgets(
     'disconnect reconnects once after cooldown and then receives new frames',
     (tester) async {
@@ -535,6 +576,8 @@ class FakeChannel implements WebSocketChannel {
   FakeChannel({Future<void>? ready}) : ready = ready ?? Future<void>.value();
   final frames = StreamController<dynamic>();
   final sent = <Object?>[];
+  @override
+  int? get closeCode => null;
   @override
   final Future<void> ready;
   @override

@@ -1,0 +1,115 @@
+{
+  "source": "Official SGIS public website's 2025 provincial/municipal boundary data",
+  "sourceUrl": "https://sgis.mods.go.kr/js/data/geo_sido_2025.js",
+  "sourceSha256": "ebf9456e7f6d53a14088b1bfe56fd1be4c5c1b8c15ac44f4b59b75e42e897b17",
+  "sourceCRS": "EPSG:5179 (UTM-K, KGD2002/GRS80)",
+  "outputCRS": "EPSG:4326",
+  "coordinateProcessing": "pyproj 3.7.2, always_xy, offline transform; no simplification, clipping or buffers; CWR1 Float32 storage",
+  "officialDataIndex": "https://link.mods.go.kr/view/pss/openDataIntrcn",
+  "year": 2025,
+  "count": 17,
+  "compiledFeatures": 18,
+  "regions": [
+    {
+      "code": "11",
+      "sourceName": "서울특별시",
+      "displayName": "韩国首尔特别市"
+    },
+    {
+      "code": "21",
+      "sourceName": "부산광역시",
+      "displayName": "韩国釜山广域市"
+    },
+    {
+      "code": "22",
+      "sourceName": "대구광역시",
+      "displayName": "韩国大邱广域市"
+    },
+    {
+      "code": "23",
+      "sourceName": "인천광역시",
+      "displayName": "韩国仁川广域市"
+    },
+    {
+      "code": "24",
+      "sourceName": "광주광역시",
+      "displayName": "韩国光州广域市"
+    },
+    {
+      "code": "25",
+      "sourceName": "대전광역시",
+      "displayName": "韩国大田广域市"
+    },
+    {
+      "code": "26",
+      "sourceName": "울산광역시",
+      "displayName": "韩国蔚山广域市"
+    },
+    {
+      "code": "29",
+      "sourceName": "세종특별자치시",
+      "displayName": "韩国世宗特别自治市"
+    },
+    {
+      "code": "31",
+      "sourceName": "경기도",
+      "displayName": "韩国京畿道"
+    },
+    {
+      "code": "32",
+      "sourceName": "강원특별자치도",
+      "displayName": "韩国江原特别自治道"
+    },
+    {
+      "code": "33",
+      "sourceName": "충청북도",
+      "displayName": "韩国忠清北道"
+    },
+    {
+      "code": "34",
+      "sourceName": "충청남도",
+      "displayName": "韩国忠清南道"
+    },
+    {
+      "code": "35",
+      "sourceName": "전북특별자치도",
+      "displayName": "韩国全北特别自治道"
+    },
+    {
+      "code": "36",
+      "sourceName": "전라남도",
+      "displayName": "韩国全罗南道"
+    },
+    {
+      "code": "37",
+      "sourceName": "경상북도",
+      "displayName": "韩国庆尚北道"
+    },
+    {
+      "code": "38",
+      "sourceName": "경상남도",
+      "displayName": "韩国庆尚南道"
+    },
+    {
+      "code": "39",
+      "sourceName": "제주특별자치도",
+      "displayName": "韩国济州特别自治道"
+    }
+  ],
+  "neutralGeographicParts": {
+    "sourceCode": "37",
+    "sourcePolygonIndices": [
+      1,
+      2
+    ],
+    "displayName": "独岛（竹岛）",
+    "pointsChanged": false,
+    "reference": "https://www.mfa.gov.cn/fyrbt_673021/dhdw_673027/201208/t20120824_5432741.shtml"
+  },
+  "purpose": "Land place-name lookup only, not national borders, marine epicentral regions or EEZ claims",
+  "marine": "Existing FE geographic regions retained; KMA reference-place/direction/distance text is not polygon data",
+  "output": {
+    "bytes": 142976,
+    "sha256": "0138e964f0ad90d2f8d6f254e352df2185adce822877144aa196ae1ae87f1078"
+  }
+}

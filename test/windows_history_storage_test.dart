@@ -8,6 +8,8 @@ import 'package:flutterrhythmquake/models/eew_event_group.dart';
 import 'package:flutterrhythmquake/models/station_history_frame.dart';
 import 'package:flutterrhythmquake/services/debug/history_replay.dart';
 import 'package:flutterrhythmquake/services/eew_history_store.dart';
+import 'package:flutterrhythmquake/services/history_storage.dart';
+import 'package:flutterrhythmquake/services/debug/station_replay_blocks.dart';
 import 'package:flutterrhythmquake/services/windows_preferences_worker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
@@ -15,6 +17,11 @@ import 'history_replay_timeline_test.dart' as timeline;
 import 'history_replay_test.dart' as recorded;
 
 const prefix = 'unified_eew_history';
+
+Future<List<Map<String, dynamic>>> frameMaps(EewEventGroup group) async => [
+  for (final entry in StationReplayFrames.describe(group.stationFrames))
+    (await entry.loadAsync()).toMap(),
+];
 
 EewEventGroup fixtureGroup() {
   final replay = HistoryReplayPackage.decode(
@@ -151,7 +158,7 @@ void main() {
       await personal.save(prefs, []);
       final loaded = await public.loadStationFrames(publicSaved);
       expect(
-        loaded.stationFrames.single.toMap(),
+        (await frameMaps(loaded)).single,
         original.stationFrames.single.toMap(),
       );
       expect(await worker.getAll(), isEmpty);
@@ -170,7 +177,7 @@ void main() {
       expect(groups.single.hasStationHistory, isTrue);
       expect(groups.single.storedStations!.frameKeys, hasLength(1));
       final files = Directory(
-        '${directory.path}/eew_history',
+        '${directory.path}/replay_history/v3/frames',
       ).listSync().whereType<File>().toList();
       final times = {
         for (final file in files) file.path: file.lastModifiedSync(),
@@ -181,7 +188,7 @@ void main() {
       }
       final loaded = await cold.loadStationFrames(groups.single);
       expect(
-        loaded.stationFrames.map((f) => f.toMap()),
+        await frameMaps(loaded),
         original.stationFrames.map((f) => f.toMap()),
       );
       expect(loaded.storedStations, isNull);
@@ -207,14 +214,18 @@ void main() {
       await store.save(prefs, [withReport]);
       final loaded = await store.loadStationFrames(withReport);
       expect(
-        loaded.stationFrames.single.toMap(),
+        (await frameMaps(loaded)).single,
         original.stationFrames.single.toMap(),
       );
       await store.save(prefs, []);
       expect(await store.restoreForStartup(prefs), isEmpty);
       expect(
-        await worker.readHistory(released.storedStations!.archiveKeys.single),
-        isNull,
+        await File(
+          (historyStorage(prefs) as HistoryFileStorage).framePath(
+            released.storedStations!.frameKeys.single,
+          ),
+        ).exists(),
+        isFalse,
       );
     },
   );
@@ -245,10 +256,7 @@ void main() {
     final restart = EewHistoryStore(preferenceKey: prefix);
     final saved = (await restart.restoreForStartup(prefs)).single;
     final loaded = await restart.loadStationFrames(saved);
-    expect(loaded.stationFrames.map((f) => f.toMap()), [
-      frame.toMap(),
-      next.toMap(),
-    ]);
+    expect(await frameMaps(loaded), [frame.toMap(), next.toMap()]);
   });
 
   test(
@@ -260,14 +268,20 @@ void main() {
       final key = store
           .releaseSavedFrames(original)
           .storedStations!
-          .archiveKeys
+          .frameKeys
           .single;
-      await worker.removeHistory(key);
+      await (historyStorage(prefs) as HistoryFileStorage).removeFrame(key);
       final groups = await store.restoreForStartup(prefs);
       expect(groups, hasLength(1));
       await expectLater(
-        store.loadStationFrames(groups.single),
-        throwsFormatException,
+        store
+            .loadStationFrames(groups.single)
+            .then(
+              (g) => StationReplayFrames.describe(
+                g.stationFrames,
+              ).single.loadAsync(),
+            ),
+        throwsA(isA<StateError>()),
       );
     },
   );
@@ -374,13 +388,13 @@ void main() {
       await store.save(prefs, [cwa, cea]);
       final groups = await store.restoreForStartup(prefs);
       expect(
-        groups.first.storedStations!.archiveKeys,
-        groups.last.storedStations!.archiveKeys,
+        groups.first.storedStations!.frameKeys,
+        groups.last.storedStations!.frameKeys,
       );
       await store.save(prefs, [groups.last]);
       final loaded = await store.loadStationFrames(groups.last);
       expect(
-        loaded.stationFrames.single.toMap(),
+        (await frameMaps(loaded)).single,
         cwa.stationFrames.single.toMap(),
       );
     },

@@ -1,5 +1,9 @@
 # Windows History Storage
 
+The current independent report/frame layout is documented in
+[Directory history and replay files](replay_directory_storage.md).
+The sections below describe the earlier split format retained for compatibility.
+
 Windows preferences previously held settings, event records and all station
 archives in one JSON file. Every `setValue` or `remove` rewrote that entire file.
 Restoring history also decoded all station archives on the UI isolate.

@@ -5,6 +5,31 @@ import 'package:flutterrhythmquake/models/unified_quake_data.dart';
 import 'package:flutterrhythmquake/models/volcano_event_data.dart';
 
 void main() {
+  test('catalogue titles omit reviewed without changing other report labels', () {
+    const title = '中国地震台网地震信息';
+    final event = UnifiedQuakeData(
+      source: 'cencEqlist', origin: 0, eventId: 'title-unit', isEew: false, timeZone: 8,
+      titleText: '正式测定', reportNumText: 'reviewed', useShindo: false,
+      maxIntensity: '4', className: 'blue', hypocenter: '标题组件测试',
+    );
+    expect(UnifiedEventPresentation.fromEvent(event).title, title);
+    expect(event.titleText, '正式测定');
+    expect(event.reportNumText, 'reviewed');
+    final canonical = event.copyWith(titleText: title);
+    expect(UnifiedEventPresentation.fromEvent(canonical).title, title);
+    expect(UnifiedEventPresentation.fromEvent(canonical.copyWith(
+      reportNumText: '正式测定')).title, '$title 正式测定');
+    expect(UnifiedEventPresentation.fromEvent(canonical.copyWith(
+      reportNumText: '自动测定')).title, '$title 自动测定');
+    for (final source in ['usgs', 'emsc', 'cwaEqlist']) {
+      final other = event.copyWith(source: source, titleText: '已有标题');
+      expect(UnifiedEventPresentation.fromEvent(other).title, '已有标题');
+      expect(UnifiedEventPresentation.fromEvent(other.copyWith(
+        reportNumText: '第2报')).title, '已有标题 第2报');
+    }
+    final eew = event.copyWith(isEew: true, titleText: '预警原标题');
+    expect(UnifiedEventPresentation.fromEvent(eew).title, '预警原标题 reviewed');
+  });
   test('P2P ScalePrompt notification uses unified UI investigation text', () {
     final event = UnifiedQuakeData(
       source: 'jmaEqlist',
@@ -104,6 +129,49 @@ void main() {
     expect(presentation.notificationBody, contains('烈度 X'));
   });
 
+  test(
+    'only WHEWS information intensity zero falls back to local estimate',
+    () {
+      UnifiedQuakeData event({
+        required int origin,
+        required String api,
+        required String intensity,
+      }) => UnifiedQuakeData(
+        source: 'cencEqlist',
+        origin: origin,
+        eventId: 'whews-zero-test',
+        isEew: false,
+        timeZone: 8,
+        titleText: '地震信息',
+        reportNumText: '',
+        useShindo: false,
+        maxIntensity: intensity,
+        className: 'gray',
+        hypocenter: '测试地区',
+        originTime: DateTime(2026, 7, 29, 12, 34, 56),
+        magnitude: 5.0,
+        depth: 10,
+        apiTypeLabel: api,
+      );
+
+      final whewsZero = UnifiedEventPresentation.fromEvent(
+        event(origin: 3, api: 'WHEWS', intensity: '0'),
+      );
+      expect(whewsZero.intensityLabel, '烈度');
+      expect(whewsZero.intensityValue, isNot('0'));
+
+      final whewsReported = UnifiedEventPresentation.fromEvent(
+        event(origin: 3, api: 'WHEWS', intensity: '4.2'),
+      );
+      expect(whewsReported.intensityValue, 'IV');
+
+      final otherSource = UnifiedEventPresentation.fromEvent(
+        event(origin: 1, api: 'Jian Project', intensity: '0'),
+      );
+      expect(otherSource.intensityValue, '0');
+    },
+  );
+
   test('compact volcano text omits the repeated ashfall time range', () {
     final startTime = DateTime.utc(2026, 8, 8, 15);
     final event = UnifiedQuakeData(
@@ -164,5 +232,12 @@ void main() {
     expect(presentation.secondaryText, contains('08/09 00:00-08/09 03:00'));
     expect(presentation.compactSecondaryText, isNot(contains('08/09')));
     expect(presentation.compactSecondaryText, '予報 ３時間後：降灰 北海道釧路市、北海道足寄町');
+    expect(
+      UnifiedEventPresentation.fromEvent(
+        event.copyWith(reportNumText: '第3报'),
+      ).title,
+      '日本气象厅火山情报 第3报',
+      reason: 'genuine special volcano report serial must remain visible',
+    );
   });
 }

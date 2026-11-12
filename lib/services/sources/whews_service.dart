@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:collection';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
-import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/foundation.dart' show visibleForTesting, debugPrint;
 
 import '../../models/weather_alarm.dart';
 import '../../models/unified_quake_data.dart';
@@ -10,9 +11,12 @@ import '../../models/volcano_event_data.dart';
 import '../../models/source_status.dart';
 import '../../models/tsunami_message.dart';
 import '../quake_event_adapter.dart';
+import '../native_jma_tsunami.dart';
 import 'base_source.dart';
 import 'jma_ashfall_forecast_service.dart';
 import 'noaa_tsunami_area_service.dart';
+import 'incois_tsunami_detail_service.dart';
+import 'tsunami_bulletin_service.dart';
 import 'whews_socket_client.dart';
 
 class WhewsService extends BaseSourceService {
@@ -20,11 +24,21 @@ class WhewsService extends BaseSourceService {
     required String apiToken,
     JmaAshfallForecastService? ashfallForecastService,
     NoaaTsunamiAreaService? noaaTsunamiAreaService,
-  }) : _apiToken = apiToken.trim(),
+    IncoisTsunamiDetailService? incoisTsunamiDetailService,
+    TsunamiBulletinService? tsunamiBulletinService,
+    DateTime Function()? now,
+    WebSocketChannel Function(Uri)? socketFactory,
+  }) : _now = now ?? DateTime.now,
+       _apiToken = apiToken.trim(),
+       _socketFactory = socketFactory,
        _ashfallForecastService =
            ashfallForecastService ?? JmaAshfallForecastService(),
        _noaaTsunamiAreaService =
-           noaaTsunamiAreaService ?? NoaaTsunamiAreaService();
+           noaaTsunamiAreaService ?? NoaaTsunamiAreaService(),
+       _incoisTsunamiDetailService =
+           incoisTsunamiDetailService ?? IncoisTsunamiDetailService(),
+       _tsunamiBulletinService =
+           tsunamiBulletinService ?? TsunamiBulletinService();
 
   static const String enabledPreferenceKey = 'api_source_whews_enabled';
   static const String apiAuthorizedPreferenceKey =
@@ -45,13 +59,19 @@ class WhewsService extends BaseSourceService {
   };
 
   String _apiToken;
+  final DateTime Function() _now;
+  final WebSocketChannel Function(Uri)? _socketFactory;
   WhewsSocketClient? _aggregateClient;
   WhewsSocketClient? _ceaClient;
   final LinkedHashSet<String> _seenFrames = LinkedHashSet<String>();
   final Map<String, WhewsSocketState> _states = {};
   final JmaAshfallForecastService _ashfallForecastService;
   final NoaaTsunamiAreaService _noaaTsunamiAreaService;
-  final Map<String, Future<void>> _noaaAreaFetches = {};
+  final IncoisTsunamiDetailService _incoisTsunamiDetailService;
+  final TsunamiBulletinService _tsunamiBulletinService;
+  final Map<String, Future<void>> _officialDetailFetches = {};
+  final Map<TsunamiSource, Object> _officialDetailRevisions = {};
+  final Map<TsunamiSource, TsunamiMessage> _officialDetailReports = {};
   final LinkedHashMap<String, List<VolcanoAshfallWindow>>
   _ashfallWindowsByRevision = LinkedHashMap();
   final Map<String, Future<void>> _ashfallFetches = {};
@@ -64,9 +84,15 @@ class WhewsService extends BaseSourceService {
   @override
   String get name => 'WHEWS';
 
-  void setApiToken(String apiToken) {
+  void setApiToken(String apiToken, {bool retryRejected = false}) {
     final next = apiToken.trim();
-    if (next == _apiToken) return;
+    if (next == _apiToken) {
+      if (retryRejected && _connectionRequested && next.isNotEmpty) {
+        _closeClients();
+        _openClients();
+      }
+      return;
+    }
     _apiToken = next;
     if (next.isEmpty) {
       _closeClients();
@@ -112,6 +138,7 @@ class WhewsService extends BaseSourceService {
     return WhewsSocketClient(
       url: url,
       apiToken: _apiToken,
+      socketFactory: _socketFactory,
       onMessage: _handleMessage,
       onStateChanged: (state) => _handleState(url, state),
     );
@@ -137,12 +164,30 @@ class WhewsService extends BaseSourceService {
   }
 
   void _handleInitialAggregate(List<dynamic> message) {
+    final jmaIndices = NativeJmaTsunami.supported
+        ? (NativeJmaTsunami.prepare({
+                    'op': 'snapshot',
+                    'frames': message,
+                  })['indices']
+                  as List)
+              .cast<int>()
+              .toSet()
+        : null;
     final latestTsunamiFrames = <String, Map<String, dynamic>>{};
     final allTsunamiFrames = <Map<String, dynamic>>[];
-    for (final item in message) {
+    for (var index = 0; index < message.length; index++) {
+      final item = message[index];
       if (item is! Map) continue;
       final frame = Map<String, dynamic>.from(item);
       final source = frame['source']?.toString().trim() ?? '';
+      if (source == 'jma_tsunami' && jmaIndices != null) {
+        if (jmaIndices.contains(index)) {
+          _handleMessage(frame, isInitialSnapshot: true);
+        } else {
+          _rememberFrame(frame);
+        }
+        continue;
+      }
       if (!tsunamiSources.contains(source)) {
         _handleMessage(frame, isInitialSnapshot: true);
         continue;
@@ -175,14 +220,39 @@ class WhewsService extends BaseSourceService {
     Map<String, dynamic> candidate,
     Map<String, dynamic> current,
   ) {
+    if (candidate['source'] == 'tsunami' &&
+        NativeJmaTsunami.supported &&
+        candidate['Data'] is Map &&
+        current['Data'] is Map) {
+      final next = TsunamiMessage.parseNmefcTsunami(
+        Map<String, dynamic>.from(candidate['Data'] as Map),
+      );
+      final previous = TsunamiMessage.parseNmefcTsunami(
+        Map<String, dynamic>.from(current['Data'] as Map),
+      );
+      return NativeJmaTsunami.prepare({
+            'op': 'nmefcAccept',
+            'previous': previous.toMap(),
+            'incoming': next.toMap(),
+          })['accepted'] ==
+          true;
+    }
     final bulletinSource = switch (candidate['source']) {
       'cat_tsunami' => TsunamiSource.cat,
       'cwa_tsunami' => TsunamiSource.cwa,
       _ => null,
     };
-    if (bulletinSource != null && candidate['Data'] is Map && current['Data'] is Map) {
-      final next = TsunamiMessage.parseInternationalTsunami(bulletinSource, Map<String, dynamic>.from(candidate['Data'] as Map));
-      final previous = TsunamiMessage.parseInternationalTsunami(bulletinSource, Map<String, dynamic>.from(current['Data'] as Map));
+    if (bulletinSource != null &&
+        candidate['Data'] is Map &&
+        current['Data'] is Map) {
+      final next = TsunamiMessage.parseInternationalTsunami(
+        bulletinSource,
+        Map<String, dynamic>.from(candidate['Data'] as Map),
+      );
+      final previous = TsunamiMessage.parseInternationalTsunami(
+        bulletinSource,
+        Map<String, dynamic>.from(current['Data'] as Map),
+      );
       final order = next.reportOrderComparedTo(previous);
       if (order != null) return order >= 0;
     }
@@ -218,8 +288,14 @@ class WhewsService extends BaseSourceService {
           TsunamiSource.incois,
           data,
         ).reportInstantUtc,
-        'cat_tsunami' => TsunamiMessage.parseInternationalTsunami(TsunamiSource.cat, data).reportInstantUtc,
-        'cwa_tsunami' => TsunamiMessage.parseInternationalTsunami(TsunamiSource.cwa, data).reportInstantUtc,
+        'cat_tsunami' => TsunamiMessage.parseInternationalTsunami(
+          TsunamiSource.cat,
+          data,
+        ).reportInstantUtc,
+        'cwa_tsunami' => TsunamiMessage.parseInternationalTsunami(
+          TsunamiSource.cwa,
+          data,
+        ).reportInstantUtc,
         _ => null,
       };
     } catch (_) {
@@ -248,27 +324,56 @@ class WhewsService extends BaseSourceService {
       return;
     }
     if (source == 'tsunami') {
-      try {
-        emitTsunami(
-          TsunamiMessage.parseNmefcTsunami(
-            data,
-          ).copyWith(isInitialSnapshot: isInitialSnapshot),
-        );
-      } catch (_) {
-        // Keep malformed tsunami frames out of the existing tsunami pipeline.
-      }
+      final generation = _connectionGeneration;
+      unawaited(
+        TsunamiMessage.parseNmefcTsunamiAsync(data)
+            .then((message) {
+              if (generation == _connectionGeneration) {
+                final event = message.copyWith(
+                  isInitialSnapshot: isInitialSnapshot,
+                );
+                final previous = _officialDetailReports[event.source];
+                if (previous != null &&
+                    NativeJmaTsunami.supported &&
+                    NativeJmaTsunami.prepare({
+                          'op': 'nmefcAccept',
+                          'previous': previous.toMap(),
+                          'incoming': event.toMap(),
+                        })['accepted'] !=
+                        true) {
+                  return;
+                }
+                final revision = Object();
+                _officialDetailRevisions[event.source] = revision;
+                _officialDetailReports[event.source] = event;
+                emitTsunami(event);
+                if (NativeJmaTsunami.supported &&
+                    event.isDisplayableAt(_now())) {
+                  _enrichOfficialTsunamiDetail(event, event.htmlUrl, revision);
+                }
+              }
+            })
+            .catchError((Object error) {
+              debugPrint('WHEWS NMEFC 海啸解析失败: $error');
+            }),
+      );
       return;
     }
     if (source == 'jma_tsunami') {
-      try {
-        emitTsunami(
-          TsunamiMessage.parseWhewsJmaTsunami(
-            data,
-          ).copyWith(isInitialSnapshot: isInitialSnapshot),
-        );
-      } catch (_) {
-        // Keep malformed JMA tsunami frames out of the existing pipeline.
-      }
+      final generation = _connectionGeneration;
+      unawaited(
+        TsunamiMessage.parseJmaSourceAsync('whews', data)
+            .then((message) {
+              if (generation == _connectionGeneration) {
+                emitTsunami(
+                  message.copyWith(isInitialSnapshot: isInitialSnapshot),
+                );
+              }
+            })
+            .catchError((Object error) {
+              debugPrint('WHEWS JMA 海啸解析失败: $error');
+            }),
+      );
       return;
     }
     final internationalSource = switch (source) {
@@ -285,11 +390,34 @@ class WhewsService extends BaseSourceService {
           internationalSource,
           data,
         ).copyWith(isInitialSnapshot: isInitialSnapshot);
+        final isNoaa =
+            internationalSource == TsunamiSource.ptwc ||
+            internationalSource == TsunamiSource.ntwc;
+        final hasOfficialDetail =
+            isNoaa || internationalSource == TsunamiSource.incois;
+        if (hasOfficialDetail &&
+            NativeJmaTsunami.supported &&
+            NativeJmaTsunami.prepare({
+                  'op': 'noaaIsCurrent',
+                  'previous': _officialDetailReports[internationalSource]
+                      ?.toMap(),
+                  'incoming': event.toMap(),
+                })['current'] !=
+                true) {
+          return;
+        }
+        final revision = Object();
+        if (hasOfficialDetail) {
+          _officialDetailRevisions[internationalSource] = revision;
+          _officialDetailReports[internationalSource] = event;
+        }
         emitTsunami(event);
-        if (event.isActive &&
-            (internationalSource == TsunamiSource.ptwc ||
-                internationalSource == TsunamiSource.ntwc)) {
-          _enrichNoaaTsunamiAreas(event, data['jsonUrl']?.toString() ?? '');
+        if (event.isDisplayableAt(_now()) && hasOfficialDetail) {
+          _enrichOfficialTsunamiDetail(
+            event,
+            data[isNoaa ? 'jsonUrl' : 'detailUrl']?.toString() ?? '',
+            revision,
+          );
         }
       } catch (_) {
         // Keep malformed international tsunami frames out of the pipeline.
@@ -305,30 +433,63 @@ class WhewsService extends BaseSourceService {
     );
   }
 
-  void _enrichNoaaTsunamiAreas(TsunamiMessage event, String jsonUrl) {
-    if (jsonUrl.isEmpty || event.areas.isNotEmpty) return;
-    final key = '${event.source.name}|${event.id}|${event.reportTime}';
-    if (_noaaAreaFetches.containsKey(key)) return;
+  void _enrichOfficialTsunamiDetail(
+    TsunamiMessage event,
+    String jsonUrl,
+    Object revision,
+  ) {
+    if (jsonUrl.isEmpty) return;
+    final key =
+        '${event.source.name}|${event.id}|${event.reportTime}|${identityHashCode(revision)}';
+    if (_officialDetailFetches.containsKey(key)) return;
     final generation = _connectionGeneration;
-    final fetch = _fetchNoaaTsunamiAreas(event, jsonUrl, generation);
-    _noaaAreaFetches[key] = fetch;
+    final fetch = _fetchOfficialTsunamiDetail(
+      event,
+      jsonUrl,
+      generation,
+      revision,
+    );
+    _officialDetailFetches[key] = fetch;
     unawaited(
       fetch.whenComplete(() {
-        if (identical(_noaaAreaFetches[key], fetch)) {
-          _noaaAreaFetches.remove(key);
+        if (identical(_officialDetailFetches[key], fetch)) {
+          _officialDetailFetches.remove(key);
         }
       }),
     );
   }
 
-  Future<void> _fetchNoaaTsunamiAreas(
+  Future<void> _fetchOfficialTsunamiDetail(
     TsunamiMessage event,
     String jsonUrl,
     int generation,
+    Object revision,
   ) async {
-    final areas = await _noaaTsunamiAreaService.fetch(jsonUrl);
-    if (areas.isEmpty || generation != _connectionGeneration) return;
-    emitTsunami(event.copyWith(areas: areas));
+    final isIncois = event.source == TsunamiSource.incois;
+    final isNoaa =
+        event.source == TsunamiSource.ptwc ||
+        event.source == TsunamiSource.ntwc;
+    final bulletinFuture = _tsunamiBulletinService.fetch(event);
+    final detail = isNoaa
+        ? await _noaaTsunamiAreaService.fetchDetail(jsonUrl)
+        : null;
+    final raw = isIncois
+        ? await _incoisTsunamiDetailService.fetch(jsonUrl)
+        : detail?.raw;
+    final bulletin = await bulletinFuture;
+    if ((raw == null && bulletin == null) ||
+        generation != _connectionGeneration ||
+        !identical(_officialDetailRevisions[event.source], revision)) {
+      return;
+    }
+    emitTsunami(
+      event.copyWith(
+        areas: detail == null || detail.areas.isEmpty
+            ? event.areas
+            : detail.areas,
+        officialDetail: {...?raw, ...?bulletin},
+      ),
+    );
   }
 
   void _emitUnifiedWithAshfallEnrichment(UnifiedQuakeData event) {
@@ -407,8 +568,18 @@ class WhewsService extends BaseSourceService {
         frame['source']?.toString().trim().toLowerCase().replaceAll('-', '_') ??
         '';
     if (source.isEmpty) return null;
+    if (source == 'jma_tsunami' && NativeJmaTsunami.supported) {
+      return NativeJmaTsunami.prepare({'op': 'frameKey', 'frame': frame})['key']
+          as String?;
+    }
+    final rawData = frame['Data'];
+    final cancellation =
+        source == 'jma_eew' &&
+        rawData is Map &&
+        (rawData['isCancel'] == true || rawData['cancel'] == true);
+    final statusKey = source == 'jma_eew' ? '|cancel=$cancellation' : '';
     final md5 = frame['md5']?.toString().trim() ?? '';
-    if (md5.isNotEmpty) return '$source|$md5';
+    if (md5.isNotEmpty) return '$source|$md5$statusKey';
     final data = frame['Data'];
     if (data is! Map) return null;
     final id =
@@ -432,7 +603,7 @@ class WhewsService extends BaseSourceService {
                 data['ReportTime'])
             ?.toString() ??
         '';
-    return '$source|$id|$updates|$updateTime';
+    return '$source|$id|$updates|$updateTime$statusKey';
   }
 
   @override
@@ -453,7 +624,9 @@ class WhewsService extends BaseSourceService {
     _seenFrames.clear();
     _ashfallFetches.clear();
     _ashfallWindowsByRevision.clear();
-    _noaaAreaFetches.clear();
+    _officialDetailFetches.clear();
+    _officialDetailRevisions.clear();
+    _officialDetailReports.clear();
   }
 
   @override

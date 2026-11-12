@@ -3,6 +3,8 @@ import 'dart:async';
 import '../core/event_detection/event_detection_models.dart';
 import '../core/app_edition.dart';
 import '../models/unified_quake_data.dart';
+import '../models/tsunami_message.dart';
+import 'native_obs_automation_policy.dart';
 
 enum ObsAutomationInputKind { unifiedEvent, networkDetection, stationChange }
 
@@ -106,6 +108,7 @@ const obsAutomationInputFields = <ObsAutomationInputFieldDefinition>[
       if (AppEdition.hasIcl) 'icl': 'ICL',
       'kma': 'KMA',
       'shakeAlert': 'ShakeAlert',
+      'sasmex': 'SASMEX（墨西哥）',
       if (AppEdition.hasGlobalQuake) 'globalQuake': 'GlobalQuake',
       'cenc': 'CENC',
       'usgs': 'USGS',
@@ -416,6 +419,7 @@ class ObsAutomationInputEvent {
     required this.occurredAt,
     this.unifiedPhase,
     this.unifiedEvent,
+    this.tsunamiEvent,
     this.network,
     this.networkPhase,
     this.stationPhase,
@@ -443,6 +447,58 @@ class ObsAutomationInputEvent {
       unifiedPhase: phase,
       unifiedEvent: event,
       eventId: event.eventId,
+    );
+  }
+
+  /// OBS-only projection of an accepted receipt. The provider still updates
+  /// all existing tsunami list/map entries using the unchanged original model.
+  factory ObsAutomationInputEvent.tsunami(TsunamiMessage message) {
+    final view = NativeObsAutomationPolicy.tsunamiProjection({
+      'source': message.source.name,
+      'id': message.id,
+      'eventId': message.eventId,
+      'originTime': message.originTime,
+      'reportTime': message.reportTime,
+      'timeZone': message.timeZone,
+      'epicenterLat': message.epicenterLat,
+      'epicenterLng': message.epicenterLng,
+      'magnitude': message.magnitude,
+      'depth': message.depth,
+    });
+    DateTime? instant(String field) => view[field] == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(
+            (view[field] as num).toInt(),
+            isUtc: true,
+          );
+    return ObsAutomationInputEvent._(
+      kind: ObsAutomationInputKind.unifiedEvent,
+      occurredAt: DateTime.now(),
+      unifiedPhase: ObsUnifiedEventPhase.updated,
+      tsunamiEvent: message,
+      eventId: view['eventId'] as String,
+      unifiedEvent: UnifiedQuakeData(
+        source: view['source'] as String,
+        origin: -2,
+        eventId: view['eventId'] as String,
+        isEew: false,
+        timeZone: 0,
+        titleText: message.titleText.isEmpty
+            ? message.title
+            : message.titleText,
+        reportNumText: message.reportNumber?.toString() ?? '',
+        useShindo: false,
+        maxIntensity: '-',
+        className: message.className,
+        hypocenter: message.epicenterName,
+        originTime: instant('originUtcMs'),
+        reportTime: instant('reportUtcMs'),
+        lat: (view['latitude'] as num?)?.toDouble(),
+        lng: (view['longitude'] as num?)?.toDouble(),
+        magnitude: (view['magnitude'] as num?)?.toDouble() ?? -1,
+        depth: (view['depth'] as num?)?.toDouble() ?? -1,
+        sourcePayload: message.sourcePayload,
+      ),
     );
   }
 
@@ -491,6 +547,7 @@ class ObsAutomationInputEvent {
   final DateTime occurredAt;
   final ObsUnifiedEventPhase? unifiedPhase;
   final UnifiedQuakeData? unifiedEvent;
+  final TsunamiMessage? tsunamiEvent;
   final String? network;
   final ObsNetworkDetectionPhase? networkPhase;
   final ObsStationChangePhase? stationPhase;
@@ -535,6 +592,11 @@ class ObsAutomationInputService {
     _controller.add(
       ObsAutomationInputEvent.unified(phase: phase, event: event),
     );
+  }
+
+  void emitTsunamiEvent(TsunamiMessage message) {
+    if (!hasListeners || message.isInitialSnapshot) return;
+    _controller.add(ObsAutomationInputEvent.tsunami(message));
   }
 
   void ingestEventDetection(String network, EventDetection detection) {

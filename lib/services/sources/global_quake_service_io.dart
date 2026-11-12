@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ffi';
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
 
@@ -13,6 +13,10 @@ import '../../models/unified_quake_data.dart';
 import '../../utils/fe_regions.dart';
 import 'base_source.dart';
 import 'global_quake_first_report_filter.dart';
+import 'native_station_core_library_io.dart';
+import 'source_tcp_socket.dart';
+
+part 'global_quake_native_decoder.dart';
 
 class GlobalQuakeService extends BaseSourceService {
   static final GlobalQuakeService _instance = GlobalQuakeService._internal();
@@ -44,7 +48,7 @@ class GlobalQuakeService extends BaseSourceService {
   final _decoder = _JavaObjectStreamDecoder();
   final _firstReportMagnitudeFilter = GlobalQuakeFirstReportMagnitudeFilter();
 
-  Socket? _socket;
+  SourceTcpSocket? _socket;
   StreamSubscription<Uint8List>? _socketSub;
   Timer? _heartbeatTimer;
   Timer? _reconnectTimer;
@@ -60,6 +64,7 @@ class GlobalQuakeService extends BaseSourceService {
   String _secondaryHost = defaultSecondaryHost;
   int _secondaryPort = defaultPort;
   int _endpointIndex = 0;
+  int _connectionGeneration = 0;
 
   @override
   String get name => 'GlobalQuake';
@@ -127,6 +132,7 @@ class GlobalQuakeService extends BaseSourceService {
 
   @override
   void disconnect() {
+    _connectionGeneration++;
     _enabled = false;
     _manualClose = true;
     _reconnectTimer?.cancel();
@@ -134,6 +140,7 @@ class GlobalQuakeService extends BaseSourceService {
   }
 
   Future<void> _connect() async {
+    final generation = ++_connectionGeneration;
     if (!isSupported) {
       _lastError = 'GlobalQuake direct link is supported only on IO platforms.';
       _setStatus(SourceStatus.error);
@@ -143,29 +150,54 @@ class GlobalQuakeService extends BaseSourceService {
     final endpoint = _endpoints[_endpointIndex % _endpoints.length];
     try {
       await _closeSocket(null);
-      _decoder.reset();
+      if (generation != _connectionGeneration || !_enabled || _manualClose) {
+        return;
+      }
       _sentFirstHeartbeat = false;
       _lastLog = 'Connecting to ${endpoint.host}:${endpoint.port}';
       _notifyState();
-      final socket = await Socket.connect(
+      final socket = await connectSourceTcpSocket(
         endpoint.host,
         endpoint.port,
         timeout: const Duration(seconds: 10),
       );
+      if (generation != _connectionGeneration || !_enabled || _manualClose) {
+        socket.destroy();
+        return;
+      }
       _socket = socket;
       socket.add(_handshakeBytes);
       await socket.flush();
+      if (generation != _connectionGeneration || !identical(socket, _socket)) {
+        socket.destroy();
+        return;
+      }
       _socketSub = socket.listen(
-        _handleBytes,
+        (bytes) {
+          if (generation == _connectionGeneration &&
+              identical(socket, _socket)) {
+            _handleBytes(bytes);
+          }
+        },
         onError: (Object error) {
+          if (generation != _connectionGeneration ||
+              !identical(socket, _socket)) {
+            return;
+          }
           _lastError = error.toString();
           _setStatus(SourceStatus.error);
+          unawaited(_closeSocket(null));
           _scheduleReconnect(advanceEndpoint: true);
         },
         onDone: () {
+          if (generation != _connectionGeneration ||
+              !identical(socket, _socket)) {
+            return;
+          }
           if (_manualClose || !_enabled) return;
           _lastError = 'GlobalQuake socket closed';
           _setStatus(SourceStatus.disconnected);
+          unawaited(_closeSocket(null));
           _scheduleReconnect(advanceEndpoint: true);
         },
         cancelOnError: true,
@@ -174,8 +206,12 @@ class GlobalQuakeService extends BaseSourceService {
       _setStatus(SourceStatus.connected);
       _lastLog = 'Connected to ${endpoint.host}:${endpoint.port}';
     } catch (e) {
+      if (generation != _connectionGeneration || !_enabled || _manualClose) {
+        return;
+      }
       _lastError = 'Connect ${endpoint.host}:${endpoint.port} failed: $e';
       _setStatus(SourceStatus.error);
+      unawaited(_closeSocket(null));
       _scheduleReconnect(advanceEndpoint: true);
     }
   }
@@ -201,15 +237,40 @@ class GlobalQuakeService extends BaseSourceService {
       }
     } catch (e) {
       _lastError = 'GlobalQuake parse error: $e';
-      _notifyState();
+      _setStatus(SourceStatus.error);
+      unawaited(_closeSocket(null));
+      _scheduleReconnect(advanceEndpoint: true);
     }
   }
 
   @visibleForTesting
   List<Map<String, dynamic>> decodePayloadsForTesting(Uint8List bytes) {
     final decoder = _JavaObjectStreamDecoder();
-    return [for (final packet in decoder.add(bytes)) _snapshotPacket(packet)];
+    try {
+      return [for (final packet in decoder.add(bytes)) _snapshotPacket(packet)];
+    } finally {
+      decoder.reset();
+    }
   }
+
+  @visibleForTesting
+  List<Map<String, dynamic>> decodeChunksForTesting(
+    Iterable<Uint8List> chunks,
+  ) {
+    final decoder = _JavaObjectStreamDecoder();
+    try {
+      return [
+        for (final chunk in chunks)
+          for (final packet in decoder.add(chunk)) _snapshotPacket(packet),
+      ];
+    } finally {
+      decoder.reset();
+    }
+  }
+
+  @visibleForTesting
+  Map<String, int> get nativeDecoderDiagnostics =>
+      _NativeJavaObjectStreamDecoder.diagnostics;
 
   Map<String, dynamic> _snapshotPacket(_JavaObject packet) =>
       snapshotSourcePayload({
@@ -332,14 +393,16 @@ class GlobalQuakeService extends BaseSourceService {
   Future<void> _closeSocket(SourceStatus? nextStatus) async {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
-    await _socketSub?.cancel();
+    final subscription = _socketSub;
     _socketSub = null;
     final socket = _socket;
     _socket = null;
     socket?.destroy();
+    _decoder.reset();
     if (nextStatus != null) {
       _setStatus(nextStatus);
     }
+    await subscription?.cancel();
   }
 
   String? _qualitySummary(dynamic advanced) {
@@ -528,6 +591,25 @@ class _GlobalQuakeEndpoint {
 }
 
 class _JavaObjectStreamDecoder {
+  _NativeJavaObjectStreamDecoder? _native;
+  _DartJavaObjectStreamDecoder? _dart;
+
+  List<_JavaObject> add(Uint8List chunk) {
+    if (StationCoreLibrary.supported) {
+      return (_native ??= _NativeJavaObjectStreamDecoder()).add(chunk);
+    }
+    return (_dart ??= _DartJavaObjectStreamDecoder()).add(chunk);
+  }
+
+  void reset() {
+    _native?.dispose();
+    _native = null;
+    _dart?.reset();
+    _dart = null;
+  }
+}
+
+class _DartJavaObjectStreamDecoder {
   Uint8List _bytes = Uint8List(0);
   int _offset = 0;
   bool _headerRead = false;
@@ -544,19 +626,20 @@ class _JavaObjectStreamDecoder {
     _bytes = Uint8List.fromList([..._bytes.sublist(_offset), ...chunk]);
     _offset = 0;
     final objects = <_JavaObject>[];
+    if (!_headerRead) {
+      if (_remaining < 4) return objects;
+      final magic = _readU2();
+      final version = _readU2();
+      if (magic != 0xaced || version != 5) {
+        throw FormatException('Invalid Java stream header');
+      }
+      // Commit the header independently of a potentially incomplete first object.
+      _headerRead = true;
+    }
     while (true) {
       final mark = _offset;
       final handlesMark = List<dynamic>.of(_handles);
       try {
-        if (!_headerRead) {
-          if (_remaining < 4) break;
-          final magic = _readU2();
-          final version = _readU2();
-          if (magic != 0xaced || version != 5) {
-            throw FormatException('Invalid Java stream header');
-          }
-          _headerRead = true;
-        }
         if (_remaining <= 0) break;
         final value = _readContent();
         if (value is _JavaObject) {
@@ -839,7 +922,9 @@ class _JavaPayloadSnapshot {
       return {
         'id': id,
         'className': value.className,
-        'fields': value.fields.map((key, field) => MapEntry(key, encode(field))),
+        'fields': value.fields.map(
+          (key, field) => MapEntry(key, encode(field)),
+        ),
         if (value.customData.isNotEmpty)
           'customData': value.customData.map(
             (key, items) => MapEntry(key, encode(items)),
@@ -868,7 +953,9 @@ class _JavaPayloadSnapshot {
         'superDesc': encode(value.superDesc),
       };
     }
-    throw FormatException('Unsupported decoded Java value ${value.runtimeType}');
+    throw FormatException(
+      'Unsupported decoded Java value ${value.runtimeType}',
+    );
   }
 }
 

@@ -57,6 +57,22 @@ pkg_check_modules(GTK REQUIRED IMPORTED_TARGET gtk+-3.0)
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
 
+# Replay persistence owns its bounded file writer in Rust on Linux as well.
+find_program(RQ_CARGO_EXECUTABLE cargo REQUIRED)
+set(RQ_REPLAY_CORE_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/../native/station_core")
+set(RQ_REPLAY_TARGET_DIR "${CMAKE_CURRENT_BINARY_DIR}/rq_station_core/cargo")
+set(RQ_REPLAY_LIBRARY "${RQ_REPLAY_TARGET_DIR}/release/librq_station_core.so")
+file(GLOB_RECURSE RQ_REPLAY_SOURCES CONFIGURE_DEPENDS "${RQ_REPLAY_CORE_SOURCE}/src/*.rs")
+add_custom_command(
+  OUTPUT "${RQ_REPLAY_LIBRARY}"
+  COMMAND "${RQ_CARGO_EXECUTABLE}" build --release --locked
+    --manifest-path "${RQ_REPLAY_CORE_SOURCE}/Cargo.toml" --target-dir "${RQ_REPLAY_TARGET_DIR}"
+  DEPENDS ${RQ_REPLAY_SOURCES} "${RQ_REPLAY_CORE_SOURCE}/Cargo.toml" "${RQ_REPLAY_CORE_SOURCE}/Cargo.lock"
+  COMMENT "Building Rust replay file owner"
+  VERBATIM)
+add_custom_target(rq_replay_core_build ALL DEPENDS "${RQ_REPLAY_LIBRARY}")
+add_dependencies(${BINARY_NAME} rq_replay_core_build)
+
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)
 
@@ -90,6 +106,7 @@ install(CODE "
 
 set(INSTALL_BUNDLE_DATA_DIR "${CMAKE_INSTALL_PREFIX}/data")
 set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}/lib")
+install(FILES "${RQ_REPLAY_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
 
 # Native assets look up the unversioned name; runtime-only distributions may
 # provide only libsqlite3.so.0. Include the runtime in the relocatable bundle.

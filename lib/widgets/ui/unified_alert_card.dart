@@ -4,6 +4,7 @@ import '../../core/utils/quake_time.dart';
 import '../../models/unified_quake_data.dart';
 import 'unified_intensity_format.dart';
 import 'cmt_badge.dart';
+import 'jma_eew_long_period_footer.dart';
 
 class UnifiedAlertCard extends StatelessWidget {
   final UnifiedQuakeData event;
@@ -101,7 +102,7 @@ class UnifiedAlertCard extends StatelessWidget {
           SizedBox(width: _s(8, context)),
           Expanded(
             child: Text(
-              event.titleText,
+              event.displayTitleText,
               style: TextStyle(
                 color: Colors.white,
                 fontSize: _s(11, context),
@@ -184,11 +185,11 @@ class UnifiedAlertCard extends StatelessWidget {
     final isLpgm = event.isJmaLpgm;
     final value = double.tryParse(event.maxIntensity);
     final display = isLpgm
-        ? '长周期'
+        ? (event.jmaLpgmBulletin?.maxLgInt.toString() ?? '-')
         : value != null
         ? unifiedRomanIntensityLabel(event.maxIntensity)
         : event.maxIntensity;
-    final isNumeric = value != null && !isLpgm;
+    final isNumeric = isLpgm ? event.jmaLpgmBulletin != null : value != null;
     return Container(
       width: _s(48, context),
       height: _s(48, context),
@@ -233,13 +234,18 @@ class UnifiedAlertCard extends StatelessWidget {
 
   Widget _buildShindoBadge(BuildContext context) {
     final color = _colorFromClass(event.className);
+    final longPeriodClass =
+        event.eewLongPeriodClass ??
+        ((event.jmaLpgmBulletin?.maxLgInt ?? 0) > 0
+            ? event.jmaLpgmBulletin!.maxLgInt
+            : null);
     final text = event.maxIntensity;
     final hasSubscript =
         text.length > 1 && (text.contains('-') || text.contains('+'));
     final mainChar = hasSubscript ? text.substring(0, 1) : text;
     final subChar = hasSubscript ? text.substring(1) : '';
 
-    return Container(
+    final badge = Container(
       width: _s(48, context),
       height: _s(48, context),
       decoration: BoxDecoration(
@@ -288,12 +294,29 @@ class UnifiedAlertCard extends StatelessWidget {
             style: TextStyle(
               fontSize: _s(7, context),
               fontWeight: FontWeight.w500,
-              color: color,
+              color: longPeriodClass == null ? color : Colors.transparent,
               height: 1,
             ),
           ),
         ],
       ),
+    );
+    if (longPeriodClass == null) return badge;
+    return Stack(
+      children: [
+        badge,
+        Positioned(
+          left: _s(1.2, context),
+          right: _s(1.2, context),
+          bottom: _s(1.2, context),
+          child: JmaEewLongPeriodFooter(
+            level: longPeriodClass,
+            height: _s(13, context),
+            radius: _s(6.8, context),
+            fontSize: _s(7, context),
+          ),
+        ),
+      ],
     );
   }
 
@@ -342,6 +365,7 @@ class UnifiedAlertCard extends StatelessWidget {
   }
 
   String _formatMagDepth(UnifiedQuakeData event, BuildContext context) {
+    if (event.plumMissingParametersText case final text?) return text;
     final magnitudeInvestigating = event.magnitude < 0;
     if (magnitudeInvestigating) {
       return '規模 調査中';

@@ -133,6 +133,7 @@ Source: "assets\icon\app_icon.png"; Flags: dontcopy
 Source: "assets\installer\rhythmquake_frosted_background.png"; Flags: dontcopy
 Source: "build\windows\x64\runner\Release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "build\windows\x64\runner\Release\*.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "build\windows\x64\runner\Release\rq_station_core_licenses.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "build\windows\x64\runner\Release\native_assets.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "build\windows\x64\runner\Release\release_manifest.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "build\windows\x64\runner\Release\data\*"; DestDir: "{app}\data"; Flags: ignoreversion recursesubdirs createallsubdirs

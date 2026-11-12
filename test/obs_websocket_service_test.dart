@@ -3,9 +3,34 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutterrhythmquake/services/obs_websocket_service.dart';
+import 'package:flutterrhythmquake/services/sources/native_websocket_channel.dart';
+import 'package:flutterrhythmquake/services/sources/source_socket.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  final native =
+      Platform.isWindows &&
+      Platform.environment.containsKey('RQ_STATION_CORE_LIBRARY');
+  setUp(() {
+    // Only controlled loopback OBS servers are used here. Do not let the
+    // widget binding's HTTP override silently select the Dart transport.
+    final previous = HttpOverrides.current;
+    HttpOverrides.global = null;
+    final baseline = native ? NativeWebSocketChannel.activeWorkers : 0;
+    addTearDown(() async {
+      try {
+        if (native) {
+          await _waitUntil(
+            () => NativeWebSocketChannel.activeWorkers == baseline,
+            timeout: const Duration(seconds: 5),
+          );
+        }
+      } finally {
+        HttpOverrides.global = previous;
+      }
+    });
+  });
 
   test('creates the OBS 5.x SHA-256 challenge response', () {
     final response = ObsWebSocketService.createAuthenticationResponse(
@@ -19,7 +44,12 @@ void main() {
 
   test('connects, identifies, and synchronizes OBS output status', () async {
     final server = await _FakeObsServer.start(replayActive: true);
-    final service = ObsWebSocketService();
+    WebSocketChannel? transport;
+    final service = ObsWebSocketService(
+      socketFactory: (uri) {
+        return transport = connectSourceSocket(uri);
+      },
+    );
     addTearDown(() async {
       await service.dispose();
       await server.close();
@@ -30,6 +60,7 @@ void main() {
     );
 
     expect(service.connectionStateNotifier.value, ObsConnectionState.connected);
+    if (native) expect(transport, isA<NativeWebSocketChannel>());
     expect(
       server.eventSubscriptions,
       ObsWebSocketService.outputEventSubscription,

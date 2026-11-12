@@ -1,0 +1,57 @@
+{
+  "eventDir" : "/events/PHEB/2026/10/24/26297000/1/WEGM42/",
+  "thisDocGenerated" : "Sat Oct 24 02:40:24 UTC 2026",
+  "thisDoc" : "/tsunami_ops_data/web/htdocs/events/json/PHEBWEGM42.json",
+  "TWCID" : "PHEB",
+  "WMOID" : "WEGM42",
+  "eventMagnitude" : 7.2,
+  "eventMagnitudeType" : "Mwp",
+  "eventDepth" : 10,
+  "eventDepthType" : "kilometers",
+  "eventLat" : -13.821,
+  "eventLon" : 165.725,
+  "originTime" : "2026-10-24T02:31:27Z",
+  "bulletinIssueTime" : "2026-10-24T02:40:12Z",
+  "quakeLocation" : "VANUATU",
+  "issueYear" : "2026",
+  "issueMonth" : "10",
+  "issueDay" : "24",
+  "twcEventID" : "26297000",
+  "bulletinNr" : "1",
+  "rootURL" : "/events/",
+   "alerts" : {"areaList":[[]]},
+   "segments" : [ 
+  
+    {
+       "id" : 1, 
+       "category" : "Information", 
+       "NWSZones" : "GUZ001-MPZ001>003-240440-", 
+
+       "headline" : "  ",
+
+
+       "bkp_start_location" : "","bkp_start_lat" : 0.0,
+
+          "bkp_start_lon" : 0.0,
+"bkp_end_location" : "","bkp_end_lat" : 0.0,
+
+          "bkp_end_lon" : 0.0,
+"recommendedActions" : " ",
+       "productDefinition" : "" } 
+   ], 
+  "actions" : [ 
+  
+    {
+       "otherCenterActions" : "N/A", 
+       "nextActions" : " N/A " } 
+   ], 
+  
+ "breakpointZones" : [ 
+ ], 
+ "breakpointLocations" : [ 
+ ] 
+ }
+
+  
+
+

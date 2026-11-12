@@ -1,16 +1,30 @@
 import 'dart:async';
+import 'api_json_decoder.dart';
 import 'dart:convert';
+import 'dart:isolate';
 import '../station_history_capture.dart';
 import '../foreground_station_payload.dart';
+import '../../models/source_payload.dart';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import '../../core/source_estimation/palert_source_profile.dart';
+import '../../core/source_estimation/source_estimation_models.dart';
 import 'palert_detection.dart';
 import 'palert_http_client.dart';
 import 'palert_intensity.dart';
+import 'palert_level_history.dart';
+import 'palert_wire_values.dart';
+import 'station_json_decoder.dart';
 import 'shake_detection_service.dart';
+import 'native_station_runtime.dart';
+import 'native_station_display.dart';
+import '../obs_automation_input_service.dart';
+
+part 'palert_data_worker.dart';
+part 'palert_native_runtime.dart';
 
 class PAlertStation {
   final String id;
@@ -25,6 +39,7 @@ class PAlertStation {
   final int? heldLevel;
   final DateTime? dataTime;
   final DateTime? receivedAt;
+  final int? _sampledLevel;
 
   const PAlertStation({
     required this.id,
@@ -39,20 +54,30 @@ class PAlertStation {
     this.heldLevel,
     this.dataTime,
     this.receivedAt,
-  });
+    int? sampledLevel,
+    this.preparedMapRecent,
+  }) : _sampledLevel = sampledLevel;
+  final bool? preparedMapRecent;
 
   int? get displayCwaIntensityIndex {
+    if (preparedMapRecent != null) {
+      return heldCwaIntensityIndex ?? cwaIntensityIndex;
+    }
     final level = gridLevel;
     return level < 0
         ? null
         : PAlertSourceProfile.intensityIndexFromLevel(level);
   }
 
+  /// Original sampled result for native consumers; no threshold recalculation.
+  int? get sampledLevel => _sampledLevel;
+
   bool get hasRealtime => gridLevel >= 0 && dataTime != null;
 
   int get gridLevel => heldLevel ?? currentGridLevel;
 
-  int get currentGridLevel => PAlertSourceProfile.level(pgaGal, pgvCms);
+  int get currentGridLevel =>
+      _sampledLevel ?? PAlertSourceProfile.level(pgaGal, pgvCms);
 
   double? get estimatedContinuousShindo =>
       PAlertIntensity.estimateFromPga(pgaGal);
@@ -97,6 +122,10 @@ class PAlertStation {
       heldLevel: heldLevel ?? this.heldLevel,
       dataTime: dataTime ?? this.dataTime,
       receivedAt: receivedAt ?? this.receivedAt,
+      sampledLevel: pgaGal == null && pgvCms == null ? _sampledLevel : null,
+      preparedMapRecent: pgaGal == null && pgvCms == null && receivedAt == null
+          ? preparedMapRecent
+          : null,
     );
   }
 }
@@ -145,8 +174,20 @@ class PAlertDetectionGate {
 class PAlertService {
   static final PAlertService _instance = PAlertService._();
   factory PAlertService() => _instance;
-  PAlertService._({Future<http.Client> Function()? clientFactory})
-    : _clientFactory = clientFactory ?? createPAlertHttpClient {
+  PAlertService._({
+    Future<http.Client> Function()? clientFactory,
+    bool useWorker = !kIsWeb,
+    bool useNative = true,
+    Map<String, Object?> nativeSettings = const {},
+    Uri? endpoint,
+    Duration pollInterval = realtimePollInterval,
+  }) : _clientFactory = clientFactory ?? createPAlertHttpClient,
+       _useWorker = useWorker,
+       _useNative = useNative && useWorker,
+       _nativeSettings = nativeSettings,
+       _endpoint = endpoint,
+       _pollInterval = pollInterval {
+    if (_useWorker) return;
     _detector.onSnapshot = (snapshot) {
       onDetectionChanged?.call(snapshot);
     };
@@ -163,15 +204,85 @@ class PAlertService {
   @visibleForTesting
   PAlertService.forTesting({
     required Future<http.Client> Function() clientFactory,
-  }) : this._(clientFactory: clientFactory);
+    Duration pollInterval = realtimePollInterval,
+    Uri? endpoint,
+  }) : this._(
+         clientFactory: clientFactory,
+         useWorker: false,
+         pollInterval: pollInterval,
+         endpoint: endpoint,
+       );
+
+  @visibleForTesting
+  PAlertService.workerForTesting({
+    required Uri endpoint,
+    Duration pollInterval = realtimePollInterval,
+  }) : this._(endpoint: endpoint, pollInterval: pollInterval, useNative: false);
+
+  @visibleForTesting
+  PAlertService.nativeForTesting({
+    Uri? endpoint,
+    Duration pollInterval = realtimePollInterval,
+    Map<String, Object?> settings = const {},
+  }) : this._(
+         endpoint: endpoint,
+         pollInterval: pollInterval,
+         nativeSettings: settings,
+       );
 
   final Future<http.Client> Function() _clientFactory;
+  final bool _useWorker;
+  final bool _useNative;
+  final Map<String, Object?> _nativeSettings;
+  late final _PAlertNativeRuntime _nativeRuntime = _PAlertNativeRuntime(this);
+  bool get nativeActive => _nativeRuntime.active;
+  String get nativeLayerSignature => _nativeRuntime.signature;
+  String get nativeStatus => _nativeRuntime.status;
+  String? get nativeError => _nativeRuntime.error;
+  int get nativeFrameCount => _nativeRuntime.frames;
+  List<NativeStationGrid> get nativeGrids => _nativeRuntime.grids;
+  List<ObsStationInputSample> get nativeAutomationSamples =>
+      _nativeRuntime.automation;
+  PAlertPreparedSummary? get nativeSummary => _nativeRuntime.summary;
+  List<SeismicActiveEvent> get nativeSourceEvents => _nativeRuntime.events;
+  bool _nativeInferenceEnabled = false;
+  void setInferenceEnabled(bool enabled) {
+    if (_nativeInferenceEnabled == enabled) return;
+    _nativeInferenceEnabled = enabled;
+    if (nativeActive) _nativeRuntime.setInferenceEnabled(enabled);
+  }
+
+  final Uri? _endpoint;
+  final Duration _pollInterval;
+  late final _PAlertDataWorker _dataWorker = _PAlertDataWorker(this);
+  ShakeDetectionSnapshot _workerDetection = ShakeDetectionService.idleSnapshot;
+  Map<String, dynamic>? _preparedHistory;
+  int _sensitivity = 2;
+  String? processingIsolateName;
+  bool get processingInBackground => _useWorker;
+
+  /// Already frozen in the processing owner; callers only display/forward it.
+  Map<String, dynamic> historySnapshot({bool includeOriginalJson = false}) {
+    if (nativeActive) return _nativeRuntime.history(includeOriginalJson);
+    final snapshot =
+        _preparedHistory ??
+        ForegroundStationPayload.palert(
+          _stations,
+          dataTime: dataTimeNotifier.value,
+          receivedTime: receivedTimeNotifier.value,
+          detection: detectionSnapshot,
+        );
+    final original = StationHistoryCapture.instance.original('palert');
+    return includeOriginalJson && original != null
+        ? {...snapshot, 'originalJson': original}
+        : snapshot;
+  }
 
   static Uri get _graphqlUri => kIsWeb
       ? Uri.base.resolve('/api/palert/graphql/')
       : Uri.parse('https://palert.earth.sinica.edu.tw/graphql/');
   static const String _stationFilter = 'onlineAll';
-  static const Duration intensityHoldDuration = Duration(seconds: 3);
+  static const Duration intensityHoldDuration = PAlertLevelHistory.holdDuration;
   static const Duration realtimePollInterval = Duration(seconds: 1);
   static const Duration frameStaleAfter = Duration(seconds: 6);
   static const Duration _frameWatchdogInterval = Duration(seconds: 1);
@@ -207,12 +318,25 @@ query (\$recordTime: Float!, \$token: String!) {
   void Function(int maxShindo)? onShakeDetected;
   void Function()? onShakeExpired;
   void Function(ShakeDetectionSnapshot)? onDetectionChanged;
-  final PAlertDetector _detector = PAlertDetector();
-  ShakeDetectionSnapshot get detectionSnapshot => _detector.snapshot;
-  void setSensitivity(int value) => _detector.setSensitivity(value);
+  late final PAlertDetector _detector = PAlertDetector();
+  ShakeDetectionSnapshot get detectionSnapshot =>
+      _useWorker ? _workerDetection : _detector.snapshot;
+  void setSensitivity(int value) {
+    _sensitivity = value;
+    if (nativeActive) {
+      _nativeRuntime.setSensitivity(value);
+    } else if (_useWorker) {
+      _dataWorker.setSensitivity(value);
+    } else {
+      _detector.setSensitivity(value);
+    }
+  }
 
   final Map<String, PAlertStation> _stationMap = {};
-  final Map<String, List<({DateTime time, int level})>> _levelHistory = {};
+  late final PAlertLevelHistory _levelHistory = PAlertLevelHistory();
+  late final StationJsonDecoder _wireDecoder = StationJsonDecoder(
+    prepareStationNumbers: false,
+  );
   final PAlertDetectionGate _detectionGate = PAlertDetectionGate();
   List<PAlertStation> _stations = const [];
   List<PAlertStation> get stations => _stations;
@@ -222,6 +346,7 @@ query (\$recordTime: Float!, \$token: String!) {
   bool _running = false;
   bool _fetchingStations = false;
   bool _fetchingRealtime = false;
+  void Function()? _onRealtimeSettled;
   bool _isConnected = false;
   bool _failureReported = false;
   int _consecutiveFailures = 0;
@@ -240,9 +365,17 @@ query (\$recordTime: Float!, \$token: String!) {
     _isConnected = false;
     _failureReported = false;
     _lastFrameReceivedAt = null;
+    if (_useNative && NativeStationRuntime.supported) {
+      _nativeRuntime.start();
+      return;
+    }
+    if (_useWorker) {
+      _dataWorker.start();
+      return;
+    }
     unawaited(_bootstrap(generation));
     _realtimeTimer = Timer.periodic(
-      realtimePollInterval,
+      _pollInterval,
       (_) => _fetchRealtime(generation),
     );
     _frameWatchdogTimer = Timer.periodic(
@@ -252,7 +385,17 @@ query (\$recordTime: Float!, \$token: String!) {
   }
 
   void stop({bool clear = true}) {
-    _endShakeDetection();
+    if (nativeActive) _nativeRuntime.stop();
+    if (_useWorker) {
+      _dataWorker.stop();
+      final wasDetected = _workerDetection.stage != ShakeDetectStage.idle;
+      _workerDetection = ShakeDetectionService.idleSnapshot;
+      _preparedHistory = null;
+      onDetectionChanged?.call(_workerDetection);
+      if (wasDetected) onShakeExpired?.call();
+    } else {
+      _endShakeDetection();
+    }
     _running = false;
     _runGeneration++;
     _realtimeTimer?.cancel();
@@ -266,7 +409,10 @@ query (\$recordTime: Float!, \$token: String!) {
     _consecutiveFailures = 0;
     _lastRealtimeTimestamp = null;
     _lastFrameReceivedAt = null;
-    _levelHistory.clear();
+    if (!_useWorker) {
+      _levelHistory.clear();
+      _wireDecoder.dispose();
+    }
     dataTimeNotifier.value = null;
     receivedTimeNotifier.value = null;
     _client?.close();
@@ -278,6 +424,10 @@ query (\$recordTime: Float!, \$token: String!) {
       _stationController.add(_stations);
     }
   }
+
+  @visibleForTesting
+  void handleOriginalForTesting(List<int> bytes, DateTime clock) =>
+      _nativeRuntime.inject(bytes, clock);
 
   bool _isCurrentRun(int generation) =>
       _running && generation == _runGeneration;
@@ -309,8 +459,10 @@ query (\$recordTime: Float!, \$token: String!) {
     try {
       final json = await _postGraphql(
         _stationListQuery,
+        generation: generation,
         variables: const {'staFilter': _stationFilter},
       );
+      if (!_isCurrentRun(generation)) return;
       final data = json['data'] as Map<String, dynamic>?;
       final stationList = data?['stationList'] as Map<String, dynamic>?;
       StationHistoryCapture.instance.retainOriginal('palert', 'metadata', json);
@@ -344,6 +496,7 @@ query (\$recordTime: Float!, \$token: String!) {
           heldLevel: existing?.heldLevel,
           dataTime: existing?.dataTime,
           receivedAt: existing?.receivedAt,
+          sampledLevel: existing?._sampledLevel,
         );
       }
       if (!_isCurrentRun(generation)) return;
@@ -354,7 +507,8 @@ query (\$recordTime: Float!, \$token: String!) {
       _stationMap
         ..clear()
         ..addAll(nextStations);
-      _levelHistory.removeWhere((id, _) => !nextStations.containsKey(id));
+      _levelHistory.setStations(nextStations.keys);
+      _wireDecoder.setPAlertStations(nextStations.keys);
       _emitStations();
     } catch (e) {
       if (_isCurrentRun(generation)) {
@@ -377,10 +531,20 @@ query (\$recordTime: Float!, \$token: String!) {
     }
     _fetchingRealtime = true;
     try {
+      late PAlertWireResponse wire;
       final json = await _postGraphql(
         _realtimeQuery,
+        generation: generation,
         variables: const {'recordTime': 0, 'token': ''},
+        decoder: (bytes) {
+          wire = _wireDecoder.decodePAlertUtf8(
+            bytes,
+            shouldExtract: _shouldExtractRealtimeValues,
+          );
+          return wire.raw;
+        },
       );
+      if (!_isCurrentRun(generation)) return;
       final data = json['data'] as Map<String, dynamic>?;
       final pga = data?['pga'] as Map<String, dynamic>?;
       StationHistoryCapture.instance.retainOriginal('palert', 'data', json);
@@ -394,28 +558,30 @@ query (\$recordTime: Float!, \$token: String!) {
       }
       if (!isNewerFrameTime(_lastRealtimeTimestamp, pgaTimestamp)) return;
 
-      final pgaVals = _asValueMap(pga?['dataVals']);
-      if (pgaVals.isEmpty) {
+      final values = wire.values;
+      if (values.validPgaCount == 0) {
         _handleFailure();
         return;
       }
-      final pgvVals = pgvTimestamp == pgaTimestamp
-          ? _asValueMap(pgv?['dataVals'])
-          : const <String, double>{};
+      final includePgv = pgvTimestamp == pgaTimestamp;
       final receivedAt = DateTime.now().toUtc();
+      final levels = _levelHistory.processWireValues(
+        pgaTimestamp,
+        values,
+        includePgv: includePgv,
+      );
       var changed = false;
+      var index = 0;
       for (final id in _stationMap.keys.toList(growable: false)) {
-        final pgaGal = pgaVals[id];
-        final pgvCms = pgvVals[id];
+        final row = index * 2;
+        final pgaGal = values.pga(index);
+        final pgvCms = includePgv ? values.pgv(index) : null;
+        index++;
         if (pgaGal == null && pgvCms == null) continue;
         final station = _stationMap[id]!;
         final hasCurrentPga = pgaGal != null;
-        final level = hasCurrentPga
-            ? PAlertSourceProfile.level(pgaGal, pgvCms)
-            : -1;
-        final heldLevel = hasCurrentPga
-            ? _heldLevelFor(id, pgaTimestamp, level)
-            : station.heldLevel;
+        final level = levels[row];
+        final heldLevel = hasCurrentPga ? levels[row + 1] : station.heldLevel;
         _stationMap[id] = PAlertStation(
           id: station.id,
           network: station.network,
@@ -433,6 +599,7 @@ query (\$recordTime: Float!, \$token: String!) {
           heldLevel: heldLevel,
           dataTime: hasCurrentPga ? pgaTimestamp : station.dataTime,
           receivedAt: hasCurrentPga ? receivedAt : station.receivedAt,
+          sampledLevel: hasCurrentPga ? level : station.currentGridLevel,
         );
         changed = true;
       }
@@ -456,6 +623,7 @@ query (\$recordTime: Float!, \$token: String!) {
     } finally {
       if (generation == _runGeneration) {
         _fetchingRealtime = false;
+        _onRealtimeSettled?.call();
       }
     }
   }
@@ -469,6 +637,16 @@ query (\$recordTime: Float!, \$token: String!) {
       return;
     }
     _markDisconnected();
+  }
+
+  bool _shouldExtractRealtimeValues(dynamic raw) {
+    if (raw is! Map || raw['errors'] != null) return false;
+    final data = raw['data'];
+    final pga = data is Map ? data['pga'] : null;
+    final timestamp = pga is Map ? pga['timestamp'] : null;
+    if (timestamp is! String) return false;
+    final time = parseTimestamp(timestamp);
+    return time != null && isNewerFrameTime(_lastRealtimeTimestamp, time);
   }
 
   void _handleSuccess() {
@@ -501,13 +679,15 @@ query (\$recordTime: Float!, \$token: String!) {
 
   Future<Map<String, dynamic>> _postGraphql(
     String query, {
+    required int generation,
     required Map<String, dynamic> variables,
+    dynamic Function(List<int>) decoder = decodeApiJsonBytes,
   }) async {
     final client = _client;
     if (client == null) throw StateError('P-Alert client is not running');
     final response = await client
         .post(
-          _graphqlUri,
+          _endpoint ?? _graphqlUri,
           headers: const {
             'Accept': 'application/json, text/plain, */*',
             'Content-Type': 'application/json;charset=UTF-8',
@@ -520,10 +700,13 @@ query (\$recordTime: Float!, \$token: String!) {
           body: jsonEncode({'query': query, 'variables': variables}),
         )
         .timeout(const Duration(seconds: 12));
+    if (!_isCurrentRun(generation)) {
+      throw StateError('P-Alert connection stopped');
+    }
     if (response.statusCode != 200) {
       throw StateError('HTTP ${response.statusCode}');
     }
-    final json = jsonDecode(utf8.decode(response.bodyBytes));
+    final json = decoder(response.bodyBytes);
     if (json is! Map<String, dynamic>) {
       throw StateError('invalid JSON');
     }
@@ -537,10 +720,16 @@ query (\$recordTime: Float!, \$token: String!) {
     final next = _stationMap.values.toList(growable: false)
       ..sort((a, b) => a.id.compareTo(b.id));
     _stations = next;
-    StationHistoryCapture.instance.publish('palert', () =>
-        ForegroundStationPayload.palert(_stations,
-          dataTime: dataTimeNotifier.value, receivedTime: receivedTimeNotifier.value,
-          detection: detectionSnapshot), source: 'palert');
+    StationHistoryCapture.instance.publish(
+      'palert',
+      () => ForegroundStationPayload.palert(
+        _stations,
+        dataTime: dataTimeNotifier.value,
+        receivedTime: receivedTimeNotifier.value,
+        detection: detectionSnapshot,
+      ),
+      source: 'palert',
+    );
     _stationController.add(next);
   }
 
@@ -557,23 +746,6 @@ query (\$recordTime: Float!, \$token: String!) {
     return level < 0
         ? null
         : PAlertSourceProfile.intensityIndexFromLevel(level);
-  }
-
-  int _heldLevelFor(String stationId, DateTime timestamp, int currentLevel) {
-    final samples = _levelHistory.putIfAbsent(stationId, () => []);
-    final cutoff = timestamp.subtract(intensityHoldDuration);
-    samples.removeWhere(
-      (sample) =>
-          sample.time.isBefore(cutoff) || sample.time.isAfter(timestamp),
-    );
-    if (currentLevel >= 0) samples.add((time: timestamp, level: currentLevel));
-    if (samples.isEmpty) {
-      _levelHistory.remove(stationId);
-      return currentLevel;
-    }
-    return samples
-        .map((sample) => sample.level)
-        .reduce((a, b) => a > b ? a : b);
   }
 
   static DateTime? parseTimestamp(String? value) {
@@ -605,16 +777,6 @@ query (\$recordTime: Float!, \$token: String!) {
     Duration staleAfter = frameStaleAfter,
   }) {
     return receivedAt != null && now.difference(receivedAt) > staleAfter;
-  }
-
-  static Map<String, double> _asValueMap(dynamic raw) {
-    if (raw is! Map) return const {};
-    final values = <String, double>{};
-    for (final entry in raw.entries) {
-      final value = _asDouble(entry.value);
-      if (value != null) values[entry.key.toString()] = value;
-    }
-    return values;
   }
 
   static String _asString(dynamic value) => value?.toString().trim() ?? '';

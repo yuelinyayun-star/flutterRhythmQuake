@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import '../core/mobile_weather_layers.dart';
 
 /// Only explicitly supported station settings can bypass a full source reload.
 /// Unknown settings still take the existing full reload path.
@@ -28,6 +29,9 @@ class BackgroundSourceReloadPlan {
   final Set<String> stations = {};
 
   static const runtimeKeys = {
+    // Owned by the dedicated weather-map sync channel, not EEW reloads.
+    mobileWeatherPreferenceKey,
+    mobileWeatherStationModeKey,
     // These are outputs/caches, not inputs to a connection. A fresh login
     // explicitly forces credential reload even if the profile is unchanged.
     'wauth_user_info',

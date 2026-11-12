@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import '../../core/source_estimation/palert_source_profile.dart';
 import 'nied_monitor.dart';
 import 'palert_service.dart';
+import 'palert_station_layout.dart';
 import 'shake_detection_service.dart';
 
 /// Feeds the shared detector with current P-Alert levels, not held display peaks.
@@ -26,7 +27,7 @@ class PAlertDetector {
   );
   final Map<String, NiedStation> _stations = {};
   final Map<String, int> _currentLevels = {};
-  String _layout = '';
+  final _layout = PAlertStationLayout();
   ShakeDetectionSnapshot snapshot = ShakeDetectionService.idleSnapshot;
   void Function(ShakeDetectionSnapshot)? onSnapshot;
   void Function(int)? onCwaIntensityChanged;
@@ -36,10 +37,9 @@ class PAlertDetector {
 
   void update(List<PAlertStation> input, {required DateTime now}) {
     final ordered = input.toList()..sort((a, b) => a.id.compareTo(b.id));
-    final layout = ordered.map((s) => '${s.id}:${s.coordinate}').join('|');
-    if (_layout != layout) {
+    if (!_layout.matches(ordered)) {
       reset();
-      _layout = layout;
+      _layout.replace(ordered);
       for (var i = 0; i < ordered.length; i++) {
         final station = ordered[i];
         _stations[station.id] = NiedStation(
@@ -156,7 +156,7 @@ class PAlertDetector {
     _engine.reset(detachStations: true);
     _stations.clear();
     _currentLevels.clear();
-    _layout = '';
+    _layout.clear();
     snapshot = ShakeDetectionService.idleSnapshot;
     _publishCwaIntensity();
   }

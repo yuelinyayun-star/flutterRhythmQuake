@@ -213,7 +213,9 @@ Severe 活动事件保留 5 分钟，其他活动事件 3 分钟；结束后清�
 ## 双连接对照
 
 APP 保持原有 Sidesis `/sasmex-eew` 实时通道；独立服务器观察器只读连接 Socket.IO
-与 Firestore `sasno-d79e1` 的 `app/events`，每秒轮询后者。两个来源的真实原文、
-连接状态及原始轮询实现备份到 TG `SASMEX原始归档/双连接对照/YYYY-MM-DD/`。
+与 Firestore `sasno-d79e1` 的 `app/events`，正常每 5 秒轮询后者，失败时退避。
+TG `SASMEX原始归档/双连接对照/YYYY-MM-DD/` 只归档真实 Socket.IO 地震报文与
+Firestore 事件内容变化；心跳、连接状态、失败／恢复和启动备份不会触发上传。
+这些状态留在服务器状态文件及日志；旧轮询实现备份和既有 TG 历史归档继续保留。
 Firestore 不进入 APP，10 月 6 日旧文档只建立基线。连接可达、实际收包和内容变化
 分开统计，不能以连接成功代替新事件证据。实现和部署说明见服务器 README。

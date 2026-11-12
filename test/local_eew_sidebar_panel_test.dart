@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutterrhythmquake/models/unified_quake_data.dart';
+import 'package:flutterrhythmquake/services/location_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:flutterrhythmquake/core/travel_time_service.dart';
@@ -86,6 +88,32 @@ void main() {
     );
   });
 
+  test(
+    'GlobalQuake 4162 km event has an available far-field S-wave arrival',
+    () async {
+      await TravelTimeService().ensureLoaded();
+      const userLat = 29.36;
+      const userLng = 120.17;
+      final farField = event.copyWith(
+        source: 'globalQuakeEew',
+        lat: -8.0,
+        lng: 120.17,
+        magnitude: 5.1,
+        depth: 10,
+        originTime: DateTime.utc(2026, 10, 18, 8, 0, 7),
+      );
+      final estimated = calculateLocalEewEstimate(
+        farField,
+        userLat: userLat,
+        userLng: userLng,
+        elapsedSeconds: 235,
+      );
+      expect(estimated.distanceKm, inInclusiveRange(4000, 4300));
+      expect(estimated.secondsToSWave, isNotNull);
+      expect(estimated.secondsToSWave, greaterThan(480));
+      expect(estimated.secondsToSWave, lessThan(650));
+    },
+  );
   test('local estimate uses the captured report and local position', () async {
     await TravelTimeService().ensureLoaded();
     final county = Map<String, dynamic>.from(
@@ -143,6 +171,122 @@ void main() {
     expect(missingDepth.secondsToSWave, isNull);
   });
 
+  testWidgets('GlobalQuake captured replay renders numeric S countdown in UI', (
+    tester,
+  ) async {
+    await TravelTimeService().ensureLoaded();
+    LocationService().setCurrentLatLng(29.36, 120.17);
+    final eventFromCapture = UnifiedQuakeData(
+      source: 'globalQuakeEew',
+      origin: 3,
+      eventId: '3ef60ee6-b157-4deb-bd6a-c8b426937d49',
+      isEew: true,
+      timeZone: 8,
+      titleText: 'GlobalQuake 地震预警',
+      reportNumText: '第1报',
+      useShindo: false,
+      maxIntensity: '7',
+      className: 'orange',
+      hypocenter: '印尼弗洛勒斯岛地区附近',
+      originTime: DateTime(2026, 10, 18, 16, 0, 6, 55),
+      reportTime: DateTime(2026, 10, 18, 16, 2, 56, 425),
+      magnitude: 5.227834224700928,
+      depth: 10,
+      lat: -8.098663330078125,
+      lng: 120.38573455810547,
+      replaySessionId: 'captured-replay-test',
+      replayClockOffset: DateTime.now().toUtc().difference(
+        DateTime.utc(2026, 10, 18, 8, 2, 58),
+      ),
+    );
+    expect(
+      selectLocalEewSidebarEvent(
+        [eventFromCapture],
+        0,
+        domesticEnabled: true,
+        foreignEnabled: true,
+      ),
+      same(eventFromCapture),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 320,
+            height: 440,
+            child: LocalEewSidebarPanel(
+              event: eventFromCapture,
+              scale: (v) => v,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    final countdown = tester.widget<Text>(
+      find.byKey(const ValueKey('local-eew-countdown')),
+    );
+    expect(
+      countdown.data,
+      isNot('--'),
+      reason: 'Widget should render a numeric countdown for captured replay',
+    );
+    expect(int.tryParse(countdown.data!), isNotNull);
+    expect(find.text('S 波走时不可用'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+  testWidgets(
+    'sidebar loads travel tables itself and updates unavailable placeholder',
+    (tester) async {
+      TravelTimeService().resetForTesting();
+      LocationService().setCurrentLatLng(29.36, 120.17);
+      final source = UnifiedQuakeData(
+        source: 'globalQuakeEew',
+        origin: 3,
+        eventId: 'replay-load-check',
+        isEew: true,
+        timeZone: 8,
+        titleText: 'GlobalQuake 地震预警',
+        reportNumText: '第14报',
+        useShindo: false,
+        maxIntensity: '7',
+        className: 'orange',
+        hypocenter: '印尼弗洛勒斯岛地区附近',
+        originTime: DateTime(2026, 10, 18, 16, 0, 7),
+        magnitude: 5.1,
+        depth: 10,
+        lat: -8.073859214782715,
+        lng: 120.3382339477539,
+        replaySessionId: 'local-load',
+        replayClockOffset: DateTime.now().toUtc().difference(
+          DateTime.utc(2026, 10, 18, 8, 4, 2),
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 320,
+              height: 450,
+              child: LocalEewSidebarPanel(event: source, scale: (v) => v),
+            ),
+          ),
+        ),
+      );
+      await tester.runAsync(() async {
+        for (var i = 0; i < 50 && !TravelTimeService().isLoaded; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+      });
+      await tester.pump();
+      expect(TravelTimeService().isLoaded, isTrue);
+      final label = tester.widget<Text>(
+        find.byKey(const ValueKey('local-eew-countdown')),
+      );
+      expect(int.tryParse(label.data ?? ''), isNotNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
   test('EEW source switch keeps the captured ICL event eligible', () {
     expect(isDomesticLocalEew(event), isTrue);
     expect(

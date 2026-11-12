@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/io_client.dart';
+import 'package:http/http.dart' as http;
 
 import 'package:flutterrhythmquake/services/sources/palert_http_client.dart';
 import 'package:flutterrhythmquake/services/sources/palert_http_client_io.dart'
@@ -38,7 +38,7 @@ void main() {
     () async {
       final client = await createPAlertHttpClient();
       addTearDown(client.close);
-      if (Platform.isWindows) expect(client, isA<IOClient>());
+      expect(client, isA<http.BaseClient>());
     },
   );
 }

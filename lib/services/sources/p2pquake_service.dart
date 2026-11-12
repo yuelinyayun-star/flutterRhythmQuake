@@ -44,11 +44,15 @@
 /// - 心跳检测：每10秒发送 ping 消息保持连接活跃
 /// - 故障恢复：重连成功后自动重置重试计数
 
+library;
+
 import 'dart:async';
+import 'api_json_decoder.dart';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'source_socket.dart';
 
 import '../../models/source_payload.dart';
 import 'base_source.dart';
@@ -73,6 +77,18 @@ import '../../models/source_status.dart';
 /// service.connect();
 /// ```
 class P2PQuakeService extends BaseSourceService {
+  P2PQuakeService({WebSocketChannel Function(Uri)? socketFactory})
+    : _socketFactory =
+          socketFactory ??
+          ((uri) => connectSourceSocket(
+            uri,
+            connectTimeout: const Duration(seconds: 10),
+          ));
+
+  final WebSocketChannel Function(Uri) _socketFactory;
+  StreamSubscription<dynamic>? _subscription;
+  int _connectionSerial = 0;
+
   /// 服务名称标识
   ///
   /// 用于在日志和状态显示中标识此数据源。
@@ -135,6 +151,7 @@ class P2PQuakeService extends BaseSourceService {
   @override
   void connect() async {
     _isManualClose = false;
+    final serial = ++_connectionSerial;
     _reconnectTimer?.cancel();
     _pingTimer?.cancel();
     _cleanup();
@@ -142,51 +159,54 @@ class P2PQuakeService extends BaseSourceService {
     debugPrint('正在建立 P2PQuake 链路: $_wsUrl (尝试次数: ${_retryCount + 1})');
 
     try {
-      final channel = WebSocketChannel.connect(Uri.parse(_wsUrl));
+      final channel = _socketFactory(Uri.parse(_wsUrl));
       _channel = channel;
-      await channel.ready.timeout(const Duration(seconds: 10));
-      if (_channel != channel) return;
-      final recovered = _retryCount > 0;
-      _retryCount = 0;
-      onStatusChanged?.call(SourceStatus.connected);
-      if (recovered) {
-        debugPrint('P2PQuake 链路已恢复正常');
-      }
-      debugPrint('P2PQuake WebSocket 已连接，等待 JMA 地震/津波报文...');
-      _startPing();
-
-      channel.stream.listen(
+      _subscription = channel.stream.listen(
         (data) {
-          debugPrint('RAW >> P2PQuake: $data');
+          if (!_current(channel, serial)) return;
           onStatusChanged?.call(SourceStatus.connected);
           _handleData(data);
         },
         onDone: () {
+          if (!_current(channel, serial)) return;
           debugPrint('P2PQuake 链路远程关闭');
-          _stopPing();
-          _handleFailure();
+          _handleFailure(serial);
         },
         onError: (err) {
+          if (!_current(channel, serial)) return;
           debugPrint('P2PQuake 链路传输错误: $err');
-          _stopPing();
-          _handleFailure();
+          _handleFailure(serial);
         },
         cancelOnError: true,
       );
+      await channel.ready.timeout(const Duration(seconds: 10));
+      if (!_current(channel, serial)) return;
+      final recovered = _retryCount > 0;
+      _retryCount = 0;
+      onStatusChanged?.call(SourceStatus.connected);
+      if (recovered) debugPrint('P2PQuake 链路已恢复正常');
+      _startPing(channel, serial);
     } catch (e) {
+      if (_isManualClose || serial != _connectionSerial) return;
       debugPrint('P2PQuake 初始握手失败: $e');
-      _handleFailure();
+      _handleFailure(serial);
     }
   }
 
   /// 启动心跳定时器
   ///
   /// 连接成功后调用，定期发送 ping 消息保持连接活跃。
-  void _startPing() {
+  bool _current(WebSocketChannel channel, int serial) =>
+      !_isManualClose &&
+      serial == _connectionSerial &&
+      identical(_channel, channel);
+
+  void _startPing(WebSocketChannel channel, int serial) {
     _pingTimer?.cancel();
-    _sendPing();
+    _sendPing(channel, serial);
+    if (!_current(channel, serial)) return;
     _pingTimer = Timer.periodic(_pingInterval, (_) {
-      _sendPing();
+      _sendPing(channel, serial);
     });
   }
 
@@ -202,12 +222,13 @@ class P2PQuakeService extends BaseSourceService {
   ///
   /// 向服务器发送 'ping' 字符串，服务器会返回 'pong'。
   /// 这用于检测连接是否仍然活跃。
-  void _sendPing() {
+  void _sendPing(WebSocketChannel channel, int serial) {
+    if (!_current(channel, serial)) return;
     try {
-      if (_channel != null) {
-        _channel!.sink.add('ping');
-      }
-    } catch (_) {}
+      channel.sink.add('ping');
+    } catch (_) {
+      _handleFailure(serial);
+    }
   }
 
   /// 处理接收到的原始数据
@@ -217,8 +238,19 @@ class P2PQuakeService extends BaseSourceService {
   /// 参数：
   /// - [data]: WebSocket 接收到的原始数据（通常是 JSON 字符串）
   void _handleData(dynamic data) {
+    if (data == 'pong' ||
+        data is List<int> &&
+            data.length == 4 &&
+            data[0] == 112 &&
+            data[1] == 111 &&
+            data[2] == 110 &&
+            data[3] == 103) {
+      return;
+    }
     try {
-      final json = jsonDecode(data.toString());
+      final json = data is List<int>
+          ? decodeApiJsonBytes(data)
+          : decodeApiJson(data as String);
 
       if (json is List) {
         for (final item in json) {
@@ -303,22 +335,22 @@ class P2PQuakeService extends BaseSourceService {
   /// 参数：
   /// - [json]: 完整的海啸情报 JSON 数据
   void _handleJmaTsunami(Map<String, dynamic> json) {
-    try {
-      final tsunami = TsunamiMessage.parseJmaTsunami(json);
-      debugPrint(
-        'P2PQuake 海啸情报(552): ${tsunami.title}'
-        '${tsunami.isActive ? " (${tsunami.areas.length}区域)" : ""}',
-      );
-      emitTsunami(tsunami);
-    } catch (e) {
-      debugPrint('P2PQuake 552 海啸情报解析异常: $e');
-    }
+    final serial = _connectionSerial;
+    unawaited(TsunamiMessage.parseJmaSourceAsync('p2p', json).then((message) {
+      if (!_isManualClose && serial == _connectionSerial) emitTsunami(message);
+    }).catchError((Object error) {
+      debugPrint('P2PQuake 552 海啸情报解析异常: $error');
+    }));
   }
 
   /// 处理连接失败
   ///
   /// 更新状态并触发自动重连机制。
-  void _handleFailure() {
+  void _handleFailure(int serial) {
+    if (_isManualClose || serial != _connectionSerial) return;
+    ++_connectionSerial;
+    _stopPing();
+    _cleanup();
     onStatusChanged?.call(SourceStatus.error);
     if (!_isManualClose) {
       _scheduleReconnect();
@@ -339,8 +371,10 @@ class P2PQuakeService extends BaseSourceService {
 
     _retryCount++;
     final delay = (_retryCount + 2).clamp(3, 10);
+    final serial = _connectionSerial;
 
     _reconnectTimer = Timer(Duration(seconds: delay), () {
+      if (_isManualClose || serial != _connectionSerial) return;
       connect();
     });
   }
@@ -349,10 +383,14 @@ class P2PQuakeService extends BaseSourceService {
   ///
   /// 关闭 WebSocket 通道并释放相关资源。
   void _cleanup() {
-    try {
-      _channel?.sink.close();
-    } catch (_) {}
+    final subscription = _subscription;
+    _subscription = null;
+    final channel = _channel;
     _channel = null;
+    if (subscription != null) unawaited(subscription.cancel());
+    if (channel != null) {
+      unawaited(channel.sink.close().catchError((Object _) {}));
+    }
   }
 
   /// 断开连接
@@ -364,10 +402,17 @@ class P2PQuakeService extends BaseSourceService {
   @override
   void disconnect() {
     _isManualClose = true;
+    ++_connectionSerial;
     _reconnectTimer?.cancel();
     _stopPing();
     _cleanup();
     onStatusChanged?.call(SourceStatus.disconnected);
+  }
+
+  @override
+  void dispose() {
+    disconnect();
+    super.dispose();
   }
 
   /// 调试打印
@@ -379,7 +424,7 @@ class P2PQuakeService extends BaseSourceService {
   }
 
   @visibleForTesting
-  void handleMessageForTesting(String data) => _handleData(data);
+  void handleMessageForTesting(Object data) => _handleData(data);
 
   void _emitP2pUnified(
     Map<String, dynamic> json,
@@ -453,7 +498,7 @@ class P2PQuakeService extends BaseSourceService {
   }
 
   Map<String, dynamic> _deepCopyMap(Map<String, dynamic> value) {
-    return jsonDecode(jsonEncode(value)) as Map<String, dynamic>;
+    return decodeApiJson(jsonEncode(value)) as Map<String, dynamic>;
   }
 
   bool _hasValidHypocenter(Map<String, dynamic> hypocenter) {

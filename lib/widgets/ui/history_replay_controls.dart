@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, compute;
 import 'package:flutter/material.dart';
 
+import '../../core/utils/replay_event_name.dart';
 import '../../services/debug/history_replay.dart';
 import 'settings_controls.dart';
 import 'history_replay_file_web.dart'
@@ -16,16 +17,34 @@ HistoryReplayPackage _decodeReplay(Uint8List bytes) =>
     HistoryReplayPackage.decode(utf8.decode(bytes));
 
 Future<bool> exportHistoryReplay(HistoryReplayPackage package) async {
-  final bytes = await compute(_encodeReplay, package);
+  final extension = replay_file.supportsDirectoryReplay ? 'zip' : 'rqreplay';
+  final fileName = '${replayEventName(package.reports.last)}.$extension';
+  if (replay_file.supportsDirectoryReplay && !replay_file.isMobile) {
+    final path = await FilePicker.platform.saveFile(
+      dialogTitle: '导出回放 ZIP 压缩包',
+      fileName: fileName,
+      type: FileType.custom,
+      allowedExtensions: [extension],
+    );
+    if (path == null) {
+      return false;
+    }
+    await replay_file.exportReplay(package, path);
+    return true;
+  }
+  final bytes = replay_file.supportsDirectoryReplay
+      ? await replay_file.exportReplayBytes(package)
+      : await compute(_encodeReplay, package);
   final path = await FilePicker.platform.saveFile(
     dialogTitle: '导出回放包',
-    fileName:
-        'RhythmQuake_${package.times.first.millisecondsSinceEpoch}.rqreplay',
+    fileName: fileName,
     type: FileType.custom,
-    allowedExtensions: ['rqreplay'],
+    allowedExtensions: [extension],
     bytes: kIsWeb || replay_file.isMobile ? bytes : null,
   );
-  if (path == null) return false;
+  if (path == null) {
+    return false;
+  }
   if (!kIsWeb && !replay_file.isMobile) {
     await replay_file.writeBytes(path, bytes);
   }
@@ -56,16 +75,26 @@ class _HistoryReplayControlsState extends State<HistoryReplayControls> {
       _busy = true;
       _error = null;
     });
+    final packages = <HistoryReplayPackage>[];
+    var adopted = false;
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['rqreplay', 'json'],
+        allowedExtensions: ['rqreplay', 'zip', 'json'],
         allowMultiple: true,
         withData: kIsWeb,
       );
-      if (result == null || !mounted) return;
-      final packages = <HistoryReplayPackage>[];
+      if (result == null || !mounted) {
+        return;
+      }
       for (final selected in result.files) {
+        if (!mounted) {
+          break;
+        }
+        if (replay_file.supportsDirectoryReplay && selected.path != null) {
+          packages.add(await replay_file.importReplay(selected.path!));
+          continue;
+        }
         if (selected.size > HistoryReplayPackage.maxBytes) {
           throw const FormatException('回放包超过 128 MiB');
         }
@@ -85,11 +114,23 @@ class _HistoryReplayControlsState extends State<HistoryReplayControls> {
         }
         packages.add(await compute(_decodeReplay, bytes));
       }
-      if (mounted) widget.controller.importPackages(packages);
+      if (mounted) {
+        widget.controller.importPackages(packages);
+        adopted = true;
+      }
     } catch (error) {
-      if (mounted) setState(() => _error = '导入失败：$error');
+      if (mounted) {
+        setState(() => _error = '导入失败：$error');
+      }
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (!adopted) {
+        for (final package in packages) {
+          await package.releaseFiles?.call();
+        }
+      }
+      if (mounted) {
+        setState(() => _busy = false);
+      }
     }
   }
 
@@ -97,13 +138,21 @@ class _HistoryReplayControlsState extends State<HistoryReplayControls> {
     setState(() => _busy = true);
     try {
       await widget.controller.playPrepared();
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       setState(() => _error = null);
-      if (widget.controller.active) widget.onPlaybackStarted?.call();
+      if (widget.controller.active) {
+        widget.onPlaybackStarted?.call();
+      }
     } catch (error) {
-      if (mounted) setState(() => _error = '回放失败：$error');
+      if (mounted) {
+        setState(() => _error = '回放失败：$error');
+      }
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() => _busy = false);
+      }
     }
   }
 

@@ -1,1 +1,2 @@
-aiohttp==3.12.15
+aiohttp==3.14.4
+multidict>=6.9.1,<7

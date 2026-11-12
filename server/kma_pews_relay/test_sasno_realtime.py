@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sasno_realtime import (
@@ -71,6 +72,8 @@ class SasnoRealtimeTest(unittest.TestCase):
         self.assertEqual(event["lng"], -97.90988)
         self.assertEqual(event["intensidad"], "Moderado")
         self.assertEqual(event["grado"], 2)
+        self.assertEqual(event["msgType"], "Alert")
+        self.assertNotIn("msgTypeOrigin", event)
         self.assertEqual(event["severidad"], 3)
         self.assertFalse(event["isWarn"])
         self.assertEqual(event["severity"], "Moderate")
@@ -86,6 +89,7 @@ class SasnoRealtimeTest(unittest.TestCase):
         self.assertEqual(event["severity"], "Minor")
         self.assertEqual(event["severityOrigin"], "intensity")
         self.assertEqual(event["intensidad"], "Leve")
+        self.assertEqual(event["msgType"], "Alert")
         self.assertEqual(event["grado"], 1)
         self.assertFalse(event["isWarn"])
         self.assertEqual(event["epochMs"], 1791259786000)
@@ -130,6 +134,8 @@ class SasnoRealtimeTest(unittest.TestCase):
         )
 
         self.assertEqual(severe["severity"], "Severe")
+        self.assertEqual(severe["msgType"], "Alert")
+        self.assertNotIn("msgType", severe["original"])
         self.assertTrue(severe["isWarn"])
         self.assertEqual(moderate["severity"], "Moderate")
         self.assertFalse(moderate["isWarn"])
@@ -173,6 +179,7 @@ class SasnoRealtimeTest(unittest.TestCase):
                 stale_after_seconds=30,
             ),
             on_update,
+            clock=lambda: datetime.fromtimestamp(1791259847, UTC),
         )
 
         async def get():

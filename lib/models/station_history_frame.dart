@@ -97,9 +97,13 @@ class StationHistoryFrame {
     }
     return StationHistoryFrame(
       receivedAt: time,
-      snapshot: Map<String, dynamic>.from(map['snapshot'] as Map),
+      snapshot: map['snapshot'] is Map<String, dynamic>
+          ? map['snapshot'] as Map<String, dynamic>
+          : Map<String, dynamic>.from(map['snapshot'] as Map),
       originalJson: map['originalJson'] == null
           ? null
+          : map['originalJson'] is Map<String, dynamic>
+          ? map['originalJson'] as Map<String, dynamic>
           : Map<String, dynamic>.from(map['originalJson'] as Map),
     );
   }

@@ -1,0 +1,7 @@
+{
+  "url": "https://forecast.weather.com.cn/api/v1/traffic/alarm/alarmMap",
+  "status": 200,
+  "content_type": "text/html;charset=utf-8",
+  "sha256": "9740f530403e3819ad2f4760e52d2b47b19c4dde4d3857a67ed807ffc5c4866e",
+  "bytes": 1975538
+}

@@ -52,6 +52,8 @@ class HistoryMarkerLayer extends StatelessWidget {
                 longitude: event!.longitude,
                 magnitude: event!.magnitude,
                 infoTypeName: event!.infoTypeName,
+                isPlum: !event!.isInfoEvent && event!.isAssumption &&
+                    const {QuakeSourceType.wolfx, QuakeSourceType.jma_fan}.contains(event!.source),
                 camera: camera,
               ),
               size: Size.infinite,
@@ -78,6 +80,7 @@ class HistoryCrossPainter extends CustomPainter {
 
   /// 情报标题类型
   final String? infoTypeName;
+  final bool isPlum;
 
   /// 地图相机对象
   /// 用于坐标转换
@@ -88,6 +91,7 @@ class HistoryCrossPainter extends CustomPainter {
     required this.longitude,
     required this.magnitude,
     this.infoTypeName,
+    this.isPlum = false,
     required this.camera,
   });
 
@@ -172,7 +176,9 @@ class HistoryCrossPainter extends CustomPainter {
     final isForeignVolcano = title.contains('遠地噴火');
     final isForeign = title.contains('遠地地震') || title.contains('海外');
     String label;
-    if (isForeignVolcano) {
+    if (isPlum) {
+      label = 'PLUM所得假定震源';
+    } else if (isForeignVolcano) {
       label = '遠地噴火に関する情報';
     } else if (isForeign) {
       label = '遠地地震に関する情報';
@@ -214,12 +220,18 @@ class HistoryCrossPainter extends CustomPainter {
     canvas.drawRRect(bgRect, bgPaint);
 
     textPainter.paint(canvas, Offset(labelX, labelY));
+    textPainter.dispose();
   }
 
   @override
   bool shouldRepaint(covariant HistoryCrossPainter oldDelegate) {
     return oldDelegate.latitude != latitude ||
         oldDelegate.longitude != longitude ||
-        oldDelegate.magnitude != magnitude;
+        oldDelegate.magnitude != magnitude ||
+        oldDelegate.infoTypeName != infoTypeName ||
+        oldDelegate.camera.center != camera.center ||
+        oldDelegate.camera.zoom != camera.zoom ||
+        oldDelegate.camera.rotation != camera.rotation ||
+        oldDelegate.camera.nonRotatedSize != camera.nonRotatedSize;
   }
 }

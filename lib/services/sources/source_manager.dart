@@ -37,6 +37,7 @@ library;
 
 import 'dart:async';
 import 'base_source.dart';
+import 'api_json_decoder.dart';
 import '../event_bus.dart';
 import '../../models/quake_message.dart';
 import '../../models/source_status.dart';
@@ -147,6 +148,9 @@ class SourceManager {
 
   final List<StreamSubscription<QuakeMessage>> _sourceSubscriptions = [];
   bool _started = false;
+  int _startGeneration = 0;
+  final Map<BaseSourceService, Timer> _startTimers = {};
+  final Set<BaseSourceService> _startedSources = {};
   final Set<String> _disabledSourceNames = {};
 
   /// 注册数据源服务
@@ -166,6 +170,7 @@ class SourceManager {
   void registerSource(BaseSourceService source) {
     _sources.add(source);
     source.onStatusChanged = (status) {
+      if (!_sources.contains(source)) return;
       _statusController.add(SourceStatusUpdate(source.name, status,
         authenticationStatus: source.authenticationStatus,
         credentialInfo: source.credentialInfo));
@@ -183,9 +188,11 @@ class SourceManager {
     }
     if (enabled) {
       _disabledSourceNames.remove(sourceName);
-      if (_started) source?.connect();
+      if (_started && source != null) _startSource(source, _startGeneration);
     } else {
       _disabledSourceNames.add(sourceName);
+      _startTimers.remove(source)?.cancel();
+      _startedSources.remove(source);
       source?.disconnect();
     }
   }
@@ -208,17 +215,18 @@ class SourceManager {
   void startAll({Duration stagger = const Duration(milliseconds: 80)}) {
     if (_started) return;
     _started = true;
+    final generation = ++_startGeneration;
     var delayIndex = 0;
     for (var source in _sources) {
       _sourceSubscriptions.add(source.onEvent.listen(_handleIncomingEvent));
       if (source.autoStart && isSourceEnabled(source.name)) {
         if (delayIndex == 0 || stagger == Duration.zero) {
-          source.connect();
+          _startSource(source, generation);
         } else {
           final delayMs = delayIndex * stagger.inMilliseconds;
-          Timer(Duration(milliseconds: delayMs), () {
-            if (!_started || !isSourceEnabled(source.name)) return;
-            source.connect();
+          _startTimers[source] = Timer(Duration(milliseconds: delayMs), () {
+            _startTimers.remove(source);
+            _startSource(source, generation);
           });
         }
         delayIndex++;
@@ -226,7 +234,19 @@ class SourceManager {
     }
   }
 
+  void _startSource(BaseSourceService source, int generation) {
+    if (!_started || generation != _startGeneration ||
+        !_sources.contains(source) || !isSourceEnabled(source.name) ||
+        !_startedSources.add(source)) return;
+    _startTimers.remove(source)?.cancel();
+    source.connect();
+  }
+
   void stopAll() {
+    ++_startGeneration;
+    for (final timer in _startTimers.values) { timer.cancel(); }
+    _startTimers.clear();
+    _startedSources.clear();
     if (!_started) return;
     _started = false;
     for (final source in _sources) {
@@ -236,6 +256,7 @@ class SourceManager {
       subscription.cancel();
     }
     _sourceSubscriptions.clear();
+    disposeApiJsonResources();
   }
 
   /// 清空当前 isolate 的源实例，供 Android 前台服务重载设置时使用。

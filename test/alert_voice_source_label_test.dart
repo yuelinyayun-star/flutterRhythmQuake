@@ -177,7 +177,7 @@ void main() {
     expect(text, isNot(contains('更新')));
   });
 
-  test('EEW voice includes depth without rounding away reported decimals', () {
+  test('EEW voice omits depth', () {
     final event = eventFor(
       'jmaEew',
     ).copyWith(isEew: true, depth: 14.9, depthText: '深度 14.9 km');
@@ -186,9 +186,8 @@ void main() {
       phase: 'first',
     );
 
-    expect(text, contains('深度14.9公里'));
+    expect(text, isNot(contains('深度')));
     expect(text, isNot(contains('14.9 km')));
-    expect(text, isNot(contains('深度15公里')));
   });
 
   test('EEW voice localizes CWA name and Japanese UI depth text', () {
@@ -203,7 +202,7 @@ void main() {
 
     expect(text, startsWith('地震预警，测试地点，震级3.0'));
     expect(text, endsWith('中央气象署，第2报。'));
-    expect(text, contains('深度10公里'));
+    expect(text, isNot(contains('深度')));
     expect(text, isNot(contains('台湾中央气象署')));
     expect(text, isNot(contains('深さ')));
     expect(text, isNot(contains('40km')));

@@ -1,0 +1,16 @@
+[
+  {
+    "kind": "radar",
+    "file": "radar.tile.original.png",
+    "path": "/bosai/jmatile/data/nowc/20261019094000/none/20261019094000/surf/hrpns/6/56/25.png",
+    "bytes": 3624,
+    "sha256": "6f10141f885e422153027d32887f9e64e1f9fa7591e67e36a95d02bff51164fa"
+  },
+  {
+    "kind": "satellite",
+    "file": "satellite.tile.original.jpg",
+    "path": "/bosai/himawari/data/satimg/20261019093000/fd/20261019093000/B13/TBB/3/7/3.jpg",
+    "bytes": 16579,
+    "sha256": "457689dd3db80273e9cd10ba2804d7534007af86893fda99c99ffca0f4a009ef"
+  }
+]

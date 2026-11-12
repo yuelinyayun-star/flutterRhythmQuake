@@ -17,6 +17,8 @@ import '../../core/nied_replay_logger.dart';
 import '../../core/utils/quake_time.dart';
 import '../../models/quake_message.dart';
 import 'local_inject_decoder.dart';
+import 'runtime_performance.dart';
+import 'runtime_rendering_probe.dart';
 import '../../widgets/map/quake_map_view.dart';
 import '../sources/mock_input_service.dart';
 import '../sources/nied_monitor.dart';
@@ -99,7 +101,7 @@ class LocalInjectServer {
     final nextPort = port ?? configuredPort(store);
     _validatePort(nextPort);
     if (enabled) {
-      if (!isSupportedPlatform) throw UnsupportedError('当前平台不支持本地注入服务');
+      if (!isSupportedPlatform) throw UnsupportedError('当前平台不支持 Mock 模拟注入服务');
       await _bind(nextPort);
     } else {
       await _close();
@@ -155,6 +157,7 @@ class LocalInjectServer {
   static Future<void> stop() => _serialized(_close);
 
   static Future<void> _close() async {
+    RuntimeRenderingProbe.reset();
     final server = _server;
     _server = null;
     lastError = null;
@@ -185,6 +188,19 @@ class LocalInjectServer {
 
     try {
       final path = request.uri.path;
+      if (path == '/diagnostics/rendering' && request.method == 'GET') {
+        await _writeJson(request.response, HttpStatus.ok, RuntimeRenderingProbe.state);
+        return;
+      }
+      if (path == '/diagnostics/rendering' && request.method == 'POST') {
+        final body = await _readJsonObject(request);
+        await _writeJson(request.response, HttpStatus.ok, RuntimeRenderingProbe.configure(body));
+        return;
+      }
+      if (request.method == 'GET' && path == '/diagnostics/performance') {
+        await _writeJson(request.response, HttpStatus.ok, collectRuntimePerformance());
+        return;
+      }
       if (request.method == 'GET' && (path == '/' || path == '/help')) {
         await _writeJson(request.response, HttpStatus.ok, _helpPayload());
         return;
@@ -348,7 +364,9 @@ class LocalInjectServer {
       'routes': {
         'POST /inject':
             '原始 JSON；可选 ?format=fan&source=cenc 或 {format,source,payload}；不改写时间',
-        'GET /health': '本地注入服务标识、监听端口和回放状态',
+        'GET /health': 'Mock 服务标识、监听端口和回放状态',
+        'GET /diagnostics/performance': '只读进程/原生内存、EEW/情报队列和震源推算积压计数；不含原始报文及凭据',
+        'POST /diagnostics/rendering': '临时绘制隔离 painting=all/overlays/none、freezeCamera={latitude,longitude,zoom}；reset=true 恢复；不停止数据处理',
         'POST /inject/eew':
             'raw Wolfx/FAN/P2P JSON → MockInputService; fresh=1 按机构墙钟时区改写 (JMA/KMA UTC+9, 其他 UTC+8)',
         'POST /inject/nied-gif':

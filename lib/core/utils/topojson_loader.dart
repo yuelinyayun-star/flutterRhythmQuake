@@ -54,6 +54,7 @@ class TopoJsonLoader {
   static TopoJsonData? _krData;
   static TopoJsonData? _twData;
   static TopoJsonData? _jpTsunamiData;
+  static final _loading = <String, Future<TopoJsonData?>>{};
 
   static TopoJsonData? get cnData => _cnData;
   static TopoJsonData? get jpData => _jpData;
@@ -64,47 +65,26 @@ class TopoJsonLoader {
     await Future.wait([loadCnEew(), loadJpEew(), loadKrEew()]);
   }
 
-  static Future<TopoJsonData?> loadCnEew() async {
-    if (_cnData != null) return _cnData;
-    try {
-      final jsonStr = await rootBundle.loadString(
-        'assets/maps/cn.eew.topo.json',
-      );
-      _cnData = parse(jsonStr, source: 'cn');
-      return _cnData;
-    } catch (e) {
-      print('TopoJSON cn.eew 加载失败: $e');
-      return null;
-    }
-  }
+  static Future<TopoJsonData?> loadCnEew() => _loadCached(
+    'cn',
+    'assets/maps/cn.eew.topo.json',
+    _cnData,
+    (data) => _cnData = data,
+  );
 
-  static Future<TopoJsonData?> loadJpEew() async {
-    if (_jpData != null) return _jpData;
-    try {
-      final jsonStr = await rootBundle.loadString(
-        'assets/maps/jp.eew.topo.json',
-      );
-      _jpData = parse(jsonStr, source: 'jp');
-      return _jpData;
-    } catch (e) {
-      print('TopoJSON jp.eew 加载失败: $e');
-      return null;
-    }
-  }
+  static Future<TopoJsonData?> loadJpEew() => _loadCached(
+    'jp',
+    'assets/maps/jp.eew.topo.json',
+    _jpData,
+    (data) => _jpData = data,
+  );
 
-  static Future<TopoJsonData?> loadKrEew() async {
-    if (_krData != null) return _krData;
-    try {
-      final jsonStr = await rootBundle.loadString(
-        'assets/maps/kr.eew.topo.json',
-      );
-      _krData = parse(jsonStr, source: 'kr');
-      return _krData;
-    } catch (e) {
-      print('TopoJSON kr.eew 加载失败: $e');
-      return null;
-    }
-  }
+  static Future<TopoJsonData?> loadKrEew() => _loadCached(
+    'kr',
+    'assets/maps/kr.eew.topo.json',
+    _krData,
+    (data) => _krData = data,
+  );
 
   static Future<TopoJsonData?> loadTwEew() async {
     if (_twData != null) return _twData;
@@ -122,16 +102,44 @@ class TopoJsonLoader {
     );
   }
 
-  static Future<TopoJsonData?> loadJpTsunami() async {
-    if (_jpTsunamiData != null) return _jpTsunamiData;
+  static Future<TopoJsonData?> loadJpTsunami() => _loadCached(
+    'jp_tsunami',
+    'assets/maps/jp.tsunami.topo.json',
+    _jpTsunamiData,
+    (data) => _jpTsunamiData = data,
+  );
+
+  static Future<TopoJsonData?> _loadCached(
+    String source,
+    String asset,
+    TopoJsonData? cached,
+    void Function(TopoJsonData) save,
+  ) {
+    if (cached != null) return Future.value(cached);
+    return _loading.putIfAbsent(
+      source,
+      () => _readAsset(
+        source,
+        asset,
+        save,
+      ).whenComplete(() {
+        _loading.remove(source);
+      }),
+    );
+  }
+
+  static Future<TopoJsonData?> _readAsset(
+    String source,
+    String asset,
+    void Function(TopoJsonData) save,
+  ) async {
     try {
-      final jsonStr = await rootBundle.loadString(
-        'assets/maps/jp.tsunami.topo.json',
-      );
-      _jpTsunamiData = parse(jsonStr, source: 'jp_tsunami');
-      return _jpTsunamiData;
+      final jsonStr = await rootBundle.loadString(asset, cache: false);
+      final data = parse(jsonStr, source: source);
+      if (data != null) save(data);
+      return data;
     } catch (e) {
-      print('TopoJSON jp.tsunami 加载失败: $e');
+      print('TopoJSON $source 加载失败: $e');
       return null;
     }
   }

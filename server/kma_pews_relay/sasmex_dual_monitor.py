@@ -4,9 +4,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 import hashlib
 import json
 import logging
+import math
 from pathlib import Path
 import signal
 
@@ -17,6 +19,35 @@ from sasno_realtime import SasnoRealtimeConfig, SasnoRealtimeFeed, parse_firesto
 from sidesis_realtime import parse_socket_io_frame, parse_sidesis_message, socket_url_with_engine_query
 
 IO_URL = 'wss://sidesis.iigea.org/socket.io/?EIO=4&transport=websocket'
+LOGGER = logging.getLogger(__name__)
+
+
+def content_fingerprint(document):
+    return hashlib.sha256(json.dumps(document['fields'], ensure_ascii=False, sort_keys=True,
+                                     separators=(',', ':')).encode('utf-8')).hexdigest()
+
+
+def retry_after_seconds(headers):
+    value = next((value for key, value in headers.items() if key.lower() == 'retry-after'), None)
+    if value is None:
+        return 0
+    try:
+        seconds = float(value)
+    except ValueError:
+        try:
+            stamp = parsedate_to_datetime(value)
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=UTC)
+            seconds = (stamp - datetime.now(UTC)).total_seconds()
+        except (TypeError, ValueError, OverflowError):
+            return 0
+    return max(0, seconds) if math.isfinite(seconds) else 0
+
+
+def atomic_bytes(path, body):
+    temporary = path.with_suffix('.tmp')
+    temporary.write_bytes(body)
+    temporary.replace(path)
 
 def now_utc():
     return datetime.now(UTC).isoformat()
@@ -30,7 +61,7 @@ async def never_publish(*args):
 
 class DualMonitor:
     def __init__(self, directory: Path, *, project='sasno-d79e1', io_url=IO_URL,
-                 poll_seconds=1.0, health_seconds=60.0):
+                 poll_seconds=5.0, health_seconds=60.0):
         self.directory = directory
         self.io_url = socket_url_with_engine_query(io_url)
         self.poll_seconds = poll_seconds
@@ -38,21 +69,46 @@ class DualMonitor:
         self.archive = SasmexArchive(str(directory / 'outbox'))
         self.firestore = SasnoRealtimeFeed(SasnoRealtimeConfig(project, poll_seconds, 20, 90), never_publish)
         self.stop = asyncio.Event()
+        self._health_lock = asyncio.Lock()
         self.started_at = now_utc()
         self.session_id = self.started_at
         self.io = dict(endpoint=self.io_url, connected=False, attempts=0, frames=0,
                        businessFrames=0, eligibleEewFrames=0, newEewContents=0,
+                       transportFrames=0, ignoredBusinessFrames=0, duplicateEewFrames=0,
                        lastFrameAtUtc=None, lastBusinessAtUtc=None, lastError=None)
         self.fs = dict(endpoint=self.firestore.config.document_url, connected=False,
                        polls=0, successfulPolls=0, changes=0, unchangedPolls=0,
                        lastAttemptAtUtc=None, lastSuccessAtUtc=None, lastChangeAtUtc=None,
                        lastStatus=None, lastError=None, originalSha256=None,
-                       contentSha256=None, sourceUpdateTime=None, sourceUnix=None)
+                       contentSha256=None, sourceUpdateTime=None, sourceUnix=None,
+                       consecutiveFailures=0, retryDelaySeconds=poll_seconds, nextAttemptAtUtc=None)
         self._fs_fingerprint = None
         self._fs_error = None
         self._io_seen = set()
+        # A service restart must not turn the existing snapshot into a new event.
+        for name in ('firestore-latest.original.json', 'firestore-baseline.original.json'):
+            path = directory / name
+            if path.exists():
+                document = json.loads(path.read_bytes().decode('utf-8'))
+                if not isinstance(document.get('fields'), dict):
+                    raise ValueError('Retained Firestore snapshot has no fields object')
+                self._fs_fingerprint = content_fingerprint(document)
+                break
 
     def record(self, transport, kind, originals=None, **details):
+        # Only earthquake content belongs in the upload outbox. Operational
+        # state stays in connection-status.json, local error files and journald.
+        if (transport, kind) not in {('socket-io', 'business-frame'), ('firestore', 'change')}:
+            return
+        # Name/date evidence by the event's source timestamp, even when received
+        # or uploaded on another day. Received time remains separate metadata.
+        if transport == 'firestore' and originals and 'raw/firestore-document.json' in originals:
+            decoded = parse_firestore_document(json.loads(originals['raw/firestore-document.json'].decode('utf-8')))
+            source = decoded.get('SASNOEVENTDATA', decoded.get('sasnoeventdata', decoded))
+            unix = source.get('unix') if isinstance(source, dict) else None
+            if unix is not None:
+                details['eventTimeUtc'] = datetime.fromtimestamp(float(unix), UTC).isoformat()
+                details['eventDateBasis'] = 'SASNOEVENTDATA.unix'
         self.archive.submit(dict(schemaVersion=1, sessionId=self.session_id,
                                  recordedAtUtc=now_utc(), transport=transport,
                                  recordKind=kind, publishedToApp=False, **details), originals or {})
@@ -66,8 +122,10 @@ class DualMonitor:
             result['lastSuccessAgeSeconds'] = round(age, 3) if age is not None else None
             result['healthy'] = bool(state['connected'] and age is not None and age < threshold)
             return result
-        return dict(schemaVersion=1, role='comparison-only', appTransport='existing-sidesis-ws',
-                    firestorePublishedToApp=False, startedAtUtc=self.started_at, recordedAtUtc=stamp.isoformat(),
+        return dict(schemaVersion=1, role='comparison-only', appTransport='relay-ws',
+                    appPrimarySource='sasno-firestore', publishesToApp=False,
+                    firestorePublishedToApp=False, archivePolicy='earthquake-content-only',
+                    startedAtUtc=self.started_at, recordedAtUtc=stamp.isoformat(),
                     socketIo=with_age(self.io, 'lastFrameAtUtc', 90),
                     firestore=with_age(self.fs, 'lastSuccessAtUtc', 90), archive=self.archive.status())
 
@@ -76,6 +134,10 @@ class DualMonitor:
             await asyncio.wait_for(self.stop.wait(), seconds)
         except TimeoutError:
             pass
+
+    async def write_health(self):
+        async with self._health_lock:
+            await asyncio.to_thread(atomic_json, self.directory / 'connection-status.json', self.health())
 
     def process_firestore(self, fetched):
         """Decode received bytes unchanged; never use the legacy EEW adapter."""
@@ -92,15 +154,14 @@ class DualMonitor:
                 raise ValueError('Firestore response has no fields object')
             decoded = parse_firestore_document(raw)
         except Exception as error:
-            # Retain actual failed response once per distinct response/error; counters remain in health.
+            # Keep the actual failed response locally, never in the TG outbox.
             signature = (fetched.status, raw_hash, str(error))
             if signature != self._fs_error:
-                self.record('firestore', 'invalid-response', {'raw/firestore-document.json': fetched.body},
-                            error=str(error), **request)
+                atomic_bytes(self.directory / 'firestore-error.original.json', fetched.body)
+                atomic_json(self.directory / 'firestore-error.json', dict(error=str(error), **request))
             self._fs_error = signature
             raise
-        fingerprint = hashlib.sha256(json.dumps(raw, ensure_ascii=False, sort_keys=True,
-                                                separators=(',', ':')).encode('utf-8')).hexdigest()
+        fingerprint = content_fingerprint(raw)
         self.fs.update(connected=True, lastSuccessAtUtc=fetched.received_at_utc,
                        lastError=None, successfulPolls=self.fs['successfulPolls'] + 1,
                        originalSha256=raw_hash, contentSha256=fingerprint,
@@ -109,35 +170,47 @@ class DualMonitor:
         self.fs['sourceUnix'] = source.get('unix') if isinstance(source, dict) else None
         if fingerprint != self._fs_fingerprint:
             baseline = self._fs_fingerprint is None
-            attachments = {'raw/firestore-document.json': fetched.body, 'parsed.json': json_bytes(decoded)}
-            self.record('firestore', 'baseline' if baseline else 'change', attachments,
-                        contentSha256=fingerprint, previousContentSha256=self._fs_fingerprint, **request)
             if not baseline:
+                attachments = {'raw/firestore-document.json': fetched.body, 'parsed.json': json_bytes(decoded)}
+                self.record('firestore', 'change', attachments,
+                            contentSha256=fingerprint, previousContentSha256=self._fs_fingerprint, **request)
                 self.fs['changes'] += 1
                 self.fs['lastChangeAtUtc'] = fetched.received_at_utc
+            atomic_bytes(self.directory / 'firestore-latest.original.json', fetched.body)
             self._fs_fingerprint = fingerprint
             if baseline:
-                # Exact response is retained on the server as well as in Telegram evidence.
-                (self.directory / 'firestore-baseline.original.json').write_bytes(fetched.body)
+                atomic_bytes(self.directory / 'firestore-baseline.original.json', fetched.body)
         else:
             self.fs['unchangedPolls'] += 1
         if self._fs_error is not None:
-            self.record('firestore', 'recovered', **request)
+            LOGGER.info('Firestore connection recovered (HTTP %s)', fetched.status)
         self._fs_error = None
 
     async def poll_firestore(self):
         while not self.stop.is_set():
             self.fs['polls'] += 1
             self.fs['lastAttemptAtUtc'] = now_utc()
+            fetched = None
             try:
                 fetched = await self.firestore._get()
                 self.process_firestore(fetched)
+                delay = self.poll_seconds
+                self.fs['consecutiveFailures'] = 0
             except Exception as error:
                 message = f'{type(error).__name__}: {error}'
-                if self.fs['lastError'] != message:
-                    self.record('firestore', 'connection-error', error=message, endpoint=self.fs['endpoint'])
-                self.fs.update(connected=False, lastError=message)
-            await self.wait(self.poll_seconds)
+                failures = self.fs['consecutiveFailures'] + 1
+                status = fetched.status if fetched is not None else None
+                base, maximum = (60, 900) if status == 429 else (5, 300)
+                delay = min(maximum, max(base, self.poll_seconds) * 2 ** min(failures - 1, 10))
+                if fetched is not None:
+                    delay = max(delay, retry_after_seconds(fetched.headers))
+                self.fs.update(connected=False, lastError=message, lastStatus=status,
+                               consecutiveFailures=failures)
+                LOGGER.warning('Firestore attempt failed (%s); retry in %.1fs', message, delay)
+            self.fs.update(retryDelaySeconds=delay,
+                           nextAttemptAtUtc=datetime.fromtimestamp(datetime.now(UTC).timestamp() + delay, UTC).isoformat())
+            await self.write_health()
+            await self.wait(delay)
 
     def process_io_frame(self, raw):
         original = raw if isinstance(raw, bytes) else raw.encode('utf-8')
@@ -146,8 +219,7 @@ class DualMonitor:
         try:
             frame = original.decode('utf-8')
         except UnicodeDecodeError:
-            self.record('socket-io', 'invalid-encoding', {'raw/socketio-frame.txt': original},
-                        endpoint=self.io_url, receivedAtUtc=self.io['lastFrameAtUtc'])
+            atomic_bytes(self.directory / 'socketio-error.original.frame', original)
             raise
         parsed = parse_socket_io_frame(frame)
         details = dict(endpoint=self.io_url, receivedAtUtc=self.io['lastFrameAtUtc'],
@@ -164,21 +236,28 @@ class DualMonitor:
                                                         separators=(',', ':')).encode('utf-8')).hexdigest()
                 duplicate = fingerprint in self._io_seen
                 details['duplicateContent'] = duplicate
-                if not duplicate:
+                if duplicate:
+                    self.io['duplicateEewFrames'] += 1
+                else:
                     self.io['newEewContents'] += 1
                     self._io_seen.add(fingerprint)
                     if len(self._io_seen) > 1024:
                         self._io_seen.clear()
                         self._io_seen.add(fingerprint)
-            self.record('socket-io', 'business-frame', {'raw/socketio-frame.txt': original}, **details)
+                    if event.get('epochMs') is not None:
+                        details['eventTimeUtc'] = datetime.fromtimestamp(event['epochMs'] / 1000, UTC).isoformat()
+                        details['eventDateBasis'] = 'sent' if event.get('sent') else 'updated'
+                    self.record('socket-io', 'business-frame', {'raw/socketio-frame.txt': original}, **details)
+            else:
+                self.io['ignoredBusinessFrames'] += 1
         else:
-            self.record('socket-io', 'transport-frame', {'raw/socketio-frame.txt': original}, **details)
+            self.io['transportFrames'] += 1
         return frame
 
     async def listen_io(self):
         while not self.stop.is_set():
             self.io['attempts'] += 1
-            self.record('socket-io', 'connecting', endpoint=self.io_url, attempt=self.io['attempts'])
+            LOGGER.info('Socket.IO connecting; attempt=%d', self.io['attempts'])
             try:
                 async with websockets.connect(self.io_url, open_timeout=20, close_timeout=5,
                                               ping_interval=None, max_size=2 * 1024 * 1024,
@@ -193,31 +272,24 @@ class DualMonitor:
                             await socket.send('3')
                         elif frame.startswith('40'):
                             self.io.update(connected=True, lastError=None)
-                            self.record('socket-io', 'connected', endpoint=self.io_url, namespace='/')
+                            LOGGER.info('Socket.IO connected')
                         elif frame.startswith('1') or frame.startswith('41'):
                             break
             except Exception as error:
                 self.io['lastError'] = f'{type(error).__name__}: {error}'
             finally:
                 self.io['connected'] = False
-                self.record('socket-io', 'disconnected', endpoint=self.io_url, error=self.io['lastError'])
+                LOGGER.info('Socket.IO disconnected; error=%s', self.io['lastError'])
             await self.wait(3)
 
     async def periodic_health(self):
         while not self.stop.is_set():
-            health = self.health()
-            await asyncio.to_thread(atomic_json, self.directory / 'connection-status.json', health)
-            self.record('both', 'connection-status', {'connection.json': json_bytes(health)})
+            await self.write_health()
             await self.wait(self.health_seconds)
 
     async def run(self):
         self.directory.mkdir(parents=True, exist_ok=True)
         self.archive.start()
-        backup = Path(__file__).with_name('backup')
-        attachments = {'backup/sasno_realtime.py': (backup / 'sasno_realtime.py').read_bytes()}
-        if (backup / 'firestore-original.json').exists():
-            attachments['backup/firestore-original.json'] = (backup / 'firestore-original.json').read_bytes()
-        self.record('firestore', 'implementation-backup', attachments, legacyParserUsedForComparison=False)
         await self.firestore.start()
         tasks = [asyncio.create_task(method()) for method in [self.poll_firestore, self.listen_io, self.periodic_health]]
         try:
@@ -234,8 +306,8 @@ class DualMonitor:
                 task.cancel()
             await asyncio.gather(waiter, *tasks, return_exceptions=True)
             await self.firestore.close()
-            self.record('both', 'stopped', {'connection.json': json_bytes(self.health())})
             await self.archive.close()
+            await self.write_health()
 
 
 async def main(args):
@@ -251,7 +323,7 @@ async def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--directory', type=Path, default=Path('/var/lib/rhythmquake-sasmex-compare'))
-    parser.add_argument('--poll-seconds', type=float, default=1)
+    parser.add_argument('--poll-seconds', type=float, default=5)
     args = parser.parse_args()
     if args.poll_seconds <= 0:
         parser.error('--poll-seconds must be positive')

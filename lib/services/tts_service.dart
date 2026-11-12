@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:collection';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:audioplayers/audioplayers.dart';
@@ -9,6 +8,9 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/system_voice_availability.dart';
+import 'native_windows_tts.dart';
+import 'windows_sapi_worker.dart';
 
 class TtsVoiceOption {
   final String id;
@@ -43,6 +45,12 @@ class _TtsJob {
   final DateTime? expiresAt;
   bool obsolete = false;
   bool playbackStarted = false;
+  Completer<void>? playbackCanceled;
+
+  void cancel() {
+    obsolete = true;
+    if (playbackCanceled?.isCompleted == false) playbackCanceled!.complete();
+  }
 
   _TtsJob({
     required this.text,
@@ -90,11 +98,14 @@ class TtsService {
 
   final FlutterTts _flutterTts = FlutterTts();
   final Queue<_TtsJob> _queue = Queue<_TtsJob>();
-  final Map<String, DateTime> _lastSpokenAt = {};
+  final Map<String, ({DateTime at, String? text})> _lastSpokenAt = {};
 
   bool _initialized = false;
   bool _engineReady = false;
   bool _processing = false;
+
+  /// Playback state only; display timing policies live in the native engine.
+  final ValueNotifier<bool> speakingNotifier = ValueNotifier(false);
   int _generation = 0;
   int _gptSovitsGeneration = 0;
   int _windowsGeneration = 0;
@@ -103,7 +114,7 @@ class TtsService {
   Completer<void>? _gptSovitsPlaybackCanceled;
   Completer<void>? _windowsPlaybackCanceled;
   Future<void>? _playbackStopFuture;
-  Process? _windowsSynthesisProcess;
+  final WindowsSapiWorker _windowsSapiWorker = WindowsSapiWorker();
   AudioPlayer? _gptSovitsPlayer;
   AudioPlayer? _windowsTtsPlayer;
   @visibleForTesting
@@ -151,7 +162,9 @@ class TtsService {
     try {
       await _ensureEngineReady();
       if (!_engineReady) return _voices;
-      final raw = await _flutterTts.getVoices;
+      final raw = await _flutterTts.getVoices.timeout(
+        const Duration(seconds: 5),
+      );
       final parsed = <TtsVoiceOption>[TtsVoiceOption.systemDefault];
       if (raw is List) {
         for (final item in raw) {
@@ -359,8 +372,15 @@ class TtsService {
       final now = DateTime.now();
       _pruneDedupeKeys(now);
       final last = _lastSpokenAt[dedupeKey];
-      if (last != null && now.difference(last) < dedupeWindow) return;
-      _lastSpokenAt[dedupeKey] = now;
+      if (last != null &&
+          now.difference(last.at) < dedupeWindow &&
+          (eewKind == null || last.text == cleaned)) {
+        return;
+      }
+      _lastSpokenAt[dedupeKey] = (
+        at: now,
+        text: eewKind == null ? null : cleaned,
+      );
     }
 
     if (interrupt) {
@@ -370,13 +390,17 @@ class TtsService {
         _queue.clear();
       }
       _generation++;
-      _activeJob?.obsolete = true;
+      _activeJob?.cancel();
       _cancelActiveDelay();
     }
 
+    final replacesPlayingEew =
+        eewEventKey != null &&
+        _activeJob?.eewEventKey == eewEventKey &&
+        _activeJob?.playbackStarted == true;
     final job = _TtsJob(
       text: cleaned,
-      delay: delay,
+      delay: replacesPlayingEew ? Duration.zero : delay,
       interrupt: interrupt,
       eewEventKey: eewEventKey,
       eventKey: eventKey,
@@ -397,10 +421,7 @@ class TtsService {
     } else {
       _queue.add(job);
     }
-    if (interrupt ||
-        (eewKind != null &&
-            eewKind != EewSpeechKind.update &&
-            _activeJob?.obsolete == true)) {
+    if (interrupt || (eewKind != null && _activeJob?.obsolete == true)) {
       await _stopActivePlayback();
     }
     unawaited(_processQueue());
@@ -408,11 +429,11 @@ class TtsService {
 
   void _pruneDedupeKeys(DateTime now) {
     _lastSpokenAt.removeWhere(
-      (_, timestamp) => now.difference(timestamp) >= _dedupeEntryTtl,
+      (_, entry) => now.difference(entry.at) >= _dedupeEntryTtl,
     );
     if (_lastSpokenAt.length <= _dedupeEntryLimit) return;
     final oldest = _lastSpokenAt.entries.toList()
-      ..sort((a, b) => a.value.compareTo(b.value));
+      ..sort((a, b) => a.value.at.compareTo(b.value.at));
     final removeCount = _lastSpokenAt.length - _dedupeEntryLimit;
     for (var i = 0; i < removeCount; i++) {
       _lastSpokenAt.remove(oldest[i].key);
@@ -446,17 +467,15 @@ class TtsService {
         _activeJob!.text = job.text;
         return;
       }
-      if (_activeJob?.eewEventKey == key &&
-          _activeJob?.eewKind == EewSpeechKind.update &&
-          _activeJob?.playbackStarted == false) {
-        _activeJob!.obsolete = true;
+      if (_activeJob?.eewEventKey == key) {
+        _activeJob!.cancel();
         _cancelActiveDelay();
       }
     } else if (_activeJob?.eewEventKey == key) {
-      _activeJob!.obsolete = true;
+      _activeJob!.cancel();
       _cancelActiveDelay();
     } else if (_activeJob != null && !_activeJob!.isCriticalEew) {
-      _activeJob!.obsolete = true;
+      _activeJob!.cancel();
       _cancelActiveDelay();
     }
 
@@ -477,7 +496,7 @@ class TtsService {
   void discardEew(String eventKey) {
     _queue.removeWhere((job) => job.eewEventKey == eventKey);
     if (_activeJob?.eewEventKey != eventKey) return;
-    _activeJob!.obsolete = true;
+    _activeJob!.cancel();
     _cancelActiveDelay();
     unawaited(_stopActivePlayback());
   }
@@ -485,7 +504,7 @@ class TtsService {
   void discardEvent(String eventKey) {
     _queue.removeWhere((job) => job.eventKey == eventKey);
     if (_activeJob?.eventKey != eventKey) return;
-    _activeJob!.obsolete = true;
+    _activeJob!.cancel();
     _cancelActiveDelay();
     unawaited(_stopActivePlayback());
   }
@@ -521,7 +540,7 @@ class TtsService {
       await _gptSovitsPlayer?.stop();
     } else if (!kIsWeb && Platform.isWindows) {
       _windowsGeneration++;
-      _windowsSynthesisProcess?.kill();
+      if (_windowsSapiWorker.isSynthesizing) _windowsSapiWorker.abort();
       if (_windowsPlaybackCanceled?.isCompleted == false) {
         _windowsPlaybackCanceled!.complete();
       }
@@ -534,11 +553,11 @@ class TtsService {
   Future<void> stop() async {
     _queue.clear();
     _generation++;
-    _activeJob?.obsolete = true;
+    _activeJob?.cancel();
     _cancelActiveDelay();
     _gptSovitsGeneration++;
     _windowsGeneration++;
-    _windowsSynthesisProcess?.kill();
+    if (_windowsSapiWorker.isSynthesizing) _windowsSapiWorker.abort();
     if (_gptSovitsPlaybackCanceled?.isCompleted == false) {
       _gptSovitsPlaybackCanceled!.complete();
     }
@@ -554,35 +573,27 @@ class TtsService {
   }
 
   Future<List<TtsVoiceOption>> _loadWindowsVoices() async {
-    const script = r'''
-Add-Type -AssemblyName System.Speech
-$s = New-Object System.Speech.Synthesis.SpeechSynthesizer
-$items = @()
-foreach ($v in $s.GetInstalledVoices()) {
-  $items += [PSCustomObject]@{
-    name = $v.VoiceInfo.Name
-    culture = $v.VoiceInfo.Culture.Name
+    await checkWindowsSystemVoice();
+    return _voices;
   }
-}
-$s.Dispose()
-$items | ConvertTo-Json -Compress
-''';
+
+  /// Queries the same System.Speech engine used by Windows playback.
+  /// The UI's synthetic "system default" option is never proof of a voice.
+  Future<SystemVoiceAvailability> checkWindowsSystemVoice() async {
     try {
-      final result = await Process.run('powershell.exe', [
-        '-NoProfile',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-Command',
-        script,
-      ], runInShell: false).timeout(const Duration(seconds: 6));
-      if (result.exitCode != 0) {
-        debugPrint('[TTS] Windows voice list failed: ${result.stderr}');
-        return _voices;
+      final result = await NativeWindowsTts.probe();
+      final state = switch (result['state']) {
+        'available' => SystemVoiceState.available,
+        'unavailable' => SystemVoiceState.unavailable,
+        _ => SystemVoiceState.checkFailed,
+      };
+      if (state == SystemVoiceState.checkFailed) {
+        return SystemVoiceAvailability(
+          state,
+          diagnostic: result['message']?.toString(),
+        );
       }
-      final output = result.stdout.toString().trim();
-      if (output.isEmpty) return _voices;
-      final decoded = json.decode(output);
-      final list = decoded is List ? decoded : [decoded];
+      final list = result['voices'] as List;
       final parsed = <TtsVoiceOption>[TtsVoiceOption.systemDefault];
       for (final item in list) {
         if (item is! Map) continue;
@@ -600,31 +611,24 @@ $items | ConvertTo-Json -Compress
       }
       parsed.sort(_sortVoice);
       _voices = parsed;
+      return SystemVoiceAvailability(
+        state,
+        diagnostic: result['message']?.toString(),
+      );
     } catch (e) {
-      debugPrint('[TTS] Windows voice list error: $e');
-      _voices = const [TtsVoiceOption.systemDefault];
+      debugPrint('[TTS] Windows voice detection failed: $e');
+      return SystemVoiceAvailability(
+        SystemVoiceState.checkFailed,
+        diagnostic: e.toString(),
+      );
     }
-    return _voices;
   }
 
   Future<void> _speakViaWindowsSapi(String text) async {
     final generation = _windowsGeneration;
     if (generation != _windowsGeneration || !enabled) return;
 
-    const script = r'''
-Add-Type -AssemblyName System.Speech
-$s = New-Object System.Speech.Synthesis.SpeechSynthesizer
-$s.Rate = [int]$env:RQ_TTS_RATE
-$s.Volume = [int]$env:RQ_TTS_VOLUME
-if (![string]::IsNullOrWhiteSpace($env:RQ_TTS_VOICE)) {
-  try { $s.SelectVoice($env:RQ_TTS_VOICE) } catch {}
-}
-$s.SetOutputToWaveFile($env:RQ_TTS_FILE)
-$s.Speak($env:RQ_TTS_TEXT)
-$s.Dispose()
-''';
     File? file;
-    Process? process;
     StreamSubscription<void>? completionSubscription;
     Completer<void>? playbackCanceled;
     try {
@@ -633,34 +637,13 @@ $s.Dispose()
       file = File(
         '${dir.path}/rq_windows_tts_${DateTime.now().microsecondsSinceEpoch}.wav',
       );
-      final env = Map<String, String>.from(Platform.environment);
-      env['RQ_TTS_TEXT'] = text;
-      env['RQ_TTS_FILE'] = file.path;
-      env['RQ_TTS_RATE'] = _windowsRate().toString();
-      env['RQ_TTS_VOLUME'] = (volume.clamp(0.0, 1.0) * 100).round().toString();
-      env['RQ_TTS_VOICE'] = _selectedVoice()?.name ?? '';
-
-      process = await Process.start(
-        'powershell.exe',
-        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
-        environment: env,
-        runInShell: false,
+      await _windowsSapiWorker.synthesize(
+        text: text,
+        file: file.path,
+        rate: _windowsRate(),
+        volume: (volume.clamp(0.0, 1.0) * 100).round(),
+        voice: _selectedVoice()?.name ?? '',
       );
-      _windowsSynthesisProcess = process;
-      unawaited(process.stdout.drain<void>());
-      unawaited(process.stderr.drain<void>());
-      if (generation != _windowsGeneration) process.kill();
-      final exitCode = await process.exitCode.timeout(
-        const Duration(seconds: 12),
-        onTimeout: () {
-          process!.kill();
-          return -1;
-        },
-      );
-      if (exitCode != 0 && generation == _windowsGeneration) {
-        debugPrint('[TTS] Windows SAPI failed with exit code $exitCode');
-        return;
-      }
       if (generation != _windowsGeneration || !await file.exists()) return;
 
       _windowsTtsPlayer ??= AudioPlayer();
@@ -686,9 +669,6 @@ $s.Dispose()
     } catch (e) {
       debugPrint('[TTS] Windows SAPI error: $e');
     } finally {
-      if (identical(_windowsSynthesisProcess, process)) {
-        _windowsSynthesisProcess = null;
-      }
       await completionSubscription?.cancel();
       if (file != null && await file.exists()) {
         try {
@@ -862,6 +842,7 @@ $s.Dispose()
   Future<void> _processQueue() async {
     if (_processing) return;
     _processing = true;
+    speakingNotifier.value = true;
     try {
       while (_queue.isNotEmpty) {
         final pendingStop = _playbackStopFuture;
@@ -890,37 +871,47 @@ $s.Dispose()
             continue;
           }
           job.playbackStarted = true;
-          if (gptSovitsEnabled) {
-            await _speakViaGptSovits(job.text);
-            continue;
-          }
-          if (!kIsWeb && Platform.isWindows) {
-            await (windowsSpeechOverrideForTest?.call(job.text) ??
-                _speakViaWindowsSapi(job.text));
-            continue;
-          }
-          await _ensureEngineReady();
-          if (!_engineReady || job.obsolete) continue;
-          if (job.interrupt) {
-            await _safeTtsCall(() => _flutterTts.stop());
-          }
-          await _applyEngineConfig();
-          if (!job.obsolete) {
-            await _safeTtsCall(() => _flutterTts.speak(job.text));
-          }
+          final canceled = Completer<void>();
+          job.playbackCanceled = canceled;
+          await Future.any([_playJob(job), canceled.future]);
         } finally {
+          job.playbackCanceled = null;
           if (identical(_activeJob, job)) _activeJob = null;
         }
       }
     } finally {
       _processing = false;
+      speakingNotifier.value = false;
+    }
+  }
+
+  Future<void> _playJob(_TtsJob job) async {
+    if (gptSovitsEnabled) {
+      await _speakViaGptSovits(job.text);
+      return;
+    }
+    if (!kIsWeb && Platform.isWindows) {
+      await (windowsSpeechOverrideForTest?.call(job.text) ??
+          _speakViaWindowsSapi(job.text));
+      return;
+    }
+    await _ensureEngineReady();
+    if (!_engineReady || job.obsolete) return;
+    if (job.interrupt) {
+      await _safeTtsCall(() => _flutterTts.stop());
+    }
+    await _applyEngineConfig();
+    if (!job.obsolete) {
+      await _safeTtsCall(() => _flutterTts.speak(job.text));
     }
   }
 
   Future<void> _ensureEngineReady() async {
     if (_engineReady) return;
     try {
-      await _flutterTts.awaitSpeakCompletion(true);
+      await _flutterTts.awaitSpeakCompletion(true).timeout(
+        const Duration(seconds: 5),
+      );
       _engineReady = true;
     } catch (e) {
       debugPrint('[TTS] init error: $e');

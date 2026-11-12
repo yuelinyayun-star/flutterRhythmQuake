@@ -1,0 +1,23 @@
+{
+  "key": "incois_incois2025otqm_3",
+  "source": "incois",
+  "Data": {
+    "id": "incois2025otqm_3",
+    "eventId": "incois2025otqm",
+    "updates": 3,
+    "level": "Information",
+    "issueTime": "2025-07-30T07:18:20+05:30",
+    "headline": "... NO TSUNAMI THREAT FOR INDIAN COAST ...",
+    "description": "Based on pre-run model scenarios, there is NO THREAT to India",
+    "instruction": "For regions under WARNING (RED), public should be advised to move in-land towards higher grounds. Vessels should move into deep ocean.For regions under ALERT (Orange), public should be advised to avoid beaches and low-lying coastal areas. Vessels should move into deep oceanFor regions under WATCH (Yellow) and NO THREAT (Green), no immediate action is requiredThis bulletin is being issued as advice. Only national/state/local authorities and disaster management officers have the authority to make decisions regarding the official threat and warning status in their coastal areas and any action to be taken in response. ",
+    "placeName": "Off East Coast of Kamchatka",
+    "magnitude": 8.7,
+    "latitude": 52.57,
+    "longitude": 160.08,
+    "depth": 10.0,
+    "detailUrl": "https://tsunami.incois.gov.in/itews/DSSProducts/OPR/incois2025otqm/NTWC/B3/incois2025otqm_B3_NTWC_Pub.json"
+  },
+  "original": "test/fixtures/tsunami_presentation_20261023/raw/b964eac24cca7de8.original",
+  "url": "https://tsunami.incois.gov.in/itews/DSSProducts/OPR/incois2025otqm/NTWC/B3/incois2025otqm_B3_NTWC_Pub.json",
+  "sha256": "b964eac24cca7de87c97ecae3715b9b984734f12fe30ffa88b202c9ac9a8bfba"
+}

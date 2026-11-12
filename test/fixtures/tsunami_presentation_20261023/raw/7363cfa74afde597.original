@@ -1,0 +1,27 @@
+{
+  "Data": {
+    "id": "BOLETIN_INFORMATIVO_001_20260914_151809",
+    "updates": 1,
+    "shockTime": "2026-09-15 04:38:58",
+    "latitude": 15.045,
+    "longitude": -104.219,
+    "depth": 10.0,
+    "magnitude": 5.5,
+    "placeName": "墨西哥米却肯州沿岸远海",
+    "agency": "CAT",
+    "bulletinUrl": "https://diredimoat.semar.gob.mx/cat/Boletines/BOLETIN_INFORMATIVO_001_20260914_151809.txt",
+    "capUrl": "https://diredimoat.semar.gob.mx/cat/rss/ultimo_boletin.xml",
+    "certainty": "Unlikely",
+    "description": "En base a las caracteristicas, ubicacion del sismo y a la informacion recibida, no se espera la generacion de un tsunami para las costas nacionales.",
+    "eventId": "BOLETIN_INFORMATIVO_001_20260914_151809",
+    "headline": "BOLETIN INFORMATIVO 001 20260914 151809",
+    "instruction": "NINGUNA. Este sera el unico boletin que se emita para este evento, a menos que se reciba informacion complementaria.",
+    "issueTime": "2026-09-15 05:18:09",
+    "level": "Information",
+    "senderName": "CENTRO DE ALERTA DE TSUNAMIS (CAT-SEMAR)",
+    "severity": "Minor",
+    "urgency": "Unknown"
+  },
+  "md5": "039489e8006dc714f078cfd6a24a2996",
+  "source": "cat_tsunami"
+}

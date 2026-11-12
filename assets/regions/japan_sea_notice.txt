@@ -1,0 +1,24 @@
+Offline epicentral sea-place index (not national borders or EEZ boundaries)
+
+Geometry: Benidate / 0Quake JMA_Region, CC0-1.0 Universal
+https://github.com/0Quake/JMA_Region
+Pinned commit: a7ee5949d8df9879dd081eec21142a37622e9f3a
+Original GeoJSON SHA256: 8bd26502076d77b5d440a30df2c40356ecb5d5ad62309494ade4742246084a02
+This is THIRD-PARTY tracing, not an official JMA vector dataset.
+Original CC0 dedication: https://creativecommons.org/publicdomain/zero/1.0/
+
+Underlying maps/names: Japan Meteorological Agency
+https://www.data.jma.go.jp/eqev/data/joho/region/
+https://www.jma.go.jp/jma/press/0609/20b/20060920bessi3.pdf
+Original JMA source terms: https://www.jma.go.jp/jma/kishou/info/coment.html
+Separate simplified Chinese display aliases are applied; source records and
+geometry are preserved. No buffers, inferred polygons or boundary smoothing.
+
+Chinese baseline coordinates: PRC Government statement dated 2012-09-10
+https://www.fmprc.gov.cn/web/wjb_673085/zzjg_673183/bjhysws_674671/bhsmgb/201209/t20120910_320427.shtml
+The enclosed areas are named as Taiwan Province's Diaoyu/Chiwei island regions.
+These polygons represent only the enclosed baseline areas, not exact land
+shorelines or the full territorial sea. No territorial-sea buffers generated.
+
+See japan_sea_regions.provenance.json for every source code/name, separate
+display alias and binary-output hashes. Raw archives are retained unchanged.

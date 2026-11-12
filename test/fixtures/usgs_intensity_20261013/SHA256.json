@@ -1,0 +1,14 @@
+[
+  {
+    "file": "us6000u214.versions.original.geojson",
+    "sha256": "1244f0c313b97e04cedf2cc92e5975333ef1c2c863d17351412aac7e7edb8a26"
+  },
+  {
+    "file": "us6000u214.v1.info.original.json",
+    "sha256": "02fec49171b70316e5e36c44ef002a684b53cf73658fe7c2f476777d19915849"
+  },
+  {
+    "file": "us6000u214.v1.cont_mmi.original.json",
+    "sha256": "2b263864cb6d5836cb28be14bee8d204d57a65c2e10f0a9c05cc3c59ba5c4f50"
+  }
+]

@@ -2,6 +2,8 @@ import 'package:flutter/widgets.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../core/calculator.dart';
+import '../../core/utils/cenc_ir_region_intensities.dart';
+import '../../core/utils/topojson_loader.dart';
 import '../../models/cenc_ir_data.dart';
 import '../ui/ui_scale.dart';
 
@@ -22,6 +24,7 @@ List<LatLng> cencIrFocusPoints({
   required String eventId,
   required double epicenterLatitude,
   required double epicenterLongitude,
+  TopoJsonData? geography,
 }) {
   final normalizedEventId = eventId.trim();
   if (normalizedEventId.isEmpty ||
@@ -40,6 +43,12 @@ List<LatLng> cencIrFocusPoints({
   for (final station in data.instrumentIntensities) {
     if (!station.hasUsableCoordinate) continue;
     points.add(LatLng(station.latitude, station.longitude));
+  }
+  final areas = geography ?? TopoJsonLoader.cnData;
+  if (areas != null) {
+    points.addAll(
+      CencIrRegionIntensities.filledBounds(areas, data.instrumentIntensities),
+    );
   }
   return points;
 }

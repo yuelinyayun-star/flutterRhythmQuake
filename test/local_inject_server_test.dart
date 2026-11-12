@@ -105,6 +105,8 @@ void main() {
       )).close();
       final identity = jsonDecode(await utf8.decoder.bind(health).join());
       expect(identity['service'], 'RhythmQuake.LocalInject');
+      expect(identity['apiName'], 'Mock');
+      expect(source.name, 'Mock');
       final raw =
           (jsonDecode(
                     File(

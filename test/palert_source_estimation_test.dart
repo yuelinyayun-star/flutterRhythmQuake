@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:flutterrhythmquake/core/source_estimation/palert_source_profile.dart';
@@ -22,6 +24,49 @@ PAlertStation sample(int second, double? pga, {int index = 0}) => PAlertStation(
 );
 
 void main() {
+  test(
+    'unmodified public quiet PGA responses retain eight actual observations',
+    () {
+      final directory = Directory('test/fixtures/palert_cadence_20261014');
+      final catalog =
+          jsonDecode(
+                File('${directory.path}/station-list.json').readAsStringSync(),
+              )
+              as Map;
+      final station = (catalog['data']['stationList']['staInfos'] as List)
+          .cast<Map>()
+          .firstWhere((s) => s['station'] == 'W460');
+      final pick = PAlertSourcePick();
+      for (var i = 0; i < 12; i++) {
+        final raw =
+            jsonDecode(
+                  File(
+                    '${directory.path}/${i.toString().padLeft(2, '0')}.json',
+                  ).readAsStringSync(),
+                )
+                as Map;
+        final pga = raw['data']['pga'] as Map;
+        final time = DateTime.parse(pga['timestamp'] as String);
+        pick.update(
+          PAlertStation(
+            id: station['station'],
+            network: station['network'],
+            name: station['locname'],
+            area: station['area'],
+            coordinate: LatLng(
+              (station['lat'] as num).toDouble(),
+              (station['lon'] as num).toDouble(),
+            ),
+            pgaGal: (pga['dataVals']['W460'] as num).toDouble(),
+            dataTime: time,
+            receivedAt: time,
+          ),
+        );
+      }
+      expect(pick.hasQuietHistory, isTrue);
+      expect(pick.triggerAt, isNull);
+    },
+  );
   test('KA level boundaries also determine intensity categories', () {
     for (var i = 0; i < PAlertSourceProfile.pgaThresholds.length; i++) {
       final threshold = PAlertSourceProfile.pgaThresholds[i];
@@ -81,11 +126,31 @@ void main() {
       pick.update(sample(t, 0.2));
     }
     expect(pick.triggerAt, isNull);
-    pick.update(sample(20, 1.5));
+    pick.update(sample(24, 1.5));
     expect(pick.triggerAt, isNull);
-    pick.update(sample(21, null));
+    pick.update(sample(25, null));
     expect(pick.updatedAt, isNull);
   });
+
+  test(
+    'real received cadence gaps preserve actual samples; expiry uses time',
+    () {
+      final pick = PAlertSourcePick();
+      for (var t = 0; t < 16; t += 2) {
+        pick.update(sample(t, 0.02));
+      }
+      expect(pick.hasQuietHistory, isTrue);
+      pick.update(sample(16, 2.5));
+      expect(pick.triggerAt, base.add(const Duration(seconds: 16)));
+      pick.update(sample(18, 2.5));
+      for (final t in [20, 22, 24]) {
+        pick.update(sample(t, 0.02));
+        expect(pick.triggerAt, isNotNull);
+      }
+      pick.update(sample(26, 0.02));
+      expect(pick.triggerAt, isNull);
+    },
+  );
 
   test('raw zero is quiet; high PGA without PGV uses level 15', () {
     final pick = PAlertSourcePick();
@@ -149,12 +214,33 @@ void main() {
     expect(results, isNotEmpty);
     expect(results.every(PAlertSourceEstimation.isPublishable), isTrue);
     expect(results.first.method, 'palert_hyp_v1');
-    expect(results.first.magnitude, isNull);
+    expect(results.first.magnitude, isNonNegative);
+    expect(results.first.diagnostics['palert_magnitude_preliminary'], isTrue);
     expect(results.first.diagnostics['quality_score'], isA<num>());
     expect(
       session.update(frame, ids, base.add(const Duration(seconds: 15))),
       isEmpty,
     );
+  });
+
+  test('two-second raw cadence reaches independent HYP publication', () async {
+    final worker = PAlertSourceWorker();
+    addTearDown(worker.dispose);
+    final ids = {for (var i = 0; i < 6; i++) 'TEST-$i'};
+    for (var t = 0; t < 16; t += 2) {
+      await worker.process(
+        [for (var i = 0; i < 6; i++) sample(t, 0.02, index: i)],
+        {},
+        now: base.add(Duration(seconds: t)),
+      );
+    }
+    final events = await worker.process(
+      [for (var i = 0; i < 6; i++) sample(16, 2.5, index: i)],
+      ids,
+      now: base.add(const Duration(seconds: 16)),
+    );
+    expect(events, isNotEmpty);
+    expect(events!.first.estimate!.magnitude, isNonNegative);
   });
 
   test(

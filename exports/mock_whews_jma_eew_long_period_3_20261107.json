@@ -1,0 +1,43 @@
+{
+  "Data": {
+    "id": "20261107171401",
+    "updates": 1,
+    "shockTime": "2026-11-07 17:13:49",
+    "createTime": "2026-11-07 17:14:01",
+    "latitude": 37.5,
+    "longitude": 137.3,
+    "depth": 10.0,
+    "magnitude": 6.2,
+    "placeName": "【模拟测试】石川県能登地方",
+    "epiIntensity": "6+",
+    "maxLgInt": "3",
+    "infoTypeName": "警報",
+    "editorialOffice": "気象庁本庁",
+    "isTraining": false,
+    "isSea": false,
+    "landOrSea": "内陸",
+    "warningAreas": [
+      {
+        "name": "北陸",
+        "code": "9934",
+        "scope": "緊急地震速報（地方予報区）"
+      },
+      {
+        "name": "石川",
+        "code": "9170",
+        "scope": "緊急地震速報（府県予報区）"
+      },
+      {
+        "name": "石川県能登",
+        "code": "390",
+        "scope": "緊急地震速報（細分区域）"
+      }
+    ],
+    "isPLUM": false,
+    "isIPF": false,
+    "final": false,
+    "cancel": false
+  },
+  "md5": "simulation-not-upstream-md5",
+  "source": "jma_eew"
+}

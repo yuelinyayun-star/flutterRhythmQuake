@@ -132,7 +132,8 @@ class QuakeTime {
       Duration(hours: sourceTimeZone),
     ).toLocal();
     final clock = formatWallClock(display, includeSeconds: includeSeconds);
-    return includeZoneLabel ? '$clock ($systemZoneLabel)' : clock;
+    final zone = formatTimeZone(display.timeZoneOffset);
+    return includeZoneLabel ? '$clock ($zone)' : clock;
   }
 
   /// 获取时区标签
@@ -238,14 +239,14 @@ class QuakeTime {
   }
 
   /// 计算统一事件的已过去时间（秒）
-  static int calcPassedSecondsUnified(UnifiedQuakeData event) {
+  static int calcPassedSecondsUnified(UnifiedQuakeData event, {DateTime? now}) {
     final refTime = event.originTime;
     if (refTime == null) return event.useSourceTimeForExpiry ? 999999 : 0;
     // 使用适配器中写入的 timeZone 字段，比字符串匹配更准确
     final offset = Duration(hours: event.timeZone);
-    if (event.isReplay) {
+    if (event.isReplay || now != null) {
       final instant = wallClockToUtc(refTime, offset);
-      return NtpService().now.toUtc().subtract(event.replayClockOffset)
+      return (now ?? NtpService().now).toUtc().subtract(event.replayClockOffset)
           .difference(instant).inSeconds.clamp(0, 999999);
     }
     return _calcPassedSecondsFromDateTime(refTime, offset);

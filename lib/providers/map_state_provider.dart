@@ -4,14 +4,19 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/quake_message.dart';
+import '../models/history_map_product.dart';
 import '../models/sasmex_map_geometry.dart';
 import '../widgets/map/map_config.dart';
+import '../widgets/map/range_camera_geometry.dart';
 import '../core/calculator.dart';
 import '../core/travel_time_service.dart';
 import '../core/utils/world_wrap.dart';
 import '../core/utils/quake_time.dart';
 import '../services/ntp_service.dart';
 import '../services/location_service.dart';
+import '../services/native_camera_focus.dart';
+import '../core/mobile_weather_layers.dart';
+import '../services/native_weather_map_policy.dart';
 import 'dart:math';
 
 enum MapCameraMode { autoFollow, manualLocked }
@@ -190,7 +195,38 @@ class MapStateProvider with ChangeNotifier {
         .contains(camera.latLngToScreenOffset(wrapped));
   }
 
+  /// Range vertices are not epicenter fields. Validate them as one native
+  /// batch; event/card callers keep the strict isPointInEventViewport contract.
+  bool areGeometryPointsInEventViewport(
+    List<LatLng> points, {required EdgeInsets padding}
+  ) {
+    final controller = _mapController;
+    if (controller == null) return false;
+    final geometry = RangeCameraGeometry.prepare(points);
+    if (geometry.points.length != points.length) return false;
+    final destination = _animationDestination;
+    final camera = destination == null
+        ? controller.camera
+        : controller.camera.withPosition(
+            center: destination.center,
+            zoom: destination.zoom,
+          );
+    final size = camera.nonRotatedSize;
+    if (size.width <= padding.horizontal || size.height <= padding.vertical) {
+      return false;
+    }
+    final visible = padding.deflateRect(Offset.zero & size);
+    return geometry.points.every((point) {
+      final wrapped = LatLng(
+        point.latitude,
+        WorldWrap.longitudeClosestTo(point.longitude, camera.center.longitude),
+      );
+      return visible.contains(camera.latLngToScreenOffset(wrapped));
+    });
+  }
+
   QuakeMessage? _selectedHistoryEvent;
+  HistoryMapProduct _selectedHistoryProduct = HistoryMapProduct.earthquake;
   String _tileKey = 'petalLight';
   final Map<String, bool> _overlayEnabled = {
     'cloudLayer': false,
@@ -219,7 +255,40 @@ class MapStateProvider with ChangeNotifier {
   };
 
   String _weatherStationMode = 'auto';
-  String get weatherStationMode => _weatherStationMode;
+  Map<String, bool>? _mobileWeatherLayers;
+  String? _mobileWeatherStationMode;
+  int? _mobileWeatherSourceMask;
+  bool get _usesMobileWeatherLayers => _mobileViewportIsolation && _viewport == MapViewport.weather;
+  bool get hasMobileWeatherLayerProfile => _mobileWeatherLayers != null;
+  bool get isMobileWeatherViewport => _usesMobileWeatherLayers;
+  String get weatherStationMode => _usesMobileWeatherLayers ? mobileWeatherStationMode : _weatherStationMode;
+  String get mobileWeatherStationMode => _mobileWeatherStationMode ?? _weatherStationMode;
+  bool mobileWeatherLayerEnabled(String key) => _mobileWeatherLayers?[key] ?? _overlayEnabled[key] ?? false;
+
+  void restoreMobileWeatherLayers(Map<String, bool> values, {String? stationMode}) {
+    _mobileWeatherLayers = {for (final key in mobileWeatherLayerKeys) key: values[key] ?? _overlayEnabled[key] ?? false};
+    _mobileWeatherStationMode = stationMode ?? _weatherStationMode;
+    _mobileWeatherSourceMask = null;
+    notifyListeners();
+  }
+
+  void setMobileWeatherLayer(String key, bool enabled) {
+    if (!mobileWeatherLayerKeys.contains(key) || mobileWeatherLayerEnabled(key) == enabled) return;
+    _mobileWeatherLayers ??= {for (final key in mobileWeatherLayerKeys) key: _overlayEnabled[key] ?? false};
+    _mobileWeatherLayers![key] = enabled;
+    _mobileWeatherSourceMask = null;
+    notifyListeners();
+  }
+
+  void setMobileWeatherStationMode(String value) {
+    if (!const {'auto', 'rain', 'temperature', 'wind'}.contains(value) || mobileWeatherStationMode == value) return;
+    _mobileWeatherStationMode = value;
+    notifyListeners();
+  }
+
+  int get _mobileSourceMask => _mobileWeatherSourceMask ??= NativeWeatherMapPolicy.requiredSources(0,
+    [for (var i = 0; i < hostedWeatherLayerKeys.length; i++)
+      if (mobileWeatherLayerEnabled(hostedWeatherLayerKeys[i])) 1 << i].fold(0, (a, b) => a | b));
 
   void setWeatherStationMode(String mode) {
     if (_weatherStationMode == mode) return;
@@ -255,9 +324,16 @@ class MapStateProvider with ChangeNotifier {
   DateTime? _lastCameraMovedAt;
 
   QuakeMessage? get selectedHistoryEvent => _selectedHistoryEvent;
+  HistoryMapProduct get selectedHistoryProduct => _selectedHistoryProduct;
   String get tileKey => _tileKey;
   String get tileUrl => MapConfig.urlByKey(_tileKey);
-  bool isOverlayEnabled(String key) => _overlayEnabled[key] ?? false;
+  bool isOverlayEnabled(String key) {
+    if (_usesMobileWeatherLayers && mobileWeatherLayerKeys.contains(key)) {
+      final source = hostedWeatherLayerKeys.indexOf(key);
+      return source < 0 ? mobileWeatherLayerEnabled(key) : _mobileSourceMask & (1 << source) != 0;
+    }
+    return _overlayEnabled[key] ?? false;
+  }
   Map<String, bool> get overlayEnabledMap => Map.unmodifiable(_overlayEnabled);
   bool get isAutoZoom => _isAutoZoom;
   MapCameraMode get cameraMode => _cameraMode;
@@ -288,6 +364,7 @@ class MapStateProvider with ChangeNotifier {
     if (!_overlayEnabled.containsKey(key)) return;
     if (_overlayEnabled[key] == enabled) return;
     _overlayEnabled[key] = enabled;
+    _mobileWeatherSourceMask = null;
     notifyListeners();
   }
 
@@ -297,25 +374,31 @@ class MapStateProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  void selectHistoryEvent(QuakeMessage? event) {
+  void selectHistoryEvent(QuakeMessage? event, {
+    HistoryMapProduct product = HistoryMapProduct.earthquake,
+  }) {
     if (_selectedHistoryEvent?.eventId == event?.eventId && event != null &&
-        _selectedHistoryEvent?.source == event.source) {
+        _selectedHistoryEvent?.source == event.source && _selectedHistoryProduct == product) {
       return;
     }
     _selectedHistoryEvent = event;
+    _selectedHistoryProduct = event == null ? HistoryMapProduct.earthquake : product;
     notifyListeners();
   }
 
   bool get isHistoryEventSelected => _selectedHistoryEvent != null;
 
-  bool isSelectedHistoryEvent(QuakeMessage event) {
+  bool isSelectedHistoryEvent(QuakeMessage event, {
+    HistoryMapProduct product = HistoryMapProduct.earthquake,
+  }) {
     return _selectedHistoryEvent?.eventId == event.eventId &&
-        _selectedHistoryEvent?.source == event.source;
+        _selectedHistoryEvent?.source == event.source && _selectedHistoryProduct == product;
   }
 
   void clearSelectedHistoryEvent() {
     if (_selectedHistoryEvent == null) return;
     _selectedHistoryEvent = null;
+    _selectedHistoryProduct = HistoryMapProduct.earthquake;
     notifyListeners();
   }
 
@@ -650,12 +733,24 @@ class MapStateProvider with ChangeNotifier {
     final fittedCamera = followWaves
         ? _fitViewToViewport(view, minZoom: minZoom, maxZoom: maxZoom)
         : null;
-    final center = fittedCamera?.center ?? view.center;
-    final zoom =
-        fittedCamera?.zoom ??
-        _zoomForDiff(
-          max(view.latDiff, view.lngDiff) + padding * 2,
-        ).clamp(minZoom, maxZoom).toDouble();
+    // Bounds fitting supplies zoom only. Its projected midpoint drifts toward
+    // the pole; the original epicenter-group center remains the focus.
+    final target = NativeCameraFocus.prepare({
+      'op': 'eventCameraTarget',
+      'latitude': epicenterView.center.latitude,
+      'longitude': epicenterView.center.longitude,
+      'latDiff': view.latDiff,
+      'lngDiff': view.lngDiff,
+      'padding': padding,
+      'minZoom': minZoom,
+      'maxZoom': maxZoom,
+      'fittedZoom': fittedCamera?.zoom,
+    }) as Map;
+    final center = LatLng(
+      (target['latitude'] as num).toDouble(),
+      (target['longitude'] as num).toDouble(),
+    );
+    final zoom = (target['zoom'] as num).toDouble();
     final targetCenter = screenOffset == Offset.zero
         ? center
         : _centerForScreenOffset(center, zoom, screenOffset);
@@ -715,8 +810,15 @@ class MapStateProvider with ChangeNotifier {
     if (_mapController == null) return;
     if (points.isEmpty) return;
 
-    final view = _calcWrappedPointView(points);
-    if (view == null) return;
+    final geometry = RangeCameraGeometry.prepare(points);
+    final rawView = geometry.view;
+    if (rawView == null) return;
+    final view = _WrappedEventView(
+      center: LatLng((rawView['latitude'] as num).toDouble(),
+          (rawView['longitude'] as num).toDouble()),
+      latDiff: (rawView['latDiff'] as num).toDouble(),
+      lngDiff: (rawView['lngDiff'] as num).toDouble(),
+    );
 
     final maxDiff = max(view.latDiff, view.lngDiff) + padding * 2;
     final hasAnchor =
@@ -727,7 +829,7 @@ class MapStateProvider with ChangeNotifier {
         );
     final fitted = hasAnchor
         ? _fitPointsAroundAnchor(
-            points,
+            geometry.points,
             focusAnchor,
             minZoom: minZoom,
             maxZoom: maxZoom,
@@ -917,58 +1019,6 @@ class MapStateProvider with ChangeNotifier {
     );
   }
 
-  _WrappedEventView? _calcWrappedPointView(List<LatLng> points) {
-    final validPoints = points
-        .where(
-          (point) => QuakeCalculator.isUsableMapCoordinate(
-            point.latitude,
-            point.longitude,
-          ),
-        )
-        .toList();
-    if (validPoints.isEmpty) return null;
-
-    double minLat = double.infinity;
-    double maxLat = double.negativeInfinity;
-    final longitudes = <double>[];
-
-    for (final point in validPoints) {
-      _addPointToView(point.latitude, point.longitude, longitudes, (lat) {
-        if (lat < minLat) minLat = lat;
-        if (lat > maxLat) maxLat = lat;
-      });
-    }
-
-    longitudes.sort();
-
-    var largestGap = -1.0;
-    var largestGapIndex = 0;
-    for (int i = 0; i < longitudes.length; i++) {
-      final current = longitudes[i];
-      final next = i == longitudes.length - 1
-          ? longitudes.first + 360
-          : longitudes[i + 1];
-      final gap = next - current;
-      if (gap > largestGap) {
-        largestGap = gap;
-        largestGapIndex = i;
-      }
-    }
-
-    final startIndex = (largestGapIndex + 1) % longitudes.length;
-    final startLng = longitudes[startIndex];
-    final endLng = startIndex == 0
-        ? longitudes[largestGapIndex]
-        : longitudes[largestGapIndex] + 360;
-    final centerLng = (startLng + endLng) / 2;
-
-    return _WrappedEventView(
-      center: LatLng((minLat + maxLat) / 2, centerLng),
-      latDiff: maxLat - minLat,
-      lngDiff: endLng - startLng,
-    );
-  }
-
   double _zoomForDiff(double maxDiff) {
     if (maxDiff > 20) return 3.0;
     if (maxDiff > 10) return 4.0;
@@ -1050,46 +1100,27 @@ class MapStateProvider with ChangeNotifier {
       return null;
     }
 
-    Offset rotate(Offset point, double angle) => Offset(
-      point.dx * cos(angle) - point.dy * sin(angle),
-      point.dx * sin(angle) + point.dy * cos(angle),
-    );
     final anchorPixel = camera.projectAtZoom(anchor);
-    var halfWidth = 0.0;
-    var halfHeight = 0.0;
+    final offsets = <List<double>>[];
     for (final point in points) {
-      if (!QuakeCalculator.isUsableMapCoordinate(
-        point.latitude,
-        point.longitude,
-      )) {
-        continue;
-      }
+      // These are the original vertices selected by RangeCameraGeometry.
       final wrapped = LatLng(
         point.latitude,
         WorldWrap.longitudeClosestTo(point.longitude, anchor.longitude),
       );
-      final delta = rotate(
-        camera.projectAtZoom(wrapped) - anchorPixel,
-        -camera.rotationRad,
-      );
-      halfWidth = max(halfWidth, delta.dx.abs());
-      halfHeight = max(halfHeight, delta.dy.abs());
+      final delta = camera.projectAtZoom(wrapped) - anchorPixel;
+      offsets.add([delta.dx, delta.dy]);
     }
-    // Keep the epicenter centered; the farther side determines each span.
-    final scale = min(
-      halfWidth == 0 ? double.infinity : width / (2 * halfWidth),
-      halfHeight == 0 ? double.infinity : height / (2 * halfHeight),
-    );
-    final zoom = (scale.isFinite ? camera.getScaleZoom(scale) : maxZoom)
-        .clamp(minZoom, maxZoom)
-        .toDouble();
-    final paddingOffset = rotate(
-      Offset(
-        (padding.right - padding.left) / 2,
-        (padding.bottom - padding.top) / 2,
-      ),
-      camera.rotationRad,
-    );
+    final fit = NativeCameraFocus.prepare({
+      'op':'fitAnchor', 'offsets':offsets, 'width':width, 'height':height,
+      'currentScale':camera.crs.scale(camera.zoom),
+      'rotation':camera.rotationRad, 'minZoom':minZoom, 'maxZoom':maxZoom,
+      'paddingX':(padding.right-padding.left)/2,
+      'paddingY':(padding.bottom-padding.top)/2,
+    }) as Map;
+    final zoom = (fit['zoom'] as num).toDouble();
+    final paddingOffset = Offset(
+      (fit['offsetX'] as num).toDouble(), (fit['offsetY'] as num).toDouble());
     return camera.withPosition(
       center: WorldWrap.unprojectUnwrapped(
         camera,

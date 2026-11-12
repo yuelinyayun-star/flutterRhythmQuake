@@ -7,8 +7,13 @@ import 'nmefc_tsunami_layer.dart';
 
 class InternationalTsunamiLayer extends StatelessWidget {
   final TsunamiMessage? tsunami;
+  final bool showObservations;
 
-  const InternationalTsunamiLayer({super.key, required this.tsunami});
+  const InternationalTsunamiLayer({
+    super.key,
+    required this.tsunami,
+    this.showObservations = true,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -55,31 +60,34 @@ class InternationalTsunamiLayer extends StatelessWidget {
             ),
           ),
         ),
-      for (final station in data.observations.where((e) => e.hasValidPosition))
-        Marker(
-          point: LatLng(station.latitude, station.longitude),
-          width: 78,
-          height: 42,
-          child: Tooltip(
-            message: [
-              data.source.displayLabel,
-              if (station.stationName.isNotEmpty) station.stationName,
-              if (station.stationId.isNotEmpty) station.stationId,
-              if (station.maxWaveHeight.isNotEmpty)
-                '波高：${station.maxWaveHeight}',
-              if (station.time.isNotEmpty)
-                '到达：${data.formatLocalTime(station.time)}',
-              if (station.condition.isNotEmpty) station.condition,
-            ].join('\n'),
-            child: TsunamiObservationMarker(
-              color: color,
-              size: 14,
-              label: station.maxWaveHeight.isEmpty
-                  ? null
-                  : station.maxWaveHeight,
+      if (showObservations)
+        for (final station in data.observations.where(
+          (e) => e.hasValidPosition,
+        ))
+          Marker(
+            point: LatLng(station.latitude, station.longitude),
+            width: 78,
+            height: 42,
+            child: Tooltip(
+              message: [
+                data.source.displayLabel,
+                if (station.stationName.isNotEmpty) station.stationName,
+                if (station.stationId.isNotEmpty) station.stationId,
+                if (station.maxWaveHeight.isNotEmpty)
+                  '波高：${station.maxWaveHeight}',
+                if (station.time.isNotEmpty)
+                  '到达：${data.formatLocalTime(station.time)}',
+                if (station.condition.isNotEmpty) station.condition,
+              ].join('\n'),
+              child: TsunamiObservationMarker(
+                color: color,
+                size: 14,
+                label: station.maxWaveHeight.isEmpty
+                    ? null
+                    : station.maxWaveHeight,
+              ),
             ),
           ),
-        ),
     ];
     return markers.isEmpty
         ? const SizedBox.shrink()

@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:convert';
+import 'api_json_decoder.dart';
 import 'package:http/http.dart' as http;
 import '../../utils/fe_regions.dart';
 
@@ -71,7 +71,7 @@ class UsgsCmtService {
         print('USGS CMT query HTTP ${resp.statusCode}');
         return;
       }
-      final data = json.decode(resp.body);
+      final data = decodeApiJsonResponse(resp);
       final features = data['features'] as List?;
       if (features == null || features.isEmpty) return;
       onStatusChanged?.call(true);
@@ -109,7 +109,7 @@ class UsgsCmtService {
           .timeout(const Duration(seconds: 15));
       if (resp.statusCode != 200) return null;
 
-      final data = json.decode(resp.body);
+      final data = decodeApiJsonResponse(resp);
       final props = data['properties'] as Map<String, dynamic>?;
       if (props == null) return null;
 

@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SASMEX 网页显示观察版</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #071017;
+      --panel: rgba(20, 31, 39, .86);
+      --panel-strong: #14232c;
+      --line: rgba(190, 215, 222, .15);
+      --text: #edf7f5;
+      --muted: #98afb4;
+      --orange: #fa7838;
+      --green: #58d58a;
+      --amber: #ffd166;
+      --blue: #70b7ff;
+      --purple: #c57cff;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { background: radial-gradient(circle at 15% 0%, #18323a 0, transparent 34rem), var(--bg); }
+    button { font: inherit; }
+    .shell { width: min(1440px, 100%); margin: 0 auto; padding: 16px; }
+    .topbar { position: relative; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: -54px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 18px; background: rgba(14, 25, 32, .78); box-shadow: 0 16px 50px rgba(0, 0, 0, .24); backdrop-filter: blur(18px); }
+    .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .logo { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 11px; background: var(--orange); color: #24140e; font-weight: 900; letter-spacing: -.08em; }
+    .brand-name { font-size: 1.18rem; font-weight: 850; line-height: 1; }
+    .brand-sub { margin-top: 3px; color: var(--muted); font-size: .78rem; }
+    .status { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 999px; color: var(--green); background: rgba(88, 213, 138, .12); font-size: .8rem; font-weight: 750; white-space: nowrap; }
+    .status i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 5px rgba(88, 213, 138, .12); }
+    .map-wrap { overflow: hidden; position: relative; height: min(68vh, 720px); min-height: 470px; border: 1px solid var(--line); border-radius: 22px; background: #d9e1df; box-shadow: 0 24px 70px rgba(0, 0, 0, .28); }
+    #map { width: 100%; height: 100%; }
+    .map-caption { position: absolute; z-index: 4; left: 18px; bottom: 16px; max-width: min(560px, calc(100% - 36px)); padding: 11px 14px; border: 1px solid rgba(255,255,255,.4); border-radius: 13px; color: #15242b; background: rgba(255, 255, 255, .8); box-shadow: 0 8px 24px rgba(0,0,0,.16); backdrop-filter: blur(12px); }
+    .map-caption strong { display: block; font-size: .82rem; }
+    .map-caption span { display: block; margin-top: 2px; font-size: .78rem; }
+    .leaflet-control-zoom a { color: #17242b !important; }
+    .content { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(350px, .6fr); gap: 16px; margin-top: 16px; }
+    .panel { border: 1px solid var(--line); border-radius: 18px; background: var(--panel); box-shadow: 0 16px 45px rgba(0, 0, 0, .2); backdrop-filter: blur(18px); }
+    .event-card { padding: 20px; }
+    .eyebrow { color: var(--muted); font-size: .78rem; font-weight: 650; }
+    .event-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    h1, h2, p { margin: 0; }
+    h1 { margin-top: 5px; font-size: clamp(1.25rem, 2.2vw, 1.75rem); line-height: 1.15; }
+    .chip { display: inline-flex; align-items: center; padding: 6px 11px; border-radius: 999px; color: #9ef0b9; background: rgba(88, 213, 138, .15); font-size: .7rem; font-weight: 850; letter-spacing: .06em; white-space: nowrap; }
+    .alert-chip { color: #ffe0c9; background: rgba(250, 120, 56, .2); border: 1px solid rgba(250, 120, 56, .38); }
+    .alert-banner { margin-top: 16px; padding: 14px; border: 1px solid rgba(250, 120, 56, .42); border-left: 4px solid var(--orange); border-radius: 10px; color: #ffe2d1; background: rgba(250, 120, 56, .13); }
+    .alert-banner strong { color: #fff2e9; }
+    .alert-banner small { display: block; margin-top: 5px; color: #ffc2a5; }
+    .notice { margin-top: 16px; padding: 12px 14px; border-left: 3px solid var(--green); border-radius: 10px; color: #c8ded8; background: rgba(88, 213, 138, .08); }
+    .notice strong { color: var(--text); }
+    .facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+    .fact-label { color: var(--muted); font-size: .74rem; }
+    .fact-value { margin-top: 3px; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+    .source { display: flex; justify-content: space-between; gap: 12px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: .8rem; }
+    .source b { color: var(--text); }
+    .side { display: grid; gap: 16px; align-content: start; }
+    .rules { padding: 18px; }
+    .rules h2 { font-size: 1rem; }
+    .rule { display: grid; grid-template-columns: 10px 1fr; gap: 10px; margin-top: 14px; color: #c4d4d5; font-size: .84rem; }
+    .rule-dot { width: 10px; height: 10px; margin-top: 5px; border-radius: 50%; }
+    .rule-dot.orange { background: var(--orange); box-shadow: 0 0 14px rgba(250,120,56,.7); }
+    .rule-dot.amber { background: var(--amber); box-shadow: 0 0 14px rgba(255,209,102,.65); }
+    .rule-dot.blue { background: var(--blue); box-shadow: 0 0 14px rgba(112,183,255,.65); }
+    .rule b { color: var(--text); }
+    .scope { padding: 18px; }
+    .scope h2 { font-size: 1rem; }
+    .scope p { margin-top: 10px; color: #c4d4d5; font-size: .84rem; }
+    .scope code { color: #ffd9c8; }
+    .legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+    .legend span { padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); font-size: .72rem; }
+    .wave-key { display: inline-flex; align-items: center; gap: 8px; margin-top: 12px; color: var(--muted); font-size: .75rem; }
+    .wave-key i { width: 18px; height: 18px; border: 2px solid #e94c42; border-radius: 50%; }
+    .wave-key i:nth-child(2) { border-color: var(--purple); }
+    .footer { padding: 15px 4px 5px; color: #789096; font-size: .74rem; text-align: center; }
+    .epicenter-marker { width: 18px; height: 18px; border: 3px solid white; border-radius: 50%; background: #fa7838; box-shadow: 0 0 0 5px rgba(250,120,56,.24), 0 4px 14px rgba(0,0,0,.35); }
+    .pulse-preview { pointer-events: none; }
+    @media (max-width: 900px) {
+      .content { grid-template-columns: 1fr; }
+      .map-wrap { min-height: 410px; }
+    }
+    @media (max-width: 560px) {
+      .shell { padding: 10px; }
+      .topbar { margin-bottom: -48px; padding: 9px 10px; }
+      .brand-sub { display: none; }
+      .map-wrap { height: 58vh; min-height: 360px; border-radius: 17px; }
+      .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .event-card, .rules, .scope { padding: 16px; }
+      .map-caption { left: 12px; bottom: 12px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo" aria-hidden="true">S</div>
+        <div>
+          <div class="brand-name">SASNO</div>
+          <div class="brand-sub">Monitor sísmico · SASMEX</div>
+        </div>
+      </div>
+      <div class="status"><i></i> EN LÍNEA</div>
+    </header>
+
+    <section class="map-wrap" aria-label="历史警报区域地图">
+      <div id="map"></div>
+      <div class="map-caption">
+        <strong>网页实际警报地图显示</strong>
+        <span>这条历史警报由 CAP 提供两块警报区域；页面没有把不存在的震中坐标或固定半径补进去。</span>
+      </div>
+    </section>
+
+    <section class="content">
+      <article class="panel event-card">
+        <div class="event-head">
+          <div>
+            <div class="eyebrow">Alerta histórica · 历史警报</div>
+            <h1>ALERTA SISMICA en CDMX</h1>
+          </div>
+        <span class="chip alert-chip">ALERTA SISMICA</span>
+      </div>
+        <div class="alert-banner"><strong>网页警报层：</strong>此历史报文的动作是 <b>Execute</b>，表示已进入警报显示流程；这不是当前实时警报。<small>来源报文：CIRES20260504091933 · 2026-05-04 15:19:33 UTC</small></div>
+        <div class="facts">
+          <div><div class="fact-label">警报动作</div><div class="fact-value">Execute</div></div>
+          <div><div class="fact-label">严重性</div><div class="fact-value">Severe</div></div>
+          <div><div class="fact-label">警报状态</div><div class="fact-value">已发警报</div></div>
+          <div><div class="fact-label">警报标题</div><div class="fact-value">ALERTA SISMICA en CDMX</div></div>
+          <div><div class="fact-label">事件描述</div><div class="fact-value">Severo · Costa Oax-Gro</div></div>
+          <div><div class="fact-label">距 CDMX</div><div class="fact-value">347 km</div></div>
+        </div>
+        <div class="source"><span>页面来源显示</span><b>Red SASNO · retransmisión SASMEX · CAP 1.1</b></div>
+      </article>
+
+      <aside class="side">
+        <section class="panel rules">
+          <h2>网页警报显示规则</h2>
+          <div class="rule"><i class="rule-dot orange"></i><div><b>Alerta sísmica · 橙色</b><br>正式警报时进入警报层，显示警报区域、波圈和到用户位置的剩余时间。</div></div>
+          <div class="rule"><i class="rule-dot amber"></i><div><b>Sismo moderado · 琥珀色</b><br>事件可明显感觉，但网页文案明确不是警报。</div></div>
+          <div class="rule"><i class="rule-dot blue"></i><div><b>Sismo menor · 蓝色</b><br>低强度信息提示，不需要立即行动。</div></div>
+        </section>
+        <section class="panel scope">
+          <h2>这条警报的真实范围</h2>
+          <p>网页警报层使用 CAP 的两个 <code>polygon</code> 区域；不是一个固定的 <code>radius</code> 数字。地图上的橙色区域就是报文给出的警报区域。</p>
+          <p>这是一条历史警报，当前时间已经超过有效期，所以本地观察页不伪造正在扩散的波圈或到达倒计时。</p>
+          <div class="legend"><span>Execute</span><span>Severe</span><span>2 个真实警报区域</span></div>
+        </section>
+      </aside>
+    </section>
+    <div class="footer">本地观察版 · 固定使用历史 CAP 警报 CIRES20260504091933，不连接生产接口。</div>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const alertData = {
+      id: '20260504091933',
+      source: 'CIRES',
+      sentUtc: '2026-05-04T15:19:33Z',
+      responseType: 'Execute',
+      severity: 'Severe',
+      headline: 'ALERTA SISMICA en CDMX por sismo en Costa Oax-Gro',
+      description: 'Sismo Severo en Costa Oax-Gro, a 347km de CDMX',
+      polygons: [
+        [[15.48, -94.06], [18.35, -93.87], [18.55, -98.59], [15.62, -98.70], [15.48, -94.06]],
+        [[19.15, -98.95], [19.60, -98.95], [19.60, -99.35], [19.15, -99.35], [19.15, -98.95]],
+      ],
+    };
+
+    const map = L.map('map', { zoomControl: true, attributionControl: true }).setView([18.1, -97.8], 6);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: '&copy; OpenStreetMap contributors',
+    }).addTo(map);
+
+    const polygonLayers = alertData.polygons.map((points, index) => {
+      const polygon = L.polygon(points, {
+        color: '#f26f32',
+        weight: 3,
+        opacity: .95,
+        fillColor: index === 0 ? '#f26f32' : '#ffb347',
+        fillOpacity: .24,
+      }).addTo(map);
+      polygon.bindPopup(`<strong>${index === 0 ? '区域 1：Region de Alertamiento' : '区域 2：CDMX 区域'}</strong><br>${alertData.responseType} · ${alertData.severity}`);
+      return polygon;
+    });
+    const warningBounds = L.featureGroup(polygonLayers).getBounds();
+    map.fitBounds(warningBounds.pad(.08));
+  </script>
+</body>
+</html>

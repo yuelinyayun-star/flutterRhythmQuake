@@ -49,6 +49,7 @@ void main() {
     double activity = 8,
     int ascend = 2,
     bool isTriggered = true,
+    Set<String> qualityFlags = const {'synthetic'},
   }) {
     return SeismicStationSample(
       descriptor: SeismicStationDescriptor(
@@ -66,9 +67,60 @@ void main() {
       activity: activity,
       ascend: ascend,
       isTriggered: isTriggered,
-      qualityFlags: const {'synthetic'},
+      qualityFlags: qualityFlags,
     );
   }
+
+  test(
+    'observation sharing preserves flag transitions and owns its snapshots',
+    () {
+      final start = DateTime(2026, 6, 10, 16);
+      void ingest(int second, Set<String> flags) {
+        final at = start.add(Duration(seconds: second));
+        tracker.ingestFrame(
+          sourceId: 'global-demo',
+          observedAt: at,
+          stageName: 'detected',
+          maxShindo: 2,
+          samples: [
+            buildSample(
+              code: 'G01',
+              lat: 10,
+              lng: 120,
+              observedAt: at,
+              qualityFlags: flags,
+            ),
+          ],
+        );
+      }
+
+      final input = <String>{'synthetic'};
+      ingest(0, input);
+      input.add('stale_observation');
+      ingest(1, {'synthetic'});
+      ingest(2, input);
+      ingest(3, {'synthetic'});
+      final frames = tracker
+          .currentEvent('global-demo')!
+          .records
+          .single
+          .observationHistory
+          .frames;
+      expect(frames[0].qualityFlags, {'synthetic'});
+      expect(frames[1].qualityFlags, same(frames[0].qualityFlags));
+      expect(frames[2].qualityFlags, {'synthetic', 'stale_observation'});
+      expect(frames[3].qualityFlags, {'synthetic'});
+      expect(() => frames[0].qualityFlags.clear(), throwsUnsupportedError);
+      expect(
+        frames[1].physicalObservations,
+        same(frames[0].physicalObservations),
+      );
+      expect(
+        () => frames[0].physicalObservations.clear(),
+        throwsUnsupportedError,
+      );
+    },
+  );
 
   test('tracks generic non-NIED source event lifecycle', () {
     var notificationCount = 0;

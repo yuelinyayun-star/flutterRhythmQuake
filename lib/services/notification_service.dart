@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../models/unified_quake_data.dart';
+import '../core/utils/jian_cea_eew.dart';
 import '../providers/notification_settings_provider.dart';
 import '../providers/quake_provider.dart';
 import 'sound_effect_service.dart';
@@ -51,7 +52,7 @@ class NotificationService {
   }
 
   void _handleEewEvent(UnifiedQuakeData event, bool isUpdate) {
-    final isWarn = event.isWarn;
+    final isWarn = effectiveEewWarn(event);
     final base = _settings.onEew;
     final warn = _settings.onEewWarn;
     final notify = isWarn
@@ -97,7 +98,7 @@ class NotificationService {
       _playSound('update');
     }
 
-    if (event.isWarn) {
+    if (effectiveEewWarn(event)) {
       if (!flags.warnSound) {
         if (_quakeProvider.claimEewThresholdSound(event, warn: true)) {
           _playSound('warn');
@@ -105,7 +106,8 @@ class NotificationService {
         flags.warnSound = true;
         flags.cautionSound = true;
       }
-    } else if (_isCautionClass(event.className) && !flags.cautionSound) {
+    } else if (_isCautionClass(effectiveEewClassName(event)) &&
+        !flags.cautionSound) {
       if (_quakeProvider.claimEewThresholdSound(event, warn: false)) {
         _playSound('caution');
       }

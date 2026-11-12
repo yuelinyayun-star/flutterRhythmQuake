@@ -5,7 +5,6 @@ import '../../services/sources/seisjs_service.dart';
 import 'map_style_zoom.dart';
 import 'station_dot_painter_layer.dart';
 
-@visibleForTesting
 int seisJsMapIntensityLevel(double intensity) {
   if (!intensity.isFinite) return 0;
   return intensity.round().clamp(0, 12);
@@ -55,7 +54,7 @@ class SeisJsLayer extends StatelessWidget {
     final data = stations;
     if (data == null || data.isEmpty) return const SizedBox.shrink();
 
-    final zoom = MapCamera.maybeOf(context)?.zoom ?? mapStyleZoomOf(context);
+    final zoom = mapStyleZoomOf(context);
     final overview = seisJsOverviewFactorForZoom(zoom);
     final idleRadius = seisJsIdleDotRadiusForZoom(zoom);
     final idleBorderWidth = (1.1 + overview * 0.5).clamp(1.1, 1.6);
@@ -64,8 +63,12 @@ class SeisJsLayer extends StatelessWidget {
     final iconMarkers = <Marker>[];
 
     for (var station in data) {
-      final intensity = seisJsMapIntensityLevel(station.intensity);
-      final active = station.intensity.isFinite && station.intensity >= 0;
+      final intensity =
+          station.preparedMapLevel ??
+          seisJsMapIntensityLevel(station.intensity);
+      final active =
+          station.preparedMapActive ??
+          (station.intensity.isFinite && station.intensity >= 0);
 
       if (active) {
         final label = intensity.toString();

@@ -1,3 +1,4 @@
+import 'source_http_client.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -10,7 +11,7 @@ import 'web_source_proxy.dart';
 /// Polls the JMA eqvol Atom feed for VXSE62 long-period observation bulletins.
 class JmaLpgmService {
   JmaLpgmService({http.Client? client})
-    : _client = client ?? http.Client(),
+    : _client = client ?? createSourceHttpClient(),
       _ownsClient = client == null;
 
   static const String feedUrl =
@@ -34,10 +35,12 @@ class JmaLpgmService {
   Timer? _expiryTimer;
   bool _started = false;
   bool _fetching = false;
+  bool _disposed = false;
 
   JmaLpgmBulletin? get latest => latestNotifier.value;
 
   void start({Duration interval = refreshInterval}) {
+    if (_disposed) return;
     if (_started) {
       if (latest == null) unawaited(fetchNow());
       return;
@@ -57,18 +60,21 @@ class JmaLpgmService {
   }
 
   void dispose() {
+    if (_disposed) return;
+    _disposed = true;
     stop();
     latestNotifier.dispose();
     if (_ownsClient) _client.close();
   }
 
   Future<void> fetchNow() async {
-    if (_fetching) return;
+    if (_disposed || _fetching) return;
     _fetching = true;
     try {
       final response = await _client
           .get(sourceUri(Uri.parse(feedUrl)), headers: sourceHeaders(_headers))
           .timeout(const Duration(seconds: 15));
+      if (_disposed) return;
       if (response.statusCode != 200) {
         debugPrint('JMA LPGM feed HTTP ${response.statusCode}');
         _expireIfNeeded();
@@ -91,9 +97,11 @@ class JmaLpgmService {
       }
 
       for (final entry in entries.take(5)) {
+        if (_disposed) return;
         final fingerprint = _entryFingerprint(entry);
         if (_seenEntryFingerprints[entry.id] == fingerprint) continue;
         final bulletin = await _fetchDetail(entry);
+        if (_disposed) return;
         if (bulletin == null) continue;
         _seenEntryFingerprints[entry.id] = fingerprint;
         if (_seenEntryFingerprints.length > 200) {
@@ -116,7 +124,9 @@ class JmaLpgmService {
       }
       _expireIfNeeded();
     } catch (error) {
-      debugPrint('JMA LPGM fetch error: $error');
+      if (!_disposed) {
+        debugPrint('JMA LPGM fetch error: $error');
+      }
     } finally {
       _fetching = false;
     }
@@ -125,6 +135,11 @@ class JmaLpgmService {
   /// 接收 Android 前台服务的原始解析结果，保留本服务的 UI 订阅契约。
   void ingestExternal(JmaLpgmBulletin? bulletin) {
     _setLatest(bulletin);
+  }
+
+  /// Parse the JMA original XML also carried by compatible relay APIs.
+  JmaLpgmBulletin? parseDetailXml(String xml, {String detailUrl = ''}) {
+    return _parseDetailXml(xml, detailUrl: detailUrl);
   }
 
   @visibleForTesting
@@ -423,6 +438,7 @@ class JmaLpgmService {
   }
 
   void _expireIfNeeded() {
+    if (_disposed) return;
     final current = latest;
     if (current != null && !current.isActive()) {
       _setLatest(null);
@@ -430,6 +446,7 @@ class JmaLpgmService {
   }
 
   void _setLatest(JmaLpgmBulletin? bulletin) {
+    if (_disposed) return;
     if (latest?.signature == bulletin?.signature) return;
     _expiryTimer?.cancel();
     _expiryTimer = null;

@@ -16,7 +16,7 @@ class JmaLpgmSidebarPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final maxRegions = bulletin.regionsAtMaxClass();
-    final stations = bulletin.topStations(limit: 6);
+    final stations = bulletin.topStations(limit: bulletin.stations.length);
     final category = jmaLpgmCategoryLabel(bulletin.lgCategory);
 
     return Column(
@@ -45,8 +45,8 @@ class JmaLpgmSidebarPanel extends StatelessWidget {
             SizedBox(width: scale(6)),
             Expanded(
               child: Text(
-                '长周期地震动观测情报',
-                maxLines: 1,
+                jmaLpgmObservationTitle,
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: Colors.white,
@@ -62,7 +62,6 @@ class JmaLpgmSidebarPanel extends StatelessWidget {
         Text(
           [
             'JMA · VXSE62',
-            if (bulletin.serial > 1) '第 ${bulletin.serial} 报',
             if (bulletin.infoType.isNotEmpty) bulletin.infoType,
           ].join(' · '),
           maxLines: 1,
@@ -97,6 +96,17 @@ class JmaLpgmSidebarPanel extends StatelessWidget {
                     value: maxRegions.map((region) => region.name).join('、'),
                     scale: scale,
                   ),
+                for (final level in [4, 3, 2, 1])
+                  if (level != bulletin.maxLgInt &&
+                      bulletin.regions.any((r) => r.maxLgInt == level))
+                    _LpgmTextSection(
+                      label: '长周期阶级 ' + level.toString() + ' 的地区',
+                      value: bulletin.regions
+                          .where((r) => r.maxLgInt == level)
+                          .map((r) => r.name)
+                          .join('、'),
+                      scale: scale,
+                    ),
                 if (stations.isNotEmpty)
                   _LpgmSection(
                     title: '测站',
@@ -104,38 +114,7 @@ class JmaLpgmSidebarPanel extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        for (final station in stations)
-                          Padding(
-                            padding: EdgeInsets.only(bottom: scale(2)),
-                            child: Text.rich(
-                              TextSpan(
-                                children: [
-                                  TextSpan(
-                                    text: '${station.lgInt}  ',
-                                    style: TextStyle(
-                                      color: jmaLpgmClassColor(station.lgInt),
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                  TextSpan(text: station.name),
-                                  if (station.intensity.isNotEmpty)
-                                    TextSpan(text: '  震度${station.intensity}'),
-                                  if (station.sva != null)
-                                    TextSpan(
-                                      text:
-                                          '  ${station.sva!.toStringAsFixed(1)}',
-                                    ),
-                                ],
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: scale(10.3),
-                                height: 1.2,
-                              ),
-                            ),
-                          ),
+                        for (final station in stations) _stationRow(station),
                       ],
                     ),
                   ),
@@ -144,6 +123,62 @@ class JmaLpgmSidebarPanel extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _stationRow(JmaLpgmStation station) {
+    String periodText(List<JmaLpgmPeriodValue> periods, {String unit = ''}) =>
+        periods
+            .map((p) => p.band.toString() + '秒台 ' + _number(p.value) + unit)
+            .join(' / ');
+    return Padding(
+      padding: EdgeInsets.only(bottom: scale(5)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(
+                  text: station.lgInt.toString() + '  ',
+                  style: TextStyle(
+                    color: jmaLpgmClassColor(station.lgInt),
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                TextSpan(text: station.name),
+                if (station.intensity.isNotEmpty)
+                  TextSpan(text: '  震度' + station.intensity),
+                if (station.sva != null)
+                  TextSpan(text: '  SVA ' + _number(station.sva!) + ' cm/s'),
+              ],
+            ),
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: scale(10.3),
+              height: 1.2,
+            ),
+          ),
+          if (station.lgIntPerPeriod.isNotEmpty)
+            Text(
+              '各周期阶级：' + periodText(station.lgIntPerPeriod),
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: scale(9.2),
+                height: 1.35,
+              ),
+            ),
+          if (station.svaPerPeriod.isNotEmpty)
+            Text(
+              '各周期 SVA：' + periodText(station.svaPerPeriod, unit: ' cm/s'),
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: scale(9.2),
+                height: 1.35,
+              ),
+            ),
+        ],
+      ),
     );
   }
 
@@ -161,6 +196,9 @@ class JmaLpgmSidebarPanel extends StatelessWidget {
     add('震中', bulletin.hypocenter);
     if (bulletin.depthKm != null) {
       add('深度', '${_number(bulletin.depthKm!)} km');
+    }
+    if (bulletin.reportTime != null) {
+      add('发布时间', _dateTime(bulletin.reportTime!) + ' JST');
     }
     if (bulletin.originTime != null) {
       add('发震时刻', '${_dateTime(bulletin.originTime!)} JST');

@@ -1,0 +1,29 @@
+Named administrative coastal base lines for NMEFC forecast-area display
+
+Mainland coverage: 62 coastal prefectures, directly administered counties/cities
+and municipalities across 11 coastal provinces/municipalities, plus Hong Kong
+and Macao. The earlier 17 Taiwan Province coastlines are retained.
+Mainland marine outlines use the app's unchanged cn.province.topo.json, partitioned
+using its existing city-boundary GeoJSON. Names and provinces must both match.
+No inland provincial/city boundaries are drawn. Mainland coverage excludes distant
+South China Sea decorative/sea features; they are not treated as coastal cities.
+Mainland source hashes, city alignment and estuary endpoint reference information:
+nmefc.named-coasts.provenance.json (mainland).
+Detailed provenance: docs/nmefc_mainland_coasts_20261021.md.
+
+Source: pinned TOWN_MOI_1120317 official township boundary package
+URL: https://maps.nlsc.gov.tw/download/鄉鎮市區界線(TWD97經緯度).zip
+Original ZIP SHA256: e028e5a750eee48cf7913330655e5e5c5bb1f176868fbd0afdfc661fca60557c
+Build: tool/region_data/build_nmefc_coast_assets.py
+
+Original package bytes remain unchanged in references/region_data/official.
+These lines are derived administrative outer shores, not NMEFC-issued warning
+boundaries or inundation limits. Inland administrative borders are excluded.
+Only exactly matched named regions are activated; this is not a global NMEFC
+forecast-area boundary database.
+The user-selected display policy matches full county/city names and unambiguous
+abbreviations at that level: 花莲 selects 花莲县, 宜兰 selects 宜兰县.
+Ambiguous county/city aliases (such as 新竹) are not resolved by choosing the
+first feature. Directional sectors such as 台东北 are not expanded.
+Source warning colours and status come from the original forecasts array.
+Generation method, coverage and output hash: nmefc.named-coasts.provenance.json.

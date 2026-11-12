@@ -1,0 +1,185 @@
+{
+  "source": "https://maps.nlsc.gov.tw/download/鄉鎮市區界線(TWD97經緯度).zip",
+  "sourceSha256": "e028e5a750eee48cf7913330655e5e5c5bb1f176868fbd0afdfc661fca60557c",
+  "method": "Taiwan township union exterior intersected by county; mainland basemap marine exterior partitioned by existing prefecture boundaries. Offline 1e-9 degree overlay grid; original sources unchanged. See mainland method and endpoint provenance.",
+  "meaning": "Named administrative coastal base lines, NOT NMEFC-issued warning boundaries or inundation limits.",
+  "coverage": "Mainland coastal prefectures/municipalities, Hainan coastal counties/cities, Hong Kong, Macao and 17 Taiwan Province coastal counties/cities. Not all NMEFC global forecast areas.",
+  "mainland": {
+    "basemap": "assets\\maps\\ka\\cn.province.topo.json",
+    "basemapSha256": "4b64a2d342c1017b1b571a4e02c92bafac0e114e9f3c31860b1b1bba4dc56965",
+    "administrativeSource": "assets/maps/中华人民共和国.geojson",
+    "administrativeSha256": "a268d74d3fba89bcc35f9febd8843a9cb77792a3690044dc8b26f21e8acf1bcd",
+    "endpointReference": "https://naturalearth.s3.amazonaws.com/10m_cultural/ne_10m_admin_0_boundary_lines_land.zip",
+    "endpointReferenceSha256": "16ead035f539c8b6c23650c5845d86ad3556553e7456bdf9b4730210f26aacbe",
+    "endpointAlignment": {
+      "China,North Korea": {
+        "referenceCoordinate": [
+          124.36996504000001,
+          40.098293361000074
+        ],
+        "basemapCoordinate": [
+          124.37007267710365,
+          40.098157711518645
+        ],
+        "snapDistanceDegrees": 0.0001731661857647543
+      },
+      "China,Vietnam": {
+        "referenceCoordinate": [
+          107.99122155000003,
+          21.48566315300009
+        ],
+        "basemapCoordinate": [
+          107.9832128764308,
+          21.537993011244257
+        ],
+        "snapDistanceDegrees": 0.05293914351586619
+      }
+    },
+    "featuresByProvince": {
+      "上海市": 1,
+      "天津市": 1,
+      "山东省": 7,
+      "广东省": 14,
+      "广西壮族自治区": 3,
+      "江苏省": 4,
+      "河北省": 3,
+      "浙江省": 5,
+      "海南省": 12,
+      "澳门特别行政区": 1,
+      "福建省": 6,
+      "辽宁省": 6,
+      "香港特别行政区": 1
+    },
+    "maxCityAlignmentDistanceDegrees": 0.011594815891945371,
+    "cityAlignmentDistanceDegreesByProvince": {
+      "上海市": 3.6575339995439715e-15,
+      "天津市": 2.0759098272375313e-15,
+      "山东省": 0.00970199683259421,
+      "广东省": 0.011362600868422394,
+      "广西壮族自治区": 0.011160364737504326,
+      "江苏省": 0.00648050407311342,
+      "河北省": 0.0055675530187801895,
+      "浙江省": 0.010528405875382668,
+      "海南省": 0.006635125081461992,
+      "澳门特别行政区": 0.0,
+      "福建省": 0.011594815891945371,
+      "辽宁省": 0.010171344476662196,
+      "香港特别行政区": 5.9671837899688094e-15
+    },
+    "coordinateValidationToleranceDegrees": 2e-09,
+    "method": "Original basemap mainland marine exterior between referenced estuary endpoints, plus nearshore island exterior rings. Split by existing city edges; assign unmatched shoreline slivers to the nearest city in the same province. No buffered coast, inland provincial/city boundaries, or new warning extents.",
+    "coverage": "11 mainland coastal provinces/municipalities plus Hong Kong and Macao; Hainan directly administered coastal counties/cities included. Distant South China Sea features excluded from this mainland display layer."
+  },
+  "nameMatchingPolicy": "User-selected county/city-level display. Unambiguous short names select the corresponding county/city shoreline, not a same-named township-level city. No directional suffix stripping.",
+  "unmatchedNamesAreNotExpanded": [
+    "台东北",
+    "台东南",
+    "屏东东",
+    "屏东西",
+    "台北东"
+  ],
+  "ambiguousAliases": {
+    "中国台湾省新竹": [
+      "台湾省新竹县",
+      "台湾省新竹市"
+    ],
+    "台湾省新竹": [
+      "台湾省新竹县",
+      "台湾省新竹市"
+    ],
+    "新竹": [
+      "台湾省新竹县",
+      "台湾省新竹市"
+    ],
+    "臺灣省新竹": [
+      "台湾省新竹县",
+      "台湾省新竹市"
+    ]
+  },
+  "featureNames": [
+    "上海市",
+    "台湾省云林县",
+    "台湾省台东县",
+    "台湾省台中市",
+    "台湾省台南市",
+    "台湾省嘉义县",
+    "台湾省基隆市",
+    "台湾省宜兰县",
+    "台湾省屏东县",
+    "台湾省彰化县",
+    "台湾省新北市",
+    "台湾省新竹县",
+    "台湾省新竹市",
+    "台湾省桃园市",
+    "台湾省澎湖县",
+    "台湾省花莲县",
+    "台湾省苗栗县",
+    "台湾省高雄市",
+    "天津市",
+    "山东省东营市",
+    "山东省威海市",
+    "山东省日照市",
+    "山东省滨州市",
+    "山东省潍坊市",
+    "山东省烟台市",
+    "山东省青岛市",
+    "广东省东莞市",
+    "广东省中山市",
+    "广东省广州市",
+    "广东省惠州市",
+    "广东省揭阳市",
+    "广东省汕头市",
+    "广东省汕尾市",
+    "广东省江门市",
+    "广东省深圳市",
+    "广东省湛江市",
+    "广东省潮州市",
+    "广东省珠海市",
+    "广东省茂名市",
+    "广东省阳江市",
+    "广西壮族自治区北海市",
+    "广西壮族自治区钦州市",
+    "广西壮族自治区防城港市",
+    "江苏省南通市",
+    "江苏省盐城市",
+    "江苏省苏州市",
+    "江苏省连云港市",
+    "河北省唐山市",
+    "河北省沧州市",
+    "河北省秦皇岛市",
+    "浙江省台州市",
+    "浙江省嘉兴市",
+    "浙江省宁波市",
+    "浙江省温州市",
+    "浙江省舟山市",
+    "海南省万宁市",
+    "海南省三亚市",
+    "海南省东方市",
+    "海南省临高县",
+    "海南省乐东黎族自治县",
+    "海南省儋州市",
+    "海南省文昌市",
+    "海南省昌江黎族自治县",
+    "海南省海口市",
+    "海南省澄迈县",
+    "海南省琼海市",
+    "海南省陵水黎族自治县",
+    "澳门特别行政区",
+    "福建省厦门市",
+    "福建省宁德市",
+    "福建省泉州市",
+    "福建省漳州市",
+    "福建省福州市",
+    "福建省莆田市",
+    "辽宁省丹东市",
+    "辽宁省大连市",
+    "辽宁省盘锦市",
+    "辽宁省营口市",
+    "辽宁省葫芦岛市",
+    "辽宁省锦州市",
+    "香港特别行政区"
+  ],
+  "features": 81,
+  "inlandBoundariesIncluded": false,
+  "outputSha256": "1e5a5d8bb6884c4bf193d8d55676057cefe70a4918287531b04494f175375ccd"
+}

@@ -1,5 +1,6 @@
 import 'cmt_moment_tensor.dart';
 import 'cmt_solution_metadata.dart';
+import 'information_map_data.dart';
 
 /// 地震消息数据模型
 ///
@@ -747,6 +748,9 @@ class QuakeMessage {
   final String? usgsProductTypes;
   final int? usgsUpdated;
 
+  /// Existing information fill inputs, independent of live event admission.
+  final InformationMapData? informationMap;
+
   /// 构造函数
   ///
   /// 创建一个地震消息实例。
@@ -788,6 +792,7 @@ class QuakeMessage {
     this.usgsDetailUrl,
     this.usgsProductTypes,
     this.usgsUpdated,
+    this.informationMap,
   });
 
   /// 创建一个副本并更新指定字段
@@ -830,6 +835,7 @@ class QuakeMessage {
     String? usgsDetailUrl,
     String? usgsProductTypes,
     int? usgsUpdated,
+    InformationMapData? informationMap,
   }) {
     return QuakeMessage(
       source: source,
@@ -868,6 +874,7 @@ class QuakeMessage {
       usgsDetailUrl: usgsDetailUrl ?? this.usgsDetailUrl,
       usgsProductTypes: usgsProductTypes ?? this.usgsProductTypes,
       usgsUpdated: usgsUpdated ?? this.usgsUpdated,
+      informationMap: informationMap ?? this.informationMap,
     );
   }
 
@@ -915,6 +922,7 @@ class QuakeMessage {
       'usgsDetailUrl': usgsDetailUrl,
       'usgsProductTypes': usgsProductTypes,
       'usgsUpdated': usgsUpdated,
+      if (informationMap != null) 'informationMap': informationMap!.toMap(),
     };
   }
 
@@ -974,6 +982,9 @@ class QuakeMessage {
       usgsDetailUrl: map['usgsDetailUrl'],
       usgsProductTypes: map['usgsProductTypes'],
       usgsUpdated: _optionalInt(map['usgsUpdated']),
+      informationMap: map['informationMap'] is Map
+          ? InformationMapData.fromMap(map['informationMap'] as Map)
+          : null,
     );
   }
 

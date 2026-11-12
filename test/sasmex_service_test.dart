@@ -80,30 +80,74 @@ void main() {
     expect(SasmexService.displayTitle(severity: 'Minor'), 'SASMEX 地震检出');
   });
 
-  test('converted original October 6 document uses the unified severity UI', () {
-    final original = jsonDecode(File(
-      'test/fixtures/sasmex_firestore_20261006.original.json',
-    ).readAsStringSync(encoding: utf8));
-    final frame = jsonDecode(File(
-      'test/fixtures/sasmex_firestore_20261006.relay.json',
-    ).readAsStringSync(encoding: utf8)) as Map<String, dynamic>;
+  test(
+    'converted original October 6 document uses the unified severity UI',
+    () {
+      final original = jsonDecode(
+        File(
+          'test/fixtures/sasmex_firestore_20261006.original.json',
+        ).readAsStringSync(encoding: utf8),
+      );
+      final frame =
+          jsonDecode(
+                File(
+                  'test/fixtures/sasmex_firestore_20261006.relay.json',
+                ).readAsStringSync(encoding: utf8),
+              )
+              as Map<String, dynamic>;
+      final event = SasmexService.parseRelayFrame(frame)!;
+      final presentation = UnifiedEventPresentation.fromEvent(event);
+      expect(event.originTime, DateTime.utc(2026, 10, 6, 4, 9, 46));
+      expect(event.lat, original['epicenter']['latitude']);
+      expect(event.lng, original['epicenter']['longitude']);
+      expect(event.isWarn, false);
+      expect(event.sourcePayload!['original'], original);
+      expect(event.sourcePayload!['severity'], 'Minor');
+      expect(event.sourcePayload!['severityOrigin'], 'intensity');
+      expect(presentation.intensityValue, '轻微');
+      expect(presentation.secondaryText, '类型：未知 · 严重性：Minor');
+      expect(presentation.detailText, contains('上游强度文字：Leve'));
+      expect(presentation.title, 'SASMEX 地震检出 第1報');
+      final provider = QuakeProvider();
+      addTearDown(provider.dispose);
+      provider.handleUnifiedEventForTest(event, suppressEffects: true);
+      expect(provider.unifiedEvents, isEmpty);
+    },
+  );
+
+  test('October 16 original Firestore document reaches unified UI unchanged', () {
+    final raw = jsonDecode(
+      File(
+        'server/kma_pews_relay/test_fixtures/sasno_firestore_20261016.original.json',
+      ).readAsStringSync(encoding: utf8),
+    );
+    final fields = raw['fields']['SASNOEVENTDATA']['mapValue']['fields'];
+    final frame =
+        jsonDecode(
+              File(
+                'test/fixtures/sasno_firestore_20261016.relay.json',
+              ).readAsStringSync(encoding: utf8),
+            )
+            as Map<String, dynamic>;
     final event = SasmexService.parseRelayFrame(frame)!;
     final presentation = UnifiedEventPresentation.fromEvent(event);
-    expect(event.originTime, DateTime.utc(2026, 10, 6, 4, 9, 46));
-    expect(event.lat, original['epicenter']['latitude']);
-    expect(event.lng, original['epicenter']['longitude']);
+    expect(event.originTime, DateTime.utc(2026, 10, 16, 11, 40, 11));
+    expect(event.eventId, '1792150811000');
+    expect(event.lat, 15.1385);
+    expect(event.lng, -92.46365);
+    expect(
+      event.sourcePayload!['original']['unix'],
+      int.parse(fields['unix']['integerValue']),
+    );
+    expect(
+      event.sourcePayload!['original']['region'],
+      fields['region']['stringValue'],
+    );
+    expect(event.isEew, true);
     expect(event.isWarn, false);
-    expect(event.sourcePayload!['original'], original);
-    expect(event.sourcePayload!['severity'], 'Minor');
-    expect(event.sourcePayload!['severityOrigin'], 'intensity');
+    expect(presentation.title, 'SASMEX 地震检出 第1報');
     expect(presentation.intensityValue, '轻微');
     expect(presentation.secondaryText, '类型：未知 · 严重性：Minor');
-    expect(presentation.detailText, contains('上游强度文字：Leve'));
-    expect(presentation.title, 'SASMEX 地震检出 第1報');
-    final provider = QuakeProvider();
-    addTearDown(provider.dispose);
-    provider.handleUnifiedEventForTest(event, suppressEffects: true);
-    expect(provider.unifiedEvents, isEmpty);
   });
 
   test(

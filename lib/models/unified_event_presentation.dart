@@ -2,7 +2,19 @@ import '../core/intensity_calculator.dart';
 import '../core/cwa_intensity_prediction.dart';
 import '../core/cwa_report_intensities.dart';
 import '../core/utils/quake_time.dart';
+import 'jma_lpgm_bulletin.dart' show jmaLpgmObservationTitle;
 import 'unified_quake_data.dart';
+
+// Replay changes the visible API label, while retaining the original adapter
+// origin. Use that identity for the same presentation rules as live reports.
+String _eewPresentationApi(UnifiedQuakeData event) => event.isReplay
+    ? switch (event.origin) {
+        1 => 'FAN',
+        3 => 'WHEWS',
+        4 => 'Jian Project',
+        _ => event.apiTypeLabel,
+      }
+    : event.apiTypeLabel;
 
 CwaIntensityForecast? cwaForecastForEvent(UnifiedQuakeData event) {
   final raw = event.sourcePayload;
@@ -50,7 +62,11 @@ bool cwaObservedFillAvailable(UnifiedQuakeData event) {
       event.sourcePayload?['isCancel'] == true ||
       event.sourcePayload?['cancel'] == true ||
       event.sourcePayload?['isTraining'] == true ||
-      !const {'FAN', 'Jian Project', 'WHEWS'}.contains(event.apiTypeLabel)) {
+      !const {
+        'FAN',
+        'Jian Project',
+        'WHEWS',
+      }.contains(_eewPresentationApi(event))) {
     return null;
   }
   final reported = CwaIntensityPrediction.parseRank(event.maxIntensity);
@@ -65,6 +81,12 @@ bool cwaObservedFillAvailable(UnifiedQuakeData event) {
   }.contains(event.maxIntensity.trim())) {
     return null;
   }
+  if (event.sourcePayload == null && event.displayEstimateResolved) {
+    final savedRank = CwaIntensityPrediction.parseRank(
+      event.displayEstimatedIntensity,
+    );
+    return savedRank == null ? null : (rank: savedRank, estimated: true);
+  }
   final forecast = cwaForecastForEvent(event);
   return forecast == null
       ? null
@@ -74,12 +96,11 @@ bool cwaObservedFillAvailable(UnifiedQuakeData event) {
 /// New API badges reuse FAN's CSIS estimate without replacing source values.
 int? estimatedNewApiEewBadgeIntensity(UnifiedQuakeData event) {
   final raw = event.sourcePayload;
-  if (!const {'Jian Project', 'WHEWS'}.contains(event.apiTypeLabel) ||
+  if (!const {'Jian Project', 'WHEWS'}.contains(_eewPresentationApi(event)) ||
       !event.isEew ||
       event.useShindo ||
       event.isCanceled ||
       event.isAssumption ||
-      event.isHistory ||
       raw?['isCancel'] == true ||
       raw?['cancel'] == true ||
       raw?['isTraining'] == true ||
@@ -90,7 +111,29 @@ int? estimatedNewApiEewBadgeIntensity(UnifiedQuakeData event) {
       event.depth < 0) {
     return null;
   }
+  if (raw == null && event.displayEstimateResolved) {
+    return int.tryParse(event.displayEstimatedIntensity ?? '');
+  }
   return IntensityCalculator.calcCsisLevel(event.magnitude, event.depth, 0);
+}
+
+/// Display metadata for history summaries, calculated before raw bodies are
+/// deferred to disk (including any supplied CWA PGA adjustment).
+String? estimatedEewIntensityValue(UnifiedQuakeData event) {
+  final cwa = cwaEewBadgeIntensity(event);
+  if (cwa != null && cwa.estimated) {
+    return CwaIntensityPrediction.labels[cwa.rank];
+  }
+  return estimatedNewApiEewBadgeIntensity(event)?.toString();
+}
+
+/// Reuse existing badge estimates without changing reported fields. CWA ranks
+/// must be resolved to their weak/strong label, never spoken as rank numbers.
+String unifiedEewIntensityValue(UnifiedQuakeData event) {
+  final cwa = cwaEewBadgeIntensity(event);
+  if (cwa != null) return CwaIntensityPrediction.labels[cwa.rank];
+  return estimatedNewApiEewBadgeIntensity(event)?.toString() ??
+      event.maxIntensity.trim();
 }
 
 String unifiedRomanIntensityLabel(String value) {
@@ -113,6 +156,43 @@ String unifiedRomanIntensityLabel(String value) {
     'XII',
   ];
   return labels[level];
+}
+
+/// WHEWS 普通情报的烈度展示规则：上游明确给出 0 时视为无效，改用
+/// 本地震中烈度估算。其他 WHEWS 烈度值和所有其他来源都保留原值。
+String? forcedInfoIntensityValue(UnifiedQuakeData event) {
+  final isWhews =
+      event.origin == 3 || event.apiTypeLabel.trim().toUpperCase() == 'WHEWS';
+  if (!isWhews ||
+      event.isEew ||
+      event.useShindo ||
+      event.isCanceled ||
+      event.isAssumption ||
+      event.isVolcanoEvent ||
+      double.tryParse(event.maxIntensity.trim()) != 0) {
+    return null;
+  }
+  if (!event.magnitude.isFinite ||
+      event.magnitude <= 0 ||
+      !event.depth.isFinite ||
+      event.depth < 0) {
+    return null;
+  }
+  return IntensityCalculator.calcCsisLevel(
+    event.magnitude,
+    event.depth,
+    0,
+  ).toString();
+}
+
+String infoIntensityDisplayValue(UnifiedQuakeData event) {
+  final estimated = forcedInfoIntensityValue(event);
+  if (estimated == null) {
+    return event.useShindo
+        ? event.maxIntensity
+        : unifiedRomanIntensityLabel(event.maxIntensity);
+  }
+  return unifiedRomanIntensityLabel(estimated);
 }
 
 /// 统一地震信息卡与系统通知共同使用的展示文本。
@@ -139,10 +219,33 @@ class UnifiedEventPresentation {
   final String apiTypeLabel;
   final String detailText;
 
-  factory UnifiedEventPresentation.fromEvent(UnifiedQuakeData event) {
+  factory UnifiedEventPresentation.fromEvent(
+    UnifiedQuakeData event, {
+    Map<String, String>? sourceSummary,
+  }) {
+    if (event.source == 'usgsDyfi') {
+      final properties = event.sourcePayload?['properties'];
+      final responses = properties is Map
+          ? properties['numResp'] ?? properties['num-responses']
+          : null;
+      final detail = '收到 ${responses ?? '未知'} 份报告';
+      return UnifiedEventPresentation(
+        title: _displayTitle(event),
+        primaryText: event.hypocenter,
+        secondaryText: detail,
+        compactSecondaryText: detail,
+        timeText:
+            '更新 ${QuakeTime.formatSourceClockInSystem(event.reportTime, 0)}',
+        intensityLabel: 'CDI',
+        intensityValue: event.maxIntensity,
+        apiTypeLabel: event.apiTypeLabel,
+      );
+    }
     if (event.source == 'sasmex') {
       final raw = event.sourcePayload;
-      final rawSeverity = _sasmexText(raw?['severity']);
+      final rawSeverity = _sasmexText(
+        raw?['severity'] ?? sourceSummary?['severity'],
+      );
       final severity = rawSeverity ?? '';
       final severityLabel = switch (severity.trim().toLowerCase()) {
         'minor' => '轻微',
@@ -150,7 +253,9 @@ class UnifiedEventPresentation {
         'severe' => '严重',
         _ => severity.isEmpty ? '未知' : severity,
       };
-      final messageType = _sasmexText(raw?['msgType']);
+      final messageType = _sasmexText(
+        raw?['msgType'] ?? sourceSummary?['msgType'],
+      );
       final statusText =
           '类型：${messageType ?? '未知'} · 严重性：${rawSeverity ?? '未知'}';
       final details = <String>[
@@ -185,11 +290,8 @@ class UnifiedEventPresentation {
       );
     }
     if (event.isJmaLpgm) {
-      final title = event.reportNumText.isNotEmpty
-          ? '${event.titleText} ${event.reportNumText}'
-          : event.titleText;
       return UnifiedEventPresentation(
-        title: title,
+        title: jmaLpgmObservationTitle,
         primaryText: event.hypocenter,
         secondaryText: event.depthText.isNotEmpty
             ? '${event.magnitude >= 0 ? 'M${event.magnitude.toStringAsFixed(1)}' : 'M--'}  ·  ${event.depthText}'
@@ -201,7 +303,10 @@ class UnifiedEventPresentation {
             : (event.magnitude >= 0
                   ? 'M${event.magnitude.toStringAsFixed(1)}'
                   : 'M--'),
-        timeText: QuakeTime.formatUnifiedOriginClock(event),
+        timeText: QuakeTime.formatSourceClockInSystem(
+          event.originTime,
+          event.timeZone,
+        ),
         intensityLabel: '长周期',
         intensityValue: '长周期',
         apiTypeLabel: event.apiTypeLabel,
@@ -251,17 +356,20 @@ class UnifiedEventPresentation {
         : event.depth >= 0
         ? '深度 ${event.depth.toInt()}km'
         : '深度 --';
-    final secondaryText = depthText.isNotEmpty
+    final secondaryText = event.plumMissingParametersText ?? (depthText.isNotEmpty
         ? '$magnitudeText  ·  $depthText'
-        : magnitudeText;
-    final timeText = QuakeTime.formatUnifiedOriginClock(event);
-    final intensityValue = event.useShindo
-        ? event.maxIntensity
-        : unifiedRomanIntensityLabel(event.maxIntensity);
+        : magnitudeText);
+    final timeText = QuakeTime.formatSourceClockInSystem(
+      event.originTime,
+      event.timeZone,
+    );
+    final intensityValue = infoIntensityDisplayValue(event);
 
     final isForeignVolcano = event.titleText.contains('遠地噴火');
     final intensityLabel = isForeignVolcano
         ? '噴火'
+        : event.source == 'usgsShakeMap'
+        ? 'MMI'
         : (event.useShindo ? '震度' : '烈度');
     final displayIntensityValue =
         isForeignVolcano && (intensityValue == '不明' || intensityValue == '-')
@@ -296,21 +404,33 @@ String? _sasmexText(Object? value) {
 }
 
 String _displayTitle(UnifiedQuakeData event) {
-  final report = event.reportNumText.trim();
-  if (report.isEmpty) return event.titleText;
+  final titleText = event.displayTitleText;
+  final rawReport = event.reportNumText.trim();
+  final report = !event.isEew && rawReport.toLowerCase() == 'reviewed'
+      ? ''
+      : rawReport;
+  if (!event.isEew && event.source == 'cencEqlist') {
+    const title = '中国地震台网地震信息';
+    return report.isEmpty ? title : '$title $report';
+  }
+  if (report.isEmpty) return titleText;
 
-  // JMA 情报（含 P2P / WHEWS）不拼报次；取消/订正等状态仍显示。
-  if (!event.isEew && event.source == 'jmaEqlist') {
-    if (RegExp(r'^第\d+報').hasMatch(report)) {
-      final status = RegExp(r'（([^）]+)）').firstMatch(report)?.group(1)?.trim();
-      if (status != null && status.isNotEmpty) {
-        return '${event.titleText} $status';
-      }
-      return event.titleText;
+  // JMA ordinary observation titles (also P2P/WHEWS) do not carry a report
+  // serial. Keep revision/cancellation statuses and the underlying serial for
+  // event ordering. Accept Chinese 报, Japanese 報 and fullwidth digits.
+  if (!event.isEew &&
+      const {'jmaEqlist', 'p2pJmaEqlist'}.contains(event.source)) {
+    final serial = RegExp(r'^第\s*[0-9０-９]+\s*[報报](.*)$').firstMatch(report);
+    if (serial != null) {
+      final suffix = (serial.group(1) ?? '').trim();
+      if (suffix.isEmpty) return titleText;
+      final wrapped = RegExp(r'^[（(]([^）)]+)[）)]$').firstMatch(suffix);
+      final status = wrapped?.group(1)?.trim() ?? suffix;
+      return status.isEmpty ? titleText : '$titleText $status';
     }
   }
 
-  return '${event.titleText} $report';
+  return '$titleText $report';
 }
 
 bool _isInvestigatingHypocenter(String value) {

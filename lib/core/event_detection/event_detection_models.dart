@@ -99,6 +99,13 @@ abstract class StationTriggerDetector {
   void reset();
 }
 
+/// Optional batch capability; existing detectors retain their update contract.
+abstract class BatchStationTriggerDetector implements StationTriggerDetector {
+  List<StationTriggerSnapshot> updateBatch(
+    List<StationObservationFrame> observations,
+  );
+}
+
 class EventDetection {
   final String detectorId;
   final String sourceId;

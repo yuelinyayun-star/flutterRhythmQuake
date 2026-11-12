@@ -1,0 +1,33 @@
+{
+  "type": "update",
+  "source": "sasmex",
+  "Data": {
+    "source": "sasmex",
+    "id": "1792150811000",
+    "eventId": "1792150811000",
+    "epochMs": 1792150811000,
+    "region": "Huixtla, Chis.",
+    "lat": 15.1385,
+    "lng": -92.46365,
+    "intensidad": "Leve",
+    "grado": 1,
+    "severidad": 2,
+    "isWarn": false,
+    "original": {
+      "unix": 1792150811,
+      "region": "Huixtla, Chis.",
+      "metadata": {
+        "source": "SASNO",
+        "version": "6.1.0"
+      },
+      "intensity": "Leve",
+      "epicenter": {
+        "longitude": -92.46365,
+        "latitude": 15.1385
+      }
+    },
+    "severity": "Minor",
+    "severityOrigin": "intensity",
+    "updated": "2026-10-16T11:40:23.825569Z"
+  }
+}

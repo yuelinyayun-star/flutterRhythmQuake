@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'api_json_decoder.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -14,6 +15,8 @@ import '../../models/nied_station_db.dart';
 import 'http_response_bytes.dart';
 import 'web_source_proxy.dart';
 import 'station_image_decoder.dart';
+import 'nied_background_worker.dart';
+import 'native_station_image_decoder.dart';
 
 class LpgmStationReading {
   final String code;
@@ -172,7 +175,7 @@ class LpgmMonitorService {
     _running = true;
     _runGeneration++;
     _resetLiveFrameAnchor();
-    _buildPoints();
+    if (kIsWeb) _buildPoints();
     _timer = Timer.periodic(_interval, (_) => _tick());
     unawaited(_tick());
   }
@@ -188,6 +191,7 @@ class LpgmMonitorService {
     _previousSvaByCode.clear();
     _currentSvaByCode.clear();
     _confirmedSupportingRiseCodes.clear();
+    if (!kIsWeb) unawaited(NiedBackgroundWorker.instance.resetLpgm());
   }
 
   void dispose() {
@@ -239,7 +243,18 @@ class LpgmMonitorService {
       } else {
         _latestInputFrame = null;
       }
-      _parseFrame(frame.packedRgb, time);
+      if (kIsWeb) {
+        _parseFrame(frame.packedRgb, time);
+      } else {
+        final snapshot = await NiedBackgroundWorker.instance.processLpgmFrame(
+          imageBytes: frame.gifBytes,
+          dataTime: time,
+        );
+        if (!_isCurrentRun(generation)) return;
+        if (snapshot != null) {
+          _snapshotController.add(_latestSnapshot = snapshot);
+        }
+      }
     } catch (_) {
       // keep silent for now; caller can observe stream gaps.
     } finally {
@@ -313,7 +328,7 @@ class LpgmMonitorService {
     if (text == null) return null;
     String latest;
     try {
-      final decoded = jsonDecode(text);
+      final decoded = decodeApiJson(text);
       if (decoded is! Map<String, dynamic>) return null;
       final value = decoded['latest_time'];
       if (value is! String) return null;
@@ -725,6 +740,9 @@ class LpgmMonitorService {
         }
         bytes = await readHttpResponseBytes(res, timeout: _imageTimeout);
       }
+      // Native monitoring passes the untouched image to the persistent data
+      // owner. No Skia decode, full-image RGB loop or SVA calculation on UI.
+      if (!kIsWeb) return (const <int>[], 0, 0, bytes);
       if (StationImageDecoder.cpuOnly) {
         final decoded = await StationImageDecoder.decodeCpu(bytes);
         if (decoded == null) return null;
@@ -851,4 +869,61 @@ class _LpgmDecodedFrame {
   final List<int> packedRgb;
   final Uint8List gifBytes;
   const _LpgmDecodedFrame({required this.packedRgb, required this.gifBytes});
+}
+
+/// Runs only inside the existing image worker, including the stateful outlier
+/// history. Raw image bytes and the established color formulas stay unchanged.
+class LpgmFrameProcessor {
+  LpgmFrameProcessor({bool useNative = true}) {
+    _engine._buildPoints();
+    if (useNative && NativeStationImageDecoder.supported) {
+      _decoder = NativeStationImageDecoder([
+        for (final point in _engine._points) ...[point.x, point.y],
+      ]);
+    }
+  }
+  final _engine = LpgmMonitorService._internal();
+  NativeStationImageDecoder? _decoder;
+  final _pixels = Uint32List(
+    LpgmMonitorService._imgW * LpgmMonitorService._imgH,
+  );
+
+  LpgmSnapshot? process(Uint8List bytes, DateTime dataTime) {
+    final decoder = _decoder;
+    final List<int> pixels;
+    if (decoder != null) {
+      final frame = decoder.decode(bytes);
+      if (frame.width != LpgmMonitorService._imgW ||
+          frame.height != LpgmMonitorService._imgH) {
+        throw const FormatException('Unexpected LPGM image dimensions');
+      }
+      for (var i = 0; i < _engine._points.length; i++) {
+        final point = _engine._points[i];
+        final rgba = frame.pixels[i];
+        final alpha = (rgba >> 24) & 255;
+        // Match the existing dart:ui rawRgba representation, including fully
+        // transparent palette entries. These are decoder pixels, not readings.
+        final r = (((rgba >> 16) & 255) * alpha + 127) ~/ 255;
+        final g = (((rgba >> 8) & 255) * alpha + 127) ~/ 255;
+        final b = ((rgba & 255) * alpha + 127) ~/ 255;
+        _pixels[point.y * LpgmMonitorService._imgW + point.x] =
+            (r << 16) | (g << 8) | b;
+      }
+      pixels = _pixels;
+    } else {
+      final decoded = decodeStationImageCpu(bytes);
+      if (decoded == null) throw const FormatException('Invalid LPGM image');
+      pixels = decoded.packedRgb;
+    }
+    final previous = _engine.latestSnapshot;
+    _engine._parseFrame(pixels, dataTime);
+    final current = _engine.latestSnapshot;
+    return identical(previous, current) ? null : current;
+  }
+
+  void dispose() {
+    _decoder?.dispose();
+    _decoder = null;
+    _engine.dispose();
+  }
 }

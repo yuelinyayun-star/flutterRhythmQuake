@@ -1,0 +1,30 @@
+{
+  "key": "captured_incois",
+  "source": "incois",
+  "Data": {
+    "id": "incois2026qmbb_B1",
+    "updates": 1,
+    "shockTime": "2026-08-21 02:00:00",
+    "latitude": -14.59,
+    "longitude": -73.52,
+    "depth": 10,
+    "magnitude": 6.8,
+    "placeName": "Central Peru",
+    "agency": "INCOIS",
+    "bulletinType": "I",
+    "description": "Based on historical earthquake and tsunami data, Tsunami Threat does not exist for India. ITEWC INCOIS will monitor sea level changes near epicentral region and report in case of tsunami threat.",
+    "detailUrl": "https://tsunami.incois.gov.in/itews/DSSProducts/OPR/incois2026qmbb/NTWC/B1/incois2026qmbb_B1_NTWC_Pub.json",
+    "eventId": "incois2026qmbb",
+    "headline": "... EARTHQUAKE BULLETIN ...",
+    "instruction": "This bulletin is being issued as advice. Only national/state/local authorities and disaster management officers have the authority to make decisions regarding the official threat and warning status in their coastal areas and any action to be taken in response.",
+    "issueTime": "2026-08-21 02:09:00",
+    "level": "Information",
+    "listUrl": "https://tsunami.incois.gov.in/itews/DSSProducts/OPR/past90days.json",
+    "ocean": "PO",
+    "topoBathy": "NIL (Located at a distnace of 162 km from coastline on Land)",
+    "updatesText": "No further bulletins will be issued by ITEWC INCOIS for this event unless additional information becomes available."
+  },
+  "original": "test/fixtures/tsunami_presentation_20261023/raw/f69c83e0ed636684.original",
+  "url": "",
+  "sha256": "f69c83e0ed636684264840061ffa6873aecf769db5bd2a2146ba3c4799cda5db"
+}

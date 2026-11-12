@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'sources/api_json_decoder.dart';
 import 'dart:convert';
 import 'dart:math';
 
@@ -56,7 +57,8 @@ class WAuthService {
   }) : _client = client ?? http.Client(),
        credentialStore = credentialStore ?? WAuthCredentialStore(),
        // Gateway paths include /wauth, so Web only prefixes /api.
-       gatewayBaseUrlValue = gatewayBaseUrl ??
+       gatewayBaseUrlValue =
+           gatewayBaseUrl ??
            (kIsWeb
                ? Uri.base.resolve('/api').toString()
                : WAuthService.gatewayBaseUrl);
@@ -435,7 +437,7 @@ class WAuthService {
 
   Map<String, dynamic> _decodeObject(http.Response response) {
     try {
-      final decoded = jsonDecode(response.body);
+      final decoded = decodeApiJsonResponse(response);
       if (decoded is Map<String, dynamic>) return decoded;
       throw const FormatException('Expected a JSON object.');
     } catch (error) {
@@ -588,8 +590,7 @@ class WAuthStoredAuthorization {
   bool get hasCredentials => credentials.hasApiToken;
 
   /// An expired OAuth session does not invalidate the business API token.
-  bool get shouldForgetLogin =>
-      hasCredentials && apiRejected;
+  bool get shouldForgetLogin => hasCredentials && apiRejected;
 
   /// Network/timeouts and other non-auth failures should keep cached login UI.
   bool get hasTransientVerificationFailure =>

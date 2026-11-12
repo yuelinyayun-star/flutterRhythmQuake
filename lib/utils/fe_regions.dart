@@ -65615,11 +65615,15 @@ final Map<String, int> _englishRegionIds = {
 String _normalizeRegionName(String name) =>
     name.trim().toUpperCase().replaceAll(RegExp(r'\s+'), ' ');
 
+// Display alias for the base FE region; its published grid remains unchanged.
+// Fine Japanese/Korean land and named marine regions take priority over it.
+String _baseFEName(String name) => name == '韩国' ? '朝鲜半岛南部' : name;
+
 /// Exact published region-name lookup, including reports without coordinates.
 String? translateFERegionName(String name) {
   final id = _englishRegionIds[_normalizeRegionName(name)];
   if (id == null || id > _feNames.length) return null;
-  return _feNames[id - 1];
+  return _baseFEName(_feNames[id - 1]);
 }
 
 String getFEName(double lat, double lng) {
@@ -65641,5 +65645,5 @@ String getFEName(double lat, double lng) {
   if (idx < 0 || idx >= _feGrid.length) return '';
   final int regionId = _feGrid[idx];
   if (regionId < 1 || regionId > _feNames.length) return '';
-  return '${_feNames[regionId - 1]}附近';
+  return '${_baseFEName(_feNames[regionId - 1])}附近';
 }

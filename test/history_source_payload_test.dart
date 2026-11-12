@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutterrhythmquake/models/eew_event_group.dart';
+import 'package:flutterrhythmquake/models/source_payload.dart';
 import 'package:flutterrhythmquake/models/unified_quake_data.dart';
 import 'package:flutterrhythmquake/providers/quake_provider.dart';
 import 'package:flutterrhythmquake/services/quake_event_adapter.dart';
@@ -226,4 +227,34 @@ void main() {
       isTrue,
     );
   });
+
+  test(
+    'compact original GQ payloads keep every value and immutable access',
+    () {
+      final bytes = File(
+        'test/fixtures/global_quake/stream_20260921.bin',
+      ).readAsBytesSync();
+      final payloads = GlobalQuakeService().decodePayloadsForTesting(bytes);
+      for (final raw in payloads) {
+        final before = jsonEncode(raw);
+        final compact = compactSourcePayload(raw);
+        expect(compact, isA<EncodedSourcePayload>());
+        expect(compact.keys, raw.keys);
+        expect(compact.length, raw.length);
+        expect(jsonEncode(compact), before);
+        expect(Map.fromEntries(compact.entries), raw);
+        for (final key in raw.keys) {
+          expect(compact[key], raw[key]);
+          final value = compact[key];
+          if (value is Map) expect(value.clear, throwsUnsupportedError);
+          if (value is List) expect(value.clear, throwsUnsupportedError);
+        }
+        expect(() => compact.clear(), throwsUnsupportedError);
+        expect(snapshotSourcePayload(compact), same(compact));
+        expect(compactSourcePayload(compact), same(compact));
+        expect(jsonEncode(compact), before);
+        expect(jsonEncode(raw), before);
+      }
+    },
+  );
 }

@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:convert';
+import 'sources/api_json_decoder.dart';
 
 import 'package:flutter/foundation.dart'
     show ValueListenable, ValueNotifier, kIsWeb, visibleForTesting;
@@ -232,7 +232,7 @@ class LocationService {
           )
           .timeout(const Duration(seconds: 5));
       if (resp.statusCode != 200) return null;
-      final data = json.decode(resp.body);
+      final data = decodeApiJsonResponse(resp);
       if (data is! Map) return null;
 
       final lookup = parseFanstudioGeoIpResponse(
@@ -277,7 +277,7 @@ class LocationService {
             .timeout(const Duration(seconds: 5)),
       );
       if (response.statusCode != 200) return null;
-      final data = json.decode(utf8.decode(response.bodyBytes));
+      final data = decodeApiJsonBytes(response.bodyBytes);
       if (data is! Map) return null;
       final lookup = parseJianGeoIpResponse(Map<String, dynamic>.from(data));
       if (lookup == null) return null;
@@ -301,7 +301,7 @@ class LocationService {
           .get(Uri.parse(url))
           .timeout(const Duration(seconds: 5));
       if (resp.statusCode != 200) return null;
-      final data = json.decode(resp.body);
+      final data = decodeApiJsonResponse(resp);
       if (data is! Map || data['status'] != 'success') return null;
       final lat = _toDouble(data['lat']);
       final lon = _toDouble(data['lon']);

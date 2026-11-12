@@ -18,6 +18,7 @@ import '../../core/source_estimation/kotoho7_js_receiver_bridge.dart';
 import 'shake_detection_service.dart';
 import 'jp_shindo_scale.dart';
 import 'lmoni_image_service.dart';
+import 'nied_realtime_pipeline.dart';
 
 /// 模拟输入服务
 ///
@@ -361,12 +362,16 @@ class MockInputService extends BaseSourceService {
 
     _niedGifInjectionRunning = true;
     _niedGifInjectionCancelRequested = false;
-    final imageService = LmoniImageService()..start();
+    final pipeline = NiedRealtimePipeline.active;
+    final useDataOwner = pipeline?.acceptsGifInjection == true;
+    final imageService = LmoniImageService();
+    if (!useDataOwner) imageService.start();
     var injected = 0;
     DateTime? fallbackTime;
     DateTime? firstDataTime;
     final playbackClock = Stopwatch()..start();
     try {
+      if (useDataOwner) await pipeline!.beginGifInjection();
       for (final file in files) {
         if (_niedGifInjectionCancelRequested) {
           debugPrint(
@@ -395,6 +400,15 @@ class MockInputService extends BaseSourceService {
         }
 
         final bytes = await file.readAsBytes();
+        if (useDataOwner) {
+          if (_niedGifInjectionCancelRequested ||
+              !identical(NiedRealtimePipeline.active, pipeline)) {
+            break;
+          }
+          await pipeline!.injectGif(bytes, dataTime, DateTime.now());
+          injected++;
+          continue;
+        }
         // Decode off the UI isolate — 352x400 GIF decode on the main thread
         // stacks with wave/camera/station rebuilds and feels like hard jank.
         final packedRgb = await Isolate.run(
@@ -417,8 +431,14 @@ class MockInputService extends BaseSourceService {
         injected++;
       }
     } finally {
-      _niedGifInjectionRunning = false;
-      _niedGifInjectionCancelRequested = false;
+      try {
+        if (useDataOwner && identical(NiedRealtimePipeline.active, pipeline)) {
+          await pipeline!.endGifInjection();
+        }
+      } finally {
+        _niedGifInjectionRunning = false;
+        _niedGifInjectionCancelRequested = false;
+      }
     }
     debugPrint('[NIED GIF Inject] Injected $injected GIF seconds from $path');
     return injected;

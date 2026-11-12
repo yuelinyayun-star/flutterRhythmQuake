@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -10,6 +11,8 @@ import 'package:flutterrhythmquake/models/unified_quake_data.dart';
 import 'package:flutterrhythmquake/services/obs_automation_input_service.dart';
 import 'package:flutterrhythmquake/services/obs_automation_runner.dart';
 import 'package:flutterrhythmquake/services/obs_automation_runtime_service.dart';
+import 'package:flutterrhythmquake/services/quake_event_adapter.dart';
+import 'package:flutterrhythmquake/widgets/ui/obs_recording_form.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -18,6 +21,178 @@ void main() {
 
   setUp(input.resetForTest);
   tearDown(input.resetForTest);
+
+  test(
+    'captured JIAN and WHEWS SA start recording and wait for matching USGS',
+    () async {
+      final captured =
+          jsonDecode(
+                File(
+                  'test/fixtures/eew_identity_20261013/reports.original.json',
+                ).readAsStringSync(),
+              )
+              as List;
+      final reports = captured.where(
+        (row) => row['source'] == 'sa' || row['source'] == 'sa_eew',
+      );
+      expect(reports.length, 2);
+      for (final row in reports) {
+        input.resetForTest();
+        final raw = Map<String, dynamic>.from(row['raw'] as Map);
+        final unchanged = jsonEncode(raw);
+        final event = row['source'] == 'sa'
+            ? QuakeEventAdapter.convertJian('sa', raw)!
+            : QuakeEventAdapter.convertWhews('sa_eew', raw)!;
+        expect(event.isEew, isTrue);
+        expect(event.source, 'sa');
+        final executor = _FakeActionExecutor();
+        final delays = <Duration>[];
+        final runner = _runner(
+          input,
+          executor,
+          delay: (d) async {
+            delays.add(d);
+          },
+        );
+        try {
+          input.emitUnifiedEvent(event, ObsUnifiedEventPhase.added);
+          await _waitUntil(() => runner.activeWaiterCount == 1);
+          expect(executor.types, [ObsAutomationBlockType.startRecord]);
+          input.emitUnifiedEvent(event, ObsUnifiedEventPhase.updated);
+          // Matching-boundary unit inputs; the captured SA payload is not altered.
+          input.emitUnifiedEvent(
+            _event(
+              source: 'usgsEqlist',
+              eventId: 'different-earthquake',
+              isEew: false,
+              originTime: event.originTime!.add(const Duration(days: 1)),
+              lat: event.lat,
+              lng: event.lng,
+            ),
+            ObsUnifiedEventPhase.added,
+          );
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+          expect(runner.activeWaiterCount, 1);
+          expect(executor.types, [ObsAutomationBlockType.startRecord]);
+          input.emitUnifiedEvent(
+            _event(
+              source: 'usgsEqlist',
+              eventId: 'matching-usgs-unit',
+              isEew: false,
+              originTime: event.originTime!,
+              lat: event.lat,
+              lng: event.lng,
+            ),
+            ObsUnifiedEventPhase.added,
+          );
+          await _waitUntil(() => executor.types.length == 2);
+          expect(executor.types.last, ObsAutomationBlockType.stopRecord);
+          expect(delays, [const Duration(seconds: 30)]);
+          expect(jsonEncode(raw), unchanged);
+        } finally {
+          await runner.dispose();
+        }
+      }
+    },
+  );
+
+  test(
+    'adding SA preserves customized existing rules, disabled SA and custom presets',
+    () {
+      var sequence = 0;
+      final current = buildEewRecordingPreset(
+        nextId: (prefix) => '$prefix-${sequence++}',
+      );
+      final existing = current.copyWith(
+        stacks: [
+          for (final row in current.stacks)
+            if (obsRecordingAgency(row) != 'shakeAlert')
+              row.copyWith(
+                enabled: false,
+                x: row.x + 17,
+                blocks: [
+                  for (final b in row.blocks)
+                    if (b.type == ObsAutomationBlockType.wait)
+                      b.copyWith(parameters: {'seconds': '47'})
+                    else
+                      b,
+                ],
+              ),
+        ],
+      );
+      final before = jsonEncode(existing.toJson());
+      final custom = existing.copyWith(id: 'custom', name: 'custom');
+      final result = upgradeBuiltInEewRecordingPresets([existing, custom]);
+      expect(result.first.enabled, existing.enabled);
+      expect(
+        result.first.stacks.take(existing.stacks.length).map((r) => r.toJson()),
+        existing.stacks.map((r) => r.toJson()),
+      );
+      expect(obsRecordingAgency(result.first.stacks.last), 'shakeAlert');
+      expect(identical(result.last, custom), isTrue);
+      expect(jsonEncode(existing.toJson()), before);
+      final disabledSa = result.first.copyWith(
+        stacks: [
+          ...result.first.stacks.take(result.first.stacks.length - 1),
+          result.first.stacks.last.copyWith(enabled: false),
+        ],
+      );
+      final once = [disabledSa, custom];
+      expect(identical(upgradeBuiltInEewRecordingPresets(once), once), isTrue);
+    },
+  );
+
+  test('SA finishing cannot stop another agency recording', () async {
+    final executor = _FakeActionExecutor();
+    final runner = _runner(input, executor);
+    addTearDown(runner.dispose);
+    final originTime = DateTime.utc(2026, 8, 21, 12);
+    for (final source in ['sa', 'ceaEew']) {
+      input.emitUnifiedEvent(
+        _event(
+          source: source,
+          eventId: source,
+          isEew: true,
+          originTime: originTime,
+        ),
+        ObsUnifiedEventPhase.added,
+      );
+    }
+    await _waitUntil(() => runner.activeWaiterCount == 2);
+    input.emitUnifiedEvent(
+      _event(
+        source: 'usgsEqlist',
+        eventId: 'usgs-unit',
+        isEew: false,
+        originTime: originTime,
+      ),
+      ObsUnifiedEventPhase.added,
+    );
+    await _waitUntil(() => runner.activeWaiterCount == 1);
+    expect(
+      executor.types.where((t) => t == ObsAutomationBlockType.stopRecord),
+      isEmpty,
+    );
+    input.emitUnifiedEvent(
+      _event(
+        source: 'cencEqlist',
+        eventId: 'cenc-unit',
+        isEew: false,
+        originTime: originTime,
+        reportNumText: '正式测定',
+      ),
+      ObsUnifiedEventPhase.added,
+    );
+    await _waitUntil(
+      () => executor.types.contains(ObsAutomationBlockType.stopRecord),
+    );
+    expect(
+      executor.types
+          .where((t) => t == ObsAutomationBlockType.stopRecord)
+          .length,
+      1,
+    );
+  });
 
   test(
     'EEW preset contains the requested threshold and complete agency flow',
@@ -39,6 +214,8 @@ void main() {
         'jma': (stopAgency: 'jma', reviewed: false),
         'cwa': (stopAgency: 'cwa', reviewed: false),
         'kma': (stopAgency: 'kma', reviewed: false),
+        'sasmex': (stopAgency: 'ssn', reviewed: false),
+        'shakeAlert': (stopAgency: 'usgs', reviewed: false),
         if (AppEdition.hasIcl) 'icl': (stopAgency: 'cenc', reviewed: true),
       };
 
@@ -58,14 +235,14 @@ void main() {
               stack,
               ObsAutomationBlockType.magnitude,
             ).parameters['value'],
-            '6.9',
+            '5.0',
           );
           expect(
             _singleBlock(
               stack,
               ObsAutomationBlockType.wait,
             ).parameters['seconds'],
-            '3600',
+            '1800',
           );
           expect(stack.blocks.map((block) => block.type), [
             ObsAutomationBlockType.unifiedEvent,
@@ -88,14 +265,7 @@ void main() {
         final magnitudeBlocks = stack.blocks.where(
           (block) => block.type == ObsAutomationBlockType.magnitude,
         );
-        if (triggerAgency == 'jma' || triggerAgency == 'kma') {
-          expect(
-            magnitudeBlocks.single.parameters['value'],
-            triggerAgency == 'jma' ? '4.0' : '5.0',
-          );
-        } else {
-          expect(magnitudeBlocks, isEmpty);
-        }
+        expect(magnitudeBlocks, isEmpty);
         expect(
           _singleBlock(
             stack,
@@ -147,6 +317,13 @@ void main() {
           _singleBlock(stack, ObsAutomationBlockType.wait).parameters,
           containsPair('seconds', '30'),
         );
+        expect(
+          _singleBlock(
+            stack,
+            ObsAutomationBlockType.waitForUnifiedEvent,
+          ).parameters,
+          containsPair('timeoutSeconds', '1800'),
+        );
       }
 
       final jmaStack = preset.stacks.singleWhere(
@@ -164,7 +341,7 @@ void main() {
                   block.type == ObsAutomationBlockType.inputFieldCondition,
             )
             .map((block) => block.parameters['value']),
-        ['震源', '震度'],
+        ['各地', '震度'],
       );
     },
   );
@@ -202,13 +379,13 @@ void main() {
     },
   );
 
-  test('JMA starts at M4 and KMA keeps its M5 threshold', () async {
+  test('JMA and KMA default to zero with no magnitude restriction', () async {
     for (final rule in [
-      (source: 'jmaEew', magnitude: 3.9, records: false),
+      (source: 'jmaEew', magnitude: 0.0, records: true),
       (source: 'jmaEew', magnitude: 4.0, records: true),
       (source: 'jmaEew', magnitude: 4.9, records: true),
-      (source: 'jmaEew', magnitude: -1.0, records: false),
-      (source: 'kmaEew', magnitude: 4.9, records: false),
+      (source: 'jmaEew', magnitude: -1.0, records: true),
+      (source: 'kmaEew', magnitude: 0.0, records: true),
       (source: 'kmaEew', magnitude: 5.0, records: true),
     ]) {
       input.resetForTest();
@@ -302,7 +479,7 @@ void main() {
   });
 
   test(
-    'JMA waits for combined information, ignoring preliminary and incomplete reports',
+    'JMA defaults to detailed intensity information, ignoring preliminary and incomplete reports',
     () async {
       final executor = _FakeActionExecutor();
       final runner = _runner(input, executor);
@@ -321,7 +498,7 @@ void main() {
       );
       await _waitUntil(() => runner.activeWaiterCount == 1);
 
-      for (final title in ['震度速報', '震源に関する情報', '各地の震度に関する情報', '遠地地震に関する情報']) {
+      for (final title in ['震度速報', '震源に関する情報', '震源・震度に関する情報', '遠地地震に関する情報']) {
         input.emitUnifiedEvent(
           _event(
             source: 'jmaEqlist',
@@ -342,7 +519,7 @@ void main() {
           eventId: 'jma-investigating',
           isEew: false,
           originTime: originTime,
-          titleText: '震源・震度に関する情報',
+          titleText: '各地の震度に関する情報',
           lat: null,
           lng: null,
         ),
@@ -358,7 +535,7 @@ void main() {
           eventId: 'jma-destination',
           isEew: false,
           originTime: originTime.add(const Duration(seconds: 8)),
-          titleText: '震源・震度に関する情報',
+          titleText: '各地の震度に関する情報',
         ),
         ObsUnifiedEventPhase.added,
       );
@@ -367,39 +544,64 @@ void main() {
     },
   );
 
-  test('JMA accepts combined P2P and WHEWS hypocenter titles', () async {
-    for (final title in ['震度・震源に関する情報', '震源・震度に関する情報', '震源・震度情報']) {
-      input.resetForTest();
-      final executor = _FakeActionExecutor();
-      final runner = _runner(input, executor);
-      final originTime = DateTime.utc(2026, 8, 21, 12);
+  test(
+    'explicit combined option still accepts P2P and WHEWS hypocenter titles',
+    () async {
+      for (final title in ['震度・震源に関する情報', '震源・震度に関する情報', '震源・震度情報']) {
+        input.resetForTest();
+        final executor = _FakeActionExecutor();
+        final runner = _runner(input, executor);
+        var sequence = 0;
+        String id(String prefix) => '$prefix-combined-${sequence++}';
+        final preset = buildEewRecordingPreset(nextId: id, enabled: true);
+        runner.configure([
+          preset.copyWith(
+            stacks: [
+              for (final rule in preset.stacks)
+                if (obsRecordingAgency(rule) == 'jma')
+                  obsRecordingChooseEnd(
+                    rule,
+                    obsRecordingEndChoices.singleWhere(
+                      (choice) => choice.id == 'jma-combined',
+                    ),
+                    id,
+                    maxSeconds: '300',
+                    maxDistanceKm: '300',
+                  )
+                else
+                  rule,
+            ],
+          ),
+        ]);
+        final originTime = DateTime.utc(2026, 8, 21, 12);
 
-      input.emitUnifiedEvent(
-        _event(
-          source: 'jmaEew',
-          eventId: 'jma-eew-$title',
-          isEew: true,
-          originTime: originTime,
-          magnitude: 5.5,
-        ),
-        ObsUnifiedEventPhase.added,
-      );
-      await _waitUntil(() => runner.activeWaiterCount == 1);
-      input.emitUnifiedEvent(
-        _event(
-          source: 'jmaEqlist',
-          eventId: 'jma-info-$title',
-          isEew: false,
-          originTime: originTime,
-          titleText: title,
-        ),
-        ObsUnifiedEventPhase.added,
-      );
-      await _waitUntil(() => executor.types.length == 2);
-      expect(executor.types.last, ObsAutomationBlockType.stopRecord);
-      await runner.dispose();
-    }
-  });
+        input.emitUnifiedEvent(
+          _event(
+            source: 'jmaEew',
+            eventId: 'jma-eew-$title',
+            isEew: true,
+            originTime: originTime,
+            magnitude: 5.5,
+          ),
+          ObsUnifiedEventPhase.added,
+        );
+        await _waitUntil(() => runner.activeWaiterCount == 1);
+        input.emitUnifiedEvent(
+          _event(
+            source: 'jmaEqlist',
+            eventId: 'jma-info-$title',
+            isEew: false,
+            originTime: originTime,
+            titleText: title,
+          ),
+          ObsUnifiedEventPhase.added,
+        );
+        await _waitUntil(() => executor.types.length == 2);
+        expect(executor.types.last, ObsAutomationBlockType.stopRecord);
+        await runner.dispose();
+      }
+    },
+  );
 
   test('CWA and KMA wait for their corresponding information agency', () async {
     for (final pair in const [
@@ -555,10 +757,14 @@ void main() {
       ],
     );
     final presets = [edited];
+    final updated = upgradeBuiltInEewRecordingPresets(presets).single;
+    expect(updated.name, edited.name);
+    expect(updated.enabled, edited.enabled);
     expect(
-      identical(upgradeBuiltInEewRecordingPresets(presets), presets),
-      isTrue,
+      updated.stacks.take(edited.stacks.length).map((s) => s.toJson()),
+      edited.stacks.map((s) => s.toJson()),
     );
+    expect(obsRecordingAgency(updated.stacks.last), 'shakeAlert');
     expect(isBuiltInEewRecordingPreset(edited), isTrue);
   });
 
@@ -637,10 +843,12 @@ void main() {
       ],
     );
     final presets = [edited];
+    final updated = upgradeBuiltInEewRecordingPresets(presets).single;
     expect(
-      identical(upgradeBuiltInEewRecordingPresets(presets), presets),
-      isTrue,
+      updated.stacks.take(edited.stacks.length).map((s) => s.toJson()),
+      edited.stacks.map((s) => s.toJson()),
     );
+    expect(obsRecordingAgency(updated.stacks.last), 'shakeAlert');
   });
 
   test('GQ is absent in the public edition', () {
@@ -662,7 +870,7 @@ void main() {
   });
 
   test(
-    'GQ starts at M6.9 on added or updated and records for one hour',
+    'GQ starts at M5.0 on added or updated and records for 30 minutes',
     () async {
       for (final source in ['globalQuakeEew', 'gqEew']) {
         input.resetForTest();
@@ -689,12 +897,12 @@ void main() {
               ),
               phase,
             );
-        emit(6.8, ObsUnifiedEventPhase.added);
+        emit(4.9, ObsUnifiedEventPhase.added);
         await Future<void>.delayed(const Duration(milliseconds: 20));
         expect(executor.types, isEmpty);
-        emit(6.9, ObsUnifiedEventPhase.updated);
+        emit(5.0, ObsUnifiedEventPhase.updated);
         await _waitUntil(() => delays.isNotEmpty);
-        expect(delays, [const Duration(hours: 1)]);
+        expect(delays, [const Duration(minutes: 30)]);
         expect(executor.types, [ObsAutomationBlockType.startRecord]);
         emit(7.2, ObsUnifiedEventPhase.updated);
         emit(7.2, ObsUnifiedEventPhase.added);
@@ -717,7 +925,7 @@ void main() {
   );
 
   test(
-    'distinct GQ events share recording until the last hour ends',
+    'distinct GQ events share recording until the last 30-minute task ends',
     () async {
       final executor = _FakeActionExecutor();
       final delays = <Completer<void>>[];
@@ -725,7 +933,7 @@ void main() {
         input,
         executor,
         delay: (duration) {
-          expect(duration, const Duration(hours: 1));
+          expect(duration, const Duration(minutes: 30));
           final delay = Completer<void>();
           delays.add(delay);
           return delay.future;
@@ -770,7 +978,7 @@ void main() {
           input,
           executor,
           delay: (duration) {
-            if (duration == const Duration(hours: 1)) {
+            if (duration == const Duration(minutes: 30)) {
               waitingHour = true;
               return hour.future;
             }
@@ -982,7 +1190,7 @@ void main() {
 }
 
 int get _expectedStackCount =>
-    7 + (AppEdition.hasIcl ? 1 : 0) + (AppEdition.hasGlobalQuake ? 1 : 0);
+    9 + (AppEdition.hasIcl ? 1 : 0) + (AppEdition.hasGlobalQuake ? 1 : 0);
 
 ObsAutomationPreset _previousPreset({bool enabled = false}) {
   var sequence = 0;
@@ -992,13 +1200,34 @@ ObsAutomationPreset _previousPreset({bool enabled = false}) {
   );
   return current.copyWith(
     stacks: current.stacks
+        .where((stack) => obsRecordingAgency(stack) != 'shakeAlert')
         .where(
           (stack) =>
               _singleBlock(
-                stack,
-                ObsAutomationBlockType.eewAgency,
-              ).parameters['value'] !=
-              'globalQuake',
+                    stack,
+                    ObsAutomationBlockType.eewAgency,
+                  ).parameters['value'] !=
+                  'globalQuake' &&
+              _singleBlock(
+                    stack,
+                    ObsAutomationBlockType.eewAgency,
+                  ).parameters['value'] !=
+                  'sasmex',
+        )
+        // Reconstruct the historical one-hour template explicitly; new
+        // defaults must not silently change the migration fixture itself.
+        .map(
+          (stack) => stack.copyWith(
+            blocks: [
+              for (final block in stack.blocks)
+                if (block.type == ObsAutomationBlockType.waitForUnifiedEvent)
+                  block.copyWith(
+                    parameters: {...block.parameters, 'timeoutSeconds': '3600'},
+                  )
+                else
+                  block,
+            ],
+          ),
         )
         .toList(),
   );
@@ -1013,6 +1242,7 @@ ObsAutomationPreset _legacyPreset({bool enabled = false}) {
   return next.copyWith(
     name: 'EEW M5 分机构自动录制',
     stacks: next.stacks
+        .where((stack) => obsRecordingAgency(stack) != 'shakeAlert')
         .where(
           (stack) =>
               _singleBlock(
@@ -1024,7 +1254,12 @@ ObsAutomationPreset _legacyPreset({bool enabled = false}) {
                     stack,
                     ObsAutomationBlockType.eewAgency,
                   ).parameters['value'] !=
-                  'globalQuake',
+                  'globalQuake' &&
+              _singleBlock(
+                    stack,
+                    ObsAutomationBlockType.eewAgency,
+                  ).parameters['value'] !=
+                  'sasmex',
         )
         .map((stack) {
           final blocks = stack.blocks
@@ -1036,8 +1271,22 @@ ObsAutomationPreset _legacyPreset({bool enabled = false}) {
                         block.parameters['value'] == '震度'),
               )
               .map(
-                (block) => block.type == ObsAutomationBlockType.wait
+                (block) =>
+                    block.type == ObsAutomationBlockType.waitForUnifiedEvent
+                    ? block.copyWith(
+                        parameters: {
+                          ...block.parameters,
+                          'timeoutSeconds': '3600',
+                        },
+                      )
+                    : block.type == ObsAutomationBlockType.wait
                     ? block.copyWith(parameters: const {'seconds': '20'})
+                    : block.type ==
+                              ObsAutomationBlockType.inputFieldCondition &&
+                          block.parameters['value'] == '各地'
+                    ? block.copyWith(
+                        parameters: {...block.parameters, 'value': '震源'},
+                      )
                     : block,
               )
               .toList();

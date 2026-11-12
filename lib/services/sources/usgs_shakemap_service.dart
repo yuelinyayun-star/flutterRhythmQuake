@@ -1,5 +1,6 @@
+import 'source_http_client.dart';
 import 'dart:async';
-import 'dart:convert';
+import 'api_json_decoder.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -11,7 +12,7 @@ import '../../core/utils/quake_time.dart';
 /// Observes the existing USGS catalogue; product updates never emit earthquakes.
 class UsgsShakeMapService extends ChangeNotifier {
   UsgsShakeMapService({http.Client? client})
-    : _client = client ?? http.Client();
+    : _client = client ?? createSourceHttpClient();
   final http.Client _client;
   final Map<String, QuakeMessage> _events = {};
   final Map<String, int> _summaryVersions = {};
@@ -21,6 +22,7 @@ class UsgsShakeMapService extends ChangeNotifier {
   final Map<String, Future<UsgsShakeMapProduct?>> _requests = {};
   final Set<String> _refreshing = {}, _baselineIds = {};
   bool _primed = false, _disposed = false;
+  bool _showSelectedProduct = true;
   int _selectionSerial = 0;
   QuakeMessage? _selected;
   Timer? _autoExpiry;
@@ -28,6 +30,9 @@ class UsgsShakeMapService extends ChangeNotifier {
   String? status;
   double _magnitudeFilter = 0;
   UsgsShakeMapFrame? get frame => _selected != null ? _manualFrame : _autoFrame;
+
+  /// Automatic product cards remain independent of a manually selected map.
+  UsgsShakeMapFrame? get automaticFrame => _autoFrame;
 
   bool _passesMagnitudeFilter(QuakeMessage event) =>
       _magnitudeFilter >= 0 &&
@@ -40,6 +45,7 @@ class UsgsShakeMapService extends ChangeNotifier {
     _hideFilteredFrames();
     final selected = _selected;
     if (selected?.source == QuakeSourceType.usgs &&
+        _showSelectedProduct &&
         _passesMagnitudeFilter(_resolve(selected!)) &&
         _manualFrame == null) {
       unawaited(select(selected));
@@ -101,7 +107,7 @@ class UsgsShakeMapService extends ChangeNotifier {
         )
         .take(50);
     final refresh = _refreshCandidates(candidates.toList());
-    if (_selected != null) {
+    if (_selected != null && _showSelectedProduct) {
       final latest = _resolve(_selected!);
       if (latest.usgsUpdated != _selected!.usgsUpdated) {
         unawaited(select(latest));
@@ -212,11 +218,12 @@ class UsgsShakeMapService extends ChangeNotifier {
     return matches.length == 1 ? matches.single : event;
   }
 
-  Future<void> select(QuakeMessage? event) async {
+  Future<void> select(QuakeMessage? event, {bool showProduct = true}) async {
     final serial = ++_selectionSerial;
     _selected = event;
+    _showSelectedProduct = showProduct;
     status = null;
-    if (event == null || event.source != QuakeSourceType.usgs) {
+    if (event == null || event.source != QuakeSourceType.usgs || !showProduct) {
       _manualFrame = null;
       notifyListeners();
       return;
@@ -301,7 +308,7 @@ class UsgsShakeMapService extends ChangeNotifier {
       if (response.statusCode != 200) {
         throw StateError('HTTP ${response.statusCode}');
       }
-      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      final decoded = decodeApiJsonBytes(response.bodyBytes);
       if (decoded is! Map<String, dynamic>) {
         throw const FormatException('USGS detail');
       }
@@ -343,7 +350,7 @@ class UsgsShakeMapService extends ChangeNotifier {
           .get(url)
           .timeout(const Duration(seconds: 20));
       if (_disposed || response.statusCode != 200) return null;
-      final raw = jsonDecode(utf8.decode(response.bodyBytes));
+      final raw = decodeApiJsonBytes(response.bodyBytes);
       if (raw is! Map<String, dynamic>) return null;
       final contours = UsgsMmiContour.parse(raw);
       if (_disposed || _products[event.eventId]?.identity != product.identity) {

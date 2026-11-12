@@ -1,0 +1,24 @@
+{
+  "key": "ntwc_t06p1k_16",
+  "source": "ntwc",
+  "Data": {
+    "id": "t06p1k-16",
+    "eventId": "t06p1k",
+    "updates": 16,
+    "level": "Warning",
+    "issueTime": "2025-07-30T14:19:09Z",
+    "shockTime": "2025-07-29T23:24:56 UTC",
+    "latitude": 52.2,
+    "longitude": 160.0,
+    "magnitude": 8.8,
+    "depth": 74,
+    "placeName": "315 miles SW of Bering I., Komandorski",
+    "headline": "NTWC Warning",
+    "description": "",
+    "jsonUrl": "https://www.tsunami.gov/events/PAAQ/2025/07/29/t06p1k/16/WEAK51/PAAQ.json",
+    "bulletinUrl": "https://www.tsunami.gov/events/PAAQ/2025/07/29/t06p1k/16/WEAK51/PAAQ.json"
+  },
+  "original": "test/fixtures/tsunami_presentation_20261023/raw/dac6dab5f158985d.original",
+  "url": "https://www.tsunami.gov/events/PAAQ/2025/07/29/t06p1k/16/WEAK51/PAAQ.json",
+  "sha256": "dac6dab5f158985d7f6aec2f91fdb88b56d086b1246a5637a48c18d451290911"
+}

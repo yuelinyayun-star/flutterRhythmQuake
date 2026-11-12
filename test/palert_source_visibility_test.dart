@@ -81,6 +81,35 @@ class TestProvider extends QuakeProvider {
 }
 
 void main() {
+  test(
+    'replay EEW cannot suppress live estimate and live EEW cannot suppress replay',
+    () {
+      final live = cwa();
+      final replay = live.copyWith(replaySessionId: 'test-session');
+      expect(
+        shouldShowPAlertSource(estimate(), [replay], hideOnMatchingEew: true),
+        isTrue,
+      );
+      expect(
+        shouldShowPAlertSource(
+          estimate(),
+          [live],
+          hideOnMatchingEew: true,
+          replay: true,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldShowPAlertSource(
+          estimate(),
+          [replay],
+          hideOnMatchingEew: true,
+          replay: true,
+        ),
+        isFalse,
+      );
+    },
+  );
   test('only matched CWA hides; source wall clock is converted to UTC', () {
     bool visible(UnifiedQuakeData e) =>
         shouldShowPAlertSource(estimate(), [e], hideOnMatchingEew: true);

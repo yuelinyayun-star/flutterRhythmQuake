@@ -1,0 +1,28 @@
+{
+  "key": "cat_BOLETIN_SEGUIMIENTO_003_20260717_110847",
+  "source": "cat_tsunami",
+  "Data": {
+    "id": "BOLETIN_SEGUIMIENTO_003_20260717_110847",
+    "eventId": "BOLETIN_SEGUIMIENTO_003_20260717_110847",
+    "updates": 3,
+    "level": "Advisory",
+    "headline": "BOLETIN SEGUIMIENTO 003 20260717 110847",
+    "issueTime": "2026-07-17T11:08:47.258-06:00",
+    "shockTime": "2026-07-17T08:49:00",
+    "latitude": 14.59,
+    "longitude": -93.15,
+    "magnitude": 7.4,
+    "depth": 10.0,
+    "placeName": "135 km al Suroeste de Ciudad Hidalgo, Chiapas",
+    "description": "En base a la informacion de la Red Mareografica Nacional y a las observaciones del nivel de mar en las costas cercanas al epicentro para el estado de Chiapas se presento una variacion del nivel del mar maxima de 40 centimetros.\nSe mantendra el monitoreo de la Red Mareografica Nacional hasta la cancelacion de la alerta.\nSe descarta la Alerta de Tsunamis para el estado de: Guerrero.",
+    "instruction": "Mantener a la poblacion alejada de las playas hasta la cancelacion de\nla alerta; se esperan corrientes fuertes en la entrada de los puertos.",
+    "severity": "Moderate",
+    "urgency": "Immediate",
+    "certainty": "Observed",
+    "capUrl": "https://diredimoat.semar.gob.mx/cat/rss/BOLETIN_SEGUIMIENTO_003_20260717_110847.xml",
+    "bulletinUrl": "https://diredimoat.semar.gob.mx/cat/Boletines/BOLETIN_SEGUIMIENTO_003_20260717_110847.txt"
+  },
+  "original": "test/fixtures/tsunami_presentation_20261023/raw/bb27d132dc888f67.original",
+  "url": "https://diredimoat.semar.gob.mx/cat/rss/BOLETIN_SEGUIMIENTO_003_20260717_110847.xml",
+  "sha256": "bb27d132dc888f67e696166c8b081ad7209c5dbfce5c1d5532bd2950af16ca34"
+}

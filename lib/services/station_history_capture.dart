@@ -9,6 +9,7 @@ class StationHistoryCapture {
   final _raw = <String, Map<String, dynamic>>{};
   final _latest = <String, StationHistoryFrame Function()>{};
   final _listeners = <void Function(StationHistoryFrame)>{};
+  final _recordingListeners = <void Function()>{};
   final _disabledKinds = <String>{};
   bool get recording => _listeners.isNotEmpty;
 
@@ -51,6 +52,7 @@ class StationHistoryCapture {
     Map<String, dynamic> Function() snapshot, {
     String? source,
     Map<String, dynamic>? originalJson,
+    Map<String, dynamic>? Function()? originalJsonLoader,
     DateTime? receivedAt,
   }) {
     if (!isEnabled(kind)) return;
@@ -59,7 +61,7 @@ class StationHistoryCapture {
     StationHistoryFrame build() => StationHistoryFrame(
       receivedAt: received,
       snapshot: snapshot(),
-      originalJson: original,
+      originalJson: originalJsonLoader?.call() ?? original,
     );
     _latest[kind] = build;
     if (!recording) return;
@@ -73,8 +75,28 @@ class StationHistoryCapture {
   Iterable<StationHistoryFrame> get latest => _latest.entries
       .where((entry) => isEnabled(entry.key))
       .map((entry) => entry.value());
-  void addListener(void Function(StationHistoryFrame) listener) =>
-      _listeners.add(listener);
-  void removeListener(void Function(StationHistoryFrame) listener) =>
-      _listeners.remove(listener);
+  void addListener(void Function(StationHistoryFrame) listener) {
+    final wasRecording = recording;
+    _listeners.add(listener);
+    if (recording != wasRecording) _notifyRecordingChanged();
+  }
+
+  void removeListener(void Function(StationHistoryFrame) listener) {
+    final wasRecording = recording;
+    _listeners.remove(listener);
+    if (recording != wasRecording) _notifyRecordingChanged();
+  }
+
+  void addRecordingListener(void Function() listener) =>
+      _recordingListeners.add(listener);
+  void removeRecordingListener(void Function() listener) =>
+      _recordingListeners.remove(listener);
+  void _notifyRecordingChanged() {
+    for (final listener in List.of(_recordingListeners)) {
+      listener();
+    }
+  }
+
+  // A native source's lazy archive view expires with its owner.
+  void clearLatest(String kind) => _latest.remove(kind);
 }

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'api_json_decoder.dart';
 import '../station_history_capture.dart';
 
 import 'package:flutter/foundation.dart';
@@ -6,6 +7,9 @@ import 'package:latlong2/latlong.dart';
 
 import '../../core/utils/quake_time.dart';
 import 'whews_socket_client.dart';
+import 'source_connection_lifecycle.dart';
+import 'station_json_decoder.dart';
+import 'station_json_values.dart';
 
 enum WhewsStationKind { nied, snet, kma }
 
@@ -44,7 +48,9 @@ class WhewsStationService {
     required this.kind,
     required String apiToken,
     this.socketFactory = WhewsSocketClient.new,
-  }) : _apiToken = apiToken.trim();
+    StationJsonDecoder? jsonDecoder,
+  }) : _apiToken = apiToken.trim(),
+       _jsonDecoder = jsonDecoder ?? StationJsonDecoder();
 
   static const String niedEnabledPreferenceKey =
       'api_source_whews_nied_enabled';
@@ -54,6 +60,8 @@ class WhewsStationService {
       'api_source_whews_kma_station_enabled';
 
   final WhewsStationKind kind;
+  final StationJsonDecoder _jsonDecoder;
+  bool _hasDecodeCatalogue = false;
   final WhewsSocketClient Function({
     required String url,
     required String apiToken,
@@ -63,8 +71,11 @@ class WhewsStationService {
   socketFactory;
   static const observationTimeout = Duration(seconds: 90);
   Timer? _observationTimer;
+  DateTime? _observationDeadline;
   String _apiToken;
   WhewsSocketClient? _client;
+  final _closing = SourceConnectionBarrier();
+  Future<void> get closed => _closing.wait();
   List<LatLng> _coordinates = const [];
   DateTime? _lastDataTime;
   bool _startRequested = false;
@@ -127,20 +138,23 @@ class WhewsStationService {
       onStateChanged: _handleSocketState,
     );
     _client = client;
+    client.frameDecoder = _decodeFrame;
+    client.binaryFrameDecoder = _decodeFrameBytes;
     client.start();
   }
 
   void _handleSocketState(WhewsSocketState state) {
+    if (state != WhewsSocketState.connected) {
+      _jsonDecoder.dispose();
+      _hasDecodeCatalogue = false;
+    }
     if (kind != WhewsStationKind.nied) {
       stateNotifier.value = state;
       return;
     }
     if (state == WhewsSocketState.connected) {
       // Transport heartbeats cannot certify that observations are updating.
-      _observationTimer ??= Timer(
-        observationTimeout,
-        _handleObservationTimeout,
-      );
+      if (_observationTimer == null) _armObservationTimer();
       return;
     }
     _observationTimer?.cancel();
@@ -167,8 +181,19 @@ class WhewsStationService {
     );
   }
 
+  void _armObservationTimer([Duration delay = observationTimeout]) {
+    _observationTimer?.cancel();
+    _observationDeadline = DateTime.now().add(delay);
+    _observationTimer = Timer(delay, _handleObservationTimeout);
+  }
+
   void _handleObservationTimeout() {
+    final deadline = _observationDeadline;
     _observationTimer = null;
+    if (deadline != null && DateTime.now().difference(deadline) > const Duration(seconds: 5)) {
+      _armObservationTimer(const Duration(seconds: 20));
+      return;
+    }
     _clearPublishedStations();
     stateNotifier.value = WhewsSocketState.error;
     _client?.reconnect();
@@ -178,7 +203,11 @@ class WhewsStationService {
     if (message is! Map) return;
     final frame = Map<String, dynamic>.from(message);
     if (frame['type'] == _stationFrameType) {
-      StationHistoryCapture.instance.retainOriginal('whews.${kind.name}', 'metadata', frame);
+      StationHistoryCapture.instance.retainOriginal(
+        'whews.${kind.name}',
+        'metadata',
+        frame,
+      );
       _readCoordinates(frame['stations']);
       return;
     }
@@ -200,11 +229,15 @@ class WhewsStationService {
     final pgv = _readOptionalMotionValues(data['pgv'], _coordinates.length);
 
     _lastDataTime = timestamp;
-    StationHistoryCapture.instance.retainOriginal('whews.${kind.name}', 'data', frame);
+    StationHistoryCapture.instance.retainOriginal(
+      'whews.${kind.name}',
+      'data',
+      frame,
+    );
     _hasPublishedStations = true;
     if (_startRequested && kind == WhewsStationKind.nied) {
       _observationTimer?.cancel();
-      _observationTimer = Timer(observationTimeout, _handleObservationTimeout);
+      _armObservationTimer();
       stateNotifier.value = WhewsSocketState.connected;
     }
     _frameController.add(
@@ -215,13 +248,21 @@ class WhewsStationService {
         values: values,
         pga: pga ?? const [],
         pgv: pgv ?? const [],
-        originalJson: StationHistoryCapture.instance.original('whews.${kind.name}'),
+        originalJson: StationHistoryCapture.instance.original(
+          'whews.${kind.name}',
+        ),
       ),
     );
   }
 
   @visibleForTesting
   void handleMessageForTesting(dynamic message) => _handleMessage(message);
+
+  dynamic _decodeFrame(String raw) =>
+      _hasDecodeCatalogue ? _jsonDecoder.decode(raw) : decodeApiJson(raw);
+  dynamic _decodeFrameBytes(List<int> raw) => _hasDecodeCatalogue
+      ? _jsonDecoder.decodeUtf8(raw)
+      : decodeApiJsonBytes(raw);
 
   DateTime? _parseTimestamp(dynamic raw) {
     final parsed = DateTime.tryParse(raw?.toString() ?? '');
@@ -255,35 +296,22 @@ class WhewsStationService {
     final changed = !listEquals(_coordinates, next);
     if (changed) _clearPublishedStations();
     _coordinates = List.unmodifiable(next);
+    _hasDecodeCatalogue = true;
     if (changed) _lastDataTime = null;
   }
 
   List<double>? _readPrimaryValues(List<dynamic> raw) {
-    final values = <double>[];
-    for (final item in raw) {
-      final value = _number(item);
-      if (value == null || !value.isFinite) return null;
-      final isInRange = kind == WhewsStationKind.kma
-          ? value >= -3 && value <= 11
-          : value >= -3 && value <= 7;
-      if (!isInRange) {
-        return null;
-      }
-      values.add(value);
-    }
-    return List.unmodifiable(values);
+    return readStationJsonNumbers(
+      raw,
+      minimum: -3,
+      maximum: kind == WhewsStationKind.kma ? 11 : 7,
+    );
   }
 
   List<double>? _readOptionalMotionValues(dynamic raw, int expectedLength) {
     if (raw == null) return const [];
     if (raw is! List || raw.length != expectedLength) return null;
-    final values = <double>[];
-    for (final item in raw) {
-      final value = _number(item);
-      if (value == null || !value.isFinite || value < 0) return null;
-      values.add(value);
-    }
-    return List.unmodifiable(values);
+    return readStationJsonNumbers(raw, minimum: 0);
   }
 
   double? _number(dynamic raw) {
@@ -301,10 +329,13 @@ class WhewsStationService {
   }
 
   void _closeClient() {
+    _jsonDecoder.dispose();
+    _hasDecodeCatalogue = false;
     _observationTimer?.cancel();
     _observationTimer = null;
-    _client?.dispose();
+    final client = _client;
     _client = null;
+    if (client != null) _closing.close(() async { client.dispose(); await client.closed; });
     _coordinates = const [];
     _lastDataTime = null;
     _hasPublishedStations = false;

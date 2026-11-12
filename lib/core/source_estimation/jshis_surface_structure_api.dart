@@ -1,4 +1,4 @@
-import 'dart:convert';
+import '../../services/sources/api_json_decoder.dart';
 
 /// Immutable request description for J-SHIS surface-structure ARV queries.
 ///
@@ -52,7 +52,7 @@ class JshisSurfaceStructureArvResponse {
   final double arv;
 
   static JshisSurfaceStructureArvResponse? tryParse(String rawResponse) {
-    final decoded = jsonDecode(rawResponse);
+    final decoded = decodeApiJson(rawResponse);
     if (decoded is! Map) return null;
     if (decoded['status'] != 'Success') return null;
 

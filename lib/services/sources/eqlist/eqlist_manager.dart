@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../../../core/utils/quake_time.dart';
 import '../../../core/utils/catalog_event_identity.dart';
@@ -148,6 +149,42 @@ class EqlistManager {
 
   /// 任意列表更新时的回调
   void Function()? onAnyUpdated;
+  /// Native policy returns references to the original rows for UI binding.
+  ({List<QuakeMessage> rows, int notifications}) Function(
+    String bucket, List<QuakeMessage> current, QuakeMessage incoming, bool replayOnly
+  )? onBucketUpsert;
+  Future<({List<QuakeMessage> rows,int notifications})> Function(
+    String bucket,List<QuakeMessage> current,QuakeMessage incoming,bool replayOnly
+  )? onBucketUpsertAsync;
+  final _bucketBindings=<String,Future<void>>{};
+
+  Future<void> waitForBucketBindings() async {
+    while(_bucketBindings.isNotEmpty){await Future.wait(List.of(_bucketBindings.values));}
+  }
+
+  void _queueBucketBinding(String bucket,List<QuakeMessage> list,QuakeMessage incoming,bool replayOnly) {
+    final policy=onBucketUpsertAsync!;
+    final previous=_bucketBindings[bucket]??Future<void>.value();
+    late final Future<void> task;
+    task=previous.then((_) async {
+      while(identical(policy,onBucketUpsertAsync)){
+        final before=List<QuakeMessage>.of(list);
+        final result=await policy(bucket,before,incoming,replayOnly);
+        if(!identical(policy,onBucketUpsertAsync)){return;}
+        // A source snapshot can replace the bound rows while the native task
+        // runs. Submit that newer UI snapshot before applying its index plan.
+        if(!listEquals(list,before)){continue;}
+        list..clear()..addAll(result.rows);
+        for(var i=0;i<result.notifications;i++){onAnyUpdated?.call();}
+        return;
+      }
+    }).catchError((Object error,StackTrace stack){
+      if(identical(policy,onBucketUpsertAsync)){
+        FlutterError.reportError(FlutterErrorDetails(exception:error,stack:stack,library:'native unified catalog binding'));
+      }
+    }).whenComplete((){if(identical(_bucketBindings[bucket],task)){_bucketBindings.remove(bucket);}});
+    _bucketBindings[bucket]=task;
+  }
 
   /// USGS 官方源最新事件回调，用于进入统一 UI。
   void Function(Map<String, dynamic>)? onUsgsCurrentUpdated;
@@ -254,11 +291,7 @@ class EqlistManager {
       onAnyUpdated?.call();
     };
     cwa.onListUpdated = (items) {
-      _cwaList
-        ..clear()
-        ..addAll(items);
-      _trim(_cwaList);
-      onAnyUpdated?.call();
+      mergeCwaList(items, externalUpdate: false);
     };
     usgs.onListUpdated = (items) {
       _usgsList
@@ -369,6 +402,15 @@ class EqlistManager {
     onAnyUpdated?.call();
   }
 
+  /// Independent FSSN CMT catalogue; retain tensor and nodal-plane fields.
+  void updateFssnCmtList(List<QuakeMessage> items) {
+    _fssnCmtList
+      ..clear()
+      ..addAll(items);
+    _trim(_fssnCmtList);
+    onAnyUpdated?.call();
+  }
+
   /// 更新KMA列表
   ///
   /// 由FanService推送触发
@@ -380,9 +422,7 @@ class EqlistManager {
     onAnyUpdated?.call();
   }
 
-  /// 更新CWA列表
-  ///
-  /// 由FanService推送触发
+  /// 显式替换 CWA 整桶；信源快照使用 [mergeCwaList] 保留跨通道记录。
   void updateCwaList(List<QuakeMessage> items) {
     cwa.noteExternalUpdate();
     _cwaList
@@ -390,6 +430,20 @@ class EqlistManager {
       ..addAll(items);
     _trim(_cwaList);
     onAnyUpdated?.call();
+  }
+
+  /// Merge transport snapshots into the same CWA catalogue. A shorter HTTP
+  /// response must not discard the remaining reports delivered by Jian/FAN.
+  void mergeCwaList(List<QuakeMessage> items, {bool externalUpdate = true}) {
+    if (externalUpdate) cwa.noteExternalUpdate();
+    for (final item in items) {
+      upsertBucketItem(
+        'cwaEqlist',
+        item,
+        replayOnly: true,
+        noteExternalUpdate: false,
+      );
+    }
   }
 
   /// 更新CENC列表
@@ -451,10 +505,7 @@ class EqlistManager {
 
   /// 添加单个CWA条目
   void addCwaItem(QuakeMessage e) {
-    cwa.noteExternalUpdate();
-    _cwaList.insert(0, e);
-    _trim(_cwaList);
-    onAnyUpdated?.call();
+    upsertBucketItem('cwaEqlist', e);
   }
 
   /// 添加单个CENC条目
@@ -469,12 +520,13 @@ class EqlistManager {
     String bucket,
     QuakeMessage e, {
     bool replayOnly = false,
+    bool noteExternalUpdate = true,
   }) {
     if (bucket == 'jmaEqlist') {
       jma.noteExternalUpdate();
     } else if (bucket == 'cencEqlist') {
       cenc.noteExternalUpdate();
-    } else if (bucket == 'cwaEqlist') {
+    } else if (bucket == 'cwaEqlist' && noteExternalUpdate) {
       cwa.noteExternalUpdate();
     }
     final list = switch (bucket) {
@@ -497,7 +549,18 @@ class EqlistManager {
             : null,
     };
     if (list == null) return;
-    final aliases = internationalCatalogSource(bucket) != null
+    if(onBucketUpsertAsync!=null){_queueBucketBinding(bucket,list,e,replayOnly);return;}
+    final nativePolicy = onBucketUpsert;
+    if (nativePolicy != null) {
+      final result = nativePolicy(bucket, list, e, replayOnly);
+      list..clear()..addAll(result.rows);
+      for (var i = 0; i < result.notifications; i++) {
+        onAnyUpdated?.call();
+      }
+      return;
+    }
+    final aliases =
+        bucket == 'cencEqlist' || internationalCatalogSource(bucket) != null
         ? _catalogIdAliases.putIfAbsent(bucket, () => {})
         : null;
     String identity(QuakeMessage item) {
@@ -505,15 +568,33 @@ class EqlistManager {
       return aliases?[id] ?? id;
     }
 
+    final ambiguousCencPrecision =
+        bucket == 'cencEqlist' &&
+        list
+                .where(
+                  (item) =>
+                      catalogEventId(bucket, item.eventId) !=
+                          catalogEventId(bucket, e.eventId) &&
+                      compareCencHistoryOriginPrecision(item, e) != null,
+                )
+                .map((item) => catalogEventId(bucket, item.eventId))
+                .toSet()
+                .length >
+            1;
     bool sameEvent(QuakeMessage item) =>
         item.eventId == e.eventId ||
         (aliases != null &&
             identity(item).isNotEmpty &&
             identity(item) == identity(e)) ||
-        sameCatalogHistoryEvent(bucket, item, e) ||
+        (sameCatalogHistoryEvent(bucket, item, e) &&
+            (!ambiguousCencPrecision ||
+                compareCencHistoryOriginPrecision(item, e) == null)) ||
         (bucket == 'jmaEqlist' && _sameJmaHistoryEvent(item, e));
     var oldIndex = list.indexWhere(sameEvent);
-    if ((bucket == 'earlyEst' || bucket == 'cencEqlist') && oldIndex >= 0) {
+    if ((bucket == 'earlyEst' ||
+            bucket == 'cencEqlist' ||
+            bucket == 'cwaEqlist') &&
+        oldIndex >= 0) {
       // Existing rows may predate cross-transport ID normalization. Compare
       // every matching report before accepting or rejecting the incoming one.
       for (var index = oldIndex + 1; index < list.length; index++) {
@@ -549,10 +630,17 @@ class EqlistManager {
     }
     if (oldIndex >= 0) {
       final old = list[oldIndex];
+      const reviewed = {'reviewed', 'formal', '正式测定'};
+      const automatic = {'automatic', 'auto', '自动测定'};
+      if (reviewed.contains(old.reviewType) &&
+          automatic.contains(e.reviewType)) {
+        return;
+      }
+      final reviewUpgrade =
+          automatic.contains(old.reviewType) && reviewed.contains(e.reviewType);
       final cencPrecisionOrder = bucket == 'cencEqlist'
           ? compareCencHistoryOriginPrecision(old, e)
           : null;
-      if (cencPrecisionOrder == -1) return;
       if (aliases != null) {
         // Retain both proven IDs so later parameter revisions still update
         // the same row, whichever transport supplies them.
@@ -567,6 +655,7 @@ class EqlistManager {
           }
         }
       }
+      if (cencPrecisionOrder == -1) return;
       final oldReport = old.reportTime == null
           ? null
           : QuakeTime.eventInstantUtc(old, value: old.reportTime);
@@ -584,6 +673,7 @@ class EqlistManager {
       if (numberedOrder == -1) return;
       if (numberedOrder != 1 &&
           cencPrecisionOrder != 1 &&
+          !reviewUpgrade &&
           replayOnly &&
           (newReport == null ||
               (oldReport != null && !newReport.isAfter(oldReport)))) {
@@ -591,6 +681,7 @@ class EqlistManager {
       }
       if (numberedOrder != 1 &&
           cencPrecisionOrder != 1 &&
+          !reviewUpgrade &&
           oldReport != null &&
           (newReport == null || newReport.isBefore(oldReport))) {
         return;

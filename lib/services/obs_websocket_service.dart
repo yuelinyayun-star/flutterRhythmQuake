@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'sources/api_json_decoder.dart';
+import 'sources/source_socket.dart';
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
@@ -185,7 +187,11 @@ class ObsWebSocketService {
     this.requestTimeout = const Duration(seconds: 8),
     this.replaySaveTimeout = const Duration(seconds: 20),
     this.closeTimeout = const Duration(seconds: 2),
-  });
+    WebSocketChannel Function(Uri)? socketFactory,
+  }) : _socketFactory =
+           socketFactory ??
+           ((uri) =>
+               connectSourceSocket(uri, connectTimeout: connectionTimeout));
 
   static const int supportedRpcVersion = 1;
   static const int outputEventSubscription = 1 << 6;
@@ -199,6 +205,7 @@ class ObsWebSocketService {
   final Duration requestTimeout;
   final Duration replaySaveTimeout;
   final Duration closeTimeout;
+  final WebSocketChannel Function(Uri) _socketFactory;
 
   final ValueNotifier<ObsConnectionState> connectionStateNotifier =
       ValueNotifier(ObsConnectionState.disconnected);
@@ -321,7 +328,7 @@ class ObsWebSocketService {
 
     WebSocketChannel? channel;
     try {
-      channel = WebSocketChannel.connect(currentConfig.uri);
+      channel = _socketFactory(currentConfig.uri);
       _channel = channel;
       await channel.ready.timeout(connectionTimeout);
       if (!_isCurrentConnection(channel, serial)) {
@@ -459,8 +466,8 @@ class ObsWebSocketService {
     Map<String, dynamic>? message;
     try {
       final decoded = raw is String
-          ? jsonDecode(raw)
-          : jsonDecode(utf8.decode((raw as List).cast<int>()));
+          ? decodeApiJson(raw)
+          : decodeApiJsonBytes((raw as List).cast<int>());
       message = _asStringMap(decoded);
     } catch (_) {
       return;

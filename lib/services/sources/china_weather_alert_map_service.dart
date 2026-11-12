@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:convert';
+import 'api_json_decoder.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -115,8 +115,7 @@ class ChinaWeatherAlertMapService {
           _lastFetchTime = _snapshotTime;
           return;
         }
-        final rawText = utf8.decode(resp.bodyBytes, allowMalformed: true);
-        final parsedItems = await compute(_parseAlertMapJson, rawText);
+        final parsedItems = await compute(_parseAlertMapJsonBytes, resp.bodyBytes);
         if (generation != _generation) return;
         _lastPayloadDigest = digest;
         _snapshotItems = parsedItems;
@@ -132,9 +131,9 @@ class ChinaWeatherAlertMapService {
   }
 
   /// 顶级函数供 compute 在独立 Isolate 中异步解析
-  static List<WeatherAlertMapItem> _parseAlertMapJson(String rawBody) {
+  static List<WeatherAlertMapItem> _parseAlertMapJsonBytes(List<int> rawBody) {
     try {
-      final decoded = jsonDecode(rawBody);
+      final decoded = decodeApiJsonIngressBytes(rawBody, allowMalformed: true);
       if (decoded is! Map<String, dynamic>) return const [];
       final result = decoded['result'];
       if (result is! Map<String, dynamic>) return const [];
@@ -198,8 +197,7 @@ class ChinaWeatherAlertMapService {
           .timeout(const Duration(seconds: 8));
 
       if (resp.statusCode == 200 && resp.bodyBytes.isNotEmpty) {
-        final rawJs = utf8.decode(resp.bodyBytes, allowMalformed: true);
-        final detail = WeatherAlertDetail.fromRawJs(rawJs, fileId);
+        final detail = WeatherAlertDetail.fromRawJsBytes(resp.bodyBytes, fileId);
         if (detail != null) {
           _detailCache[fileId] = detail;
           while (_detailCache.length > detailCacheLimit) {

@@ -4,7 +4,10 @@ import 'package:latlong2/latlong.dart';
 
 import '../../core/source_estimation/source_estimation_models.dart';
 import '../../core/source_estimation/source_estimator.dart';
+import '../../core/source_estimation/palert_magnitude.dart';
 import 'palert_service.dart';
+import 'palert_station_layout.dart';
+import 'native_palert_topology.dart';
 
 /// Raw P-Alert episode picks. The display peak hold is never an input.
 class PAlertSourcePick {
@@ -15,8 +18,9 @@ class PAlertSourcePick {
   int secondMaxLevel = -1;
   double? _peak;
   double? _secondPeak;
-  int _unchangedSeconds = 0;
+  DateTime? _lastPeakChange;
   DateTime? get updatedAt => _history.isEmpty ? null : _history.last.time;
+  double? get peakPga => _peak;
 
   void update(PAlertStation station) {
     final time = station.dataTime;
@@ -29,7 +33,7 @@ class PAlertSourcePick {
       return;
     }
     if (updatedAt != null &&
-        time.difference(updatedAt!).inMilliseconds != 1000) {
+        time.difference(updatedAt!) > PAlertService.frameStaleAfter) {
       clear();
     }
     final pga = station.pgaGal!;
@@ -68,10 +72,11 @@ class PAlertSourcePick {
       } else if (_secondPeak == null || pga > _secondPeak!) {
         _secondPeak = pga;
       }
-      _unchangedSeconds = oldPeak != _peak || oldSecond != _secondPeak
-          ? 0
-          : _unchangedSeconds + 1;
-      if (_unchangedSeconds >= 8) _clearTrigger();
+      if (oldPeak != _peak || oldSecond != _secondPeak) _lastPeakChange = time;
+      if (_lastPeakChange != null &&
+          time.difference(_lastPeakChange!) >= const Duration(seconds: 8)) {
+        _clearTrigger();
+      }
     }
     _history.add((time: time, pga: pga, level: level));
     if (_history.length > 8) _history.removeAt(0);
@@ -88,7 +93,7 @@ class PAlertSourcePick {
     triggerAt = null;
     maxLevel = secondMaxLevel = -1;
     _peak = _secondPeak = null;
-    _unchangedSeconds = 0;
+    _lastPeakChange = null;
   }
 
   void clear() {
@@ -99,11 +104,11 @@ class PAlertSourcePick {
 }
 
 /// Uses an independent instance of the existing four-stage HYP search, with
-/// P-Alert pick weights. No Japan-only magnitude estimate is published.
+/// P-Alert pick weights. Magnitude uses the APP's Taiwan PGA model only.
 class PAlertSourceEstimation {
   final Map<String, PAlertSourcePick> _picks = {};
   Map<String, List<String>> _adjacency = {};
-  String _layout = '';
+  final _layout = PAlertStationLayout();
   String? _eventId;
   String? get eventId => _eventId;
   NiedDartHypSourceEstimator _estimator = _newEstimator();
@@ -119,12 +124,11 @@ class PAlertSourceEstimation {
     Set<String> confirmedIds,
     DateTime now,
   ) {
-    final layout = stations.map((s) => '${s.id}:${s.coordinate}').join('|');
-    if (layout != _layout) {
+    if (!_layout.matches(stations)) {
       _picks.clear();
       _estimator = _newEstimator();
       _eventId = null;
-      _layout = layout;
+      _layout.replace(stations);
       _adjacency = _neighbors(stations);
     }
     final active = <Map<String, Object?>>[];
@@ -207,23 +211,69 @@ class PAlertSourceEstimation {
             (key, value) => MapEntry(key.toString(), value),
           ),
         );
-        if (isPublishable(estimate)) sources.add(estimate);
+        if (isPublishable(estimate)) {
+          sources.add(_withMagnitude(estimate, metadata, stations));
+        }
       }
     } else if (primary != null && isPublishable(primary)) {
       sources.add(
-        SourceEstimate(
-          latitude: primary.latitude,
-          longitude: primary.longitude,
-          depthKm: primary.depthKm,
-          originTime: primary.originTime,
-          confidence: primary.confidence,
-          method: 'palert_hyp_v1',
-          supportingStationCount: primary.supportingStationCount,
-          diagnostics: primary.diagnostics,
+        _withMagnitude(
+          SourceEstimate(
+            latitude: primary.latitude,
+            longitude: primary.longitude,
+            depthKm: primary.depthKm,
+            originTime: primary.originTime,
+            confidence: primary.confidence,
+            method: 'palert_hyp_v1',
+            supportingStationCount: primary.supportingStationCount,
+            diagnostics: primary.diagnostics,
+          ),
+          metadata,
+          stations,
         ),
       );
     }
     return sources;
+  }
+
+  SourceEstimate _withMagnitude(
+    SourceEstimate estimate,
+    Map<String, Object?> metadata,
+    List<PAlertStation> stations,
+  ) {
+    final assignments = metadata['nied_dart_hyp_station_detection_ids'];
+    final detectionId = estimate.diagnostics['selected_detection_id'];
+    final result = palertMagnitude(
+      lat: estimate.latitude,
+      lng: estimate.longitude,
+      depth: estimate.depthKm!,
+      samples: [
+        for (final station in stations)
+          if (assignments is Map &&
+              assignments[station.id] == detectionId &&
+              _picks[station.id]?.peakPga != null)
+            (
+              id: station.id,
+              pga: _picks[station.id]!.peakPga!,
+              lat: station.coordinate.latitude,
+              lng: station.coordinate.longitude,
+            ),
+      ],
+    );
+    return SourceEstimate(
+      latitude: estimate.latitude,
+      longitude: estimate.longitude,
+      depthKm: estimate.depthKm,
+      magnitude: result?.magnitude,
+      originTime: estimate.originTime,
+      confidence: estimate.confidence,
+      method: estimate.method,
+      supportingStationCount: estimate.supportingStationCount,
+      diagnostics: {
+        ...estimate.diagnostics,
+        if (result != null) ...result.diagnostics,
+      },
+    );
   }
 
   static bool isPublishable(SourceEstimate estimate) {
@@ -245,6 +295,17 @@ class PAlertSourceEstimation {
   }
 
   Map<String, List<String>> _neighbors(List<PAlertStation> stations) {
+    if (NativePAlertTopology.supported) {
+      final neighbors = NativePAlertTopology.build([
+        for (final station in stations) ...[
+          station.coordinate.latitude, station.coordinate.longitude,
+        ],
+      ]);
+      return {
+        for (var i = 0; i < stations.length; i++)
+          stations[i].id: [for (final index in neighbors[i]) stations[index].id],
+      };
+    }
     const distance = Distance();
     return {
       for (final station in stations)

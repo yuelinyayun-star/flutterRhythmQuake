@@ -1,0 +1,23 @@
+{
+  "type": "jma-eew",
+  "Data": {
+    "id": "20260820083831",
+    "originTime": "2026-08-20T08:38:21+09:00",
+    "latitude": 36.5,
+    "longitude": 140.6,
+    "depth": 70.0,
+    "magnitude": 3.5,
+    "placeName": "茨城県北部",
+    "infoTypeName": "予報",
+    "intensity": "2",
+    "serial": 3,
+    "isWarn": false,
+    "isFinal": true,
+    "isCancel": false,
+    "isTraining": false,
+    "isPLUM": false,
+    "warnArea": [],
+    "lgIntensity": "1"
+  },
+  "md5": "7fa1bd0efe0b5934151a6c8285e122de"
+}

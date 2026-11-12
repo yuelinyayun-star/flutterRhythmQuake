@@ -1,0 +1,62 @@
+[
+  {
+    "source": "tsunami",
+    "field": "html",
+    "url": "https://obs.nmefc.cn/Warning/TsunamiAdvice/202610241031_1_file/202610241031_1.html",
+    "status": 200,
+    "content_type": "text/html",
+    "file": "tsunami_html.original",
+    "bytes": 17950,
+    "sha256": "5494574a10660d3b3a3a12f18c5aba0ee4498d66cfaa6cf3cf1fd3b22581ff57"
+  },
+  {
+    "source": "ntwc",
+    "field": "jsonUrl",
+    "url": "https://www.tsunami.gov/events/PAAQ/2026/10/24/tne4d5/1/WEAK53/PAAQ.json",
+    "status": 200,
+    "content_type": "application/json",
+    "file": "ntwc_jsonUrl.original",
+    "bytes": 125362,
+    "sha256": "7a82a2481bd0454858ef77890a582d20fc6975dd62dc5c531f414c5df472c06c"
+  },
+  {
+    "source": "ntwc",
+    "field": "bulletinUrl",
+    "url": "https://www.tsunami.gov/events/PAAQ/2026/10/24/tne4d5/1/WEAK53/WEAK53.txt",
+    "status": 200,
+    "content_type": "text/plain; charset=utf-8",
+    "file": "ntwc_bulletinUrl.original",
+    "bytes": 1477,
+    "sha256": "f03705cea352ad39e7a59be32df0af54e91c47e3b4d93d95f18b12a1da93b3a3"
+  },
+  {
+    "source": "ptwc",
+    "field": "jsonUrl",
+    "url": "https://www.tsunami.gov/events/PHEB/2026/10/24/26297000/1/WEGM42/PHEB.json",
+    "status": 200,
+    "content_type": "application/json",
+    "file": "ptwc_jsonUrl.original",
+    "bytes": 1270,
+    "sha256": "0fc19120f271d40a524975ab8fe29a0dd5e06c88c5f38c587e64884144411417"
+  },
+  {
+    "source": "ptwc",
+    "field": "bulletinUrl",
+    "url": "https://www.tsunami.gov/events/PHEB/2026/10/24/26297000/1/WEGM42/WEGM42.txt",
+    "status": 200,
+    "content_type": "text/plain; charset=utf-8",
+    "file": "ptwc_bulletinUrl.original",
+    "bytes": 1435,
+    "sha256": "d3b5b4a380e0d2325e381b9797c07d7a88fa18a6662d9bf788fec9ef0e2d52fd"
+  },
+  {
+    "source": "incois",
+    "field": "detailUrl",
+    "url": "https://tsunami.incois.gov.in/itews/DSSProducts/OPR/incois2026vaxn/NTWC/B1/incois2026vaxn_B1_NTWC_Pub.json",
+    "status": 200,
+    "content_type": "application/json",
+    "file": "incois_detailUrl.original",
+    "bytes": 1193,
+    "sha256": "71d14bdbc03e5a63cb0880594b99a47f591df24a6e8bb58a7cecb3c6978008db"
+  }
+]

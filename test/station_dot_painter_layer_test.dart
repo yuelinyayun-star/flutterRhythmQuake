@@ -41,6 +41,12 @@ void main() {
       )
       .painter!;
 
+  final stationPaint = find.byWidgetPredicate(
+    (widget) =>
+        widget is CustomPaint &&
+        widget.painter.runtimeType.toString() == '_StationDotPainter',
+  );
+
   testWidgets(
     'identical dot appearance does not repaint a newly allocated list',
     (tester) async {
@@ -157,4 +163,127 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     controller.dispose();
   });
+
+  testWidgets('offscreen updates do not repaint visible original dots', (
+    tester,
+  ) async {
+    const outside = StationDot(
+      coordinate: LatLng(-30, -100),
+      color: Colors.blue,
+      radius: 3,
+      fillOpacity: .3,
+      borderOpacity: .7,
+      borderWidth: 1,
+    );
+    await tester.pumpWidget(map([dot, outside]));
+    final previous = painter(tester);
+    await tester.pumpWidget(
+      map([
+        dot,
+        const StationDot(
+          coordinate: LatLng(-30, -100),
+          color: Colors.yellow,
+          radius: 3,
+          fillOpacity: .3,
+          borderOpacity: .7,
+          borderWidth: 1,
+        ),
+      ]),
+    );
+    expect(painter(tester).shouldRepaint(previous), isFalse);
+    await tester.pumpWidget(map([outside]));
+    expect(stationPaint, findsNothing);
+  });
+
+  testWidgets('pan and world wrap reveal previously hidden stations', (
+    tester,
+  ) async {
+    final controller = MapController();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FlutterMap(
+          mapController: controller,
+          options: const MapOptions(
+            initialCenter: LatLng(-30, -100),
+            initialZoom: 5,
+          ),
+          children: const [
+            StationDotPainterLayer(dots: [dot]),
+          ],
+        ),
+      ),
+    );
+    expect(stationPaint, findsNothing);
+    controller.move(const LatLng(35, 139), 5);
+    await tester.pump();
+    expect(stationPaint, findsOneWidget);
+    controller.move(const LatLng(35, 139 + 360), 5);
+    await tester.pump();
+    expect(stationPaint, findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+  });
+
+  testWidgets(
+    'pan and color updates reuse projections; zoom invalidates them',
+    (tester) async {
+      const coordinate = LatLng(35.1, 139.1);
+      final crs = _CountingCrs(coordinate);
+      final controller = MapController();
+      final color = ValueNotifier(Colors.green);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: FlutterMap(
+            mapController: controller,
+            options: MapOptions(
+              crs: crs,
+              initialCenter: const LatLng(35, 139),
+              initialZoom: 5,
+            ),
+            children: [
+              ValueListenableBuilder<Color>(
+                valueListenable: color,
+                builder: (_, value, _) => StationDotPainterLayer(
+                  dots: [
+                    StationDot(
+                      coordinate: coordinate,
+                      color: value,
+                      radius: 3,
+                      fillOpacity: .3,
+                      borderOpacity: .7,
+                      borderWidth: 1,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+      expect(crs.stationProjections, 1);
+      controller.move(const LatLng(35.2, 139), 5);
+      await tester.pump();
+      color.value = Colors.red;
+      await tester.pump();
+      expect(crs.stationProjections, 1);
+      controller.move(const LatLng(35.2, 139), 6);
+      await tester.pump();
+      expect(crs.stationProjections, 2);
+      await tester.pumpWidget(const SizedBox());
+      controller.dispose();
+      color.dispose();
+    },
+  );
+}
+
+class _CountingCrs extends Epsg3857 {
+  _CountingCrs(this.station);
+  final LatLng station;
+  final _counts = [0];
+  int get stationProjections => _counts[0];
+  @override
+  Offset latLngToOffset(LatLng latlng, double zoom) {
+    if (latlng == station) _counts[0]++;
+    return super.latLngToOffset(latlng, zoom);
+  }
 }

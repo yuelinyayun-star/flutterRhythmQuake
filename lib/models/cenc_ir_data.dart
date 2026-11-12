@@ -18,7 +18,7 @@
 
 library;
 
-import 'dart:convert';
+import '../services/sources/api_json_decoder.dart';
 
 enum CencIrDataSource { fan, nowQuake }
 
@@ -185,7 +185,7 @@ class CencIrData {
       }
     } else if (json['instrument_intensity_json'] is String) {
       try {
-        final decoded = jsonDecode(json['instrument_intensity_json']);
+        final decoded = decodeApiJson(json['instrument_intensity_json']);
         if (decoded is List) {
           for (final item in decoded) {
             if (item is Map) {
@@ -203,7 +203,7 @@ class CencIrData {
       contour = Map<String, dynamic>.from(json['contour_geojson']);
     } else if (json['contour_geojson'] is String) {
       try {
-        final decoded = jsonDecode(json['contour_geojson']);
+        final decoded = decodeApiJson(json['contour_geojson']);
         if (decoded is Map) {
           contour = Map<String, dynamic>.from(decoded);
         }

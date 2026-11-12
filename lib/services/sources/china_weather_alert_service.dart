@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:convert';
+import 'api_json_decoder.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -128,8 +128,7 @@ class ChinaWeatherAlertService {
           .timeout(const Duration(seconds: 12));
       if (resp.statusCode != 200) return;
 
-      final body = utf8.decode(resp.bodyBytes, allowMalformed: true);
-      final obj = json.decode(body);
+      final obj = decodeApiJsonIngressBytes(resp.bodyBytes, allowMalformed: true);
       final result = obj is Map ? obj['result'] : null;
       final data = result is Map ? result['data'] : null;
       if (data is! List) return;
@@ -378,15 +377,8 @@ class ChinaWeatherAlertService {
           .timeout(const Duration(seconds: 10));
       if (resp.statusCode != 200) return null;
 
-      final text = utf8.decode(resp.bodyBytes, allowMalformed: true);
-      final m = RegExp(
-        r'var\s+alarminfo\s*=\s*(\{[\s\S]*?\})\s*;?',
-      ).firstMatch(text);
-      if (m == null) return null;
-
-      final jsonText = m.group(1);
-      if (jsonText == null || jsonText.isEmpty) return null;
-      final obj = json.decode(jsonText);
+      final obj = decodeApiJsonIngressBytes(resp.bodyBytes, allowMalformed: true,
+          envelope: JsonWireEnvelope.weatherAlarmAssignment);
       if (obj is! Map) return null;
 
       return _AlarmDetail(

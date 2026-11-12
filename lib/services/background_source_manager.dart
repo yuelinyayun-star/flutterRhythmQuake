@@ -13,6 +13,8 @@ import '../models/tsunami_message.dart';
 import '../models/source_status.dart';
 import 'background_event_processor.dart';
 import 'background_source_reload_plan.dart';
+import '../core/mobile_weather_layers.dart';
+import 'weather_map_source_requests.dart';
 import 'epicenter_region_service.dart';
 import 'location_service.dart';
 import 'ntp_service.dart';
@@ -22,6 +24,7 @@ import 'sources/eqlist/cwa_eqlist_service.dart';
 import 'sources/eqlist/cenc_eqlist_service.dart';
 import 'sources/eqlist/jma_eqlist_service.dart';
 import 'sources/fan_service.dart';
+import 'sources/fssn_service.dart';
 import 'sources/global_quake_service.dart';
 import 'sources/jian_icl_service.dart';
 import 'sources/chinaeew_icl_service.dart';
@@ -263,8 +266,9 @@ Iterable<Map<String, dynamic>> backgroundLocalWeatherSnapshots() sync* {
 Future<void> syncBackgroundSatelliteCloudLayers() async {
   final prefs = await SharedPreferences.getInstance();
   await prefs.reload();
-  final jma = prefs.getBool('map_overlay_jmaSatelliteCloudLayer') ?? false;
-  final nsmc = prefs.getBool('map_overlay_nsmcSatelliteCloudLayer') ?? false;
+  final required = requiredWeatherMapSources(prefs);
+  final jma = required.contains('jmaSatelliteCloudLayer');
+  final nsmc = required.contains('nsmcSatelliteCloudLayer');
   if (jma) {
     _backgroundJmaSatelliteCloud?.start();
   } else {
@@ -299,6 +303,80 @@ Iterable<Map<String, dynamic>> backgroundSatelliteCloudSnapshots() sync* {
   }
 }
 
+/// Targeted weather refresh: never tears down EEW, earthquake or station feeds.
+Future<void> syncBackgroundWeatherMapLayers() async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.reload();
+  final required = requiredWeatherMapSources(prefs);
+  if (required.contains('radarChinaLayer')) {
+    _backgroundFanRadar?.start(
+      interval: FanRadarService.refreshInterval,
+      retainDecodedImage: false,
+    );
+  } else {
+    _backgroundFanRadar?.stop(clear: true);
+  }
+  if (required.contains('precipitationChinaLayer')) {
+    _backgroundCmaPrecipitation?.start(
+      interval: FanRadarService.precipitationRefreshInterval,
+      retainDecodedImage: false,
+    );
+  } else {
+    _backgroundCmaPrecipitation?.stop(clear: true);
+  }
+  if (required.contains('jmaRadarLayer')) {
+    _backgroundJmaRadar?.start();
+  } else {
+    _backgroundJmaRadar?.stop(clear: true);
+  }
+  if (required.contains('satelliteCloudLayer')) {
+    _backgroundFanSatellite?.start();
+  } else {
+    _backgroundFanSatellite?.stop(clear: true);
+  }
+  if (required.contains('typhoonLayer')) {
+    if (_backgroundTyphoon?.isRunning != true) _backgroundTyphoon?.start();
+  } else {
+    _backgroundTyphoon?.stop();
+  }
+  await syncBackgroundSatelliteCloudLayers();
+  for (final key in [mobileWeatherPreferenceKey, mobileWeatherStationModeKey]) {
+    final value = prefs.get(key);
+    if (value == null) {
+      _backgroundSettings?.remove(key);
+    } else {
+      _backgroundSettings?[key] = value;
+    }
+  }
+}
+
+Iterable<Map<String, dynamic>> backgroundWeatherMapSnapshots() sync* {
+  final radar = _backgroundFanRadar;
+  final rain = _backgroundCmaPrecipitation;
+  final jma = _backgroundJmaRadar;
+  final satellite = _backgroundFanSatellite;
+  if (radar?.latestFrame case final frame?)
+    yield ForegroundStationPayload.fanRadar(frame);
+  if (rain?.latestFrame case final frame?)
+    yield ForegroundStationPayload.cmaPrecipitation(frame);
+  if (jma?.latestFrame case final frame?)
+    yield ForegroundStationPayload.jmaRadar(frame);
+  if (satellite?.latestFrame case final frame?)
+    yield ForegroundStationPayload.fanSatellite(frame);
+  yield* backgroundSatelliteCloudSnapshots();
+}
+
+Map<String, dynamic>? backgroundWeatherMapTyphoonSnapshot() {
+  final source = _backgroundTyphoon;
+  if (source == null || !source.isRunning) return null;
+  return {
+    'kind': 'typhoon',
+    'items': source.latestSnapshot
+        .map((item) => item.toMap())
+        .toList(growable: false),
+  };
+}
+
 /// 前台服务 isolate 中运行的 EEW/信息数据源管理
 ///
 /// 与主 isolate 隔离，不共享 SourceManager 单例状态。
@@ -319,8 +397,10 @@ Future<void> startBackgroundSources({
   required void Function(String source, List<Map<String, dynamic>> items)
   onCmtList,
   required void Function(Map<String, dynamic> payload) onAuxData,
+  bool Function()? isStationHistoryRecording,
 }) async {
   if (kIsWeb || !Platform.isAndroid) return;
+  bool recording() => isStationHistoryRecording?.call() ?? false;
 
   await stopBackgroundSources();
 
@@ -390,6 +470,11 @@ Future<void> startBackgroundSources({
       const Duration(hours: 48),
     ),
     acceptedEewReportNums: _readAcceptedEewRows(prefs),
+    canceledEewEvents: _readSeenRows(
+      prefs,
+      BackgroundEventProcessor.canceledEewEventsPreferenceKey,
+      const Duration(hours: 24),
+    ),
     onSeenStateChanged: () {
       _backgroundSeenStatePersistTimer?.cancel();
       _backgroundSeenStatePersistTimer = Timer(
@@ -407,6 +492,9 @@ Future<void> startBackgroundSources({
   final fan = FanService(
     apiKey: prefs.getString(FanService.apiKeyPreferenceKey) ?? '',
   );
+  final fssn = FssnService();
+  final fssnEnabled = prefs.getBool(FssnService.enabledPreferenceKey) ?? true;
+  fan.setFssnDeliveryEnabled(!fssnEnabled);
   final nowQuakeCencIr = NowQuakeCencIntensityService();
   final jian = JianService();
   final nowQuakeCencIrEnabled =
@@ -531,6 +619,8 @@ Future<void> startBackgroundSources({
   _backgroundManager = manager;
   wolfx.onJmaEqlistUpdated = (items) => onSourceList('jma', items);
   fan.onFssnListUpdated = (items) => onSourceList('fssn', items);
+  fssn.onFssnListUpdated = (items) => onSourceList('fssn', items);
+  fssn.onCmtListUpdated = (items) => onSourceList('fssnCmt', items);
   fan.onCencListUpdated = (items) => onSourceList('cenc', items);
   fan.onCwaListUpdated = (items) => onSourceList('cwa', items);
   fan.onCencIrData = onCencIrData;
@@ -548,6 +638,8 @@ Future<void> startBackgroundSources({
     prefs.getBool(JianService.enabledPreferenceKey) ?? false,
   );
   manager.registerSource(fan);
+  manager.registerSource(fssn);
+  manager.setSourceEnabled(FssnService.sourceName, fssnEnabled);
   manager.registerSource(nowQuakeCencIr);
   manager.registerSource(p2p);
   manager.registerSource(mock);
@@ -611,6 +703,7 @@ Future<void> startBackgroundSources({
     wolfx.onUnifiedEvent,
     whews.onUnifiedEvent,
     fan.onUnifiedEvent,
+    fssn.onUnifiedEvent,
     nowQuakeCencIr.onUnifiedEvent,
     p2p.onUnifiedEvent,
     mock.onUnifiedEvent,
@@ -629,6 +722,7 @@ Future<void> startBackgroundSources({
     p2p.onTsunamiEvent,
     fan.onTsunamiEvent,
     whews.onTsunamiEvent,
+    jian.onTsunamiEvent,
     mock.onTsunamiEvent,
   ]) {
     _backgroundSubscriptions.add(stream.listen(onTsunamiEvent));
@@ -655,8 +749,14 @@ Future<void> startBackgroundSources({
     officialEmsc.onCurrentUpdated = (data) =>
         handleOfficialCurrent('emsc', data);
     officialEmsc.onStatusChanged = (connected) => onSourceStatus(
-      SourceStatusUpdate('EMSC', connected ? SourceStatus.connected :
-          officialEmsc.isRunning ? SourceStatus.error : SourceStatus.disconnected),
+      SourceStatusUpdate(
+        'EMSC',
+        connected
+            ? SourceStatus.connected
+            : officialEmsc.isRunning
+            ? SourceStatus.error
+            : SourceStatus.disconnected,
+      ),
     );
     officialEmsc.start();
   }
@@ -773,6 +873,7 @@ Future<void> startBackgroundSources({
           ForegroundStationPayload.nied(
             stations,
             source: _backgroundNiedSource,
+            includeTrackingHistory: false,
           ),
         );
       }
@@ -781,7 +882,13 @@ Future<void> startBackgroundSources({
   _backgroundStationSubscriptions.add(
     yahoo.stationStream.listen((stations) {
       if (stations != null) {
-        onStationData(ForegroundStationPayload.nied(stations, source: 'yahoo'));
+        onStationData(
+          ForegroundStationPayload.nied(
+            stations,
+            source: 'yahoo',
+            includeTrackingHistory: false,
+          ),
+        );
       }
     }),
   );
@@ -791,6 +898,7 @@ Future<void> startBackgroundSources({
         ForegroundStationPayload.kma(
           stations,
           dataTime: kma.dataTimeNotifier.value,
+          layerSignature: kma.nativeLayerSignature,
         ),
       );
     }),
@@ -801,7 +909,8 @@ Future<void> startBackgroundSources({
         ForegroundStationPayload.cwa(
           stations,
           dataTime: cwa.dataTimeNotifier.value,
-          includeOriginalJson: true,
+          includeOriginalJson: recording(),
+          layerSignature: cwa.nativeLayerSignature,
         ),
       );
     }),
@@ -817,33 +926,32 @@ Future<void> startBackgroundSources({
         ForegroundStationPayload.seisjs(
           stations,
           dataTime: seisJs.dataTimeNotifier.value,
-          includeOriginalJson: true,
+          includeOriginalJson: recording(),
+          layerSignature: seisJs.nativeLayerSignature,
         ),
       );
     }),
   );
   _backgroundStationSubscriptions.add(
     pAlert.stationStream.listen((stations) {
+      final snapshot = pAlert.historySnapshot(includeOriginalJson: recording());
+      final signature = pAlert.nativeLayerSignature;
       onStationData(
-        ForegroundStationPayload.palert(
-          stations,
-          dataTime: pAlert.dataTimeNotifier.value,
-          receivedTime: pAlert.receivedTimeNotifier.value,
-          detection: pAlert.detectionSnapshot,
-          includeOriginalJson: true,
-        ),
+        signature.isNotEmpty
+            ? {...snapshot, 'layerSignature': signature}
+            : snapshot,
       );
     }),
   );
-  pAlert.onDetectionChanged = (snapshot) => onStationData(
-    ForegroundStationPayload.palert(
-      pAlert.stations,
-      dataTime: pAlert.dataTimeNotifier.value,
-      receivedTime: pAlert.receivedTimeNotifier.value,
-      detection: snapshot,
-      includeOriginalJson: true,
-    ),
-  );
+  pAlert.onDetectionChanged = (snapshot) {
+    final payload = pAlert.historySnapshot(includeOriginalJson: recording());
+    final signature = pAlert.nativeLayerSignature;
+    onStationData(
+      signature.isNotEmpty
+          ? {...payload, 'layerSignature': signature}
+          : payload,
+    );
+  };
   _backgroundStationSubscriptions.add(
     whewsNied.frameStream.listen((frame) {
       onStationData(_whewsNiedPayload(frame));
@@ -1039,30 +1147,37 @@ Future<void> startBackgroundSources({
       }),
     );
   }
-  if (prefs.getBool('map_overlay_radarChinaLayer') ?? false) {
-    fanRadar.start(interval: FanRadarService.refreshInterval);
+  final weatherSources = requiredWeatherMapSources(prefs);
+  if (weatherSources.contains('radarChinaLayer')) {
+    fanRadar.start(
+      interval: FanRadarService.refreshInterval,
+      retainDecodedImage: false,
+    );
   }
-  if (prefs.getBool('map_overlay_precipitationChinaLayer') ?? false) {
-    precipitation.start(interval: FanRadarService.precipitationRefreshInterval);
+  if (weatherSources.contains('precipitationChinaLayer')) {
+    precipitation.start(
+      interval: FanRadarService.precipitationRefreshInterval,
+      retainDecodedImage: false,
+    );
   }
-  if (prefs.getBool('map_overlay_jmaRadarLayer') ?? false) {
+  if (weatherSources.contains('jmaRadarLayer')) {
     jmaRadar.start(interval: JmaRadarService.refreshInterval);
   }
-  if (prefs.getBool('map_overlay_jmaSatelliteCloudLayer') ?? false) {
+  if (weatherSources.contains('jmaSatelliteCloudLayer')) {
     jmaSatelliteCloud.start(interval: JmaSatelliteCloudService.refreshInterval);
   }
-  if (prefs.getBool('map_overlay_nsmcSatelliteCloudLayer') ?? false) {
+  if (weatherSources.contains('nsmcSatelliteCloudLayer')) {
     nsmcSatelliteCloud.start(
       interval: NsmcSatelliteCloudService.refreshInterval,
     );
   }
-  if (prefs.getBool('map_overlay_satelliteCloudLayer') ?? false) {
+  if (weatherSources.contains('satelliteCloudLayer')) {
     fanSatellite.start(interval: const Duration(minutes: 30));
   }
   if (prefs.getBool('map_overlay_volcanoLayer') ?? false) {
     volcanoMap.start();
   }
-  if (prefs.getBool('map_overlay_typhoonLayer') ?? false) {
+  if (weatherSources.contains('typhoonLayer')) {
     typhoon.start();
   }
   jmaLpgm.start();
@@ -1468,6 +1583,13 @@ Future<void> _persistBackgroundSeenState(
     maxEntries: 1000,
   );
   await _persistAcceptedEewRows(prefs, processor.acceptedEewReportNums);
+  await _persistSeenRows(
+    prefs,
+    BackgroundEventProcessor.canceledEewEventsPreferenceKey,
+    processor.canceledEewEvents,
+    const Duration(hours: 24),
+    maxEntries: 200,
+  );
 }
 
 Future<void> _persistSeenRows(

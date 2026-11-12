@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html  xmlns="http://www.w3.org/1999/xhtml" lang="zh-TW">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+    <title>海嘯資訊明細 - 中央氣象署地震測報中心</title>
+
+    <link rel="shortcut icon" href="/images/favicon.ico">
+    <link rel="stylesheet" href="/lib/bootstrap/dist/css/bootstrap.min.css?7">
+    <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.1.0/css/all.css" integrity="sha384-lKuwvrZot6UHsBSfcMvOkWwlCMgc0TaWr+30HWe3a4ltaBwTZhyTEggF5tJv8tbt" crossorigin="anonymous">
+    <link rel="stylesheet" type="text/css" href="/assets/font-awesome/4.5.0/css/font-awesome.min.css" />
+    
+    
+        <link rel="stylesheet" href="/css/style.min.css?7&amp;v=FsoIO6XXAQCEZvrOZXLTs5K-mMFtc_SnQNZzY0Bi5-k">
+    
+    
+    
+        <link rel="stylesheet" href="/css/style_mob.min.css?v=vJxtFCrGD0OPK502civXSRIZVaX0HY52wyLjZK1m8HE">
+    
+    <link rel="stylesheet" type="text/css" href="/css/flatmenu.css?v=9GxncA0whfM3dbvT7kGzOYKM3Ksf-IDzRehvvmIsFmQ" media="all" />
+    <link rel="stylesheet" type="text/css" href="/css/slideMenu.css?181205" />
+    <link rel="stylesheet" type="text/css" href="/css/component.css?181205" />
+    <link rel="stylesheet" type="text/css" href="/css/slideImg.css?181205" />
+    <link rel="stylesheet" type="text/css" href="/css/jquery-ui.min.css" />
+    <link rel="stylesheet" type="text/css" href="/css/bootstrap-datepicker3-1.9.0.min.css" />
+    <link rel="stylesheet" type="text/css" href="/css/style_upd.css?251029&amp;v=egkzN4kOhRoNFHBnMswWGU6Q7U4LnoDgMBf1r-gXGd0">
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-1G5BB60EVZ"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag() { dataLayer.push(arguments); }
+        gtag('js', new Date());
+
+        gtag('config', 'G-1G5BB60EVZ');
+    </script>
+    <script type="text/javascript">
+        (function(c,l,a,r,i,t,y){
+            c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
+            t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
+            y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
+        })(window, document, "clarity", "script", "r3sm4d3wm3");
+    </script>
+</head>
+<body class="cbp-spmenu-push" data-lang="zh">
+    <div class="mobileSetContent">
+        <div class="wrapperBarBg clear">
+            <a href="#C" id="gotocenter" title="跳到主要內容區塊" tabindex="1" class="sr-only sr-only-focusable">跳到主要內容區塊</a>
+            <h1>
+                    <a href="/" class="logo BaSet">
+                        <img src="/images/wrapperLogo_2.png" alt="中央氣象署地震測報中心 LOGO">
+                    </a>
+            </h1>
+            <div class="right">
+                <div id="dialogBulletin" title="網站公告" style="display:none;">
+                    親愛的使用者您好:
+                    <br /><br />
+                    因應中央氣象局改制為中央氣象署，本網站網址自112年9月15日起調整為
+                    <a href="https://scweb.cwa.gov.tw/">https://scweb.cwa.gov.tw/</a> ，舊網域 https://scweb.cwb.gov.tw/ 後續將停止使用；敬請替換為新網址使用
+                    <br /><br />
+                    造成不便敬請見諒。
+                    <br /><br />
+                    <div align="center">
+                        <i class="ace-icon fa fa-spinner fa-spin orange bigger-125"></i>
+                    </div>
+                    <br />
+                    <div align="center">
+                        <span id="timer">
+                            will close in <span id="time"><strong>15</strong></span> seconds.
+                        </span>
+                    </div>
+                </div>
+                <ul class="optionList">
+                    <li><a href="#U" id="AU" name="U" title="右上方功能區塊" accesskey="U">:::</a></li>
+                        <li id="sitemap"><a class="BaSet" href="/zh-tw/page/sitemap">網站導覽</a></li>
+                        <li><a href="/en-US" class="BaSet">English</a></li>
+                        <li><a href="https://www.facebook.com/cwa.seismology" class="BaSet" target="_blank" title="另開新視窗 - Facebook">Facebook</a></li>
+                </ul>
+                <div class="BsearchBtnBg searchBtnBg">
+                    <input type="text" class="keyin" id="keyin" accesskey="s" title="請輸入關鍵字">
+                    <input type="button" title="搜尋" class="searchBtn" value="搜尋">
+                </div>
+                    <noscript>
+                        <br />『您的瀏覽器不支援JavaScript功能，若網頁功能無法正常使用時，請開啟瀏覽器JavaScript狀態』
+                    </noscript>
+                </div>
+                <a href="javascript:" class="menuMobBtn" id="showLeftPush">
+                    <img src="/images/mob_wrapperMenuBtn.svg" alt="手機導覽">
+                </a>
+            </div>
+
+            
+
+<nav class="wrapperMenuBg cbp-spmenu cbp-spmenu-vertical cbp-spmenu-left" id="cbp-spmenu-s1">
+    <div class="green-black">
+        <div class="mobHead">
+            <div class="mobHeadBtnBg clear">
+                    <a href="/en-US" class="mobEn BaSet">English</a>
+                <a href="javascript:" class="mobSearch BaSet"><img src="/images/mobHeadBtnSearch.png" alt="搜尋"></a>
+            </div>
+            <div class="search clear">
+                <label for="keyin_m" style="display:none;">請輸入關鍵字</label>
+                <input type="text" class="form-control keyin" id="keyin_m" aria-describedby="emailHelp" placeholder="請輸入關鍵字">
+            </div>
+        </div>
+        <ul class="dropdown clear js-nav-system navigation w100 mt2 automobile BulSet slideMenu">
+            <li class="js-nav-system__item navigation__item col w25 automobile sub" data-show-sub="false">
+                    <a href="#"  role="button" class="js-nav-system__link navigation__link">地震資訊</a>
+                    <ul class="js-nav-system__subnav subnav BulSet sub" data-visually-hidden="true">
+                                <li class="js-nav-system__subnav__item">
+                                    <a class="js-nav-system__subnav__link subnav__link" href="/zh-tw/earthquake/clear">地震活動彙整</a>
+                                </li>
+                                <li class="js-nav-system__subnav__item">
+                                    <a class="js-nav-system__subnav__link subnav__link" href="/zh-tw/page/disaster">災害地震</a>
+                                </li>
+                                <li class="js-nav-system__subnav__item">
+                                    <a class="js-nav-system__subnav__link subnav__link" href="/zh-tw/earthquake/world">全球地震</a>
+                                </li>
+                                <li class="js-nav-system__subnav__item">
+                                    <a class="js-nav-system__subnav__link subnav__link" href="/zh-tw/history">歷史地震查詢</a>
+                                </li>
+                                <li class="js-nav-system__subnav__item">
+                                    <a class="js-nav-system__subnav__link subnav__link" href="/zh-tw/earthquake/potential">地震潛勢圖</a>
+                                </li>
+                                <li class="js-nav-system__subnav__item">
+                                    <a class="js-nav-system__subnav__link subnav__link" href="/zh-tw/intensity">鄉鎮震度</a>
+                                </li>
+                    </ul>
+            </li>
+            <li class="js-nav-system__item navigation__item col w25 automobile sub menuHere" data-show-sub="false">
+                    <a href="#"  role="button" class="js-nav-system__link navigation__link">海嘯資訊</a>
+                    <ul class="js-nav-system__subnav subnav BulSet sub" data-visually-hidden="true">
+                                <li class="js-nav-system__subnav__item">
+                                    <a class="js-nav-system__subnav__link subnav__link" href="/zh-tw/tsunami/data">海嘯資訊彙整</a>
+                                </li>
+                                <li class="js-nav-system__subnav__item">
+                                    <a class="js-nav-system__subnav__link subnav__link" href="/zh-tw/tsunami/world">歷史災害海嘯</a>
+                                </li>
+                                <li class="js-nav-system__subnav__item">
+                                    <a class="js-nav-system__subnav__link subnav__link" href="/zh-tw/tsunami/pacific">太平洋海嘯資訊</a>
+                                </li>
+                    </ul>
+            </li>
+            <li class="js-nav-system__item navigation__item col w25 automobile sub" data-show-sub="false">
+                    <a href="#"  role="button" class="js-nav-system__link navigation__link">中心簡介</a>
+                    <ul class="js-nav-system__subnav subnav BulSet sub" data-visually-hidden="true">
+                                <li class="js-nav-system__subnav__item">
+                                    <a class="js-nav-system__subnav__link subnav__link" href="/zh-tw/page/intro/6">業務職掌</a>
+                                </li>
+                                <li class="js-nav-system__subnav__item">
+                                    <a class="js-nav-system__subnav__link subnav__link" href="/zh-tw/page/intro/7">歷史沿革</a>
+                                </li>
+                                <li class="js-nav-system__subnav__item">
+                                    <a class="js-nav-system__subnav__link subnav__link" href="/zh-tw/page/intro/83">中心專刊</a>
+                                </li>
+                    </ul>
+            </li>
+            <li class="js-nav-system__item navigation__item col w25 automobile sub" data-show-sub="false">
+                    <a href="#"  role="button" class="js-nav-system__link navigation__link">教育宣導</a>
+                    <ul class="js-nav-system__subnav subnav BulSet sub" data-visually-hidden="true">
+                                <li class="js-nav-system__subnav__item">
+                                    <a class="js-nav-system__subnav__link subnav__link" href="/zh-tw/guidance/faq">地震百問</a>
+                                </li>
+                                <li class="js-nav-system__subnav__item">
+                                    <a class="js-nav-system__subnav__link subnav__link" href="/zh-tw/page/intro/11">地震防護</a>
+                                </li>
+                                <li class="js-nav-system__subnav__item">
+                                    <a class="js-nav-system__subnav__link subnav__link" href="/zh-tw/guidance/protection">海嘯防護</a>
+                                </li>
+                                <li class="js-nav-system__subnav__item">
+                                    <a class="js-nav-system__subnav__link subnav__link" href="/zh-tw/guidance/eew">地震速報</a>
+                                </li>
+                    </ul>
+            </li>
+            <li class="js-nav-system__item navigation__item col w25 automobile sub" data-show-sub="false">
+                    <a href="#"  role="button" class="js-nav-system__link navigation__link">觀測網介紹</a>
+                    <ul class="js-nav-system__subnav subnav BulSet sub" data-visually-hidden="true">
+                                <li class="js-nav-system__subnav__item">
+                                    <a class="js-nav-system__subnav__link subnav__link" href="/zh-tw/page/observationnetwork">各種觀測網介紹</a>
+                                </li>
+                                <li class="js-nav-system__subnav__item">
+                                    <a class="js-nav-system__subnav__link subnav__link" href="/zh-tw/stationnew">測站查詢</a>
+                                </li>
+                    </ul>
+            </li>
+            <li class="js-nav-system__item navigation__item col w25 automobile sub" data-show-sub="false">
+                            <a class="js-nav-system__link navigation__link" href="/zh-tw/page/report">技術報告</a>
+            </li>
+            <li class="js-nav-system__item navigation__item col w25 automobile sub" data-show-sub="false">
+                            <a class="js-nav-system__link navigation__link" href="/zh-tw/page/topic">地震話題</a>
+            </li>
+            <li class="js-nav-system__item navigation__item col w25 automobile sub" data-show-sub="false">
+                            <a class="js-nav-system__link navigation__link" href="/zh-tw/pws/info">告警資訊</a>
+            </li>
+        </ul>
+    </div>
+</nav>
+            
+
+<div class="pageHeadBg">
+    <h2 class="pageHead">海嘯資訊</h2>
+</div>
+
+<div class="pageContentBg clear">
+    <div class="pageMapBg">
+        <div class="pageMap">
+            <a href="#C" title="中央內容區塊" id="AC" accesskey="C" name="C">:::</a>
+            <i class="pageMapIcon"><img src="/images/pageMapIcon.svg" alt=""></i>
+            <a href="/" class="BaSet">首頁</a>
+            <span>/</span>
+            <a href="#" class="BaSet">海嘯資訊</a>
+            <span>/</span>
+            <a class="BaSet" href="/zh-tw/tsunami/data">海嘯資訊彙整</a>
+            <span>/</span>
+            <a href="#" class="BaSet" aria-current="page">11400503</a>
+        </div>
+    </div>
+    <div class="row rowPage tsunamisInfoBg">
+        <ul class="BulSet tsunamisInfoMenu">
+            <li><a class="BaSet warningInfoHead" href="/zh-tw/tsunami/data">海嘯資訊彙整</a></li>
+            <li><a class="BaSet warningInfoTitle" href="/zh-tw/tsunami/pacific">太平洋海嘯資訊</a></li>
+            <li><a class="BaSet warningInfoTitle" href="/zh-tw/tsunami/world">世界歷史海嘯</a></li>
+            <li><a class="BaSet warningInfoTitle" href="/zh-tw/tsunami/taiwan">臺灣歷史海嘯</a></li>
+        </ul>
+        <noscript>
+            『您的瀏覽器不支援JavaScript功能，若網頁功能無法正常使用時，請開啟瀏覽器JavaScript狀態』
+        </noscript>
+        <br />
+        <br />
+        <br />
+                <div class="parent">
+            中央氣象署  海嘯警訊<br />
+海嘯編號：114005<br />
+報文編號：第3報<br />
+發布時間：民國114年07月30日09時12分<br />
+ <br />
+頃獲太平洋海嘯警報中心通報，２０２５年０７月３０日０７時<br />
+２５分（臺灣時間），俄羅斯　堪察加半島東部外海發生規模８<br />
+．７地震，震央位於東經１６０．００度、北緯５２．２０度。<br />
+經初步研判，該地震所引發海嘯預計約於０７月３０日１３時１<br />
+８分開始影響臺灣，特此發布海嘯警訊，提醒沿海地區民眾提高<br />
+警覺嚴加防範，本署將嚴密監視海嘯的後續影響，隨時提供最新<br />
+資訊。<br />
+ <br />
+<海嘯預估資訊><br />
+北部沿海地區        07/30 13:41         小於0.3公尺<br />
+東北沿海地區        07/30 13:24         小於0.3公尺<br />
+東部沿海地區        07/30 13:18         小於0.3公尺<br />
+東南沿海地區        07/30 13:19         0.3至1公尺<br />
+西南沿海地區        07/30 13:31         0.3至1公尺<br />
+海峽沿海地區        07/30 13:45         小於0.3公尺<br />
+ <br />
+<img alt="海嘯消息發布圖" src=/webdata/OLDTSU/11400503/Tsu11400503.gif style="display: block; height: auto; max-width: 100%;" /><地震資訊><br />
+發震時間：民國114年07月30日07時25分<br />
+震央地點：俄羅斯　堪察加半島東部外海<br />
+震央經度：160.0°E<br />
+震央緯度：52.2°N<br />
+震源深度：74.0 公里<br />
+地震規模：8.7<br />
+資料來源：美國太平洋海嘯警報中心<br />
+
+            <img alt="地震資訊圖" src="/webdata/OLDTSU/11400503/Tsu11400503EQ.jpg" style="display:block" />
+        </div>
+    </div>
+</div>
+
+<style>
+    .parent {
+        display: flex;
+        flex-direction: column; 
+    }
+</style>
+        <div class="wrapperQuickMenuBg">
+                <a href="javascript:" class="wrapperQuickMenuOpen" title="相關連結" role="button">
+                    <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9YzVq9sAAAAASUVORK5CYII=" alt="相關連結">
+                </a>
+                    <ul class="wrapperQuickMenuList BulSet">
+                        <li>
+                            <a class="BaSet" title="地震活動" href="/zh-tw/earthquake/data">
+                                <img src="/images/wrapperQuickMenu_01.png" alt="">
+                                <span>地震活動</span>
+                            </a>
+                        </li>
+                        <li>
+                            <a class="BaSet" title="全球地震" href="/zh-tw/earthquake/world">
+                                <img src="/images/wrapperQuickMenu_02.png" alt="">
+                                <span>全球地震</span>
+                            </a>
+                        </li>
+                        <li>
+                            <a class="BaSet" title="海嘯資訊" href="/zh-tw/tsunami/data">
+                                <img src="/images/wrapperQuickMenu_03.png" alt="">
+                                <span>海嘯資訊</span>
+                            </a>
+                        </li>
+                        <li>
+                            <a class="BaSet" title="地震防護" href="/zh-tw/page/intro/11">
+                                <img src="/images/wrapperQuickMenu_04.png" alt="">
+                                <span>地震防護</span>
+                            </a>
+                        </li>
+                        <li>
+                            <a class="BaSet" title="地震話題" href="/zh-tw/page/topic">
+                                <img src="/images/wrapperQuickMenu_05.png" alt="">
+                                <span>地震話題</span>
+                            </a>
+                        </li>
+                        <li>
+                            <a class="BaSet" title="告警資訊" href="/zh-tw/pws">
+                                <img src="/images/wrapperQuickMenu_07.png" alt="">
+                                <span>告警資訊</span>
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+        
+
+<div class="wrapperMapBg">
+    <div class="wrapperMap">
+        <ul class="BMapList">
+                <li>
+                    <ul class="mapSubList BulSet">
+                            <li><span>地震資訊</span></li>
+
+                                    <li><a class="BaSet" href="/zh-tw/earthquake/clear">地震活動彙整</a></li>
+                                    <li><a class="BaSet" href="/zh-tw/page/disaster">災害地震</a></li>
+                                    <li><a class="BaSet" href="/zh-tw/earthquake/world">全球地震</a></li>
+                                    <li><a class="BaSet" href="/zh-tw/history">歷史地震查詢</a></li>
+                                    <li><a class="BaSet" href="/zh-tw/earthquake/potential">地震潛勢圖</a></li>
+                                    <li><a class="BaSet" href="/zh-tw/intensity">鄉鎮震度</a></li>
+                    </ul>
+                </li>
+                <li>
+                    <ul class="mapSubList BulSet">
+                            <li><span>海嘯資訊</span></li>
+
+                                    <li><a class="BaSet" href="/zh-tw/tsunami/data">海嘯資訊彙整</a></li>
+                                    <li><a class="BaSet" href="/zh-tw/tsunami/world">歷史災害海嘯</a></li>
+                                    <li><a class="BaSet" href="/zh-tw/tsunami/pacific">太平洋海嘯資訊</a></li>
+                    </ul>
+                </li>
+                <li>
+                    <ul class="mapSubList BulSet">
+                            <li><span>中心簡介</span></li>
+
+                                    <li><a class="BaSet" href="/zh-tw/page/intro/6">業務職掌</a></li>
+                                    <li><a class="BaSet" href="/zh-tw/page/intro/7">歷史沿革</a></li>
+                                    <li><a class="BaSet" href="/zh-tw/page/intro/83">中心專刊</a></li>
+                    </ul>
+                </li>
+                <li>
+                    <ul class="mapSubList BulSet">
+                            <li><span>教育宣導</span></li>
+
+                                    <li><a class="BaSet" href="/zh-tw/guidance/faq">地震百問</a></li>
+                                    <li><a class="BaSet" href="/zh-tw/page/intro/11">地震防護</a></li>
+                                    <li><a class="BaSet" href="/zh-tw/guidance/protection">海嘯防護</a></li>
+                                    <li><a class="BaSet" href="/zh-tw/guidance/eew">地震速報</a></li>
+                    </ul>
+                </li>
+                <li>
+                    <ul class="mapSubList BulSet">
+                            <li><span>觀測網介紹</span></li>
+
+                                    <li><a class="BaSet" href="/zh-tw/page/observationnetwork">各種觀測網介紹</a></li>
+                                    <li><a class="BaSet" href="/zh-tw/stationnew">測站查詢</a></li>
+                    </ul>
+                </li>
+                <li>
+                    <ul class="mapSubList BulSet">
+                                <li><a class="BaSet" href="/zh-tw/page/report"><span>技術報告</span></a></li>
+
+                    </ul>
+                </li>
+                <li>
+                    <ul class="mapSubList BulSet">
+                                <li><a class="BaSet" href="/zh-tw/page/topic"><span>地震話題</span></a></li>
+
+                    </ul>
+                </li>
+                <li>
+                    <ul class="mapSubList BulSet">
+                                <li><a class="BaSet" href="/zh-tw/pws/info"><span>告警資訊</span></a></li>
+
+                    </ul>
+                </li>
+        </ul>
+    </div>
+</div>
+        <div class="footerBg">
+            <div class="footer">
+
+                
+
+<div class="text">
+                        08:30至下午05:30 地址：臺北市中正區100006公園路64號 總機：(02)2349-1000(代表號) 氣象查詢：(02)2349-1234 地震查詢：(02)2349-1168
+                        <br /> 本網站參考時間：臺灣標準時間TST(GMT +08:00)
+                    </div>
+                    <div class="copyright">Copyright &copy; 2018 中央氣象署 版權所有 轉載請註明出處 All rights reserved.</div>
+
+                <p align="right">
+                    <a href="https://accessibility.moda.gov.tw/Applications/Detail?category=20251023093644" target="_blank" title="連結到無障礙AA檢測結果(另開視窗)">
+                        <img src="/images/AA.png" border="0" width="88" height="31" alt="無障礙AA檢測結果" />
+                    </a>
+                </p>
+                <ul class="ruleList BulSet">
+                        <li><a class="BaSet" href="/zh-tw/page/intro/77">隱私權保護政策</a></li>
+                        <li><a class="BaSet" href="/zh-tw/page/intro/78">資訊安全政策</a></li>
+                        <li><a class="BaSet" href="/zh-tw/page/intro/79">政府網站資料開放宣告</a></li>
+                </ul>
+            </div>
+        </div>
+        <div class="wrapperLineBottom"></div>
+    </div>
+    <div id="page-top" title="回頂端">
+        <a href="javascript:void(0);" title="回頂端" role="button">
+            ↑
+        </a>
+    </div>
+
+    <script src="/lib/jquery/dist/jquery-3.5.0.min.js"></script>
+    <script src="/lib/bootstrap/dist/js/bootstrap.min.js"></script>
+    <script type="text/javascript" src="/js/src/jquery.slideMenu.js"></script>
+    <script src="/js/src/slideImg.js"></script>
+    <script type="text/javascript" src="/js/src/jquery-accessible-subnav-dropdown.js"></script>
+    <script type="text/javascript" src="/js/src/gotop.js?230206"></script>
+
+    <script type="text/javascript" src="/js/src/jquery-ui.min.js"></script>
+    <script type="text/javascript" src="/js/src/bootstrap-datepicker-1.9.0.min.js"></script>
+    <script src="/js/src/moment.min.js"></script>
+    <script src="/js/src/classie.js"></script>
+    
+    
+        <script src="/js/layout.min.js?v=OSywXVoqjKpSKUTaLSEzjEzTgKF70TWFkU6DZO02Pik"></script>
+    
+    <script src="/js/site.js?v=2K0FjMOOpdcoSWDd7ZGLZgNlRZ-pNZpr6GuOfQnKTrc"></script>
+    <script>
+        indexGmapOptionWidthSet();
+        //$(window).resize(indexGmapOptionWidthSet);
+        (function () {
+            //var cx = '003251229098150371760:j2gvzanjmn4';
+            var cx = 'd0a8d67cc7d694b97';
+            var gcse = document.createElement('script');
+            gcse.type = 'text/javascript';
+            gcse.async = true;
+            gcse.src = 'https://cse.google.com/cse.js?cx=' + cx;
+            var s = document.getElementsByTagName('script')[0];
+            s.parentNode.insertBefore(gcse, s);
+        })();
+        $('.wrapperQuickMenuOpen').click(function () {
+            $('.wrapperQuickMenuList').toggle();
+        });
+        $(".searchBtn").on("click", function () {
+            location.href = '?q=' + $('#keyin').val();
+        });
+        $(function () {
+            let searchParams = new URLSearchParams(window.location.search);
+            if (searchParams.has('q')) {
+                $('.gs-title').focus();
+                setTimeout(function () {
+                    $('.gsc-results-close-btn').focus();
+                }, 1000);
+            }
+            var h = 'scweb.cwa.gov.tw';
+            console.log(h);
+            if (h == 'scweb.cwb.gov.tw') {
+                var _wWidth = $(window).width() + 17;
+                if (_wWidth > 650) {
+                    $("#dialogBulletin").dialog({
+                        width: 660,
+                        height: 420,
+                    });
+                } else {
+                    $("#dialogBulletin").dialog({
+                        width: 300,
+                        height: 400
+                    });
+                }
+                $('.ui-dialog').css('z-index', 999);
+
+                var counter = 15;
+                var interval = setInterval(function () {
+                    counter--;
+                    // Display 'counter' wherever you want to display it.
+                    if (counter <= 0) {
+                        clearInterval(interval);
+                        location.href = 'https://scweb.cwa.gov.tw';
+                        //$('#timer').text("<h3>Count down complete</h3>");
+                        return;
+                    } else {
+                        $('#time').text(counter);
+                        console.log("Timer --> " + counter);
+                    }
+                }, 1000);
+            }
+        });
+    </script>
+    <gcse:searchresults-only></gcse:searchresults-only>
+    
+    
+</body>
+</html>

@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutterrhythmquake/models/cenc_ir_data.dart';
+import 'package:flutterrhythmquake/core/utils/topojson_loader.dart';
 import 'package:flutterrhythmquake/providers/map_state_provider.dart';
 import 'package:flutterrhythmquake/widgets/map/cenc_ir_focus.dart';
 import 'package:flutterrhythmquake/widgets/map/cenc_ir_layer.dart';
@@ -28,6 +29,10 @@ Rect screenBounds(MapCamera camera, List<LatLng> points) {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  final geography = TopoJsonLoader.parse(
+    File('assets/maps/cn.eew.topo.json').readAsStringSync(),
+    source: 'cn',
+  )!;
   setUpAll(() async {
     final font = FontLoader('JetBrainsMono')
       ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Variable.ttf'));
@@ -37,6 +42,7 @@ void main() {
   for (final fixture in [
     'cenc_ir_mojiang_20260914170727.json',
     'cenc_ir_qiaojia_20260908013139.json',
+    'cenc_ir_zaduo_20261024163952.original.json',
   ]) {
     final data = CencIrData.fromNowQuakeJson(
       jsonDecode(File('test/fixtures/$fixture').readAsStringSync())
@@ -47,6 +53,7 @@ void main() {
       eventId: data.reportId,
       epicenterLatitude: data.epiLat,
       epicenterLongitude: data.epiLon,
+      geography: geography,
     );
     final epicenter = LatLng(data.epiLat, data.epiLon);
     for (final size in [
@@ -57,7 +64,7 @@ void main() {
       const Size(430, 900),
     ]) {
       testWidgets(
-        'raw $fixture fits stations around the centered epicenter $size',
+        'raw $fixture centers epicenter and fits fill and stations $size',
         (tester) async {
           tester.view.physicalSize = size;
           tester.view.devicePixelRatio = 1;
@@ -165,9 +172,25 @@ void main() {
               reason: '$point',
             );
           }
-          final epicenterPixel =
-              controller.camera.projectAtZoom(epicenter) -
-              controller.camera.pixelOrigin;
+          // Every rendered vertex must fit, including areas beyond stations.
+          final painted = tester.widget<PolygonLayer>(
+            find.byType(PolygonLayer),
+          );
+          for (final polygon in painted.polygons) {
+            for (final point in polygon.points) {
+              final offset =
+                  controller.camera.projectAtZoom(point) -
+                  controller.camera.pixelOrigin;
+              expect(
+                visible.inflate(1).contains(offset),
+                isTrue,
+                reason: '$point',
+              );
+            }
+          }
+          final epicenterPixel = controller.camera.latLngToScreenOffset(
+            epicenter,
+          );
           expect((epicenterPixel - visible.center).distance, lessThan(1));
           final horizontalSpan =
               math.max(

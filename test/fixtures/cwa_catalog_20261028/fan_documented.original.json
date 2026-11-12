@@ -1,0 +1,14 @@
+{
+  "Data":{
+    "id":"115011",
+    "shockTime":"2026-01-27 02:48:37",
+    "latitude":21.8,
+    "longitude":120.8,
+    "depth":23.9,
+    "magnitude":4.6,
+    "placeName":"屏東縣政府南南東方  103.2  公里 (位於屏東縣近海)",
+    "imageURI":"https://scweb.cwa.gov.tw/webdata/OLDEQ/202601/2026012702483746011_H.png",
+    "shakemapURI":"https://scweb.cwa.gov.tw/webdata/drawTrace/plotContour/2026/2026011i.png"
+  },
+  "md5":"d53220238999edac2607241289833745"
+}

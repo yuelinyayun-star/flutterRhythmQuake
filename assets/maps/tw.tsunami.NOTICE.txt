@@ -1,0 +1,22 @@
+Taiwan tsunami coastal base map
+
+File: tw.tsunami.geo.json (upstream tsunami.json, unchanged bytes)
+Source project: ExpTechTW/TREM-Lite-v2
+Source: https://github.com/ExpTechTW/TREM-Lite-v2
+Upstream path: app/resource/map/tsunami.json
+Git tree: d0c927a6cf61605a50a6a5749240cb46ef72c488
+Git blob: a4980beb5d41cef560c5058bb99ed6f3c2aae2b0
+SHA-256: d328c9dadf6ffe96702a643d699cc1ca8c16c68aedb8abbb969b257ab7c4c6bb
+Retrieved: 2026-10-20
+
+The source repository distributes this resource under GNU AGPL version 3.
+The complete upstream license is included as tw.tsunami.LICENSE.txt.
+The original data is included in the source distribution, unchanged.
+No upstream application code is included in the map reader.
+
+This is an ExpTech coastal base map, not a CWA-issued warning polygon or
+an inundation prediction. Its AREANAME keys correspond to CWA's six named
+coastal warning zones. Only zones named in the received CWA report are
+drawn; warning status and colors come from that report, not this asset.
+CWA zone definitions:
+https://scweb.cwa.gov.tw/zh-tw/guidance/protection/228

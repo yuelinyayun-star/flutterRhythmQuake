@@ -1,4 +1,4 @@
-import 'dart:convert';
+import '../services/sources/api_json_decoder.dart';
 import 'dart:math' as math;
 
 import 'cwa_prediction_towns.dart';
@@ -189,7 +189,7 @@ class CwaIntensityPrediction {
     if (text.isEmpty) return const {};
     final Object? decoded;
     try {
-      decoded = jsonDecode(text);
+      decoded = decodeApiJson(text);
     } on FormatException {
       return const {};
     }

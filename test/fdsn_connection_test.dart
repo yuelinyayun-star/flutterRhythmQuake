@@ -11,6 +11,8 @@ import 'package:flutterrhythmquake/services/sources/fdsn_metadata_routing.dart';
 import 'package:flutterrhythmquake/services/sources/fdsn_motion_service_io.dart';
 import 'package:flutterrhythmquake/services/sources/fdsn_seedlink_info.dart';
 import 'package:flutterrhythmquake/services/sources/fdsn_station_service.dart';
+import 'package:flutterrhythmquake/services/sources/native_seedlink_signal_io.dart';
+import 'package:flutterrhythmquake/services/sources/native_seedlink_codec_io.dart';
 
 // Protocol fixtures only; no synthetic records enter an application data source.
 List<int> infoPackets(String xml) {
@@ -59,6 +61,17 @@ Uint8List dataPacket(String station, DateTime time) {
 }
 
 void main() {
+  tearDown(() {
+    if (NativeSeedLinkSignal.supported) {
+      expect(
+        NativeSeedLinkSignal.diagnostics['sessions'],
+        0,
+        reason: 'closed connections must release all native NSLC owners',
+      );
+      expect(NativeSeedLinkSignal.diagnostics['scratchBytes'], 0);
+      expect(NativeSeedLinkCodec.diagnostics['scratchBytes'], 0);
+    }
+  });
   test('stale traffic is not fresh data or a network timeout', () async {
     final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
     final sockets = <Socket>[];
@@ -1028,10 +1041,19 @@ void main() {
           lessThanOrEqualTo(220),
         );
         if (bulk) {
+          // A fixed 200 ms delay also fails on the legacy Dart transport.
+          // Keep metadata unresolved and wait for the actual admission
+          // condition; a metadata-blocked receiver still fails this deadline.
+          await (() async {
+            while (service.linkedStationCountNotifier.value < names.length) {
+              await Future<void>.delayed(const Duration(milliseconds: 10));
+            }
+          })().timeout(const Duration(seconds: 2));
           expect(
             service.linkedStationCountNotifier.value,
             220,
-            reason: 'metadata must not block receipt from other stations',
+            reason:
+                'metadata must not block receipt from other stations: ${jsonEncode(service.connectionDiagnostics)}',
           );
           expect(measured, isEmpty);
         }

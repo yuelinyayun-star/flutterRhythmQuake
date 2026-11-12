@@ -11,6 +11,7 @@ import '../../models/source_credential_info.dart';
 import '../../services/sources/cwa_station_service.dart';
 import '../../services/sources/fdsn_motion_service.dart';
 import '../../services/sources/fan_service.dart';
+import '../../services/sources/fssn_service.dart';
 import '../../services/sources/chinaeew_icl_service.dart';
 import '../../services/sources/jian_icl_service.dart';
 import '../../services/background_service.dart';
@@ -24,8 +25,6 @@ import '../../services/sources/source_manager.dart';
 import 'quake_map_view.dart';
 import 'global_station_status_row.dart';
 import '../../services/sources/fdsn_source_status.dart';
-import '../../services/debug/local_inject_server.dart';
-import '../../services/debug/local_inject_decoder.dart';
 import '../ui/ui_scale.dart';
 
 String jianAuthenticationLabel(String? status, {String? errorCode}) =>
@@ -112,7 +111,6 @@ class _SourceDashboardState extends State<SourceDashboard> {
   @override
   void initState() {
     super.initState();
-    LocalInjectServer.revision.addListener(_onLocalInjectChanged);
     BackgroundService().requestJianStatus();
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       _clockTick.value++;
@@ -121,14 +119,9 @@ class _SourceDashboardState extends State<SourceDashboard> {
 
   @override
   void dispose() {
-    LocalInjectServer.revision.removeListener(_onLocalInjectChanged);
     _clockTimer?.cancel();
     _clockTick.dispose();
     super.dispose();
-  }
-
-  void _onLocalInjectChanged() {
-    if (mounted) setState(() {});
   }
 
   double _scale(BuildContext c) => widget.mobile ? 1 : UiScale.compact(c);
@@ -138,7 +131,7 @@ class _SourceDashboardState extends State<SourceDashboard> {
   @override
   Widget build(BuildContext context) {
     return Positioned(
-      right: widget.mobile ? 6 : _s(8, context),
+      right: widget.mobile ? 6 : _s(20, context),
       bottom: widget.mobile ? 6 : _s(6, context),
       child: RepaintBoundary(
         child: IgnorePointer(
@@ -146,20 +139,23 @@ class _SourceDashboardState extends State<SourceDashboard> {
           child: Transform.scale(
             key: const ValueKey('source-dashboard-scale'),
             scale: widget.mobile ? 0.75 : 0.92,
-            alignment: widget.mobile
-                ? Alignment.bottomRight
-                : Alignment.bottomLeft,
+            alignment: Alignment.bottomRight,
             child: ConstrainedBox(
               constraints: BoxConstraints(
-                maxWidth: math.min(
-                  _s(430, context),
-                  math.max(
-                    0,
-                    (MediaQuery.sizeOf(context).width -
-                            (widget.mobile ? 12 : _s(16, context))) /
-                        (widget.mobile ? 0.75 : 1),
-                  ),
-                ),
+                minWidth: widget.mobile
+                    ? 0
+                    : UiScale.sidePanelWidth(context, 234) / 0.92,
+                maxWidth: widget.mobile
+                    ? math.min(
+                        _s(430, context),
+                        math.max(
+                          0,
+                          (MediaQuery.sizeOf(context).width -
+                                  (widget.mobile ? 12 : _s(16, context))) /
+                              (widget.mobile ? 0.75 : 1),
+                        ),
+                      )
+                    : UiScale.sidePanelWidth(context, 234) / 0.92,
               ),
               child: Builder(
                 builder: (context) {
@@ -253,6 +249,8 @@ class _SourceDashboardState extends State<SourceDashboard> {
       if (SourceManager().isSourceEnabled('Wolfx')) ('Wolfx', 'Wolfx'),
       if (SourceManager().isSourceEnabled('FAN'))
         (_fanLabel(fanAuthStatus, fanConnectionStatus), 'FAN'),
+      if (SourceManager().isSourceEnabled(FssnService.sourceName))
+        (FssnService.sourceName, FssnService.sourceName),
       if (SourceManager().isSourceEnabled('WHEWS')) ('WHEWS', 'WHEWS'),
       if (jianEnabled && !separateJian)
         (
@@ -276,7 +274,6 @@ class _SourceDashboardState extends State<SourceDashboard> {
       if (AppEdition.hasIcl &&
           _showIclStatus(ChinaEewIclService().isEnabled, chinaEewIclStatus))
         (ChinaEewIclService.sourceName, ChinaEewIclService.sourceName),
-      if (LocalInjectServer.isRunning) (localInjectApiName, localInjectApiName),
     ];
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -519,11 +516,28 @@ class _SourceDashboardState extends State<SourceDashboard> {
         for (var start = 0; start < children.length; start += 5)
           Padding(
             padding: EdgeInsets.only(top: start == 0 ? 0 : _s(2, context)),
-            child: Wrap(
-              spacing: _s(7, context),
-              runSpacing: _s(2, context),
-              children: children.skip(start).take(5).toList(),
-            ),
+            child: widget.mobile
+                ? Wrap(
+                    spacing: _s(7, context),
+                    runSpacing: _s(2, context),
+                    children: children.skip(start).take(5).toList(),
+                  )
+                : SizedBox(
+                    width: double.infinity,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          for (var i = start; i < math.min(start + 5, children.length); i++) ...[
+                            if (i > start) SizedBox(width: _s(7, context)),
+                            children[i],
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
           ),
       ],
     );

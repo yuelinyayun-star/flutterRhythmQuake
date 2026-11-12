@@ -1,5 +1,7 @@
+import 'map_backdrop_cache.dart';
 import 'package:flutter/material.dart';
 import 'dart:ui';
+import 'dart:typed_data';
 import '../../services/sources/seisjs_service.dart';
 import '../../services/sources/nied_monitor.dart';
 import '../../services/sources/shake_detection_service.dart';
@@ -37,35 +39,47 @@ SeisJsStation? selectSeisJsCurrentMaxStation(Iterable<SeisJsStation> stations) {
 List<SnetTopStation> selectSnetSidebarTopStations(
   Iterable<SnetStation> stations,
 ) {
-  final active =
-      stations
-          .where(
-            (station) =>
-                station.isActive &&
-                station.level >= 0 &&
-                station.shindo.isFinite,
-          )
-          .toList(growable: false)
-        ..sort((a, b) {
-          final shindoCompare = b.shindo.compareTo(a.shindo);
-          if (shindoCompare != 0) return shindoCompare;
-          return a.code.compareTo(b.code);
-        });
-  if (active.isEmpty ||
-      JpShindoScale.jmaIndexFromShindo(active.first.shindo) <= 0) {
+  // Keep only the five candidates, and read each mutable station value once.
+  // The original descending double order (including signed zero) and code tie
+  // break are preserved without sorting or copying the complete station list.
+  final top = List<SnetStation?>.filled(5, null);
+  final values = Float64List(5);
+  var count = 0;
+  for (final station in stations) {
+    if (!station.isActive || station.level < 0) continue;
+    final value = station.shindo;
+    if (!value.isFinite) continue;
+    var index = 0;
+    while (index < count) {
+      final order = value.compareTo(values[index]);
+      if (order > 0 ||
+          (order == 0 && station.code.compareTo(top[index]!.code) < 0)) {
+        break;
+      }
+      index++;
+    }
+    if (index == 5) continue;
+    if (count < 5) count++;
+    for (var j = count - 1; j > index; j--) {
+      top[j] = top[j - 1];
+      values[j] = values[j - 1];
+    }
+    top[index] = station;
+    values[index] = value;
+  }
+  if (count == 0 || JpShindoScale.jmaIndexFromShindo(values[0]) <= 0) {
     return const <SnetTopStation>[];
   }
 
-  return active
-      .take(5)
-      .map(
-        (station) => SnetTopStation(
-          code: station.code,
-          shindo: station.shindo,
-          jmaIndex: JpShindoScale.jmaIndexFromShindo(station.shindo),
-        ),
-      )
-      .toList(growable: false);
+  return List<SnetTopStation>.generate(
+    count,
+    (i) => SnetTopStation(
+      code: top[i]!.code,
+      shindo: values[i],
+      jmaIndex: JpShindoScale.jmaIndexFromShindo(values[i]),
+    ),
+    growable: false,
+  );
 }
 
 class SnetTopStation {
@@ -119,6 +133,9 @@ class NiedDetectVisualArea {
 }
 
 class StationSummaryData {
+  String? preparedUiSignature;
+  String? preparedDetectUiSignature;
+  String? processingIsolate;
   SeisJsStation? seisJsStation;
   SeisJsStation? seisJsMaxStation;
   NiedStation? niedMaxStation;
@@ -176,7 +193,7 @@ class StationDashboard extends StatelessWidget {
       child: RepaintBoundary(
         child: ClipRRect(
           borderRadius: BorderRadius.circular(_s(10, context)),
-          child: BackdropFilter(
+          child: CachedMapBackdropFilter.grouped(
             filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
             child: Container(
               width: _combinedWidth(context),
@@ -292,15 +309,16 @@ class StationDashboard extends StatelessWidget {
             color: Colors.white.withValues(alpha: 0.35),
           ),
         ),
-      if (AppEdition.hasPAlertStations) _maxCard(
-        context,
-        'P-Alert',
-        '当前最大震度',
-        data.pAlertMaxStation?.shindoLabel ?? '--',
-        const Color(0xFFE74C3C),
-        valueColor: _pAlertMaxColor(),
-        useShindo: true,
-      ),
+      if (AppEdition.hasPAlertStations)
+        _maxCard(
+          context,
+          'P-Alert',
+          '当前最大震度',
+          data.pAlertMaxStation?.shindoLabel ?? '--',
+          const Color(0xFFE74C3C),
+          valueColor: _pAlertMaxColor(),
+          useShindo: true,
+        ),
     ]);
   }
 
@@ -411,7 +429,8 @@ class StationDashboard extends StatelessWidget {
     TextStyle style, {
     required bool useShindo,
   }) {
-    final hasSuffix = useShindo &&
+    final hasSuffix =
+        useShindo &&
         value.length == 2 &&
         (value[0] == '5' || value[0] == '6') &&
         (value[1] == '+' || value[1] == '-');
@@ -425,7 +444,10 @@ class StationDashboard extends StatelessWidget {
         textDirection: TextDirection.ltr,
         children: [
           Text(value[0], style: style),
-          Text(value[1], style: style.copyWith(fontSize: style.fontSize! * .55)),
+          Text(
+            value[1],
+            style: style.copyWith(fontSize: style.fontSize! * .55),
+          ),
         ],
       ),
     );

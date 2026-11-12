@@ -63,6 +63,8 @@ $releaseDir = Join-Path $projectDir "build\windows\x64\runner\Release"
 $requiredPayloadFiles = @(
     "flutterrhythmquake.exe",
     "flutter_windows.dll",
+    "rq_station_core.dll",
+    "rq_station_core_licenses.txt",
     "native_assets.json",
     "data\app.so",
     "data\icudtl.dat",
@@ -78,7 +80,17 @@ foreach ($relativePath in $requiredPayloadFiles) {
 $manifestPath = Join-Path $releaseDir "release_manifest.json"
 $manifestFiles = @(
     Get-ChildItem -LiteralPath $releaseDir -Recurse -File |
-        Where-Object { $_.FullName -ne $manifestPath } |
+        Where-Object {
+            # Match installer_rhythmquake.iss [Files]; local runtime databases
+            # and other build-directory state are not installer payload.
+            $relativePath = $_.FullName.Substring($releaseDir.Length + 1)
+            $relativePath.StartsWith('data\', [StringComparison]::OrdinalIgnoreCase) -or
+                ($_.DirectoryName -eq $releaseDir -and
+                    ($_.Name -eq 'flutterrhythmquake.exe' -or
+                     $_.Extension -eq '.dll' -or
+                     $_.Name -eq 'rq_station_core_licenses.txt' -or
+                     $_.Name -eq 'native_assets.json'))
+        } |
         Sort-Object FullName |
         ForEach-Object {
             $relativePath = $_.FullName.Substring($releaseDir.Length + 1).Replace('\', '/')

@@ -1,4 +1,6 @@
+import 'source_http_client.dart';
 import 'dart:async';
+import 'api_json_decoder.dart';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart'
@@ -613,7 +615,7 @@ const Map<String, String> _jmaWarningLabels = {
 
 class JmaLocalWeatherService {
   JmaLocalWeatherService({http.Client? client})
-    : _client = client ?? http.Client();
+    : _client = client ?? createSourceHttpClient();
 
   static const String _baseUrl = 'https://www.jma.go.jp/bosai';
   static const Duration refreshInterval = Duration(minutes: 10);
@@ -921,7 +923,7 @@ class JmaLocalWeatherService {
     if (response.statusCode != 200) {
       throw StateError('HTTP ${response.statusCode}');
     }
-    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+    final decoded = decodeApiJsonBytes(response.bodyBytes);
     return decoded;
   }
 

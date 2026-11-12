@@ -260,6 +260,29 @@ void main() {
     expect(station.triggerStamp, 0);
   });
 
+  test('abnormal history counts complete peaks across gaps and plateaus', () {
+    final station = NiedStation(
+      id: 1,
+      code: 'TEST001',
+      name: 'TEST001',
+      coordinate: const LatLng(35, 140),
+      network: 'K-NET',
+      prefecture: 'Test',
+      expireSeconds: 10,
+    );
+    // The final peak ends at the oldest sample; missing values are ignored
+    // for this check while the original samples remain in the history.
+    station.recentLevel = [3, -1, 3, 0, -1, 3, 3, 0, 3, -1, 0];
+    station.update(0);
+    expect(station.abnormalUpdateCount, 0);
+    expect(station.recentLevel, [0, 3, -1, 3, 0, -1, 3, 3, 0, 3, -1, 0]);
+
+    station.abnormalUpdateCount = null;
+    station.recentLevel = [3, 0, 3, 0, 3, -1];
+    station.update(0);
+    expect(station.abnormalUpdateCount, isNull);
+  });
+
   test('missing display hold reads only the original four-frame window', () {
     final station = NiedStation(
       id: 1,

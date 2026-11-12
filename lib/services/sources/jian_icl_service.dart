@@ -1,9 +1,9 @@
 import 'dart:async';
-import 'dart:convert';
+import 'api_json_decoder.dart';
 import 'dart:math' as math;
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:web_socket_channel/io.dart';
+import 'source_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../../models/source_status.dart';
@@ -42,7 +42,7 @@ class JianIclService extends BaseSourceService {
   static final endpoint = Uri.parse('wss://api.sismotide.top/icl');
 
   JianIclTokenStore tokenStore = JianIclTokenStore();
-  JianIclSocketFactory socketFactory = (uri) => IOWebSocketChannel.connect(
+  JianIclSocketFactory socketFactory = (uri) => connectSourceSocket(
     uri,
     connectTimeout: const Duration(seconds: 20),
   );
@@ -125,9 +125,9 @@ class JianIclService extends BaseSourceService {
 
   void _receive(dynamic message) {
     try {
-      final decoded = jsonDecode(
-        message is String ? message : utf8.decode(message as List<int>),
-      );
+      final decoded = message is String
+          ? decodeApiJson(message)
+          : decodeApiJsonBytes(message as List<int>);
       if (decoded is! Map) return;
       final frame = Map<String, dynamic>.from(decoded);
       lastFrameAt = DateTime.now();

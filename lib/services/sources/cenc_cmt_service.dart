@@ -146,11 +146,10 @@ class CencCmtService {
       final lng = double.tryParse(cells[2]);
       final depth = double.tryParse(cells[3]);
       final quickMag = double.tryParse(cells[4]);
-      final mwMag = double.tryParse(cells[5]);
       final centroidDepth = double.tryParse(cells[6]);
       if (originTime == null || lat == null || lng == null) return null;
-      // Mw 优先，fallback 速报震级
-      final magnitude = mwMag ?? quickMag ?? -1;
+      // 卡片使用官方速报震级列；缺失时保持未知。
+      final magnitude = quickMag ?? -1;
       // CENC 的自动/正式解可能修订坐标；用官方发震时刻保持为同一个事件。
       final eventId = 'cenc_cmt_${originTime.toIso8601String()}';
       // 优先使用已加载的国内地名索引，未命中时保留既有全球区域回退。

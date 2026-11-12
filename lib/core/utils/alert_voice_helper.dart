@@ -1,9 +1,11 @@
-import 'dart:convert';
+import '../../services/sources/api_json_decoder.dart';
+import '../../services/native_jma_tsunami.dart';
 
 import '../../models/quake_message.dart';
 import '../../models/whews_catalog.dart';
 import '../../models/tsunami_message.dart';
 import '../../models/unified_quake_data.dart';
+import '../../models/unified_event_presentation.dart';
 import 'jma_voice_location.dart';
 
 class AlertVoiceHelper {
@@ -25,13 +27,11 @@ class AlertVoiceHelper {
     final location = _voiceLocation(event.location, isJma: isJma);
     final mag = _magText(event.magnitude);
     final shindo = _legacyIntensityText(event, intensity);
-    final depth = _depthText(event.depth);
     return _sentence([
       levelText,
       location,
       if (mag.isNotEmpty) mag,
       if (shindo.isNotEmpty) shindo,
-      if (depth.isNotEmpty) depth,
       if (countdown > 0) '预计$countdown秒后到达' else '地震波已经到达',
       if (report.isNotEmpty) report,
     ]);
@@ -58,7 +58,13 @@ class AlertVoiceHelper {
     TsunamiMessage message, {
     required bool isUpdate,
   }) {
+    if (message.source == TsunamiSource.nmefc && NativeJmaTsunami.supported) {
+      return NativeJmaTsunami.prepare({
+        'op': 'nmefcVoice', 'message': message.toMap(), 'isUpdate': isUpdate,
+      })['text'] as String;
+    }
     final source = message.source.voiceLabel;
+    if (message.isForecast) return '$source，发布海啸预报，预计有轻微海面变动。';
     if (!message.isActive) {
       if (message.isInformation) {
         return '$source，发布海啸信息。';
@@ -72,6 +78,7 @@ class AlertVoiceHelper {
     final grade = message.title.trim().isNotEmpty
         ? message.title.trim()
         : switch (message.grade) {
+            TsunamiGrade.forecast => '海啸预报',
             TsunamiGrade.majorWarning => '大海啸警报',
             TsunamiGrade.warning => '海啸警报',
             TsunamiGrade.watch => '海啸注意报',
@@ -110,14 +117,12 @@ class AlertVoiceHelper {
     final location = _voiceLocation(event.hypocenter, isJma: isJmaEew);
     final mag = _magText(event.magnitude);
     final maxIntensity = _unifiedIntensityText(event);
-    final depth = _depthText(event.depth);
     final report = _reportText(event.reportNumText);
     return _sentence([
           type,
           location,
           if (mag.isNotEmpty) mag,
           if (maxIntensity.isNotEmpty) maxIntensity,
-          if (depth.isNotEmpty) depth,
         ]) +
         _sentence([
           source,
@@ -197,7 +202,7 @@ class AlertVoiceHelper {
       'usgsEqlist' => '美国地质调查局',
       'sa' => '美国ShakeAlert地震预警',
       'globalQuake' || 'globalQuakeEew' => 'GlobalQuake',
-      'fssnEqlist' => 'FSSN',
+      'fssnEqlist' || 'fssnCmt' => 'FSSN',
       'emscEqlist' || 'emsc' => '欧洲地中海地震中心',
       'hko' => '香港天文台',
       'bcsf' => '法国中央地震研究所',
@@ -274,7 +279,7 @@ class AlertVoiceHelper {
   }
 
   static String _unifiedIntensityText(UnifiedQuakeData event) {
-    final value = event.maxIntensity.trim();
+    final value = unifiedEewIntensityValue(event);
     if (value.isEmpty || value == '-' || value == '--') return '';
     final prefix = event.isEew ? '预计最大' : '最大';
     return event.useShindo
@@ -302,7 +307,6 @@ class AlertVoiceHelper {
 
   static String _depthText(double depth) {
     if (!depth.isFinite || depth < 0) return '';
-    if (depth == 0) return '深度很浅。';
     final value = depth == depth.roundToDouble()
         ? depth.toStringAsFixed(0)
         : depth.toString();
@@ -347,7 +351,7 @@ class AlertVoiceHelper {
     if (encoded.trim().isEmpty) return empty;
     final dynamic decoded;
     try {
-      decoded = jsonDecode(encoded);
+      decoded = decodeApiJson(encoded);
     } on FormatException {
       return empty;
     }

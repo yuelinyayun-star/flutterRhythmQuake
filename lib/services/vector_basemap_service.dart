@@ -1,4 +1,4 @@
-import 'dart:convert';
+import 'sources/api_json_decoder.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -18,8 +18,8 @@ class VectorMapDataset {
 
 /// Decode original topology without dropping holes, small islands, or unnamed
 /// features. Only referenced shared arcs are drawn, once per dataset.
-VectorMapDataset parseVectorBasemap(String source) {
-  final data = jsonDecode(source) as Map<String, dynamic>;
+VectorMapDataset parseVectorBasemap(Object source) {
+  final data = decodeApiJsonDocument(source) as Map<String, dynamic>;
   if (data['type'] != 'Topology') {
     throw const FormatException('Expected basemap Topology');
   }
@@ -106,12 +106,16 @@ VectorMapDataset parseVectorBasemap(String source) {
   );
 }
 
-List<VectorMapDataset> _parseAll(List<String> sources) =>
+List<VectorMapDataset> _parseAll(List<Object> sources) =>
     List.unmodifiable(sources.map(parseVectorBasemap));
 
 class VectorBasemapService {
   VectorBasemapService({Future<String> Function(String)? loadAsset})
-    : _loadAsset = loadAsset ?? rootBundle.loadString;
+    : _loadAsset =
+          loadAsset ?? ((path) async {
+            final data = await rootBundle.load(path);
+            return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+          });
 
   // Preserve KA's composition: global, then Japan, then China on top.
   static const assetPaths = [
@@ -120,7 +124,7 @@ class VectorBasemapService {
     'assets/maps/ka/cn.province.topo.json',
   ];
   static final instance = VectorBasemapService();
-  final Future<String> Function(String) _loadAsset;
+  final Future<Object> Function(String) _loadAsset;
   Future<List<VectorMapDataset>>? _loading;
 
   Future<List<VectorMapDataset>> load() =>

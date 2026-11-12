@@ -38,6 +38,8 @@ import 'package:local_notifier/local_notifier.dart' as local;
 
 import '../models/unified_quake_data.dart';
 import '../models/unified_event_presentation.dart';
+import '../core/app_edition.dart';
+import '../core/utils/jian_cea_eew.dart';
 import '../models/quake_message.dart';
 import '../models/cenc_ir_data.dart';
 import '../models/weather_alarm.dart';
@@ -48,9 +50,16 @@ import '../providers/background_settings_provider.dart';
 import 'sources/source_manager.dart';
 import 'background_source_manager.dart';
 import 'background_accepted_event_buffer.dart';
+import 'background_station_history_recorder.dart';
+import 'foreground_station_bridge_coalescer.dart';
+import 'history_storage_io.dart';
 import '../core/calculator.dart';
 import '../core/intensity_calculator.dart';
 import 'location_service.dart';
+import 'native_core_bootstrap.dart';
+
+/// EEW 历史存储偏好键（与 QuakeProvider._eewHistoryPreferenceKey 一致）。
+const String _backgroundEewHistoryPreferenceKey = 'unified_eew_history';
 
 /// 应用前后台状态
 enum AppLifecycleStateExt {
@@ -106,6 +115,8 @@ class BackgroundService {
   StreamSubscription<Map<String, dynamic>?>? _foregroundTsunamiSubscription;
   StreamSubscription<Map<String, dynamic>?>? _foregroundStatusSubscription;
   StreamSubscription<Map<String, dynamic>?>? _foregroundStationSubscription;
+  StreamSubscription<Map<String, dynamic>?>?
+  _foregroundStationHistoryEndedSubscription;
   StreamSubscription<Map<String, dynamic>?>? _foregroundCmtSubscription;
   StreamSubscription<Map<String, dynamic>?>? _foregroundAuxSubscription;
   StreamSubscription<Map<String, dynamic>?>? _foregroundBufferedSubscription;
@@ -126,12 +137,19 @@ class BackgroundService {
       StreamController<SourceStatusUpdate>.broadcast();
   final _foregroundStationController =
       StreamController<Map<String, dynamic>>.broadcast();
+  final _foregroundStationHistoryEndedController =
+      StreamController<Map<String, dynamic>>.broadcast();
   final _foregroundCmtController =
       StreamController<Map<String, dynamic>>.broadcast();
   final _foregroundAuxController =
       StreamController<Map<String, dynamic>>.broadcast();
   final _foregroundBufferedController =
       StreamController<UnifiedQuakeData>.broadcast();
+  ForegroundStationBridgeCoalescer? _stationBridgeCoalescer;
+  bool _stationHistoryRecording = false;
+  Timer? _reloadDebounceTimer;
+  bool _reloadForcePending = false;
+  Completer<void>? _reloadDebounceCompleter;
 
   static const String _foregroundChannelId = 'rhythmquake_foreground_service';
   static const String _foregroundNotificationTitle = 'RhythmQuake 后台运行中';
@@ -182,6 +200,8 @@ class BackgroundService {
       _foregroundStatusController.stream;
   Stream<Map<String, dynamic>> get onForegroundStationData =>
       _foregroundStationController.stream;
+  Stream<Map<String, dynamic>> get onStationHistoryRecordingEnded =>
+      _foregroundStationHistoryEndedController.stream;
   Stream<Map<String, dynamic>> get onForegroundCmtList =>
       _foregroundCmtController.stream;
   Stream<Map<String, dynamic>> get onForegroundAuxData =>
@@ -208,6 +228,39 @@ class BackgroundService {
     if (!isAndroidConnectionHostedByForegroundService) return;
     FlutterBackgroundService().invoke('appVisibility', {
       'visible': _state == AppLifecycleStateExt.foreground,
+      'inBackground': isInBackground,
+    });
+    _sendStationHistoryRecording();
+  }
+
+  void updateStationHistoryRecording(
+    bool recording, {
+    List<Map<String, dynamic>> groups = const [],
+    List<String>? enabledKinds,
+  }) {
+    _stationHistoryRecording = recording;
+    _stationHistoryRecordingGroups = List.of(groups);
+    _stationHistoryEnabledKinds = enabledKinds == null
+        ? null
+        : List.of(enabledKinds);
+    _sendStationHistoryRecording();
+  }
+
+  void sendStationHistoryFrame(Map<String, dynamic> frame) {
+    if (!isAndroidConnectionHostedByForegroundService) return;
+    FlutterBackgroundService().invoke('stationHistoryFrame', frame);
+  }
+
+  List<Map<String, dynamic>> _stationHistoryRecordingGroups = const [];
+  List<String>? _stationHistoryEnabledKinds;
+
+  void _sendStationHistoryRecording() {
+    if (!isAndroidConnectionHostedByForegroundService) return;
+    FlutterBackgroundService().invoke('stationHistoryRecording', {
+      'recording': _stationHistoryRecording,
+      'groups': _stationHistoryRecordingGroups,
+      if (_stationHistoryEnabledKinds != null)
+        'enabledKinds': _stationHistoryEnabledKinds,
     });
   }
 
@@ -594,11 +647,16 @@ class BackgroundService {
           }
           if (status != null) {
             _foregroundStatusController.add(
-              SourceStatusUpdate(name, status,
+              SourceStatusUpdate(
+                name,
+                status,
                 authenticationStatus: payload['authenticationStatus'] is String
                     ? payload['authenticationStatus'] as String
                     : null,
-                credentialInfo: SourceCredentialInfo.fromMap(payload['credentialInfo'])),
+                credentialInfo: SourceCredentialInfo.fromMap(
+                  payload['credentialInfo'],
+                ),
+              ),
             );
           }
         });
@@ -606,6 +664,13 @@ class BackgroundService {
         .on('foregroundStationData')
         .listen((payload) {
           if (payload != null) _foregroundStationController.add(payload);
+        });
+    _foregroundStationHistoryEndedSubscription ??= service
+        .on('stationHistoryRecordingEnded')
+        .listen((payload) {
+          if (payload != null) {
+            _foregroundStationHistoryEndedController.add(payload);
+          }
         });
     _foregroundCmtSubscription ??= service.on('foregroundCmtList').listen((
       payload,
@@ -622,17 +687,23 @@ class BackgroundService {
         .listen((payload) {
           if (payload == null) return;
           try {
-            _foregroundBufferedController.add(UnifiedQuakeData.fromMap(payload));
+            _foregroundBufferedController.add(
+              UnifiedQuakeData.fromMap(payload),
+            );
           } catch (error) {
-            debugPrint('[BackgroundEvent] buffered report decode failed: $error');
+            debugPrint(
+              '[BackgroundEvent] buffered report decode failed: $error',
+            );
           }
         });
-    _foregroundReadySubscription ??= service.on('foregroundBridgeReady').listen((payload) {
-      _foregroundNotificationsReady = payload?['notificationsReady'] == true;
-      _sendAppVisibility();
-      if (payload?['fromRequest'] != true) requestBufferedEvents();
-      requestSourceStatuses();
-    });
+    _foregroundReadySubscription ??= service.on('foregroundBridgeReady').listen(
+      (payload) {
+        _foregroundNotificationsReady = payload?['notificationsReady'] == true;
+        _sendAppVisibility();
+        if (payload?['fromRequest'] != true) requestBufferedEvents();
+        requestSourceStatuses();
+      },
+    );
   }
 
   /// 只回传前台服务已有气象实况，不发起 HTTP 请求或重建连接。
@@ -673,15 +744,36 @@ class BackgroundService {
   /// 设置改变后要求前台服务重新读取 SharedPreferences 并重建连接。
   Future<void> requestSourceReload({bool force = false}) async {
     if (!isAndroidConnectionHostedByForegroundService) return;
-    final service = FlutterBackgroundService();
-    if (await service.isRunning()) {
-      service.invoke('reloadSources', {'force': force});
-    }
+    _reloadForcePending = _reloadForcePending || force;
+    final completer = _reloadDebounceCompleter ??= Completer<void>();
+    _reloadDebounceTimer?.cancel();
+    _reloadDebounceTimer = Timer(const Duration(milliseconds: 50), () async {
+      final pendingForce = _reloadForcePending;
+      final pendingCompleter = _reloadDebounceCompleter;
+      _reloadForcePending = false;
+      _reloadDebounceCompleter = null;
+      _reloadDebounceTimer = null;
+      try {
+        final service = FlutterBackgroundService();
+        if (await service.isRunning()) {
+          service.invoke('reloadSources', {'force': pendingForce});
+        }
+        pendingCompleter?.complete();
+      } catch (e, st) {
+        pendingCompleter?.completeError(e, st);
+      }
+    });
+    return completer.future;
   }
 
   void syncSatelliteCloudLayers() {
     if (!isAndroidConnectionHostedByForegroundService) return;
     FlutterBackgroundService().invoke('syncSatelliteCloudLayers');
+  }
+
+  void syncWeatherMapLayers() {
+    if (!isAndroidConnectionHostedByForegroundService) return;
+    FlutterBackgroundService().invoke('syncWeatherMapLayers');
   }
 
   /// 安全地尝试启动前台服务，避免 Android 12+ 限制导致未处理异常。
@@ -763,6 +855,7 @@ class BackgroundService {
 Future<void> backgroundEntryPoint(ServiceInstance service) async {
   WidgetsFlutterBinding.ensureInitialized();
   DartPluginRegistrant.ensureInitialized();
+  await initializeNativeCore();
 
   // Boot/watchdog starts have no UI provider; consult persisted user consent.
   final preferences = await SharedPreferences.getInstance();
@@ -774,13 +867,24 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
 
   final notificationSettings = BackgroundSettingsProvider();
   await notificationSettings.load(preferences);
+  await initializeHistoryFileStorage();
+  final stationHistoryRecorder = BackgroundStationHistoryRecorder(
+    preferenceKey: AppEdition.isPublic
+        ? '${_backgroundEewHistoryPreferenceKey}_public'
+        : _backgroundEewHistoryPreferenceKey,
+    onRecordingEnded: (records) =>
+        service.invoke('stationHistoryRecordingEnded', {'records': records}),
+  );
   final notifications = BackgroundService();
   var notificationsReady = false;
   Future<void> initializeNotifications() async {
     if (notificationsReady) return;
     try {
-      await notifications.initialize(WidgetsBinding.instance,
-          settings: notificationSettings, observeSettings: false);
+      await notifications.initialize(
+        WidgetsBinding.instance,
+        settings: notificationSettings,
+        observeSettings: false,
+      );
       notificationsReady = true;
       service.invoke('foregroundBridgeReady', {
         'notificationsReady': true,
@@ -794,12 +898,31 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
   await initializeNotifications();
   final bufferedEvents = BackgroundAcceptedEventBuffer(preferences);
   var appVisible = false;
+  var appInBackground = false;
+  var stationHistoryRecording = false;
   final pendingEewNotifications = <String, Timer>{};
   final eewWarnStates = <String, bool>{};
   final latestSourceStatuses = <String, Map<String, dynamic>>{};
   final latestSourceLists = <String, Map<String, dynamic>>{};
   final latestCencIrLists = <String, Map<String, dynamic>>{};
   Map<String, dynamic>? latestCencIrData;
+
+  void updateStationHistoryRecording(
+    bool recording, {
+    List<Map<String, dynamic>> groups = const [],
+    List<String>? enabledKinds,
+  }) {
+    stationHistoryRecording = recording;
+    notifications._stationBridgeCoalescer?.setRecording(recording);
+    unawaited(
+      stationHistoryRecorder.setRecording(
+        recording,
+        groups: groups,
+        enabledKinds: enabledKinds,
+        preferences: preferences,
+      ),
+    );
+  }
 
   Future<void> notifyAcceptedEvent(UnifiedQuakeData event) async {
     if (appVisible) return;
@@ -810,8 +933,10 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
       await notificationSettings.load(preferences);
       if (appVisible) return;
       if (event.isEew) {
-        await notifications.showEewNotification(event,
-          localIntensity: backgroundLocalIntensityForEvent(event));
+        await notifications.showEewNotification(
+          event,
+          localIntensity: backgroundLocalIntensityForEvent(event),
+        );
       } else {
         await notifications.showReportNotification(event);
       }
@@ -821,6 +946,16 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
   }
 
   Future<void> sendUnifiedEvent(UnifiedQuakeData event, bool isUpdate) async {
+    if (event.isEew &&
+        !event.isReplay &&
+        !event.isHistory &&
+        !event.isSnapshot) {
+      // Restore per-frame delivery before the UI receives the event. Waiting for
+      // the UI to report recording state would leave a cross-isolate race in
+      // which the first background station frame could still be coalesced.
+      if (!stationHistoryRecording) updateStationHistoryRecording(true);
+      unawaited(stationHistoryRecorder.observeEewEvent(event));
+    }
     bufferedEvents.add(event);
     service.invoke('foregroundUnifiedEvent', event.toMap());
     if (event.isHistory || event.isSnapshot) return;
@@ -830,8 +965,9 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
     }
 
     final key = '${event.source}|${event.eventId}';
-    final warnUpgrade = event.isWarn && eewWarnStates[key] != true;
-    eewWarnStates[key] = event.isWarn;
+    final warn = effectiveEewWarn(event);
+    final warnUpgrade = warn && eewWarnStates[key] != true;
+    eewWarnStates[key] = warn;
     if (eewWarnStates.length > 100) {
       eewWarnStates.remove(eewWarnStates.keys.first);
     }
@@ -897,7 +1033,15 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
   }
 
   Future<void> sendStationData(Map<String, dynamic> payload) async {
-    service.invoke('foregroundStationData', payload);
+    // UI-death fallback: record from the payload itself once UI forwarding
+    // goes silent for this kind (see BackgroundStationHistoryRecorder).
+    stationHistoryRecorder.observeStationPayload(payload);
+    notifications._stationBridgeCoalescer ??= ForegroundStationBridgeCoalescer(
+      emit: (latest) => service.invoke('foregroundStationData', latest),
+      paused: appInBackground,
+      recording: stationHistoryRecording,
+    );
+    notifications._stationBridgeCoalescer!.submit(payload);
   }
 
   Future<void> sendCmtList(
@@ -913,6 +1057,11 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
 
   Timer? sourceRetryTimer;
   var stopping = false;
+  Future<void>? reloadFuture;
+  bool reloadPending = false;
+  bool forceReloadPending = false;
+  late Future<void> Function({bool force}) reloadSources;
+
   Future<void> startSources() async {
     if (stopping) return;
     sourceRetryTimer?.cancel();
@@ -934,21 +1083,19 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
         onStationData: sendStationData,
         onCmtList: sendCmtList,
         onAuxData: sendAuxData,
+        isStationHistoryRecording: () => stationHistoryRecording,
       );
     } catch (error, stack) {
       debugPrint('[BackgroundSources] startup failed: $error\n$stack');
       if (!stopping) {
         sourceRetryTimer = Timer(const Duration(seconds: 30), () {
-          unawaited(startSources());
+          unawaited(reloadSources(force: true));
         });
       }
     }
   }
 
-  Future<void>? reloadFuture;
-  bool reloadPending = false;
-  bool forceReloadPending = false;
-  Future<void> reloadSources({bool force = false}) {
+  reloadSources = ({bool force = false}) {
     reloadPending = true;
     forceReloadPending = forceReloadPending || force;
     return reloadFuture ??= () async {
@@ -965,7 +1112,7 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
         reloadFuture = null;
       }
     }();
-  }
+  };
 
   service.on('requestLocalWeatherState').listen((_) {
     for (final payload in backgroundLocalWeatherSnapshots()) {
@@ -987,12 +1134,43 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
     }());
   });
 
+  service.on('syncWeatherMapLayers').listen((_) {
+    unawaited(() async {
+      await syncBackgroundWeatherMapLayers();
+      for (final payload in backgroundWeatherMapSnapshots()) {
+        await sendStationData(payload);
+      }
+      final typhoon = backgroundWeatherMapTyphoonSnapshot();
+      if (typhoon != null) await sendAuxData(typhoon);
+    }());
+  });
+
   service.on('reloadJianCredentials').listen((_) {
     reloadBackgroundJianCredentials();
   });
 
   service.on('appVisibility').listen((event) {
     appVisible = event?['visible'] == true;
+    appInBackground = event?['inBackground'] == true;
+    notifications._stationBridgeCoalescer?.setPaused(appInBackground);
+  });
+  service.on('stationHistoryRecording').listen((event) {
+    final groups = (event?['groups'] as List? ?? const [])
+        .whereType<Map>()
+        .map(Map<String, dynamic>.from)
+        .toList();
+    final enabledKinds = (event?['enabledKinds'] as List? ?? const [])
+        .whereType<String>()
+        .toList();
+    updateStationHistoryRecording(
+      event?['recording'] == true,
+      groups: groups,
+      enabledKinds: enabledKinds,
+    );
+  });
+  service.on('stationHistoryFrame').listen((event) {
+    if (event == null) return;
+    unawaited(stationHistoryRecorder.acceptUiFrame(event));
   });
   service.on('requestBufferedEvents').listen((_) {
     service.invoke('foregroundBridgeReady', {
@@ -1043,6 +1221,8 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
   service.on('stopService').listen((event) {
     unawaited(() async {
       stopping = true;
+      notifications._stationBridgeCoalescer?.dispose();
+      notifications._stationBridgeCoalescer = null;
       sourceRetryTimer?.cancel();
       for (final timer in pendingEewNotifications.values) {
         timer.cancel();
@@ -1053,7 +1233,7 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
     }());
   });
 
-  await startSources();
+  await reloadSources(force: true);
 }
 
 double backgroundLocalIntensityForEvent(UnifiedQuakeData event) {
@@ -1063,9 +1243,15 @@ double backgroundLocalIntensityForEvent(UnifiedQuakeData event) {
   if (position != null && lat != null && lng != null) {
     try {
       final distance = QuakeCalculator.haversineDistance(
-        position.latitude, position.longitude, lat, lng);
+        position.latitude,
+        position.longitude,
+        lat,
+        lng,
+      );
       return IntensityCalculator.calculate(
-        mag: event.magnitude, distance: distance);
+        mag: event.magnitude,
+        distance: distance,
+      );
     } catch (error) {
       debugPrint('[BackgroundEvent] local intensity failed: $error');
     }

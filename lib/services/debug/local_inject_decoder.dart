@@ -7,7 +7,7 @@ import '../quake_event_adapter.dart';
 import '../sources/fan_service.dart';
 import '../sources/nowquake_cenc_intensity_service.dart';
 
-const localInjectApiName = '本地注入';
+const localInjectApiName = 'Mock';
 
 class LocalInjectBatch {
   final events = <UnifiedQuakeData>[];
@@ -30,6 +30,7 @@ class LocalInjectDecoder {
     'nied',
     'adapter',
     'unified',
+    'tsunami',
   ];
   static const adapterSources = {
     'jmaEew',
@@ -156,7 +157,8 @@ class LocalInjectDecoder {
           : data['eq_id'] != null && data['stations'] is List
           ? 'nowquake'
           : type == 'all' ||
-                (jianEarthquakeSources.containsKey(type) &&
+                ((jianEarthquakeSources.containsKey(type) ||
+                        type == 'jma-tsunami') &&
                     data['Data'] != null)
           ? 'jian'
           : data['source'] != null && data['Data'] != null
@@ -206,7 +208,8 @@ class LocalInjectDecoder {
           final match = RegExp(r'^source[:：](.+)$').firstMatch(entry.key);
           if (match != null && entry.value is Map) {
             final key = match.group(1)!;
-            if (!jianEarthquakeSources.containsKey(key) ||
+            if ((!jianEarthquakeSources.containsKey(key) &&
+                    key != 'jma-tsunami') ||
                 (entry.value as Map)['Data'] is! Map) {
               continue;
             }
@@ -231,12 +234,20 @@ class LocalInjectDecoder {
         return;
       }
       final key = source ?? type;
-      if (!jianEarthquakeSources.containsKey(key)) {
+      if (!jianEarthquakeSources.containsKey(key) && key != 'jma-tsunami') {
         throw FormatException('不支持的 Jian 类型：$key');
       }
       final body = data['Data'] is Map
           ? Map<String, dynamic>.from(data['Data'] as Map)
           : data;
+      if (key == 'jma-tsunami') {
+        batch.tsunamis.add(
+          TsunamiMessage.parseJianJmaTsunami(
+            body,
+          ).copyWith(isInitialSnapshot: snapshot || history),
+        );
+        return;
+      }
       event = QuakeEventAdapter.convertJian(
         key,
         body,
@@ -337,6 +348,20 @@ class LocalInjectDecoder {
         throw FormatException('未知适配器：$source');
       }
       event = QuakeEventAdapter.convert(source!, data, 1);
+    } else if (resolved == 'tsunami') {
+      if (!TsunamiSource.values.any((v) => v.name == data['source']) ||
+          !TsunamiGrade.values.any((v) => v.name == data['grade'])) {
+        throw const FormatException('海啸模型缺少有效的 source 或 grade');
+      }
+      final message = TsunamiMessage.fromMap(data);
+      if ((message.id.isEmpty && message.eventId.isEmpty) ||
+          message.reportTime.isEmpty) {
+        throw const FormatException('海啸模型缺少事件标识或发布时间');
+      }
+      // Same complete model as source enrichment/history: preserve original
+      // official details and prepare readings with the existing Rust pipeline.
+      batch.tsunamis.add(message.prepareWaveData());
+      return;
     } else if (resolved == 'unified') {
       event = UnifiedQuakeData.fromMap(data);
     }

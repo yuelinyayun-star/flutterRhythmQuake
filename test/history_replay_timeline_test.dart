@@ -314,7 +314,7 @@ void main() {
         ]),
       });
       final provider = QuakeProvider();
-      await Future<void>.delayed(const Duration(milliseconds: 100));
+      await provider.eewHistoryReadyForTest;
       final before = jsonEncode(
         provider.eewHistory.map((e) => e.toMap()).toList(),
       );

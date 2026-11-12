@@ -5,26 +5,44 @@
 2026-10-08 按用户要求撤下测站服务、地图测站圆点及测站订阅。
 州提示、已有震中和 P/S 波继续使用本项目地图组件。
 
-APP 继续连接 `wss://ws.yuelinrhythm.top/sasmex-eew`，实时事件仅来自既有 Sidesis
-Socket.IO。独立 `sasmex-dual-monitor.service` 同时只读观察同一 Socket.IO 根命名空间与
+2026-10-17 起，APP 继续连接 `wss://ws.yuelinrhythm.top/sasmex-eew`，主源切换为
+SASNO 的 Firestore `app/events` 文档；服务端每 5 秒读取原文，首次只建立基线，
+变化才推送，重复、过期和时间倒退的事件不推送。读取方式是 REST 轮询，不宣称是
+Firestore `onSnapshot` 推送。已有 Socket.IO 由对照服务继续观察，不自动混入 APP。
+独立 `sasmex-dual-monitor.service` 同时只读观察 Socket.IO 根命名空间与
 `https://firestore.googleapis.com/v1/projects/sasno-d79e1/databases/(default)/documents/app/events`。
-Firestore 每秒轮询，只建立原始基线并记录变化，不调用旧预警映射，不向 APP 推送。
+对照服务的 Firestore 正常每 5 秒轮询，只建立原始基线并记录变化；该观察器自身不向 APP 推送。
+HTTP 429 从 60 秒开始指数退避，最大 15 分钟；其他失败从 5 秒开始，最大 5 分钟，
+同时遵守上游 Retry-After。成功后恢复 5 秒周期，重试间隔和下次请求时间写入状态文件。
 
 新服务代码放在 `/opt/rhythmquake/sasmex-dual-monitor`，旧 Firestore 轮询实现与实读
-原文在其中的 `backup/` 留存并随首次启动归档。原 KMA/EEW 服务无须修改或重启。
+原文在其中的 `backup/` 留存。主源切换需部署本地通过验证的 `kma_pews_relay.py`、
+`sasno_realtime.py`，安装 `sasno-primary.conf` 到 `kma-pews-relay.service.d/` 后重启中继。
 服务器状态文件 `/var/lib/rhythmquake-sasmex-compare/connection-status.json` 每 60 秒更新。
 记录实际连接、断线、传输帧、业务帧、符合现有 APP 解析条件的帧以及 Firestore 成功数、
 原文 SHA-256、文档时间和内容变化数。连接健康与新事件出现分别统计。
 
-`sasmex-compare-upload.timer` 每分钟将批次上传至 TG 云盘
+`sasmex-compare-upload.timer` 每分钟检查待上传队列，只在收到报文时上传至 TG 云盘
 `SASMEX原始归档/双连接对照/YYYY-MM-DD/`，上传后回读校验 SHA-256 与大小，
 通过后才删除临时包。归档失败计数与最后错误保留在状态文件，积压最多 64 MiB，
-不会覆盖已有原文。相同 Firestore 响应仅累计轮询计数；首个响应、文档变化、异常响应、
-恢复和连接状态均单独留档。原事件时间保留在原文，归档文件日期使用实际采集时间。
+不会覆盖已有原文。TG 只保存通过现有真实事件解析且内容未重复的 Socket.IO 地震报文，
+以及 Firestore 事件字段的变化原文。传输握手、心跳、连接／断开、错误／恢复、每分钟
+状态快照、启动备份和未变化的文档均不会触发上传。
+连接状态保留在服务器 connection-status.json 和 journal；Firestore 首个文档、本次
+最新文档、最近一份错误响应分别以原始字节保存在本地，重启时复用快照去重。
+既有 backup/ 与历史 TG 文件保留。原事件时间保留在原文，归档日期使用实际采集时间。
 
 部署本地准备文件后安装三个 systemd unit 并启动：
 `systemctl enable --now sasmex-dual-monitor.service sasmex-compare-upload.timer`。
-两个读取客户端没有 APP 广播接口；Firestore 原有旧文档不会重报。
+对照服务中的两个读取客户端没有 APP 广播接口；Firestore 原有旧文档不会重报。
+
+主源强度文字沿用现有转换：Leve → Minor，Moderado → Moderate，Fuerte → Severe；
+同时保留原值和 `severityOrigin`。时间取原始 `unix`，修订时间取 Firestore `updateTime`。
+`msgType` 在中转补为原协议英文值 `Alert`，上游类型原值优先，不增加新字段。
+标题沿用 APP 既有 `severity` 判断；第 3 档映射 `Severe`，其他为 `Minor / Moderate`。
+检出按 APP 既有 3 分钟、警报按 6 分钟源时间期限过滤，首次旧文档不出现在 WS 缓存。
+主源归档标记 `publishedToApp: true`；对照观察器的 `false` 只表示它自身没有广播。
+CAP 独立归档保留，不作为查询或启动快照的返回值。
 
 这是给 Windows / Linux 服务器使用的韩国气象厅 PEWS 实时测站转发服务。
 
@@ -324,3 +342,5 @@ Telegram 云盘/KMA异常记录/YYYY-MM-DD/批次.zip
 验证使用真实实时帧、原始测站表和生产解析器，显式标记
 `manual_live_validation` / `validationOnly`，上传到 `KMA异常记录/验证/`，
 不伪造异常、不修改测站值，不混入正式异常日期目录。
+
+双连接对照包按原始报文日期（UTC）分目录：Socket.IO 取现有解析器的 sent／updated 时间，Firestore 取 SASNOEVENTDATA.unix。接收时间与上传时间另行记录，不用于覆盖已知报文日期。历史非报文清理核验见 docs/sasmex_tg_archive_audit_20261012.md。

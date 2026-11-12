@@ -1,3 +1,4 @@
+import 'package:flutterrhythmquake/services/whews_authorization_policy.dart';
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -18,6 +19,7 @@ String _chinaTime(DateTime utc) {
 }
 
 void main() {
+  setUp(() => WhewsAuthorizationPolicy.storeOverride = MemoryConnectionRetryStore());
   test(
     'initial aggregate array enters the same event pipeline and dedupes',
     () async {
@@ -155,9 +157,11 @@ void main() {
       final service = WhewsService(apiToken: 'test-token');
       WeatherAlarm? alarm;
       TsunamiMessage? tsunami;
+      final tsunamiReady = Completer<void>();
       service.onWeatherAlarm = (value) => alarm = value;
       final tsunamiSubscription = service.onTsunamiEvent.listen((value) {
         tsunami = value;
+        if (!tsunamiReady.isCompleted) tsunamiReady.complete();
       });
 
       service.handleMessageForTesting({
@@ -192,6 +196,7 @@ void main() {
       });
       await Future<void>.delayed(Duration.zero);
 
+      await tsunamiReady.future.timeout(const Duration(seconds: 5));
       expect(alarm?.id, 'weather-1');
       expect(alarm?.source, WeatherAlarmSource.whews);
       expect(tsunami?.id, 'tsunami-1');
@@ -349,9 +354,13 @@ void main() {
 
   test('JMA tsunami frames use the existing JMA tsunami pipeline', () async {
     final service = WhewsService(apiToken: 'test-token');
+    final ready = Completer<void>();
     final tsunamis = <TsunamiMessage>[];
     final unifiedEvents = <UnifiedQuakeData>[];
-    final tsunamiSubscription = service.onTsunamiEvent.listen(tsunamis.add);
+    final tsunamiSubscription = service.onTsunamiEvent.listen((event) {
+      tsunamis.add(event);
+      if (tsunamis.length == 1 && !ready.isCompleted) ready.complete();
+    });
     final unifiedSubscription = service.onUnifiedEvent.listen(
       unifiedEvents.add,
     );
@@ -390,7 +399,7 @@ void main() {
         ],
       },
     });
-    await Future<void>.delayed(Duration.zero);
+    await ready.future.timeout(const Duration(seconds: 10));
 
     expect(tsunamis, hasLength(1));
     expect(unifiedEvents, isEmpty);
@@ -415,8 +424,12 @@ void main() {
 
   test('JMA tsunami cancellation clears the active warning', () async {
     final service = WhewsService(apiToken: 'test-token');
+    final ready = Completer<void>();
     final tsunamis = <TsunamiMessage>[];
-    final subscription = service.onTsunamiEvent.listen(tsunamis.add);
+    final subscription = service.onTsunamiEvent.listen((event) {
+      tsunamis.add(event);
+      if (tsunamis.length == 1 && !ready.isCompleted) ready.complete();
+    });
 
     service.handleMessageForTesting({
       'source': 'jma_tsunami',
@@ -431,7 +444,7 @@ void main() {
         'areas': [],
       },
     });
-    await Future<void>.delayed(Duration.zero);
+    await ready.future.timeout(const Duration(seconds: 10));
 
     expect(tsunamis, hasLength(1));
     expect(tsunamis.single.source, TsunamiSource.jma);
@@ -449,8 +462,12 @@ void main() {
 
   test('duplicate JMA tsunami frames emit once', () async {
     final service = WhewsService(apiToken: 'test-token');
+    final ready = Completer<void>();
     final tsunamis = <TsunamiMessage>[];
-    final subscription = service.onTsunamiEvent.listen(tsunamis.add);
+    final subscription = service.onTsunamiEvent.listen((event) {
+      tsunamis.add(event);
+      if (tsunamis.length == 1 && !ready.isCompleted) ready.complete();
+    });
     final frame = {
       'source': 'jma_tsunami',
       'md5': 'jma-tsunami-duplicate',
@@ -469,7 +486,7 @@ void main() {
 
     service.handleMessageForTesting(frame);
     service.handleMessageForTesting(frame);
-    await Future<void>.delayed(Duration.zero);
+    await ready.future.timeout(const Duration(seconds: 10));
 
     expect(tsunamis, hasLength(1));
 
@@ -479,8 +496,12 @@ void main() {
 
   test('initial JMA tsunami aggregate enters the dedicated pipeline', () async {
     final service = WhewsService(apiToken: 'test-token');
+    final ready = Completer<void>();
     final tsunamis = <TsunamiMessage>[];
-    final subscription = service.onTsunamiEvent.listen(tsunamis.add);
+    final subscription = service.onTsunamiEvent.listen((event) {
+      tsunamis.add(event);
+      if (tsunamis.length == 1 && !ready.isCompleted) ready.complete();
+    });
     final frame = {
       'source': 'jma_tsunami',
       'md5': 'jma-tsunami-initial',
@@ -498,7 +519,7 @@ void main() {
 
     service.handleMessageForTesting([frame]);
     service.handleMessageForTesting(frame);
-    await Future<void>.delayed(Duration.zero);
+    await ready.future.timeout(const Duration(seconds: 10));
 
     expect(tsunamis, hasLength(1));
 
@@ -510,8 +531,12 @@ void main() {
     'initial aggregate emits only the latest report for each tsunami source',
     () async {
       final service = WhewsService(apiToken: 'test-token');
-      final tsunamis = <TsunamiMessage>[];
-      final subscription = service.onTsunamiEvent.listen(tsunamis.add);
+      final ready = Completer<void>();
+    final tsunamis = <TsunamiMessage>[];
+      final subscription = service.onTsunamiEvent.listen((event) {
+      tsunamis.add(event);
+      if (tsunamis.length == 2 && !ready.isCompleted) ready.complete();
+    });
 
       service.handleMessageForTesting([
         {
@@ -550,7 +575,7 @@ void main() {
           },
         },
       ]);
-      await Future<void>.delayed(Duration.zero);
+      await ready.future.timeout(const Duration(seconds: 10));
 
       expect(tsunamis, hasLength(2));
       expect(

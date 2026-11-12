@@ -1,3 +1,4 @@
+import 'map_backdrop_cache.dart';
 import 'package:flutter/material.dart';
 import 'dart:ui';
 import 'dart:math' as math;
@@ -33,7 +34,8 @@ import 'history_replay_controls.dart';
 /// - NTP: 使用网络时间协议同步，精度高
 /// - LOC: 使用本地时间，可能有偏差
 class TopStatusBar extends StatefulWidget {
-  const TopStatusBar({super.key});
+  const TopStatusBar({super.key, this.weatherEntry});
+  final Widget? weatherEntry;
 
   @override
   State<TopStatusBar> createState() => _TopStatusBarState();
@@ -74,7 +76,7 @@ class _TopStatusBarState extends State<TopStatusBar> {
 
     return RepaintBoundary(
       child: ClipRect(
-        child: BackdropFilter(
+        child: CachedMapBackdropFilter(
           filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
           child: Container(
             height: s(50),
@@ -123,6 +125,13 @@ class _TopStatusBarState extends State<TopStatusBar> {
                           },
                         ),
                       ),
+                      if (widget.weatherEntry != null) ...[
+                        SizedBox(width: s(18)),
+                        ConstrainedBox(
+                          constraints: BoxConstraints(maxWidth: s(210)),
+                          child: widget.weatherEntry!,
+                        ),
+                      ],
                     ],
                   ),
                 ),

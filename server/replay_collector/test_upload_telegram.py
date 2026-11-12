@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from upload_telegram import discover, upload_file
+from upload_telegram import NAME, discover, upload_file
 
 
 class UploadTests(unittest.TestCase):
@@ -78,6 +78,29 @@ class UploadTests(unittest.TestCase):
                 upload_file(file, self.config, self.identifier)
         self.assertTrue(file.exists())
         self.assertFalse(file.with_suffix('.uploaded.json').exists())
+
+    def test_event_names_upload_without_changing_unicode_or_content(self):
+        old, data = self.replay()
+        name = ('2026-09-29_02-20-47_UTC+8_花蓮縣近海_M5.0_cwaEew_1150074_'
+                f'9555e7a2_{hashlib.sha256(data).hexdigest()}.rqreplay')
+        file = old.rename(self.root / name)
+        def remote(config, *args, output=None):
+            self.assertIn(name, args[2] if args[0] == 'copyto' else args[1])
+            if args[0] == 'cat':
+                output.write(data)
+        with patch('upload_telegram.run_rclone', remote):
+            upload_file(file, self.config, self.identifier)
+        receipt = json.loads(file.with_suffix('.uploaded.json').read_text(encoding='utf-8'))
+        self.assertEqual(receipt['path'], f'/RhythmQuake回放文件夹/{name}')
+        self.assertFalse(file.exists())
+
+    def test_invalid_event_names_never_upload(self):
+        _, data = self.replay()
+        for prefix in ['not-a-collector-name', 'event?bad_9555e7a2',
+                       'event\nline_9555e7a2']:
+            with self.subTest(prefix=prefix):
+                self.assertIsNone(NAME.fullmatch(
+                    f'{prefix}_{hashlib.sha256(data).hexdigest()}.rqreplay'))
 
     def test_local_hash_mismatch_never_uploads(self):
         file, _ = self.replay()

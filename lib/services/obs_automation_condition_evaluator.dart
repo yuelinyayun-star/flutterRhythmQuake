@@ -4,7 +4,9 @@ import '../models/obs_automation_preset.dart';
 import '../models/obs_automation_value_expression.dart';
 import '../models/quake_message.dart';
 import '../models/unified_event_presentation.dart';
+import '../core/utils/quake_time.dart';
 import 'obs_automation_input_service.dart';
+import 'native_obs_automation_policy.dart';
 
 class ObsAutomationEvaluationContext {
   const ObsAutomationEvaluationContext({
@@ -427,6 +429,14 @@ class ObsAutomationConditionEvaluator {
       case ObsAutomationBlockType.eventType:
         return _compareText(_eventType(event), expected, operator);
       case ObsAutomationBlockType.source:
+        if (expected.trim().toLowerCase() == 'jmalpgm') {
+          return NativeObsAutomationPolicy.sourceMatches(
+            event.unifiedEvent?.source,
+            expected,
+            operator,
+            isJmaLpgm: event.unifiedEvent?.isJmaLpgm == true,
+          );
+        }
         return _compareText(event.unifiedEvent?.source, expected, operator);
       case ObsAutomationBlockType.magnitude:
         final magnitude = event.unifiedEvent?.magnitude;
@@ -483,6 +493,7 @@ class ObsAutomationConditionEvaluator {
   }
 
   String? _eventType(ObsAutomationInputEvent input) {
+    if (input.tsunamiEvent != null) return 'tsunami';
     final event = input.unifiedEvent;
     if (event == null) return null;
     if (event.isEew) return 'eew';
@@ -509,6 +520,7 @@ class ObsAutomationConditionEvaluator {
       'iclEew' => 'icl',
       'kmaEew' => 'kma',
       'sa' => 'shakeAlert',
+      'sasmex' => 'sasmex',
       'globalQuakeEew' || 'gqEew' => 'globalQuake',
       _ => null,
     };
@@ -550,8 +562,16 @@ class ObsAutomationConditionEvaluator {
       'whews_iag' => 'iag',
       'whews_igp' => 'igp',
       'whews_nepal' => 'nepal',
-      'ipgp' || 'infp' || 'isc' || 'knmi' || 'ncedc' || 'lmu' ||
-      'koeri' || 'csn' || 'igepn' || 'earlyEst' => event.source.trim(),
+      'ipgp' ||
+      'infp' ||
+      'isc' ||
+      'knmi' ||
+      'ncedc' ||
+      'lmu' ||
+      'koeri' ||
+      'csn' ||
+      'igepn' ||
+      'earlyEst' => event.source.trim(),
       'ningxia' => 'ningxia',
       'guangxi' => 'guangxi',
       'shanxi' => 'shanxi',
@@ -596,7 +616,12 @@ class ObsAutomationConditionEvaluator {
         !_validCoordinate(rightLat, rightLng)) {
       return false;
     }
-    final seconds = leftTime.difference(rightTime).inMilliseconds.abs() / 1000;
+    final seconds =
+        QuakeTime.unifiedInstantUtc(left, value: leftTime)
+            .difference(QuakeTime.unifiedInstantUtc(right, value: rightTime))
+            .inMilliseconds
+            .abs() /
+        1000;
     if (seconds > maxSeconds) return false;
     return _haversineKm(leftLat!, leftLng!, rightLat!, rightLng!) <=
         maxDistanceKm;

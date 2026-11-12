@@ -5,9 +5,11 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutterrhythmquake/core/utils/replay_event_name.dart';
 import 'package:flutterrhythmquake/models/unified_quake_data.dart';
 import 'package:flutterrhythmquake/models/station_history_frame.dart';
 import 'package:flutterrhythmquake/services/debug/history_replay.dart';
+import 'package:flutterrhythmquake/services/debug/history_replay_directory_io.dart';
 import 'package:flutterrhythmquake/widgets/ui/history_replay_controls.dart';
 import 'package:flutterrhythmquake/widgets/ui/history_panel.dart';
 import 'package:flutterrhythmquake/providers/quake_provider.dart';
@@ -18,11 +20,25 @@ import 'history_replay_test.dart' as recorded;
 import 'history_panel_layout_test.dart' show HistoryProvider;
 import 'history_replay_timeline_test.dart' show captured, saved;
 
+Future<void> waitForFileAction(
+  WidgetTester tester,
+  bool Function() ready,
+) async {
+  for (var i = 0; i < 250 && !ready(); i++) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await tester.pump();
+  }
+  expect(ready(), isTrue, reason: 'Native file operation did not finish');
+}
+
 class ReplayFilePicker extends FilePicker {
   String? inputPath;
   List<String>? inputPaths;
   bool? lastAllowMultiple;
   String? outputPath;
+  String? suggestedName;
 
   @override
   Future<FilePickerResult?> pickFiles({
@@ -41,7 +57,9 @@ class ReplayFilePicker extends FilePicker {
   }) async {
     lastAllowMultiple = allowMultiple;
     final paths = inputPaths ?? (inputPath == null ? <String>[] : [inputPath!]);
-    if (paths.isEmpty) return null;
+    if (paths.isEmpty) {
+      return null;
+    }
     return FilePickerResult([
       for (final path in paths)
         PlatformFile(
@@ -61,7 +79,10 @@ class ReplayFilePicker extends FilePicker {
     List<String>? allowedExtensions,
     Uint8List? bytes,
     bool lockParentWindow = false,
-  }) async => outputPath;
+  }) async {
+    suggestedName = fileName;
+    return outputPath;
+  }
 }
 
 void main() {
@@ -163,8 +184,11 @@ void main() {
         );
         await tester.runAsync(() async {
           await tester.tap(find.byTooltip('导入回放包'));
-          await Future<void>.delayed(const Duration(milliseconds: 100));
         });
+        await waitForFileAction(
+          tester,
+          () => controller.importedPackages.length == 2,
+        );
         await tester.pumpAndSettle();
         expect(picker.lastAllowMultiple, isTrue);
         expect(controller.importedPackages.length, 2);
@@ -192,8 +216,11 @@ void main() {
         picker.inputPaths = [picker.inputPaths!.first, invalid];
         await tester.runAsync(() async {
           await tester.tap(find.byTooltip('导入回放包'));
-          await Future<void>.delayed(const Duration(milliseconds: 100));
         });
+        await waitForFileAction(
+          tester,
+          () => find.textContaining('导入失败').evaluate().isNotEmpty,
+        );
         await tester.pumpAndSettle();
         expect(controller.package, same(current));
         expect(controller.importedPackages.length, 2);
@@ -251,7 +278,7 @@ void main() {
   );
 
   test(
-    'desktop export writes a round-trippable UTF-8 package and handles cancel',
+    'desktop export writes a directory ZIP package and handles cancel',
     () async {
       final package = HistoryReplayPackage.fromGroup(
         recorded.group([recorded.recordedEew()]),
@@ -259,10 +286,21 @@ void main() {
       expect(await exportHistoryReplay(package), isFalse);
       picker.outputPath = '${temp.path}/captured.rqreplay';
       expect(await exportHistoryReplay(package), isTrue);
-      final restored = HistoryReplayPackage.decode(
-        await File(picker.outputPath!).readAsString(),
+      expect(
+        picker.suggestedName,
+        '${replayEventName(package.reports.last)}.zip',
       );
-      expect(restored.reports.single.toMap(), package.reports.single.toMap());
+      expect(picker.suggestedName, contains(package.reports.last.hypocenter));
+      final restored = await importReplayFile(picker.outputPath!);
+      try {
+        final original = await restored
+            .storedReports!
+            .payloads[restored.reports.single]!
+            .load!();
+        expect(original.toMap(), package.reports.single.toMap());
+      } finally {
+        await restored.releaseFiles?.call();
+      }
     },
   );
 
@@ -397,13 +435,14 @@ void main() {
       );
       await tester.runAsync(() async {
         await tester.tap(find.byTooltip('导入回放包'));
-        await Future<void>.delayed(const Duration(milliseconds: 100));
       });
+      await waitForFileAction(tester, () => controller.package != null);
       await tester.pumpAndSettle();
       expect(controller.package, isNotNull);
       expect(output, isEmpty);
       await tester.tap(find.byTooltip('播放回放'));
       await tester.pump();
+      await waitForFileAction(tester, () => output.isNotEmpty);
       expect(output.length, 1);
       expect(controller.active, isTrue);
       final activePackage = controller.package;

@@ -40,6 +40,11 @@ void main() {
           (jsonDecode(input.readAsStringSync()) as Map)['records'] as List;
       final expected = jsonDecode(oracle.readAsStringSync()) as List;
       final streams = <String, SeedLinkSignalAnalysis>{};
+      addTearDown(() {
+        for (final stream in streams.values) {
+          stream.dispose();
+        }
+      });
       var checked = 0, events = 0;
       var maximumError = 0.0;
       for (var i = 0; i < records.length; i++) {
@@ -103,6 +108,7 @@ void main() {
 
   test('constant input and unsupported rate never invent a ratio', () {
     final detector = SeedLinkSignalAnalysis();
+    addTearDown(detector.dispose);
     final origin = DateTime.utc(2026);
     for (var i = 0; i < 30; i++) {
       final result = detector.accept(
@@ -136,6 +142,8 @@ void main() {
             DateTime.parse(row['start'] as String),
           );
       final a = SeedLinkSignalAnalysis(), b = SeedLinkSignalAnalysis();
+      addTearDown(a.dispose);
+      addTearDown(b.dispose);
       final expected = [for (final row in rows) feed(a, row)];
       for (var i = 0; i < rows.length; i++) {
         expect(
@@ -145,6 +153,7 @@ void main() {
         );
       }
       final gapped = SeedLinkSignalAnalysis();
+      addTearDown(gapped.dispose);
       for (final row in rows.take(30)) {
         feed(gapped, row);
       }

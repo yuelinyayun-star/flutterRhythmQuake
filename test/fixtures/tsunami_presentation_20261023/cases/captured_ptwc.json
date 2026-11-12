@@ -1,0 +1,36 @@
+{
+  "key": "captured_ptwc",
+  "source": "ptwc",
+  "Data": {
+    "id": "PHEB-1-26234000",
+    "updates": 1,
+    "shockTime": "2026-08-22 16:22:36",
+    "latitude": -60.481,
+    "longitude": -47.185,
+    "depth": 10.0,
+    "magnitude": 6.7,
+    "placeName": "斯科舍海",
+    "agency": "PTWC",
+    "bulletinUrl": "http://www.tsunami.gov/events/PHEB/2026/08/22/26234000/1/WEPA42/WEPA42.txt",
+    "capUrl": "https://www.tsunami.gov/events/xml/PHEBCAP.xml",
+    "certainty": "Unlikely",
+    "description": "PTWC TSUNAMI INFORMATION STATEMENT - Event details: Preliminary magnitude 6.7 (Mwp) earthquake / Lat: -60.481, Lon: -47.185 at 2026-08-22T08:22:36Z",
+    "eventId": "26234000",
+    "expires": "2026-08-22 17:30:40",
+    "headline": "PTWC TSUNAMI INFORMATION STATEMENT",
+    "instruction": "N/A",
+    "issueTime": "2026-08-22 16:30:40",
+    "jsonUrl": "http://www.tsunami.gov/events/PHEB/2026/08/22/26234000/1/WEPA42/PHEB.json",
+    "level": "Information",
+    "magType": "Mwp",
+    "maps": {
+      "energyMapUrl": "http://www.tsunami.gov/events/PHEB/2026/08/22/26234000/1/WEPA42/",
+      "travelTimeMapUrl": ""
+    },
+    "severity": "Minor",
+    "urgency": "Unknown"
+  },
+  "original": "test/fixtures/tsunami_presentation_20261023/raw/f69c83e0ed636684.original",
+  "url": "",
+  "sha256": "f69c83e0ed636684264840061ffa6873aecf769db5bd2a2146ba3c4799cda5db"
+}

@@ -1,9 +1,10 @@
 import 'dart:async';
-import 'dart:convert';
+import 'api_json_decoder.dart';
 
 import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'source_socket.dart';
 
 import '../../models/cenc_ir_data.dart';
 import '../../models/source_status.dart';
@@ -62,7 +63,9 @@ class NowQuakeCencIntensityService extends BaseSourceService {
 
   void _openSocket(int serial) {
     if (_manualClose || serial != _connectionSerial) return;
-    final channel = WebSocketChannel.connect(Uri.parse(_socketUrl));
+    final channel = connectSourceSocket(
+      Uri.parse(_socketUrl), connectTimeout: const Duration(seconds: 10),
+    );
     _channel = channel;
     _receivedSocketPacket = false;
     _lastMessageAt = DateTime.now();
@@ -120,8 +123,9 @@ class NowQuakeCencIntensityService extends BaseSourceService {
 
   void _handleSocketMessage(dynamic raw) {
     try {
-      final text = raw is List<int> ? utf8.decode(raw) : raw.toString();
-      final decoded = jsonDecode(text);
+      final decoded = raw is List<int>
+          ? decodeApiJsonBytes(raw)
+          : decodeApiJson(raw.toString());
       if (decoded is! Map) return;
       final data = Map<String, dynamic>.from(decoded);
       final type = data['type']?.toString() ?? '';
@@ -136,10 +140,10 @@ class NowQuakeCencIntensityService extends BaseSourceService {
         _log('忽略缺少事件ID或有效测站坐标的推送');
         return;
       }
-      _putDetail(detail.reportId, _NowQuakeDetailCacheEntry(
-        detail,
-        DateTime.now(),
-      ));
+      _putDetail(
+        detail.reportId,
+        _NowQuakeDetailCacheEntry(detail, DateTime.now()),
+      );
       onCencIrData?.call(detail);
       final infoEvent = unifiedInfoFromJson(data);
       if (infoEvent != null) emitUnified(infoEvent);
@@ -177,7 +181,7 @@ class NowQuakeCencIntensityService extends BaseSourceService {
         _log('首次列表请求失败: HTTP ${response.statusCode}');
         return;
       }
-      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      final decoded = decodeApiJsonBytes(response.bodyBytes);
       if (decoded is! List) {
         _completeListRequest(success: false);
         _log('首次列表响应格式错误');
@@ -232,16 +236,16 @@ class NowQuakeCencIntensityService extends BaseSourceService {
         _log('事件详情请求失败: id=$normalizedId HTTP ${response.statusCode}');
         return null;
       }
-      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      final decoded = decodeApiJsonBytes(response.bodyBytes);
       if (decoded is! Map) return null;
       final detail = CencIrData.fromNowQuakeJson(
         Map<String, dynamic>.from(decoded),
       );
       if (detail.reportId.isEmpty) return null;
-      _putDetail(detail.reportId, _NowQuakeDetailCacheEntry(
-        detail,
-        DateTime.now(),
-      ));
+      _putDetail(
+        detail.reportId,
+        _NowQuakeDetailCacheEntry(detail, DateTime.now()),
+      );
       return detail;
     } catch (error) {
       _log('事件详情请求异常: id=$normalizedId $error');

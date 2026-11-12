@@ -48,6 +48,13 @@ class UsgsShakeMapProduct {
     final contents = product['contents'];
     if (p is! Map || contents is! Map) return null;
     double? value(String key) => double.tryParse(p[key]?.toString() ?? '');
+    double? mmi(String key) {
+      final result = value(key);
+      return result != null && result.isFinite && result > 0 && result <= 12
+          ? result
+          : null;
+    }
+
     final south = value('minimum-latitude');
     final north = value('maximum-latitude');
     final west = value('minimum-longitude');
@@ -90,7 +97,10 @@ class UsgsShakeMapProduct {
       north: north,
       west: west,
       east: east,
-      maxMmi: value('maxmmi'),
+      // Offshore products can publish maxmmi="nan" while the modeled grid
+      // still has a valid peak. Read that explicit field, never infer a peak
+      // from the earthquake magnitude or the highest drawn contour.
+      maxMmi: mmi('maxmmi') ?? mmi('maxmmi-grid'),
     );
   }
 

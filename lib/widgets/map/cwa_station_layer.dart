@@ -5,9 +5,11 @@ import '../../services/sources/cwa_station_service.dart';
 import 'ka_shindo_marker_style.dart';
 import 'map_style_zoom.dart';
 import 'station_dot_painter_layer.dart';
+import '../../services/sources/native_station_display.dart';
 
 class CwaStationLayer extends StatefulWidget {
   final List<CwaStation>? stations;
+  final List<NativeStationGrid>? preparedGrids;
   final bool hideGrid;
   final bool blinkOn;
   final bool displayShindo0;
@@ -16,6 +18,7 @@ class CwaStationLayer extends StatefulWidget {
   const CwaStationLayer({
     super.key,
     this.stations,
+    this.preparedGrids,
     this.hideGrid = false,
     this.blinkOn = true,
     this.displayShindo0 = false,
@@ -51,12 +54,16 @@ class _CwaStationLayerState extends State<CwaStationLayer>
     final idleDotSize = (0.9 + (zoom - 3) * 0.95).clamp(0.9, 7.5);
     final idleBorderWidth = (0.35 + overview * 0.55).clamp(0.35, 0.9);
 
-    final alertStations = data.where((s) => s.hasAlert).toList();
-    _syncHeldGridCells(alertStations);
-    final showGrids = _heldGridCells.isNotEmpty && !widget.hideGrid;
+    final prepared = widget.preparedGrids;
+    if (prepared == null) {
+      _syncHeldGridCells(data.where((s) => s.hasAlert).toList());
+    }
+    final showGrids =
+        (prepared?.isNotEmpty ?? _heldGridCells.isNotEmpty) && !widget.hideGrid;
 
     emitGridCentersIfChanged(
-      _heldGridCells.values.map((c) => c.center).toList(growable: false),
+      prepared?.map((c) => c.center).toList(growable: false) ??
+          _heldGridCells.values.map((c) => c.center).toList(growable: false),
       widget.onGridCellsChanged,
     );
 
@@ -65,12 +72,18 @@ class _CwaStationLayerState extends State<CwaStationLayer>
 
     for (var station in data) {
       final intensity = station.currentIntensity;
-      final level = CwaStationService.gridLevelFromInstShindo(intensity);
-      final showMarker = KaShindoMarkerStyle.shouldShowMarker(
-        level: level,
-        zoom: zoom,
-        displayShindo0: widget.displayShindo0,
-      );
+      final level =
+          station.preparedGridLevel ??
+          CwaStationService.gridLevelFromInstShindo(intensity);
+      // Keep the pre-change KA colours and dot styling. Source triggering
+      // only selects whether this station can enter the numeric-marker path.
+      final showMarker =
+          station.hasAlert &&
+          KaShindoMarkerStyle.shouldShowMarker(
+            level: level,
+            zoom: zoom,
+            displayShindo0: widget.displayShindo0,
+          );
 
       if (showMarker) {
         iconMarkers.add(
@@ -171,6 +184,19 @@ class _CwaStationLayerState extends State<CwaStationLayer>
   }
 
   List<Polygon> _buildGridPolygons(bool blinkOn) {
+    if (widget.preparedGrids case final prepared?) {
+      return [
+        for (final cell in prepared)
+          Polygon(
+            points: cell.points,
+            borderStrokeWidth: 2.0,
+            borderColor: _gridColor(
+              cell.level,
+            ).withValues(alpha: blinkOn ? 0.8 : 0.0),
+            color: Colors.transparent,
+          ),
+      ];
+    }
     final grids = _heldGridCells.values.toList(growable: false);
     final polygons = <Polygon>[];
     if (grids.isEmpty) return polygons;

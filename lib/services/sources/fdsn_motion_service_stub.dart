@@ -73,6 +73,7 @@ class FdsnMotionService {
   );
   final ValueNotifier<DateTime?> dataTimeNotifier = ValueNotifier(null);
   final sourceStatusesNotifier = ValueNotifier<List<FdsnSourceStatus>>(const []);
+  List<Map<String, Object>> get connectionSnapshot => const [];
 
   void acceptSourceStatuses(List<FdsnSourceStatus> statuses) {
     if (!listEquals(sourceStatusesNotifier.value, statuses)) {
