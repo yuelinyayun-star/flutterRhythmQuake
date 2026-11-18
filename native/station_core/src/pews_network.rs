@@ -3,6 +3,41 @@
 use super::*;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 
+fn html_content_type(headers: &str) -> bool {
+    headers.lines().any(|line| {
+        let Some((name, value)) = line.split_once(':') else {
+            return false;
+        };
+        if !name.eq_ignore_ascii_case("Content-Type") {
+            return false;
+        }
+        let media_type = value.split(';').next().unwrap_or_default().trim();
+        media_type.eq_ignore_ascii_case("text/html")
+            || media_type.eq_ignore_ascii_case("application/xhtml+xml")
+    })
+}
+
+fn html_body(bytes: &[u8]) -> bool {
+    let prefix = &bytes[..bytes.len().min(256)];
+    let prefix = prefix
+        .strip_prefix(b"\xef\xbb\xbf")
+        .unwrap_or(prefix)
+        .trim_ascii_start();
+    [
+        b"<!doctype html".as_slice(),
+        b"<html",
+        b"<br>",
+        b"<br/>",
+        b"<br />",
+    ]
+    .iter()
+    .any(|signature| {
+        prefix
+            .get(..signature.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(signature))
+    })
+}
+
 #[derive(Default)]
 pub(super) struct Pews {
     clock: Option<(i64, Instant)>,
@@ -76,6 +111,7 @@ impl Runtime {
             bytes: vec![],
             started: t,
             status: 0,
+            is_html: false,
             sse: false,
             trem_stream: trem_protocol::Stream::default(),
         });
@@ -241,9 +277,13 @@ impl Runtime {
                             .nth(1)
                             .and_then(|v| v.parse().ok())
                             .unwrap_or(0);
+                        request.is_html = html_content_type(&text);
                         headers.push((text, request.started));
                     }
                     2 => {
+                        if request.role == "pews_clock" || request.is_html {
+                            continue;
+                        }
                         request.bytes.extend(bytes);
                         if request.bytes.len() > 256 * 1024 {
                             done = Some(false);
@@ -275,9 +315,10 @@ impl Runtime {
             let index = self.requests.iter().position(|r| r.id == id).unwrap();
             let request = self.requests.remove(index);
             crate::http_transport::rq_http_release(request.id);
+            let html = request.is_html || html_body(&request.bytes);
             if request.role == "pews_detail" {
                 if let Some((bytes, stamp)) = self.pews.detail_pending.take() {
-                    if ok && request.status == 200 {
+                    if ok && request.status == 200 && !html {
                         // Enrich the newest identical phase, preserving its
                         // timestamp when newer station frames already arrived.
                         let current = self
@@ -302,21 +343,6 @@ impl Runtime {
                 }
                 continue;
             }
-            let prefix = request.bytes.get(..request.bytes.len().min(256)).unwrap();
-            let prefix = prefix
-                .strip_prefix(b"\xef\xbb\xbf")
-                .unwrap_or(prefix)
-                .trim_ascii_start()
-                .to_ascii_lowercase();
-            let html = [
-                b"<!doctype html".as_slice(),
-                b"<html",
-                b"<br>",
-                b"<br/>",
-                b"<br />",
-            ]
-            .iter()
-            .any(|signature| prefix.starts_with(signature));
             let accepted = if ok && request.status == 200 && (request.role == "pews_clock" || !html)
             {
                 match request.role {

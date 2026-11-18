@@ -225,6 +225,96 @@ void main() {
   );
 
   test(
+    'KMA direct rejects HTML warning, station and location responses',
+    () async {
+      const fixture = 'server/kma_pews_relay/test_fixtures';
+      final frame = File(
+        '$fixture/kma_20261117142557.original.b',
+      ).readAsBytesSync();
+      final captcha = File('$fixture/captcha_original.html').readAsBytesSync();
+      final firewall = File(
+        '$fixture/firewall_original.html',
+      ).readAsBytesSync();
+      final stamp = DateTime.parse('2026-11-17T14:25:57Z');
+      for (final reject in ['binary-body', 'binary-header', 'station-body']) {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        server.listen((request) async {
+          final response = request.response;
+          response.headers.set(
+            'ST',
+            '${stamp.millisecondsSinceEpoch ~/ 1000 + 1}',
+          );
+          response.headers.contentType = ContentType.binary;
+          switch (request.uri.path) {
+            case '/pews/':
+              response.headers.contentType = ContentType.html;
+              response.write('<!doctype html><html>PEWS</html>');
+            case '/pews/data/20261117142557.b':
+              if (reject == 'binary-header') {
+                response.headers.contentType = ContentType.html;
+              }
+              response.add(reject == 'binary-body' ? captcha : frame);
+            case '/pews/data/20261117142557.s':
+              response.add(firewall);
+            case '/pews/data/2026011364.li':
+              response.add(captcha);
+            default:
+              response.statusCode = HttpStatus.notFound;
+          }
+          await response.close();
+        });
+        final runtime = NativeStationRuntime();
+        final failure = Completer<void>();
+        final events = <Map>[];
+        runtime.onFrame = (value) {
+          events.addAll((value['eewEvents'] as List).cast<Map>());
+          expect(value['stations'], isEmpty, reason: reject);
+          expect(value['dataTime'], isNull, reason: reject);
+          if (value['status'] == 'error' && !failure.isCompleted) {
+            failure.complete();
+          }
+        };
+        try {
+          runtime.start({
+            'kind': 'kma',
+            'source': 'pews_local',
+            'pewsStations': true,
+            'endpoint': {
+              'host': '127.0.0.1',
+              'port': server.port,
+              'secure': false,
+            },
+          });
+          await failure.future.timeout(const Duration(seconds: 9));
+          expect(
+            runtime.original?['dataOriginalBase64'],
+            isNull,
+            reason: reject,
+          );
+          expect(
+            runtime.original?['metadataOriginalBase64'],
+            isNull,
+            reason: reject,
+          );
+          if (reject == 'station-body') {
+            expect(events.single['hypocenter'], isEmpty);
+            expect(
+              (events.single['sourcePayload'] as Map)['originalBase64'],
+              base64Encode(frame),
+            );
+          } else {
+            expect(events, isEmpty, reason: reject);
+          }
+        } finally {
+          runtime.stop();
+          await server.close(force: true);
+        }
+      }
+    },
+    skip: !enabled,
+  );
+
+  test(
     'original KMA socket bytes match the complete Dart display/history path',
     () async {
       final h = Harness({'kind': 'kma', 'source': 'pews', 'hold': 3});

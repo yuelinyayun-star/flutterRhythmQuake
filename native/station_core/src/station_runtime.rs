@@ -1259,6 +1259,7 @@ struct Request {
     bytes: Vec<u8>,
     started: i64,
     status: u16,
+    is_html: bool,
     sse: bool,
     trem_stream: trem_protocol::Stream,
 }
@@ -1411,6 +1412,7 @@ impl Runtime {
             bytes: vec![],
             started: t,
             status: 0,
+            is_html: false,
             sse: false,
             trem_stream: trem_protocol::Stream::default(),
         });
@@ -1760,6 +1762,7 @@ impl Runtime {
             bytes: vec![],
             started: t,
             status: 0,
+            is_html: false,
             sse: false,
             trem_stream: trem_protocol::Stream::default(),
         });
