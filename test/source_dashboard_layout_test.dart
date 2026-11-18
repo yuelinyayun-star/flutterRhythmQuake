@@ -11,7 +11,9 @@ import 'package:flutterrhythmquake/models/source_credential_info.dart';
 import 'package:flutterrhythmquake/providers/quake_provider.dart';
 import 'package:flutterrhythmquake/services/sources/chinaeew_icl_service.dart';
 import 'package:flutterrhythmquake/services/sources/jian_icl_service.dart';
+import 'package:flutterrhythmquake/services/sources/kma_pews_eew_service.dart';
 import 'package:flutterrhythmquake/services/sources/source_manager.dart';
+import 'package:flutterrhythmquake/widgets/map/quake_map_view.dart';
 import 'package:flutterrhythmquake/widgets/map/source_dashboard.dart';
 import 'package:flutterrhythmquake/widgets/ui/station_dashboard.dart';
 import 'package:provider/provider.dart';
@@ -76,6 +78,61 @@ void main() {
     'NowQuake',
     'P2PQ',
   ];
+
+  testWidgets('KMA station labels and EEW connection states are independent', (
+    tester,
+  ) async {
+    final manager = SourceManager();
+    final direct = KmaPewsEewService();
+    final rhythm = RhythmKmaEewService();
+    final stationEnabled = QuakeMapView.kmaPewsEnabledNotifier;
+    final stationSource = QuakeMapView.kmaSourceNotifier;
+    final oldEnabled = stationEnabled.value;
+    final oldSource = stationSource.value;
+    addTearDown(() {
+      manager.reset();
+      direct.dispose();
+      rhythm.dispose();
+      stationEnabled.value = oldEnabled;
+      stationSource.value = oldSource;
+    });
+    manager.registerSource(direct);
+    manager.registerSource(rhythm);
+    final provider = _StatusProvider();
+    addTearDown(provider.dispose);
+    provider.statuses[direct.name] = SourceStatus.connected;
+    provider.statuses[rhythm.name] = SourceStatus.error;
+    stationEnabled.value = true;
+    stationSource.value = 'pews';
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<QuakeProvider>.value(
+        value: provider,
+        child: const MaterialApp(
+          home: Scaffold(body: Stack(children: [SourceDashboard()])),
+        ),
+      ),
+    );
+    expect(find.text('Rhythm:'), findsOneWidget);
+    expect(
+      tester.widget<Text>(find.text(direct.name)).style?.color,
+      const Color(0xFF008000),
+    );
+    expect(
+      tester.widget<Text>(find.text(rhythm.name)).style?.color,
+      const Color(0xFFFF0000),
+    );
+
+    stationSource.value = 'pews_local';
+    manager.setSourceEnabled(rhythm.name, false);
+    provider.sourceStatusListenable.value++;
+    await tester.pump();
+    expect(find.text('Rhythm:'), findsNothing);
+    expect(find.text('KMA-PEWS:'), findsOneWidget);
+    expect(find.text(rhythm.name), findsNothing);
+    expect(find.text(direct.name), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
 
   for (final width in [800.0, 1280.0, 1600.0, 1920.0]) {
     for (final textScale in [1.0, 1.25]) {

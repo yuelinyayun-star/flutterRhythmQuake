@@ -17,6 +17,7 @@ import '../../services/sources/jian_icl_service.dart';
 import '../../services/background_service.dart';
 import '../../services/sources/global_quake_service.dart';
 import '../../services/sources/kma_monitor.dart';
+import '../../services/sources/kma_pews_eew_service.dart';
 import '../../services/sources/nied_monitor.dart';
 import '../../services/sources/nied_yahoo_service.dart';
 import '../../services/sources/palert_service.dart';
@@ -186,6 +187,7 @@ class _SourceDashboardState extends State<SourceDashboard> {
                                 QuakeMapView.niedMonitorEnabledNotifier,
                                 QuakeMapView.tremStationEnabledNotifier,
                                 QuakeMapView.kmaPewsEnabledNotifier,
+                                QuakeMapView.kmaSourceNotifier,
                                 QuakeMapView.wolfxSeisJsEnabledNotifier,
                                 QuakeMapView.pAlertEnabledNotifier,
                                 _clockTick,
@@ -245,6 +247,7 @@ class _SourceDashboardState extends State<SourceDashboard> {
     final jianIclStatus = provider.sourceStatuses[JianIclService.sourceName];
     final chinaEewIclStatus =
         provider.sourceStatuses[ChinaEewIclService.sourceName];
+    final manager = SourceManager();
     final names = <(String, String)>[
       if (SourceManager().isSourceEnabled('Wolfx')) ('Wolfx', 'Wolfx'),
       if (SourceManager().isSourceEnabled('FAN'))
@@ -263,6 +266,12 @@ class _SourceDashboardState extends State<SourceDashboard> {
       if (SourceManager().isSourceEnabled('NowQuake')) ('NowQuake', 'NowQuake'),
       if (SourceManager().isSourceEnabled('P2P')) ('P2PQ', 'P2P'),
       if (SourceManager().isSourceEnabled('SASMEX')) ('Rhythm', 'SASMEX'),
+      if (manager.getSource<RhythmKmaEewService>() != null &&
+          manager.isSourceEnabled(RhythmKmaEewService.sourceName))
+        (RhythmKmaEewService.sourceName, RhythmKmaEewService.sourceName),
+      if (manager.getSource<KmaPewsEewService>() != null &&
+          manager.isSourceEnabled(KmaPewsEewService.sourceName))
+        (KmaPewsEewService.sourceName, KmaPewsEewService.sourceName),
       if ((provider.sourceStatuses['EMSC'] ?? SourceStatus.disconnected) !=
           SourceStatus.disconnected)
         ('EMSC', 'EMSC'),
@@ -377,6 +386,13 @@ class _SourceDashboardState extends State<SourceDashboard> {
     );
     final tremTime = CwaStationService().dataTimeNotifier.value;
     final kmaTime = KmaMonitorService().dataTimeNotifier.value;
+    final kmaLabel = switch (QuakeMapView.kmaSourceNotifier.value) {
+      'pews_local' => 'KMA-PEWS',
+      'fan' => 'FAN',
+      'whews' => 'WHEWS',
+      'jian' => 'Jian',
+      _ => 'Rhythm',
+    };
     final seisJsTime = SeisJsService().dataTimeNotifier.value;
     final pAlertTime = PAlertService().dataTimeNotifier.value;
     final lines = <Widget>[
@@ -408,7 +424,7 @@ class _SourceDashboardState extends State<SourceDashboard> {
       if (QuakeMapView.kmaPewsEnabledNotifier.value)
         _buildStationLine(
           context,
-          'KMA-PEWS:',
+          '$kmaLabel:',
           provider.sourceStatuses['KMA'],
           time: kmaTime,
           utcOffsetHours: 9,

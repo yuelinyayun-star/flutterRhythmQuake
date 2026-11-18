@@ -511,7 +511,6 @@ class KmaRelay:
                     "service": "KMA PEWS relay",
                     "websocket": "/kma-station",
                     "kmaEewWebSocket": "/kma-eew",
-                    "kmaEewWebSocket": "/kma-eew",
                     "health": "/health",
                     "snapshot": "/snapshot",
                     "sasmexWebSocket": "/sasmex-eew",
