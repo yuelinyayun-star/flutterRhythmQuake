@@ -1,0 +1,46 @@
+name: Deploy KMA EEW relay
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rhythmquake-kma-relay-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Prepare the KMA EEW release
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq sshpass
+          release="$RUNNER_TEMP/kma-eew-release"
+          mkdir "$release"
+          relay=server/kma_pews_relay
+          git diff --binary 4e3e479 c9ee316 -- "$relay/kma_pews_relay.py" > "$release/kma-eew.patch"
+          test -s "$release/kma-eew.patch"
+          cp "$relay/test_kma_pews_relay.py" "$relay/ops/verify_kma_eew.py" "$release/"
+          cp -r "$relay/test_fixtures" "$release/"
+          tar -C "$release" -czf "$RUNNER_TEMP/kma-eew-release.tar.gz" .
+      - name: Publish and verify the relay
+        env:
+          SSHPASS: ${{ secrets.RHYTHMQUAKE_SSH_PASSWORD }}
+        run: |
+          host=64.90.20.78
+          known_hosts="$RUNNER_TEMP/kma-relay-known-hosts"
+          ssh-keyscan -T 10 -t ed25519 "$host" > "$known_hosts"
+          fingerprint="$(ssh-keygen -lf "$known_hosts" | awk '{print $2}')"
+          test "$fingerprint" = 'SHA256:c3XvPjgSy6QN5WT2RzlyJuLR6C6p8/WksJ2wYyfcuDw'
+          remote=(sshpass -e ssh -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$known_hosts" -o ConnectTimeout=15 "root@$host")
+          worker="$(cat server/kma_pews_relay/ops/deploy_kma_eew.sh)"
+          printf -v command 'bash -c %q' "$worker"
+          "${remote[@]}" "$command" < "$RUNNER_TEMP/kma-eew-release.tar.gz"
