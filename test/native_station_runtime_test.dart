@@ -2,10 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutterrhythmquake/core/utils/quake_time.dart';
+import 'package:flutterrhythmquake/models/unified_quake_data.dart';
+import 'package:flutterrhythmquake/providers/quake_provider.dart';
 import 'package:flutterrhythmquake/services/sources/native_station_runtime.dart';
 import 'package:flutterrhythmquake/services/sources/kma_monitor.dart';
 import 'package:flutterrhythmquake/services/sources/cwa_station_service.dart';
 import 'package:flutterrhythmquake/services/foreground_station_payload.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class Harness {
   final runtime = NativeStationRuntime();
@@ -32,7 +36,194 @@ class Harness {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   final enabled = NativeStationRuntime.supported;
+  test(
+    'KMA direct and Rhythm sockets deliver one unified event from original bytes',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      const fixture = 'server/kma_pews_relay/test_fixtures';
+      final official = File(
+        '$fixture/kma_20261117141040.original.b',
+      ).readAsBytesSync();
+      final late = File(
+        '$fixture/kma_20261117142557.original.b',
+      ).readAsBytesSync();
+      final earlyDetail = File(
+        '$fixture/kma_2026011364.original.le',
+      ).readAsBytesSync();
+      final lateDetail = File(
+        '$fixture/kma_2026011364.original.li',
+      ).readAsBytesSync();
+      final stationTable = File(
+        '$fixture/kma_stations_20261117142557.original.s',
+      ).readAsBytesSync();
+      final earlyStamp = DateTime.parse('2026-11-17T14:10:40Z');
+      final lateStamp = DateTime.parse('2026-11-17T14:25:57Z');
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final api = Completer<WebSocket>();
+      var tableRequests = 0;
+      var lateCapture = false;
+      server.listen((request) async {
+        final path = request.uri.path;
+        if (path == '/kma-eew') {
+          final socket = await WebSocketTransformer.upgrade(request);
+          api.complete(socket);
+          socket.listen((_) {});
+          return;
+        }
+        final response = request.response;
+        final stamp = lateCapture ? lateStamp : earlyStamp;
+        response.headers.set(
+          'ST',
+          '${stamp.millisecondsSinceEpoch ~/ 1000 + 1}',
+        );
+        if (path == '/pews/') {
+          response.headers.contentType = ContentType.html;
+          response.write('<html></html>');
+        } else if (path == '/pews/data/20261117141040.b' && !lateCapture) {
+          response.add(official);
+        } else if (path == '/pews/data/20261117142557.b' && lateCapture) {
+          response.add(late);
+        } else if (path == '/pews/data/20261117142557.s' && lateCapture) {
+          tableRequests++;
+          response.add(stationTable);
+        } else if (path == '/pews/data/2026011364.le') {
+          response.add(earlyDetail);
+        } else if (path == '/pews/data/2026011364.li') {
+          response.add(lateDetail);
+        } else {
+          response.statusCode = HttpStatus.notFound;
+        }
+        await response.close();
+      });
+      final endpoint = {
+        'host': '127.0.0.1',
+        'port': server.port,
+        'secure': false,
+      };
+      final direct = NativeStationRuntime();
+      final rhythm = NativeStationRuntime();
+      final stations = NativeStationRuntime();
+      var sourceNow = earlyStamp;
+      final provider = QuakeProvider(
+        startCatalogServices: false,
+        nativeUnifiedEvents: true,
+        eewClock: () => sourceNow,
+      );
+      addTearDown(() async {
+        direct.stop();
+        rhythm.stop();
+        stations.stop();
+        provider.dispose();
+        await server.close(force: true);
+      });
+      Future<UnifiedQuakeData> readEvent(NativeStationRuntime runtime) {
+        final result = Completer<UnifiedQuakeData>();
+        runtime.onFrame = (frame) {
+          expect(frame['stations'], isEmpty);
+          for (final raw in frame['eewEvents'] as List) {
+            final event = UnifiedQuakeData.fromMap(
+              Map<String, dynamic>.from(raw as Map),
+            );
+            if (event.hypocenter.isNotEmpty && !result.isCompleted) {
+              result.complete(event);
+            }
+          }
+        };
+        return result.future.timeout(const Duration(seconds: 12));
+      }
+
+      final directEvent = readEvent(direct);
+      direct.start({
+        'kind': 'kma',
+        'source': 'pews_local',
+        'endpoint': endpoint,
+        'pewsStations': false,
+      });
+      final apiEvent = readEvent(rhythm);
+      rhythm.start({
+        'kind': 'kma_eew',
+        'source': 'rhythm',
+        'endpoint': endpoint,
+      });
+      final socket = await api.future.timeout(const Duration(seconds: 12));
+      socket.add(
+        jsonEncode({
+          'type': 'pews_binary',
+          'frameEpochMs': earlyStamp.millisecondsSinceEpoch,
+          'originalBase64': base64Encode(official),
+          'detailOriginalBase64': base64Encode(earlyDetail),
+        }),
+      );
+      final local = await directEvent;
+      final relay = await apiEvent;
+      expect(local.apiTypeLabel, 'KMA-PEWS');
+      expect(relay.apiTypeLabel, 'Rhythm');
+      expect(local.eventId, '2026011364');
+      expect(
+        QuakeTime.unifiedInstantUtc(local),
+        DateTime.parse('2026-11-17T14:10:17Z'),
+      );
+      expect(local.hypocenter, relay.hypocenter);
+      expect(local.depth, -1);
+      expect(local.sourcePayload?['originalBase64'], base64Encode(official));
+      expect(relay.sourcePayload?['originalBase64'], base64Encode(official));
+      await provider.eewHistoryReadyForTest;
+      provider.handleUnifiedEventForTest(local, suppressEffects: true);
+      provider.handleUnifiedEventForTest(relay, suppressEffects: true);
+      expect(provider.unifiedEvents, hasLength(1));
+      expect(provider.unifiedEvents.single.eventId, local.eventId);
+      expect(provider.eewHistory.single.reports, hasLength(1));
+      expect(tableRequests, 0);
+
+      direct.stop();
+      lateCapture = true;
+      final stationFrame = Completer<Map<String, dynamic>>();
+      final decodedFinal = Completer<UnifiedQuakeData>();
+      stations.onFrame = (value) {
+        for (final raw in value['eewEvents'] as List) {
+          if (!decodedFinal.isCompleted) {
+            decodedFinal.complete(
+              UnifiedQuakeData.fromMap(Map<String, dynamic>.from(raw as Map)),
+            );
+          }
+        }
+        if ((value['stations'] as List).isNotEmpty &&
+            !stationFrame.isCompleted) {
+          stationFrame.complete(value);
+        }
+      };
+      stations.start({
+        'kind': 'kma',
+        'source': 'pews_local',
+        'endpoint': endpoint,
+        'pewsStations': true,
+      });
+      final frame = await stationFrame.future.timeout(
+        const Duration(seconds: 12),
+      );
+      expect(frame['stations'], hasLength(265));
+      expect(DateTime.parse(frame['dataTime'] as String), lateStamp);
+      expect(
+        stations.original?['metadataOriginalBase64'],
+        base64Encode(stationTable),
+      );
+      expect(stations.original?['dataOriginalBase64'], base64Encode(late));
+      expect(tableRequests, 1);
+      final finalReport = await decodedFinal.future.timeout(
+        const Duration(seconds: 12),
+      );
+      expect(finalReport.isFinal, isTrue);
+      expect(finalReport.depth, 20);
+      sourceNow = lateStamp;
+      provider.handleUnifiedEventForTest(finalReport, suppressEffects: true);
+      expect(provider.eewHistory.single.reports, hasLength(1));
+      await socket.close();
+    },
+    skip: !enabled,
+  );
+
   test(
     'original KMA socket bytes match the complete Dart display/history path',
     () async {

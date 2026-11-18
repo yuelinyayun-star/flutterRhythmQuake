@@ -53,6 +53,7 @@ import 'services/sources/global_quake_service.dart';
 import 'services/sources/jian_icl_service.dart';
 import 'services/sources/chinaeew_icl_service.dart';
 import 'services/sources/sasmex_service.dart';
+import 'services/sources/kma_pews_eew_service.dart';
 import 'services/sources/fdsn_motion_service.dart';
 import 'services/sources/fdsn_source_catalog.dart';
 import 'services/debug/local_inject_server.dart';
@@ -347,6 +348,18 @@ void main() async {
   SourceManager().registerSource(p2p);
   SourceManager().registerSource(mock);
   SourceManager().registerSource(sasmex);
+  if (KmaPewsEewService.supported) {
+    SourceManager().registerSource(KmaPewsEewService());
+    SourceManager().registerSource(RhythmKmaEewService());
+    SourceManager().setSourceEnabled(
+      KmaPewsEewService.sourceName,
+      prefs.getBool(KmaPewsEewService.enabledPreferenceKey) ?? true,
+    );
+    SourceManager().setSourceEnabled(
+      RhythmKmaEewService.sourceName,
+      prefs.getBool(RhythmKmaEewService.enabledPreferenceKey) ?? true,
+    );
+  }
   SourceManager().setSourceEnabled(
     SasmexService.sourceName,
     prefs.getBool(SasmexService.enabledPreferenceKey) ?? true,

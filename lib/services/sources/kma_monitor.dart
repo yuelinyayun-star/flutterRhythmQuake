@@ -7,6 +7,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'source_socket.dart';
 import 'shake_alert_gate.dart';
 import 'native_station_runtime.dart';
+import 'kma_pews_feed.dart';
 import 'native_station_display.dart';
 import '../foreground_station_payload.dart';
 import '../station_history_capture.dart';
@@ -143,35 +144,24 @@ class KmaMonitorService {
     resetRealtimeState();
     _nativeSource = source;
     _nativeToken = token;
+    if (source == 'pews_local') {
+      KmaPewsFeed.instance.attach(this, (frame) {
+        if (_nativeSource != 'pews_local') return;
+        final runtime = KmaPewsFeed.instance.runtime!;
+        _native = runtime;
+        _receiveNativeFrame(frame, runtime);
+      }, stations: true);
+      _native = KmaPewsFeed.instance.runtime;
+      KmaPewsFeed.instance.settings({
+        'sensitivity': _sensitivity,
+        'hold': _intensityHoldFrames,
+      });
+      return;
+    }
     final runtime = _native = NativeStationRuntime();
     runtime.onFrame = (frame) {
       if (!identical(_native, runtime)) return;
-      _isConnected = frame['status'] == 'connected';
-      if (nativeStatus != frame['status']) {
-        nativeStatus = frame['status'] as String;
-        onStatusChanged?.call(_isConnected);
-      }
-      final rawTime = frame['dataTime'] as String?;
-      dataTimeNotifier.value = rawTime == null ? null : DateTime.parse(rawTime);
-      nativeLayerSignature = frame['signature'] as String;
-      nativeGrids = NativeStationGrid.read(frame);
-      nativeAutomationSamples = nativeStationAutomation(frame);
-      _stations = ForegroundStationPayload.decodeKma(frame['stations']);
-      for (final signal in frame['signals'] as List) {
-        if (signal == -1) {
-          onShakeExpired?.call();
-        } else {
-          onShakeDetected?.call(signal as int);
-        }
-      }
-      final time = DateTime.parse(frame['receivedAt'] as String);
-      StationHistoryCapture.instance.publish(
-        'kma',
-        () => runtime.archive!,
-        originalJsonLoader: () => runtime.original,
-        receivedAt: time,
-      );
-      _stationController.add(_stations);
+      _receiveNativeFrame(frame, runtime);
     };
     runtime.start({
       'kind': 'kma',
@@ -180,6 +170,38 @@ class KmaMonitorService {
       'sensitivity': _sensitivity,
       'hold': _intensityHoldFrames,
     });
+  }
+
+  void _receiveNativeFrame(
+    Map<String, dynamic> frame,
+    NativeStationRuntime runtime,
+  ) {
+    _isConnected = frame['status'] == 'connected';
+    if (nativeStatus != frame['status']) {
+      nativeStatus = frame['status'] as String;
+      onStatusChanged?.call(_isConnected);
+    }
+    final rawTime = frame['dataTime'] as String?;
+    dataTimeNotifier.value = rawTime == null ? null : DateTime.parse(rawTime);
+    nativeLayerSignature = frame['signature'] as String;
+    nativeGrids = NativeStationGrid.read(frame);
+    nativeAutomationSamples = nativeStationAutomation(frame);
+    _stations = ForegroundStationPayload.decodeKma(frame['stations']);
+    for (final signal in frame['signals'] as List) {
+      if (signal == -1) {
+        onShakeExpired?.call();
+      } else {
+        onShakeDetected?.call(signal as int);
+      }
+    }
+    final time = DateTime.parse(frame['receivedAt'] as String);
+    StationHistoryCapture.instance.publish(
+      'kma',
+      () => runtime.archive!,
+      originalJsonLoader: () => runtime.original,
+      receivedAt: time,
+    );
+    _stationController.add(_stations);
   }
 
   static const List<String> _pewsWsUrls = [
@@ -243,7 +265,11 @@ class KmaMonitorService {
 
   /// Selects the socket group without starting a connection.
   void setConnectionSource(String source) {
-    final normalized = source == 'fan' ? 'fan' : 'pews';
+    final normalized = switch (source) {
+      'pews_local' => 'pews_local',
+      'fan' => 'fan',
+      _ => 'pews',
+    };
     if (_connectionSource == normalized) return;
     _connectionSource = normalized;
     _currentUrlIndex = 0;
@@ -251,6 +277,10 @@ class KmaMonitorService {
   }
 
   void connect() {
+    if (_connectionSource == 'pews_local') {
+      startNativeSource('pews_local', '');
+      return;
+    }
     _connectionRequested = true;
     if (_channel != null) return;
     _reconnectTimer?.cancel();
@@ -810,7 +840,11 @@ class KmaMonitorService {
 
   void disconnect() {
     if (_native != null) StationHistoryCapture.instance.clearLatest('kma');
-    _native?.stop();
+    if (_nativeSource == 'pews_local') {
+      KmaPewsFeed.instance.detach(this);
+    } else {
+      _native?.stop();
+    }
     _native = null;
     _nativeSource = _nativeToken = null;
     nativeAutomationSamples = const [];

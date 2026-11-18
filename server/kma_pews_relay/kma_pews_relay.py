@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import hashlib
 import json
 import logging
@@ -26,6 +27,7 @@ from pathlib import Path
 
 import aiohttp
 from websockets.asyncio.server import ServerConnection, serve
+from websockets.exceptions import ConnectionClosed
 from websockets.http11 import Request, Response
 
 from anomaly_archive import AnomalyArchive
@@ -366,6 +368,12 @@ class KmaRelay:
         self.state = RelayState()
         self.http = KmaPewsClient(config, self.clock)
         self.clients: set[ServerConnection] = set()
+        self.pews_eew_clients: dict[ServerConnection, asyncio.Queue[dict[str, Any]]] = {}
+        self._latest_pews_event: dict[str, Any] | None = None
+        self._pews_event_key: tuple[int, bytes] | None = None
+        self._pews_detail_key: tuple[str, int] | None = None
+        self._pews_detail_original: str | None = None
+        self._pews_detail_task: asyncio.Task | None = None
         self.client_send_locks: dict[ServerConnection, asyncio.Lock] = {}
         self.stop_event = asyncio.Event()
         self._last_attempted_utc: datetime | None = None
@@ -438,7 +446,7 @@ class KmaRelay:
         path = parsed.path.rstrip("/") or "/"
         upgrade = request.headers.get("Upgrade", "").lower() == "websocket"
 
-        if upgrade and path in {"/kma-station", "/ws", "/sasmex-eew"}:
+        if upgrade and path in {"/kma-station", "/ws", "/sasmex-eew", "/kma-eew"}:
             if self._authorized(request):
                 return None
             return self._json_response(
@@ -502,6 +510,8 @@ class KmaRelay:
                 {
                     "service": "KMA PEWS relay",
                     "websocket": "/kma-station",
+                    "kmaEewWebSocket": "/kma-eew",
+                    "kmaEewWebSocket": "/kma-eew",
                     "health": "/health",
                     "snapshot": "/snapshot",
                     "sasmexWebSocket": "/sasmex-eew",
@@ -517,6 +527,9 @@ class KmaRelay:
 
     async def handle_websocket(self, websocket: ServerConnection) -> None:
         path = urlsplit(websocket.request.path).path.rstrip("/") or "/"
+        if path == "/kma-eew":
+            await self.handle_pews_eew_websocket(websocket)
+            return
         if path == "/sasmex-eew":
             await self.handle_sasmex_websocket(websocket)
             return
@@ -569,6 +582,108 @@ class KmaRelay:
             self.clients.discard(websocket)
             self.client_send_locks.pop(websocket, None)
             LOGGER.info("WebSocket disconnected: %s; clients=%d", peer, len(self.clients))
+
+    async def handle_pews_eew_websocket(self, websocket: ServerConnection) -> None:
+        if len(self.pews_eew_clients) >= self.config.max_clients:
+            await websocket.close(code=1013, reason="server capacity reached")
+            return
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=8)
+        self.pews_eew_clients[websocket] = queue
+        queue.put_nowait(self._heartbeat_message())
+        if self._latest_pews_event is not None:
+            queue.put_nowait({**self._latest_pews_event, "isSnapshot": True})
+        sender = asyncio.create_task(self._send_pews_eew(websocket, queue))
+        try:
+            async for message in websocket:
+                text = message.decode("utf-8", errors="replace") if isinstance(message, bytes) else message
+                if text.strip().lower() == "ping":
+                    self._enqueue_pews_eew(websocket, {"type": "pong"})
+                else:
+                    try:
+                        payload = json.loads(text)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(payload, dict) and payload.get("type") == "ping":
+                        self._enqueue_pews_eew(websocket, {"type": "pong"})
+        finally:
+            self.pews_eew_clients.pop(websocket, None)
+            sender.cancel()
+            await asyncio.gather(sender, return_exceptions=True)
+
+    async def _send_pews_eew(
+        self, websocket: ServerConnection, queue: asyncio.Queue[dict[str, Any]]
+    ) -> None:
+        while True:
+            try:
+                payload = await queue.get()
+                await asyncio.wait_for(websocket.send(self._encode(payload)), timeout=2)
+            except TimeoutError:
+                await websocket.close(code=1013, reason="slow client")
+                return
+            except ConnectionClosed:
+                return
+
+    def _enqueue_pews_eew(self, websocket: ServerConnection, payload: dict[str, Any]) -> None:
+        queue = self.pews_eew_clients.get(websocket)
+        if queue is None:
+            return
+        try:
+            queue.put_nowait(payload)
+        except asyncio.QueueFull:
+            self.pews_eew_clients.pop(websocket, None)
+            asyncio.create_task(websocket.close(code=1013, reason="slow client"))
+
+    def _broadcast_pews_eew(self, stamp_utc: datetime, frame: bytes, header: FrameHeader) -> None:
+        # Transport the unchanged original. Event interpretation is shared by
+        # both client inputs in Rust, avoiding a second Python event policy.
+        if header.phase not in (2, 3) or len(frame) < 80:
+            return
+        payload = {
+            "type": "pews_binary",
+            "frameEpochMs": int(stamp_utc.timestamp() * 1000),
+            "originalBase64": base64.b64encode(frame).decode("ascii"),
+            "isSnapshot": False,
+        }
+        detail_key = (header.event_id, header.phase)
+        if self._pews_detail_key == detail_key and self._pews_detail_original is not None:
+            payload["detailOriginalBase64"] = self._pews_detail_original
+        elif self._pews_detail_key != detail_key:
+            if self._pews_detail_task is not None:
+                self._pews_detail_task.cancel()
+            self._pews_detail_key = detail_key
+            self._pews_detail_original = None
+            self._pews_detail_task = asyncio.create_task(self._fetch_pews_detail(*detail_key))
+        self._latest_pews_event = payload
+        key = (header.phase, frame[-75:])
+        if key == self._pews_event_key:
+            return
+        self._pews_event_key = key
+        for client in list(self.pews_eew_clients):
+            self._enqueue_pews_eew(client, payload)
+
+    async def _fetch_pews_detail(self, event_id: str, phase: int) -> None:
+        extension = "le" if phase == 2 else "li"
+        for attempt in range(3):
+            try:
+                response = await self.http.fetch(f"data/{event_id}.{extension}")
+                if response.status != HTTPStatus.OK:
+                    raise ConnectionError(f"KMA event location returned HTTP {response.status}")
+                reject_html_response(response.body, response.headers)
+                if len(response.body) > 256 * 1024:
+                    raise ValueError("KMA event location exceeds 256 KiB")
+                encoded = base64.b64encode(response.body).decode("ascii")
+                if self._pews_detail_key != (event_id, phase):
+                    return
+                self._pews_detail_original = encoded
+                if self._latest_pews_event is not None:
+                    self._latest_pews_event = {**self._latest_pews_event, "detailOriginalBase64": encoded}
+                    for client in list(self.pews_eew_clients):
+                        self._enqueue_pews_eew(client, self._latest_pews_event)
+                return
+            except (ConnectionError, ValueError) as error:
+                LOGGER.warning("KMA event location %s.%s unavailable: %s", event_id, extension, error)
+                if attempt < 2:
+                    await self._sleep_or_stop(1)
 
     async def handle_sasmex_websocket(self, websocket: ServerConnection) -> None:
         if len(self.sasmex_clients) >= self.config.max_clients:
@@ -913,6 +1028,7 @@ class KmaRelay:
             reject_html_response(frame, response.headers if response else None)
             stage = "header"
             header = decode_header(frame)
+            self._broadcast_pews_eew(stamp_utc, frame, header)
             decoded["header"] = asdict(header)
             stage = "station_table"
             if (
@@ -1050,6 +1166,9 @@ class KmaRelay:
                 self._heartbeat_message()
             )
             await self.broadcast_sasmex(self._sasmex_heartbeat_message())
+            heartbeat = self._heartbeat_message()
+            for client in list(self.pews_eew_clients):
+                self._enqueue_pews_eew(client, heartbeat)
 
     async def _sleep_or_stop(self, seconds: float) -> None:
         try:
@@ -1152,6 +1271,9 @@ class KmaRelay:
                 await self.stop_event.wait()
         finally:
             self.stop_event.set()
+            if self._pews_detail_task is not None:
+                self._pews_detail_task.cancel()
+                await asyncio.gather(self._pews_detail_task, return_exceptions=True)
             for task in (poll_task, heartbeat_task, sasmex_task, sasno_task):
                 task.cancel()
             await asyncio.gather(

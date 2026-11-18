@@ -26,6 +26,7 @@ import '../../services/sources/whews_service.dart';
 import '../../services/sources/jian_service.dart';
 import '../../services/whews_authorization_policy.dart';
 import '../../services/sources/sasmex_service.dart';
+import '../../services/sources/kma_pews_eew_service.dart';
 import 'jian_auth_settings.dart';
 import 'settings_controls.dart';
 import 'eew_history_settings.dart';
@@ -105,6 +106,8 @@ class _SettingsPageState extends State<SettingsPage>
   bool _wolfxSeisJsEnabled = true;
   bool _p2pquakeEnabled = true;
   bool _sasmexEnabled = true;
+  bool _kmaLocalEewEnabled = true;
+  bool _rhythmKmaEewEnabled = true;
   bool _kmaPewsEnabled = true;
   bool _pAlertEnabled = AppEdition.hasPAlertStations;
   bool _niedMonitorEnabled = true;
@@ -527,6 +530,10 @@ class _SettingsPageState extends State<SettingsPage>
       _p2pquakeEnabled = prefs.getBool(_p2pquakeEnabledKey) ?? true;
       _sasmexEnabled =
           prefs.getBool(SasmexService.enabledPreferenceKey) ?? true;
+      _kmaLocalEewEnabled =
+          prefs.getBool(KmaPewsEewService.enabledPreferenceKey) ?? true;
+      _rhythmKmaEewEnabled =
+          prefs.getBool(RhythmKmaEewService.enabledPreferenceKey) ?? true;
       _kmaPewsEnabled = prefs.getBool(_kmaPewsEnabledKey) ?? true;
       _pAlertEnabled =
           AppEdition.hasPAlertStations &&
@@ -583,6 +590,7 @@ class _SettingsPageState extends State<SettingsPage>
       _niedDataSource = prefs.getString(_niedDataSourceKey) ?? 'lmoni';
       final savedKmaDataSource = prefs.getString(_kmaDataSourceKey);
       _kmaDataSource = switch (savedKmaDataSource) {
+        'pews_local' => 'pews_local',
         'fan' => 'fan',
         'whews' => 'whews',
         'jian' => 'jian',
@@ -693,6 +701,14 @@ class _SettingsPageState extends State<SettingsPage>
     SourceManager().setSourceEnabled('Wolfx', _wolfxEnabled);
     SourceManager().setSourceEnabled('P2P', _p2pquakeEnabled);
     SourceManager().setSourceEnabled(SasmexService.sourceName, _sasmexEnabled);
+    SourceManager().setSourceEnabled(
+      KmaPewsEewService.sourceName,
+      _kmaLocalEewEnabled,
+    );
+    SourceManager().setSourceEnabled(
+      RhythmKmaEewService.sourceName,
+      _rhythmKmaEewEnabled,
+    );
     UiRuntimeFlags.sideInfoAutoShowBetaNotifier.value = _sideInfoAutoShowBeta;
     UiRuntimeFlags.localEewDomesticNotifier.value = _localEewDomestic;
     UiRuntimeFlags.localEewForeignNotifier.value = _localEewForeign;
@@ -2584,6 +2600,28 @@ class _SettingsPageState extends State<SettingsPage>
           _requestForegroundConnectionReload();
         },
       ),
+      if (KmaPewsEewService.supported) ...[
+        _buildApiSwitch(
+          title: 'KMA 地震预警（Rhythm）',
+          value: _rhythmKmaEewEnabled,
+          onChanged: (val) {
+            setState(() => _rhythmKmaEewEnabled = val);
+            _saveApiSourceEnabled(RhythmKmaEewService.enabledPreferenceKey, val);
+            SourceManager().setSourceEnabled(RhythmKmaEewService.sourceName, val);
+            _requestForegroundConnectionReload();
+          },
+        ),
+        _buildApiSwitch(
+          title: 'KMA-PEWS 本地预警',
+          value: _kmaLocalEewEnabled,
+          onChanged: (val) {
+            setState(() => _kmaLocalEewEnabled = val);
+            _saveApiSourceEnabled(KmaPewsEewService.enabledPreferenceKey, val);
+            SourceManager().setSourceEnabled(KmaPewsEewService.sourceName, val);
+            _requestForegroundConnectionReload();
+          },
+        ),
+      ],
       _buildApiSwitch(
         title: 'KMA 实时测站',
         value: _kmaPewsEnabled,
@@ -3908,7 +3946,8 @@ class _SettingsPageState extends State<SettingsPage>
 
   Widget _buildKmaDataSourceSelector() {
     final options = [
-      ('pews', 'KMA-PEWS'),
+      ('pews', 'Rhythm'),
+      if (KmaPewsEewService.supported) ('pews_local', 'KMA-PEWS'),
       ('fan', 'FAN'),
       if (_hasWAuthApiToken && _whewsKmaEnabled) ('whews', 'WHEWS'),
       ('jian', 'Jian'),
@@ -3919,6 +3958,7 @@ class _SettingsPageState extends State<SettingsPage>
       leading: Icons.sensors_outlined,
       control: _buildSegmentedSelector<String>(
         value: _kmaDataSource,
+        minItemWidth: 106,
         options: options.map((opt) => _SelectOption(opt.$1, opt.$2)).toList(),
         onChanged: (val) {
           if (val == null) return;
@@ -5121,10 +5161,11 @@ class _SettingsPageState extends State<SettingsPage>
     required T value,
     required List<_SelectOption<T>> options,
     required ValueChanged<T?> onChanged,
+    double minItemWidth = 78,
   }) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final useColumn = constraints.maxWidth < options.length * 78;
+        final useColumn = constraints.maxWidth < options.length * minItemWidth;
         Widget buildItem(_SelectOption<T> option) {
           final selected = option.value == value;
           return Material(

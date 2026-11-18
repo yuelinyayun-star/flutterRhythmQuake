@@ -85,6 +85,14 @@ WebSocket: ws://0.0.0.0:8765/kma-station
 当前快照:  http://127.0.0.1:8765/snapshot
 ```
 
+KMA 预警走同一中继进程的 WebSocket `/kma-eew`。它与 `/kma-station` 共用 KMA
+上游轮询，并沿用中继的鉴权。`GET /` 返回 `kmaEewWebSocket` 用于确认进程已加载
+该路由，客户端实际连接时需要进行 WebSocket 握手。
+
+`pews_binary` 消息携带 `frameEpochMs`、`originalBase64` 和 `isSnapshot`。
+官方地点文件收到后附带 `detailOriginalBase64`。二进制帧和地点文件内容保持原样，
+由客户端 Rust 解码。新连接会收到最新预警快照，过期判定由客户端统一预警入口处理。
+
 同一服务还会轮询公开的 SASMEX-CIRES RSS/CAP 页面，并提供独立的预警 WSS，
 不会把 CAP XML 混入 KMA 二进制测站频道：
 

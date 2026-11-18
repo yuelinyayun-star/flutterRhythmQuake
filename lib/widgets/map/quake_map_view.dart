@@ -1620,6 +1620,7 @@ class _QuakeMapViewState extends State<QuakeMapView> {
       QuakeMapView.kmaDataSourcePreferenceKey,
     );
     _kmaSource = switch (savedKmaSource) {
+      'pews_local' => 'pews_local',
       'fan' => 'fan',
       'whews' => 'whews',
       'jian' => 'jian',

@@ -37,6 +37,7 @@ import 'sources/wolfx_service.dart';
 import 'sources/whews_service.dart';
 import 'sources/jian_service.dart';
 import 'sources/sasmex_service.dart';
+import 'sources/kma_pews_eew_service.dart';
 import 'sources/jian_station_service.dart';
 import 'wauth_credential_store.dart';
 import 'foreground_station_payload.dart';
@@ -644,7 +645,19 @@ Future<void> startBackgroundSources({
   manager.registerSource(p2p);
   manager.registerSource(mock);
   final sasmex = SasmexService();
+  final pewsEew = KmaPewsEewService();
+  final rhythmKmaEew = RhythmKmaEewService();
   manager.registerSource(sasmex);
+  manager.registerSource(pewsEew);
+  manager.registerSource(rhythmKmaEew);
+  manager.setSourceEnabled(
+    KmaPewsEewService.sourceName,
+    prefs.getBool(KmaPewsEewService.enabledPreferenceKey) ?? true,
+  );
+  manager.setSourceEnabled(
+    RhythmKmaEewService.sourceName,
+    prefs.getBool(RhythmKmaEewService.enabledPreferenceKey) ?? true,
+  );
   if (AppEdition.hasGlobalQuake) manager.registerSource(globalQuake);
   if (AppEdition.hasIcl) {
     manager.registerSource(jianIcl);
@@ -708,6 +721,8 @@ Future<void> startBackgroundSources({
     p2p.onUnifiedEvent,
     mock.onUnifiedEvent,
     sasmex.onUnifiedEvent,
+    pewsEew.onUnifiedEvent,
+    rhythmKmaEew.onUnifiedEvent,
     if (AppEdition.hasGlobalQuake) globalQuake.onUnifiedEvent,
     if (AppEdition.hasIcl) jianIcl.onUnifiedEvent,
     if (AppEdition.hasIcl) chinaEewIcl.onUnifiedEvent,

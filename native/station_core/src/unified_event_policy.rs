@@ -1020,6 +1020,21 @@ impl Identity {
         if report(a) != report(bv) || self.same_body(a, bv) {
             return false;
         }
+        if s(a, "source") == "kmaEew" && s(bv, "source") == "kmaEew" {
+            let old = &a["sourcePayload"];
+            let new = &bv["sourcePayload"];
+            if let (Some(before), Some(after)) =
+                (old["frameEpochMs"].as_i64(), new["frameEpochMs"].as_i64())
+            {
+                if b(bv, "isSnapshot") || after < before {
+                    return false;
+                }
+                let location = s(bv, "hypocenter");
+                let location_added = s(a, "hypocenter").is_empty() && !location.is_empty();
+                let location_lost = !s(a, "hypocenter").is_empty() && location.is_empty();
+                return location_added || (after > before && !location_lost);
+            }
+        }
         if s(a, "source") == "ceaEew"
             && s(bv, "source") == "ceaEew"
             && s(a, "apiTypeLabel") == "Jian Project"

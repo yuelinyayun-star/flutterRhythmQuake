@@ -86,9 +86,14 @@ final class NativeStationRuntime implements Finalizable {
                 as Map<String, dynamic>;
         if (original != 0) return frame;
         final signals = _api.deliveredSignals(_owner, length);
+        final signalList = List<int>.of(signals.asTypedList(length.value));
+        final events = frame['source'] == 'pews_local' || frame['kind'] == 'kma_eew'
+            ? _take(4)
+            : null;
         return {
           ...frame,
-          'signals': List<int>.of(signals.asTypedList(length.value)),
+          'signals': signalList,
+          'eewEvents': events?['events'] ?? const [],
         };
       }
       // Decode only a prepared UI projection, or an explicitly requested archive.

@@ -307,10 +307,7 @@ class AlertVoiceHelper {
 
   static String _depthText(double depth) {
     if (!depth.isFinite || depth < 0) return '';
-    final value = depth == depth.roundToDouble()
-        ? depth.toStringAsFixed(0)
-        : depth.toString();
-    return '深度$value公里。';
+    return '深度${depth.round()}公里。';
   }
 
   static String _jmaInfoTitle(String title) => switch (title.trim()) {

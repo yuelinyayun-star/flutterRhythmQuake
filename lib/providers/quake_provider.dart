@@ -69,6 +69,7 @@ import '../services/sources/global_quake_service.dart';
 import '../services/sources/jian_icl_service.dart';
 import '../services/sources/chinaeew_icl_service.dart';
 import '../services/sources/sasmex_service.dart';
+import '../services/sources/kma_pews_eew_service.dart';
 import '../services/sources/eqlist/eqlist_manager.dart';
 import '../services/quake_event_adapter.dart';
 import '../core/intensity_calculator.dart';
@@ -2960,6 +2961,18 @@ class QuakeProvider with ChangeNotifier {
       );
     }
     final sasmexService = SourceManager().getSource<SasmexService>();
+    final pewsEew = SourceManager().getSource<KmaPewsEewService>();
+    if (pewsEew != null) {
+      _unifiedSubscriptions.add(
+        pewsEew.onUnifiedEvent.listen(_handleUnifiedEvent),
+      );
+    }
+    final rhythmKmaEew = SourceManager().getSource<RhythmKmaEewService>();
+    if (rhythmKmaEew != null) {
+      _unifiedSubscriptions.add(
+        rhythmKmaEew.onUnifiedEvent.listen(_handleUnifiedEvent),
+      );
+    }
     if (sasmexService != null) {
       _unifiedSubscriptions.add(
         sasmexService.onUnifiedEvent.listen(_handleUnifiedEvent),

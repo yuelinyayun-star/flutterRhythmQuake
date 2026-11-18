@@ -22,6 +22,7 @@ mod jma_eew;
 mod jma_lpgm_display;
 mod japan_sea_regions;
 mod korea_land_regions;
+mod kma_pews;
 mod east_asia_regions;
 mod tsunami_regions;
 mod json_envelope;

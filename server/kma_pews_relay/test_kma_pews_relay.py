@@ -1,23 +1,61 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
 from types import MethodType
 
+from websockets.asyncio.client import connect
+from websockets.asyncio.server import serve
+
 from kma_pews_relay import (
     Config,
     KmaRelay,
     KmaServerClock,
     Station,
+    Fetched,
     decode_header,
     decode_raw_levels,
     decode_stations,
     fan_compatible_mmi,
     frame_level_capacity,
 )
+
+class KmaPewsEewEndpointTest(unittest.IsolatedAsyncioTestCase):
+    async def test_original_warning_live_snapshot_and_station_frame_duplicate(self) -> None:
+        fixture = Path(__file__).with_name("test_fixtures")
+        first = (fixture / "kma_20261117141040.original.b").read_bytes()
+        repeated = (fixture / "kma_20261117141100.original.b").read_bytes()
+        detail = (fixture / "kma_2026011364.original.le").read_bytes()
+        stamp = datetime(2026, 11, 17, 14, 10, 40, tzinfo=UTC)
+        relay = KmaRelay(Config(access_token=""))
+
+        async def fetch(path: str) -> Fetched:
+            self.assertEqual(path, "data/2026011364.le")
+            return Fetched(200, detail, {}, 0.0)
+
+        relay.http.fetch = fetch
+        async with serve(relay.handle_websocket, "127.0.0.1", 0, process_request=relay.process_request) as server:
+            url = f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/kma-eew"
+            async with connect(url) as socket:
+                self.assertEqual(json.loads(await socket.recv())["type"], "heartbeat")
+                relay._broadcast_pews_eew(stamp, first, decode_header(first))
+                live = json.loads(await socket.recv())
+                self.assertFalse(live["isSnapshot"])
+                self.assertEqual(base64.b64decode(live["originalBase64"]), first)
+                enriched = json.loads(await socket.recv())
+                self.assertEqual(base64.b64decode(enriched["detailOriginalBase64"]), detail)
+                relay._broadcast_pews_eew(stamp.replace(minute=11, second=0), repeated, decode_header(repeated))
+                await socket.send("ping")
+                self.assertEqual(json.loads(await socket.recv()), {"type": "pong"})
+            async with connect(url) as socket:
+                self.assertEqual(json.loads(await socket.recv())["type"], "heartbeat")
+                snapshot = json.loads(await socket.recv())
+                self.assertTrue(snapshot["isSnapshot"])
+                self.assertEqual(base64.b64decode(snapshot["originalBase64"]), repeated)
 
 
 def pack_station_table(coordinates: list[tuple[int, int]]) -> bytes:

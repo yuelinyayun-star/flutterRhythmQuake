@@ -1,7 +1,11 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutterrhythmquake/core/utils/alert_voice_helper.dart';
 import 'package:flutterrhythmquake/models/quake_message.dart';
 import 'package:flutterrhythmquake/models/unified_quake_data.dart';
+import 'package:flutterrhythmquake/services/sources/fan_service.dart';
 
 // Synthetic unit-test input, not a real earthquake bulletin.
 const event = UnifiedQuakeData(
@@ -27,6 +31,26 @@ String speak(UnifiedQuakeData data, {String phase = 'first'}) =>
     AlertVoiceHelper.generateUnifiedEventText(data, phase: phase);
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('CWA information voice rounds the original fractional depth', () {
+    final original =
+        jsonDecode(
+              File(
+                'test/fixtures/cwa_catalog_20261028/fan_documented.original.json',
+              ).readAsStringSync(),
+            )
+            as Map<String, dynamic>;
+    final payload = original['Data'] as Map<String, dynamic>;
+    final data = FanService.decodeEventPayload(payload, sourceHint: 'cwa')!;
+    expect(data.depth, 23.9);
+    for (final phase in ['first', 'update']) {
+      expect(speak(data, phase: phase), contains('深度24公里'));
+    }
+    expect(data.depth, 23.9);
+    expect(data.sourcePayload?['depth'], 23.9);
+  });
+
   test('EEW puts critical information first and omits long detail reading', () {
     final text = speak(event);
     expect(text, '紧急地震警报，堪察加半岛附近，震级6.2，预计最大震度5强。日本气象厅，第3报。');

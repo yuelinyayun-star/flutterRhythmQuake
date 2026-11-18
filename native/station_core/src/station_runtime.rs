@@ -14,6 +14,9 @@ mod replay_block;
 mod seisjs_state;
 #[path = "trem_protocol.rs"]
 mod trem_protocol;
+#[path = "pews_network.rs"]
+mod pews_network;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use std::{
     collections::{HashMap, VecDeque},
     ffi::{c_void, CString},
@@ -63,6 +66,8 @@ enum Command {
     Close,
 }
 struct Output {
+    events: Vec<Value>,
+    delivered_events: Vec<u8>,
     prepared: Option<Arc<Vec<u8>>>,
     delivered_prepared: Arc<Vec<u8>>,
     original_tree: Arc<Vec<u8>>,
@@ -380,6 +385,9 @@ impl Kma {
     }
 }
 struct Engine {
+    events: Vec<Value>,
+    pews_latest: Option<(i64, u8, Vec<u8>, Vec<u8>)>,
+    pews_detail: Option<(String, u8, Vec<u8>, String)>,
     palert: palert_state::PAlert,
     seisjs: seisjs_state::SeisJs,
     archive_revision: u64,
@@ -412,6 +420,9 @@ impl Engine {
         palert.set_inference(settings["inference"] == true);
         palert.replay_mode = settings["sourceDisplayOnly"] == true;
         Self {
+            events: vec![],
+            pews_latest: None,
+            pews_detail: None,
             palert,
             seisjs: seisjs_state::SeisJs::default(),
             archive_revision: 0,
@@ -506,6 +517,13 @@ impl Engine {
         }
     }
     fn input(&mut self, v: &Value, t: i64) -> bool {
+        if self.kind == "kma_eew" && v["type"] == "pews_binary" {
+            let Some(encoded) = v["originalBase64"].as_str() else { return false; };
+            let Some(stamp) = v["frameEpochMs"].as_i64() else { return false; };
+            let Ok(bytes) = STANDARD.decode(encoded) else { return false; };
+            let detail = v["detailOriginalBase64"].as_str().and_then(|v| STANDARD.decode(v).ok());
+            return self.pews_event(&bytes, stamp, t, v["isSnapshot"] == true, detail.as_deref());
+        }
         if self.kind == "palert" {
             let revision = self.palert.revision;
             let accepted = self.palert.input(v, t, self.sensitivity);
@@ -529,6 +547,59 @@ impl Engine {
         } else {
             self.trem_input(v, t)
         }
+    }
+    fn pews_event(&mut self, bytes: &[u8], stamp: i64, t: i64, snapshot: bool, detail: Option<&[u8]>) -> bool {
+        let Some((phase, event_id, _)) = crate::kma_pews::header(bytes) else { return false; };
+        if !matches!(phase, 2 | 3) {
+            return false;
+        }
+        let Some(tail) = crate::kma_pews::event_tail(bytes) else { return false; };
+        if self.pews_latest.as_ref().is_some_and(|(time, previous_phase, previous, _)| {
+            *time > stamp || (*previous_phase > phase
+                && crate::kma_pews::header(previous).is_some_and(|(_, id, _)| id == event_id))
+        }) {
+            return false;
+        }
+        let same_tail = self.pews_latest.as_ref().is_some_and(|(_, previous_phase, previous, _)| {
+            *previous_phase == phase && crate::kma_pews::event_tail(previous) == Some(tail)
+                && crate::kma_pews::header(previous).is_some_and(|(_, id, _)| id == event_id)
+        });
+        if same_tail && detail.is_none() {
+            if let Some((time, _, previous, _)) = self.pews_latest.as_mut() {
+                *time = stamp;
+                previous.clear();
+                previous.extend_from_slice(bytes);
+            }
+            return false;
+        }
+        let label = if self.source == "pews_local" { "KMA-PEWS" } else { "Rhythm" };
+        let Some(mut event) = crate::kma_pews::event(bytes, phase, label) else { return false; };
+        if let Some(detail) = detail {
+            if let Ok(value) = serde_json::from_slice::<Value>(detail) {
+                if let Some(location) = value["info_ko"].as_str().filter(|v| !v.trim().is_empty()) {
+                    self.pews_detail = Some((event_id.clone(), phase, detail.to_vec(), location.into()));
+                }
+            }
+        }
+        let detail = self.pews_detail.as_ref().filter(|(id, p, _, _)| id == &event_id && *p == phase);
+        if let Some((_, _, _, location)) = detail {
+            event["hypocenter"] = json!(location);
+        }
+        let raw_detail = detail.map_or(&[][..], |(_, _, bytes, _)| bytes.as_slice());
+        let duplicate = same_tail && self.pews_latest.as_ref().is_some_and(|(_, _, _, previous)| previous == raw_detail);
+        self.pews_latest = Some((stamp, phase, bytes.to_vec(), raw_detail.to_vec()));
+        if duplicate { return false; }
+        event["arrivedAt"] = json!(iso(t));
+        event["isSnapshot"] = json!(snapshot);
+        event["sourcePayload"]["originalBase64"] = json!(STANDARD.encode(bytes));
+        event["sourcePayload"]["frameEpochMs"] = json!(stamp);
+        if !raw_detail.is_empty() {
+            event["sourcePayload"]["detailOriginalBase64"] = json!(STANDARD.encode(raw_detail));
+        }
+        self.events.push(event);
+        self.changed = true;
+        self.status("connected");
+        true
     }
     fn kma_input(&mut self, v: &Value, t: i64) -> bool {
         let Some(typ) = v["type"].as_str() else {
@@ -1031,7 +1102,7 @@ impl Engine {
         json!({"kind":self.kind,"source":self.source,"stations":rows,"dataTime":self.last.map(iso),"receivedAt":iso(t),"status":self.status,"signature":signature,"automation":automation,"frames":self.frames,"grids":self.grids.iter().map(|&(lat,lon,level)|json!({"center":[lat,lon],"level":level,"points":[[lat-0.495,lon-0.495],[lat+0.495,lon-0.495],[lat+0.495,lon+0.495],[lat-0.495,lon+0.495]]})).collect::<Vec<_>>()})
     }
     fn publish(&mut self, s: &Session, t: i64) {
-        if !self.changed && self.signals.is_empty() {
+        if !self.changed && self.signals.is_empty() && self.events.is_empty() {
             return;
         }
         if self.kind == "seisjs" && Instant::now() < self.next_display {
@@ -1100,6 +1171,7 @@ impl Engine {
             let mut out = s.out.lock().unwrap();
             let notify = out.prepared.is_none();
             out.prepared = Some(prepared);
+            out.events.append(&mut self.events);
             out.signals.append(&mut self.signals);
             if let Some((original, archive)) = archive {
                 out.original_tree = original;
@@ -1235,6 +1307,7 @@ fn ws_rejection_status(source: &str, code: u32) -> Option<&'static str> {
 }
 
 struct Runtime {
+    pews: pews_network::Pews,
     id: u64,
     engine: Engine,
     s: Arc<Session>,
@@ -1407,6 +1480,12 @@ impl Runtime {
             ),
             _ => ("ws.yuelinrhythm.top".into(), "/kma-station".into()),
         };
+        if self.engine.kind == "kma_eew" {
+            path = "/kma-eew".into();
+            if let Some(endpoint) = self.settings.get("endpoint") {
+                host = endpoint["host"].as_str().unwrap_or(&host).into();
+            }
+        }
         // Explicit endpoint injection for isolated transport verification.
         // Normal SeisJS settings never contain this override.
         if source == "seisjs" {
@@ -1430,11 +1509,14 @@ impl Runtime {
                     self.settings["seisjsEndpoint"]["port"]
                         .as_u64()
                         .unwrap_or(443) as u32
+                } else if self.engine.kind == "kma_eew" {
+                    self.settings["endpoint"]["port"].as_u64().unwrap_or(443) as u32
                 } else {
                     443
                 },
                 u32::from(
-                    !(source == "seisjs" && self.settings["seisjsEndpoint"]["secure"] == false),
+                    !(source == "seisjs" && self.settings["seisjsEndpoint"]["secure"] == false
+                        || self.engine.kind == "kma_eew" && self.settings["endpoint"]["secure"] == false),
                 ),
                 if source == "seisjs" { 20000 } else { 12000 },
                 0,
@@ -1869,6 +1951,10 @@ impl Runtime {
         if self.testing {
             return;
         }
+        if self.engine.source == "pews_local" {
+            self.pews_tick(t);
+            return;
+        }
         if self.engine.kind == "palert" {
             self.drain_http(t);
             let timed = self
@@ -1893,7 +1979,7 @@ impl Runtime {
             }
             return;
         }
-        if self.engine.kind == "kma" || self.engine.kind == "seisjs" {
+        if matches!(self.engine.kind.as_str(), "kma" | "kma_eew" | "seisjs") {
             if self.ws == 0 && t >= self.retry {
                 self.ws_open(t);
             }
@@ -1998,7 +2084,7 @@ impl Runtime {
         }
     }
     fn run(mut self) {
-        if self.engine.kind == "palert" && !self.testing {
+        if (self.engine.kind == "palert" || self.engine.source == "pews_local") && !self.testing {
             self.http = crate::http_transport::open_system_client("FlutterRhythmQuake/1.0");
         }
         if self.engine.kind == "cwa" && !self.testing {
@@ -2074,6 +2160,11 @@ impl Runtime {
                     }
                 }
                 Ok(Command::Settings(v)) => {
+                    if self.engine.source == "pews_local" {
+                        if let Some(enabled) = v["pewsStations"].as_bool() {
+                            self.pews_station_settings(enabled);
+                        }
+                    }
                     if let Some(enabled) = v["inference"].as_bool() {
                         self.engine.palert.set_inference(enabled);
                         self.engine.changed = true;
@@ -2131,6 +2222,8 @@ pub unsafe extern "C" fn rq_station_runtime_open(
     let s = Arc::new(Session {
         tx,
         out: Mutex::new(Output {
+            events: vec![],
+            delivered_events: vec![],
             prepared: None,
             delivered_prepared: Arc::new(vec![]),
             original_tree: Arc::new(vec![]),
@@ -2165,6 +2258,7 @@ pub unsafe extern "C" fn rq_station_runtime_open(
         .stack_size(512 * 1024)
         .spawn(move || {
             Runtime {
+                pews: pews_network::Pews::default(),
                 id,
                 engine,
                 s,
@@ -2286,11 +2380,18 @@ pub unsafe extern "C" fn rq_station_runtime_take(
             out.pinned_original_tree = out.original_tree.clone();
             out.pinned_archive_tree = out.archive_tree.clone();
             out.delivered_signals = std::mem::take(&mut out.signals);
+            let events = std::mem::take(&mut out.events);
+            out.delivered_events = if events.is_empty() {
+                vec![]
+            } else {
+                crate::station_json::pack_value(&json!({"events":events}))
+            };
         }
         let bytes = match original {
             10 => &out.delivered_prepared,
             11 => &out.pinned_original_tree,
             12 => &out.pinned_archive_tree,
+            14 => &out.delivered_events,
             _ => return ptr::null(),
         };
         if bytes.is_empty() {

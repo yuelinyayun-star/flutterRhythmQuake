@@ -171,6 +171,8 @@ final class NativeUnifiedEventOwner implements Finalizable {
       'sourcePayload': {
         if (e.apiTypeLabel == 'Jian Project')
           'infoTypeName': e.sourcePayload?['infoTypeName'],
+        if (e.source == 'kmaEew')
+          'frameEpochMs': e.sourcePayload?['frameEpochMs'],
         if (e.source == 'ceaEew' && e.apiTypeLabel == 'Jian Project') ...{
           'isTraining': e.sourcePayload?['isTraining'],
           'isWarn': e.sourcePayload?['isWarn'],
