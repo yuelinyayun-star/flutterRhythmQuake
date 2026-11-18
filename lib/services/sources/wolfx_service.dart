@@ -37,6 +37,7 @@ import 'base_source.dart';
 import '../quake_event_adapter.dart';
 import '../../models/quake_message.dart';
 import '../../models/source_status.dart';
+import '../../models/tsunami_message.dart';
 
 /// Wolfx 服务类
 ///
@@ -82,6 +83,7 @@ class WolfxService extends BaseSourceService {
   final Map<String, String> _lastLoggedRawPayloadByType = {};
 
   void Function(List<QuakeMessage>)? onJmaEqlistUpdated;
+  void Function(Map<String, dynamic> snapshot)? onJmaSpecialEqUpdated;
 
   /// 是否为手动关闭
   ///
@@ -264,6 +266,14 @@ class WolfxService extends BaseSourceService {
           final jmaItems = QuakeEventAdapter.convertWolfxJmaEqlist(json);
           if (jmaItems.isNotEmpty) onJmaEqlistUpdated?.call(jmaItems);
           break;
+        case 'jma_tsunami':
+          _logRawPayload(type, json, rawPayload);
+          emitTsunami(TsunamiMessage.parseWolfxJmaTsunami(json));
+          break;
+        case 'jma_special_eq':
+          _logRawPayload(type, json, rawPayload);
+          onJmaSpecialEqUpdated?.call(Map<String, dynamic>.from(json));
+          break;
         case '':
           _logRawPayload('cwa_eew', json, rawPayload);
           _emitUnified('cwaEew', json);
@@ -343,6 +353,8 @@ class WolfxService extends BaseSourceService {
       'query_fjeew',
       'query_jmaeqlist',
       'query_cenceqlist',
+      'query_jmatsunami',
+      'query_jmaspecialeq',
     ];
 
     final interval = Duration(

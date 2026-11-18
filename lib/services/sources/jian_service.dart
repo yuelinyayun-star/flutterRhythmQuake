@@ -67,7 +67,21 @@ class JianService extends BaseSourceService {
   static const sourceName = 'Jian Project';
   static const enabledPreferenceKey = 'api_source_jian_enabled';
   static const retryAfterPreferenceKey = 'jian_retry_after_ms';
+  static const defaultServerPreferenceKey = 'jian_default_server_index';
+  static List<String> get serverOptions => [
+    for (var index = 0; index < 2; index++)
+      Uri.parse(
+        (NativeJianConnection.prepare({
+                  'op': 'endpoint',
+                  'index': index,
+                  'path': '/all',
+                })
+                as Map)['url']
+            as String,
+      ).host,
+  ];
   static final endpoint = Uri.parse('wss://api.sismotide.top/all');
+  int _defaultEndpointIndex = 0;
   int _endpointIndex = 0;
   Uri get activeEndpoint => Uri.parse(
     (NativeJianConnection.prepare({
@@ -121,11 +135,30 @@ class JianService extends BaseSourceService {
     if (reconnect) connect();
   }
 
+  /// Changes connection priority without resuming rejected credentials or
+  /// clearing the persisted authorization cooldown.
+  void setDefaultServerIndex(int index) {
+    if (_disposed || index < 0 || index >= serverOptions.length) return;
+    final changed = _defaultEndpointIndex != index || _endpointIndex != index;
+    _defaultEndpointIndex = index;
+    if (!changed) return;
+    if (_enabled &&
+        _socket == null &&
+        _retryTimer?.isActive != true &&
+        lastError != null) {
+      return;
+    }
+    ++_generation;
+    _closeConnection();
+    _endpointIndex = index;
+    if (_enabled) unawaited(_open());
+  }
+
   @override
   void connect() {
     if (_disposed || _enabled) return;
     _enabled = true;
-    _endpointIndex = 0;
+    _endpointIndex = _defaultEndpointIndex;
     unawaited(_open());
   }
 

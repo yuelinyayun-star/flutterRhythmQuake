@@ -57,32 +57,34 @@ class UiRuntimeFlags {
   static final ValueNotifier<bool> niedHypCurvePanelVisibleNotifier =
       ValueNotifier<bool>(false);
 
-  /// Panel backdrop behavior while the map camera is moving.
+  /// Panel backdrop quality, applied both at rest and during camera motion.
   ///
-  /// 0 = full glass (bake at native resolution every frame);
-  /// 1 = low-res glass (bake at half resolution while moving, blur hides it);
-  /// 2 = glass off (plain translucent panels while moving, cheapest).
+  /// 0 = full glass (bake at native resolution every changed frame);
+  /// 2 = lightweight frosted tint (ordinary painting, at rest and in motion).
   static const int mapDragGlassFull = 0;
-  static const int mapDragGlassLowRes = 1;
+  // Keep value 2 so existing lightweight-frosted preferences remain valid.
   static const int mapDragGlassOff = 2;
   static const mapDragGlassModeKey = 'map_drag_glass_mode';
-  /// 默认档位 = 低清毛玻璃（1.0.5.31 起改为 lowRes，实测拖拽 CPU 收益最大档）。
+
+  /// 默认使用轻量磨砂。
   static final mapDragGlassModeNotifier = ValueNotifier<int>(
-    mapDragGlassLowRes,
+    mapDragGlassOff,
   );
 
   static void restoreMapDragGlassMode(SharedPreferences prefs) {
     final saved = prefs.getInt(mapDragGlassModeKey);
+    // Value 1 was the removed half-resolution mode. Migrate it to the
+    // lightweight mode instead of restoring a mode that no longer exists.
     mapDragGlassModeNotifier.value =
-        (saved == mapDragGlassFull ||
-            saved == mapDragGlassLowRes ||
-            saved == mapDragGlassOff)
+        saved == mapDragGlassFull || saved == mapDragGlassOff
         ? saved!
-        : mapDragGlassLowRes;
+        : mapDragGlassOff;
   }
 
   static Future<void> setMapDragGlassMode(int value) async {
-    RangeError.checkValueInInterval(value, 0, 2, 'value');
+    if (value != mapDragGlassFull && value != mapDragGlassOff) {
+      throw RangeError('Unsupported map glass mode: $value');
+    }
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(mapDragGlassModeKey, value);
     mapDragGlassModeNotifier.value = value;

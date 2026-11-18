@@ -5,7 +5,6 @@ import 'dart:ffi';
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
 
-import '../../core/intensity_calculator.dart';
 import '../../models/quake_message.dart';
 import '../../models/source_status.dart';
 import '../../models/source_payload.dart';
@@ -13,6 +12,7 @@ import '../../models/unified_quake_data.dart';
 import '../../utils/fe_regions.dart';
 import 'base_source.dart';
 import 'global_quake_first_report_filter.dart';
+import 'global_quake_intensity.dart';
 import 'native_station_core_library_io.dart';
 import 'source_tcp_socket.dart';
 
@@ -309,7 +309,10 @@ class GlobalQuakeService extends BaseSourceService {
     final reportTime = reportInstant?.toLocal();
     final quality = _qualitySummary(packet.fields['advancedHypocenterData']);
     final hypocenter = _localizedRegion(lat, lon, region);
-    final maxIntensity = IntensityCalculator.calcCsisLevel(magnitude, depth, 0);
+    final maxPga = _asDouble(data.fields['maxPGA']);
+    final maxIntensity = GlobalQuakeIntensity.mmiLevelFromPga(
+      maxPga ?? double.nan,
+    );
     final raw = QuakeMessage(
       source: QuakeSourceType.usgs,
       eventId: eventId,

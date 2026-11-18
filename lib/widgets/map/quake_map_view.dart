@@ -4021,9 +4021,6 @@ class _QuakeMapViewState extends State<QuakeMapView> {
   }
 
   void _handleMapEvent(MapEvent event) {
-    // Heart-beat motion window: degrades blur backdrops while the camera
-    // moves, restores them 250ms after the last event.
-    MapBackdropCacheHost.notifyMapMotion();
     final manual = _isManualCameraEvent(event);
     if (!manual) return;
     MapBackdropCacheHost.cameraMoved(context);

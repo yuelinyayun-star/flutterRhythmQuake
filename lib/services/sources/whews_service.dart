@@ -12,6 +12,7 @@ import '../../models/source_status.dart';
 import '../../models/tsunami_message.dart';
 import '../quake_event_adapter.dart';
 import '../native_jma_tsunami.dart';
+import '../native_whews_connection.dart';
 import 'base_source.dart';
 import 'jma_ashfall_forecast_service.dart';
 import 'noaa_tsunami_area_service.dart';
@@ -44,6 +45,16 @@ class WhewsService extends BaseSourceService {
   static const String apiAuthorizedPreferenceKey =
       'api_source_whews_authorized';
   static const String aggregateUrl = 'wss://api.beecld.com/ws/all';
+  static const defaultServerPreferenceKey = 'whews_default_server_index';
+  static List<String> get serverOptions => [
+    for (final url
+        in NativeWhewsConnection.prepare({
+              'op': 'endpoints',
+              'url': aggregateUrl,
+            })
+            as List)
+      Uri.parse(url as String).host,
+  ];
   // CEA/CEA-PR are not included in the overseas /ws/all aggregate; connect
   // the domestic node separately per https://api.beecld.com/#overview.
   static const String ceaAggregateUrl = 'wss://api.2v8.cn/ws/cea_all';
@@ -77,12 +88,20 @@ class WhewsService extends BaseSourceService {
   final Map<String, Future<void>> _ashfallFetches = {};
   bool _connectionRequested = false;
   bool _running = false;
+  int _defaultServerIndex = 0;
   int _connectionGeneration = 0;
 
   void Function(WeatherAlarm alarm)? onWeatherAlarm;
 
   @override
   String get name => 'WHEWS';
+
+  void setDefaultServerIndex(int index) {
+    if (index < 0 || index >= serverOptions.length) return;
+    _defaultServerIndex = index;
+    // The CEA-only connection is complementary, not an interchangeable node.
+    _aggregateClient?.setDefaultServerIndex(index);
+  }
 
   void setApiToken(String apiToken, {bool retryRejected = false}) {
     final next = apiToken.trim();
@@ -129,6 +148,7 @@ class WhewsService extends BaseSourceService {
       ..[ceaAggregateUrl] = WhewsSocketState.connecting;
     onStatusChanged?.call(SourceStatus.connecting);
     _aggregateClient = _createClient(aggregateUrl);
+    _aggregateClient!.setDefaultServerIndex(_defaultServerIndex);
     _ceaClient = _createClient(ceaAggregateUrl);
     _aggregateClient!.start();
     _ceaClient!.start();

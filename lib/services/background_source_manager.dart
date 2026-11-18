@@ -91,6 +91,19 @@ void reloadBackgroundJianCredentials() {
   _backgroundManager?.getSource<JianService>()?.reloadCredentials();
 }
 
+/// Update only the selected aggregate connection; leave station owners alive.
+void setBackgroundAggregateDefaultServer(String source, int index) {
+  if (source == JianService.sourceName) {
+    if (index < 0 || index >= JianService.serverOptions.length) return;
+    _backgroundManager?.getSource<JianService>()?.setDefaultServerIndex(index);
+    _backgroundSettings?[JianService.defaultServerPreferenceKey] = index;
+  } else if (source == 'WHEWS') {
+    if (index < 0 || index >= WhewsService.serverOptions.length) return;
+    _backgroundManager?.getSource<WhewsService>()?.setDefaultServerIndex(index);
+    _backgroundSettings?[WhewsService.defaultServerPreferenceKey] = index;
+  }
+}
+
 SourceStatusUpdate? backgroundJianStatus() {
   final jian = _backgroundManager?.getSource<JianService>();
   return jian == null
@@ -498,6 +511,12 @@ Future<void> startBackgroundSources({
   fan.setFssnDeliveryEnabled(!fssnEnabled);
   final nowQuakeCencIr = NowQuakeCencIntensityService();
   final jian = JianService();
+  whews.setDefaultServerIndex(
+    prefs.getInt(WhewsService.defaultServerPreferenceKey) ?? 0,
+  );
+  jian.setDefaultServerIndex(
+    prefs.getInt(JianService.defaultServerPreferenceKey) ?? 0,
+  );
   final nowQuakeCencIrEnabled =
       prefs.getBool(NowQuakeCencIntensityService.preferenceKey) ?? true;
   fan.setCencIrRequestsEnabled(!nowQuakeCencIrEnabled);
@@ -619,6 +638,7 @@ Future<void> startBackgroundSources({
   final manager = SourceManager();
   _backgroundManager = manager;
   wolfx.onJmaEqlistUpdated = (items) => onSourceList('jma', items);
+  wolfx.onJmaSpecialEqUpdated = jmaMegaquake.ingestWolfxSnapshot;
   fan.onFssnListUpdated = (items) => onSourceList('fssn', items);
   fssn.onFssnListUpdated = (items) => onSourceList('fssn', items);
   fssn.onCmtListUpdated = (items) => onSourceList('fssnCmt', items);
@@ -647,6 +667,7 @@ Future<void> startBackgroundSources({
   final sasmex = SasmexService();
   final pewsEew = KmaPewsEewService();
   final rhythmKmaEew = RhythmKmaEewService();
+  final rhythmEnabled = prefs.getBool(SasmexService.enabledPreferenceKey) ?? true;
   manager.registerSource(sasmex);
   manager.registerSource(pewsEew);
   manager.registerSource(rhythmKmaEew);
@@ -656,7 +677,7 @@ Future<void> startBackgroundSources({
   );
   manager.setSourceEnabled(
     RhythmKmaEewService.sourceName,
-    prefs.getBool(RhythmKmaEewService.enabledPreferenceKey) ?? true,
+    rhythmEnabled,
   );
   if (AppEdition.hasGlobalQuake) manager.registerSource(globalQuake);
   if (AppEdition.hasIcl) {
@@ -677,10 +698,7 @@ Future<void> startBackgroundSources({
     'P2P',
     prefs.getBool('api_source_p2pquake_enabled') ?? true,
   );
-  manager.setSourceEnabled(
-    SasmexService.sourceName,
-    prefs.getBool(SasmexService.enabledPreferenceKey) ?? true,
-  );
+  manager.setSourceEnabled(SasmexService.sourceName, rhythmEnabled);
 
   var nowQuakeStatus = SourceStatus.disconnected;
   var fanCencIrFallbackActive = !nowQuakeCencIrEnabled;
@@ -734,6 +752,7 @@ Future<void> startBackgroundSources({
     );
   }
   for (final stream in [
+    wolfx.onTsunamiEvent,
     p2p.onTsunamiEvent,
     fan.onTsunamiEvent,
     whews.onTsunamiEvent,

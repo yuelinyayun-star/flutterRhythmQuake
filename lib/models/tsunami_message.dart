@@ -199,10 +199,13 @@ class TsunamiMessage {
   final String eventId;
   final int? reportNumber;
   final Map<String, dynamic> sourcePayload;
+
   /// Native JMA report streams and station presentation data; Dart only carries it.
   final Map<String, dynamic> jmaDetails;
+
   /// Original official NOAA detail, separate from the unchanged relay payload.
   final Map<String, dynamic> officialDetail;
+
   /// Rust-prepared forecast/observation records. Dart only transports these.
   final Map<String, dynamic> waveData;
   final int timeZone;
@@ -280,7 +283,8 @@ class TsunamiMessage {
   bool isDisplayableAt(DateTime now) {
     final deadline = displayUntilUtc;
     if (deadline != null && !deadline.isAfter(now.toUtc())) return false;
-    return isActive || isForecast ||
+    return isActive ||
+        isForecast ||
         (informationDisplayUntilUtc?.isAfter(now.toUtc()) ?? false);
   }
 
@@ -288,7 +292,9 @@ class TsunamiMessage {
     if (isForecast) return false;
     // A CWA Information report can quote removal of a Pacific threat in its
     // description. Its explicit source level, not that quoted text, decides.
-    if ((source == TsunamiSource.nmefc || source == TsunamiSource.cat || source == TsunamiSource.cwa) &&
+    if ((source == TsunamiSource.nmefc ||
+            source == TsunamiSource.cat ||
+            source == TsunamiSource.cwa) &&
         bulletinLevel.trim().isNotEmpty) {
       return !isActive && bulletinLevel.toLowerCase() == 'cancellation';
     }
@@ -449,9 +455,11 @@ class TsunamiMessage {
           ? Map<String, dynamic>.from(map['jmaDetails'] as Map)
           : const {},
       officialDetail: map['officialDetail'] is Map
-          ? Map<String, dynamic>.from(map['officialDetail'] as Map) : const {},
+          ? Map<String, dynamic>.from(map['officialDetail'] as Map)
+          : const {},
       waveData: map['waveData'] is Map
-          ? Map<String, dynamic>.from(map['waveData'] as Map) : const {},
+          ? Map<String, dynamic>.from(map['waveData'] as Map)
+          : const {},
       timeZone: (map['timeZone'] as num?)?.toInt() ?? 9,
       reportTime: map['reportTime']?.toString() ?? '',
       title: map['title']?.toString() ?? '',
@@ -571,7 +579,8 @@ class TsunamiMessage {
       return this;
     }
     final result = NativeJmaTsunami.prepare({
-      'op': 'prepareWaveData', 'message': toMap(),
+      'op': 'prepareWaveData',
+      'message': toMap(),
       'nowMs': (now ?? DateTime.now()).millisecondsSinceEpoch,
     });
     if (result['unchanged'] == true) return this;
@@ -580,13 +589,18 @@ class TsunamiMessage {
 
   /// Realtime ingress: preserve the source object and prepare it in native code.
   static Future<TsunamiMessage> parseJmaSourceAsync(
-    String transport, Map<String, dynamic> raw,
+    String transport,
+    Map<String, dynamic> raw,
   ) async {
     if (NativeJmaTsunami.supported) {
-      return TsunamiMessage.fromMap(await NativeJmaTsunami.prepareAsync({
-        'op': 'parse', 'transport': transport, 'payload': raw,
-        'nowMs': DateTime.now().millisecondsSinceEpoch,
-      }));
+      return TsunamiMessage.fromMap(
+        await NativeJmaTsunami.prepareAsync({
+          'op': 'parse',
+          'transport': transport,
+          'payload': raw,
+          'nowMs': DateTime.now().millisecondsSinceEpoch,
+        }),
+      );
     }
     return switch (transport) {
       'jian' => parseJianJmaTsunami(raw),
@@ -632,7 +646,8 @@ class TsunamiMessage {
         height: double.tryParse(area['maxHeight']?['value']?.toString() ?? ''),
         description: area['maxHeight']?['description']?.toString(),
         arrivalTime: area['firstHeight']?['arrivalTime']?.toString(),
-        condition: (condition == null || condition.trim().isEmpty) &&
+        condition:
+            (condition == null || condition.trim().isEmpty) &&
                 area['immediate'] == true
             ? 'ただちに津波来襲と予測'
             : condition,
@@ -690,10 +705,14 @@ class TsunamiMessage {
 
   static TsunamiMessage parseWhewsJmaTsunami(Map<String, dynamic> json) {
     if (NativeJmaTsunami.supported) {
-      return TsunamiMessage.fromMap(NativeJmaTsunami.prepare({
-        'op': 'parse', 'transport': 'whews', 'payload': json,
-        'nowMs': DateTime.now().millisecondsSinceEpoch,
-      }));
+      return TsunamiMessage.fromMap(
+        NativeJmaTsunami.prepare({
+          'op': 'parse',
+          'transport': 'whews',
+          'payload': json,
+          'nowMs': DateTime.now().millisecondsSinceEpoch,
+        }),
+      );
     }
     final id = json['id']?.toString().trim() ?? '';
     final reportTime = json['createTime']?.toString().trim() ?? '';
@@ -762,14 +781,123 @@ class TsunamiMessage {
     );
   }
 
+  /// Wolfx Open API 的 JMA 海啸快照。
+  ///
+  /// Wolfx 使用根级状态快照，与 WHEWS 的单报文结构不同。保留原始
+  /// sourcePayload，并把当前有效区域投影到统一海啸模型。
+  static TsunamiMessage parseWolfxJmaTsunami(Map<String, dynamic> json) {
+    final report = json['report'] is Map
+        ? Map<String, dynamic>.from(json['report'] as Map)
+        : const <String, dynamic>{};
+    final status = json['status']?.toString().trim() ?? '';
+    final reportId = report['id']?.toString().trim() ?? '';
+    final id = reportId.isNotEmpty
+        ? reportId
+        : json['md5']?.toString().trim() ?? '';
+    final eventIds = report['eventIds'] is List
+        ? (report['eventIds'] as List)
+              .map((item) => item?.toString().trim() ?? '')
+              .where((item) => item.isNotEmpty)
+              .toList(growable: false)
+        : const <String>[];
+    final reportTime =
+        report['time']?.toString().trim() ??
+        report['issuedAt']?.toString().trim() ??
+        '';
+
+    TsunamiGrade grade;
+    switch (status) {
+      case 'active':
+        grade = TsunamiGrade.warning;
+        break;
+      case 'forecast_only':
+        grade = TsunamiGrade.forecast;
+        break;
+      case 'none_reported':
+      case 'cleared':
+      case 'expired':
+      case 'uninitialized':
+      case 'unknown':
+      default:
+        grade = TsunamiGrade.none;
+        break;
+    }
+
+    final areas = <TsunamiAreaInfo>[];
+    var topGrade = grade;
+    final rawAreas = json['areas'];
+    if (rawAreas is List) {
+      for (final raw in rawAreas) {
+        if (raw is! Map) continue;
+        final area = Map<String, dynamic>.from(raw);
+        final areaGrade = switch (area['level']?.toString().trim()) {
+          'major_warning' => TsunamiGrade.majorWarning,
+          'warning' => TsunamiGrade.warning,
+          'advisory' => TsunamiGrade.watch,
+          'forecast' => TsunamiGrade.forecast,
+          _ => TsunamiGrade.none,
+        };
+        final maxWave = area['maxWave'] is Map
+            ? Map<String, dynamic>.from(area['maxWave'] as Map)
+            : const <String, dynamic>{};
+        final height = _parseDouble(maxWave['height']);
+        final heightText = maxWave['text']?.toString().trim() ?? '';
+        final description = heightText.isNotEmpty
+            ? heightText
+            : maxWave['status']?.toString().trim();
+        areas.add(
+          TsunamiAreaInfo(
+            name: area['name']?.toString().trim() ?? '',
+            grade: areaGrade,
+            height: height,
+            description: description?.isNotEmpty == true ? description : null,
+            condition: area['kind']?.toString().trim(),
+          ),
+        );
+        if (areaGrade.index > topGrade.index) topGrade = areaGrade;
+      }
+    }
+
+    final headline = report['title']?.toString().trim() ?? '';
+    final body =
+        json['text']?.toString().trim() ??
+        (json['comments'] is Map
+            ? (json['comments'] as Map)['text']?.toString().trim() ?? ''
+            : '');
+    final title = headline.isNotEmpty ? headline : '津波情報';
+    return TsunamiMessage(
+      source: TsunamiSource.jma,
+      id: id,
+      eventId: eventIds.isNotEmpty ? eventIds.first : '',
+      sourcePayload: Map<String, dynamic>.from(json),
+      timeZone: 9,
+      reportTime: reportTime,
+      title: title,
+      titleText: body.isNotEmpty ? body : _whewsJmaStatusText(topGrade),
+      grade: topGrade,
+      areas: areas,
+      className: _whewsJmaClassName(topGrade),
+      bulletinLevel: status,
+      expires:
+          json['validUntil']?.toString() ??
+          report['validUntil']?.toString() ??
+          '',
+      isInitialSnapshot: true,
+    );
+  }
+
   /// Jian /all carries this unchanged Data object under jma-tsunami.
   /// originTime is the bulletin issue instant, not the earthquake origin.
   static TsunamiMessage parseJianJmaTsunami(Map<String, dynamic> json) {
     if (NativeJmaTsunami.supported) {
-      return TsunamiMessage.fromMap(NativeJmaTsunami.prepare({
-        'op': 'parse', 'transport': 'jian', 'payload': json,
-        'nowMs': DateTime.now().millisecondsSinceEpoch,
-      }));
+      return TsunamiMessage.fromMap(
+        NativeJmaTsunami.prepare({
+          'op': 'parse',
+          'transport': 'jian',
+          'payload': json,
+          'nowMs': DateTime.now().millisecondsSinceEpoch,
+        }),
+      );
     }
     String epochTime(Object? raw) {
       final value = raw is num
@@ -849,10 +977,13 @@ class TsunamiMessage {
 
   static TsunamiMessage parseNmefcTsunami(Map<String, dynamic> json) {
     if (NativeJmaTsunami.supported) {
-      return TsunamiMessage.fromMap(NativeJmaTsunami.prepare({
-        'op': 'nmefcParse', 'payload': json,
-        'nowMs': DateTime.now().millisecondsSinceEpoch,
-      }));
+      return TsunamiMessage.fromMap(
+        NativeJmaTsunami.prepare({
+          'op': 'nmefcParse',
+          'payload': json,
+          'nowMs': DateTime.now().millisecondsSinceEpoch,
+        }),
+      );
     }
     final timeInfo = json['timeInfo'] as Map<String, dynamic>?;
     final warningInfo = json['warningInfo'] as Map<String, dynamic>?;
@@ -995,10 +1126,13 @@ class TsunamiMessage {
     Map<String, dynamic> raw,
   ) async {
     if (!NativeJmaTsunami.supported) return parseNmefcTsunami(raw);
-    return TsunamiMessage.fromMap(await NativeJmaTsunami.prepareAsync({
-      'op': 'nmefcParse', 'payload': raw,
-      'nowMs': DateTime.now().millisecondsSinceEpoch,
-    }));
+    return TsunamiMessage.fromMap(
+      await NativeJmaTsunami.prepareAsync({
+        'op': 'nmefcParse',
+        'payload': raw,
+        'nowMs': DateTime.now().millisecondsSinceEpoch,
+      }),
+    );
   }
 
   static double? _parseDouble(dynamic value) {
@@ -1111,39 +1245,47 @@ class TsunamiMessage {
       magnitude: _parseDouble(json['magnitude']),
       depth: _parseDouble(json['depth']),
       epicenterName: json['placeName']?.toString().trim() ?? '',
-      areas: rawAreas is List ? rawAreas.whereType<Map>().map((area) {
-        final areaColor = area['areaColor']?.toString().trim() ?? '';
-        final areaGrade = switch (areaColor) {
-          '紅色' || '红色' => TsunamiGrade.warning,
-          '橙色' => TsunamiGrade.warning,
-          '黃色' || '黄色' => TsunamiGrade.watch,
-          '綠色' || '绿色' => TsunamiGrade.none,
-          _ => grade,
-        };
-        final wave = area['waveHeight']?.toString().trim() ?? '';
-        final detail = area['areaDesc']?.toString().trim() ?? '';
-        return TsunamiAreaInfo(
-          name: area['areaName']?.toString().trim() ?? '',
-          grade: areaGrade,
-          height: _waveHeightMeters(wave),
-          description: [if (detail.isNotEmpty) detail, if (wave.isNotEmpty) '波高：$wave'].join('；'),
-          arrivalTime: area['arrivalTime']?.toString().trim(),
-          condition: area['infoStatus']?.toString().trim(),
-        );
-      }).toList() : const [],
-      observations: rawStations is List ? rawStations.whereType<Map>().map((station) {
-        final wave = station['waveHeight']?.toString().trim() ?? '';
-        return TsunamiObservationInfo(
-          stationId: station['stationId']?.toString().trim() ?? '',
-          stationName: station['stationName']?.toString().trim() ?? '',
-          condition: station['infoStatus']?.toString().trim() ?? '',
-          location: '',
-          latitude: _parseDouble(station['latitude']) ?? double.nan,
-          longitude: _parseDouble(station['longitude']) ?? double.nan,
-          time: station['arrivalTime']?.toString().trim() ?? '',
-          maxWaveHeight: wave, maxWaveHeightMeters: _waveHeightMeters(wave),
-        );
-      }).toList() : const [],
+      areas: rawAreas is List
+          ? rawAreas.whereType<Map>().map((area) {
+              final areaColor = area['areaColor']?.toString().trim() ?? '';
+              final areaGrade = switch (areaColor) {
+                '紅色' || '红色' => TsunamiGrade.warning,
+                '橙色' => TsunamiGrade.warning,
+                '黃色' || '黄色' => TsunamiGrade.watch,
+                '綠色' || '绿色' => TsunamiGrade.none,
+                _ => grade,
+              };
+              final wave = area['waveHeight']?.toString().trim() ?? '';
+              final detail = area['areaDesc']?.toString().trim() ?? '';
+              return TsunamiAreaInfo(
+                name: area['areaName']?.toString().trim() ?? '',
+                grade: areaGrade,
+                height: _waveHeightMeters(wave),
+                description: [
+                  if (detail.isNotEmpty) detail,
+                  if (wave.isNotEmpty) '波高：$wave',
+                ].join('；'),
+                arrivalTime: area['arrivalTime']?.toString().trim(),
+                condition: area['infoStatus']?.toString().trim(),
+              );
+            }).toList()
+          : const [],
+      observations: rawStations is List
+          ? rawStations.whereType<Map>().map((station) {
+              final wave = station['waveHeight']?.toString().trim() ?? '';
+              return TsunamiObservationInfo(
+                stationId: station['stationId']?.toString().trim() ?? '',
+                stationName: station['stationName']?.toString().trim() ?? '',
+                condition: station['infoStatus']?.toString().trim() ?? '',
+                location: '',
+                latitude: _parseDouble(station['latitude']) ?? double.nan,
+                longitude: _parseDouble(station['longitude']) ?? double.nan,
+                time: station['arrivalTime']?.toString().trim() ?? '',
+                maxWaveHeight: wave,
+                maxWaveHeightMeters: _waveHeightMeters(wave),
+              );
+            }).toList()
+          : const [],
       htmlUrl: htmlUrl,
       earthquakeMapUrl: maps?['energyMapUrl']?.toString().trim() ?? '',
       amplitudeMapUrl: maps?['travelTimeMapUrl']?.toString().trim() ?? '',
@@ -1152,13 +1294,16 @@ class TsunamiMessage {
 
   static double? _waveHeightMeters(String value) {
     // CWA's string contract does not specify a unit for bare numbers.
-    final match = RegExp(r'^\s*(\d+(?:\.\d+)?)\s*(cm|m|公分|厘米|米)\s*$', caseSensitive: false).firstMatch(value);
+    final match = RegExp(
+      r'^\s*(\d+(?:\.\d+)?)\s*(cm|m|公分|厘米|米)\s*$',
+      caseSensitive: false,
+    ).firstMatch(value);
     if (match == null) return null;
     final number = double.parse(match.group(1)!);
     return const {'cm', '公分', '厘米'}.contains(match.group(2)!.toLowerCase())
-        ? number / 100 : number;
+        ? number / 100
+        : number;
   }
-
 
   static TsunamiGrade _parseInternationalLevel(String level) {
     final normalized = level.trim().toLowerCase();

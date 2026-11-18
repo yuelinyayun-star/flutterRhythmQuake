@@ -717,6 +717,14 @@ class BackgroundService {
     FlutterBackgroundService().invoke('requestJianStatus');
   }
 
+  void updateAggregateDefaultServer(String source, int index) {
+    if (!isAndroidConnectionHostedByForegroundService) return;
+    FlutterBackgroundService().invoke('aggregateDefaultServer', {
+      'source': source,
+      'index': index,
+    });
+  }
+
   Future<void> requestJianCredentialReload() async {
     if (!isAndroidConnectionHostedByForegroundService) return;
     final service = FlutterBackgroundService();
@@ -1207,6 +1215,13 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
 
   service.on('reloadSources').listen((event) {
     unawaited(reloadSources(force: event?['force'] == true));
+  });
+  service.on('aggregateDefaultServer').listen((event) {
+    final source = event?['source'];
+    final index = event?['index'];
+    if (source is String && index is int) {
+      setBackgroundAggregateDefaultServer(source, index);
+    }
   });
   service.on('jmaVolcanoPushEnabled').listen((event) {
     final value = event?['value'];

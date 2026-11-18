@@ -70,7 +70,6 @@ class KmaPewsEewService extends BaseSourceService {
 
 class RhythmKmaEewService extends BaseSourceService {
   static const sourceName = 'Rhythm KMA';
-  static const enabledPreferenceKey = 'api_source_rhythm_kma_eew_enabled';
   NativeStationRuntime? _runtime;
   SourceStatus _status = SourceStatus.disconnected;
 

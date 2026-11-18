@@ -21,6 +21,7 @@ import '../../utils/catalog_location.dart';
 /// 不在客户端直接连接网页上游。
 class SasmexService extends BaseSourceService {
   static const sourceName = 'SASMEX';
+  // Rhythm's aggregate API retains the original stored setting.
   static const enabledPreferenceKey = 'api_source_sasmex_enabled';
   static const defaultUrl = 'wss://ws.yuelinrhythm.top/sasmex-eew';
   static const adapterOrigin = 8;

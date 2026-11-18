@@ -4,8 +4,23 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutterrhythmquake/widgets/ui/map_backdrop_cache.dart';
+import 'package:flutterrhythmquake/widgets/ui/ui_runtime_flags.dart';
 
 void main() {
+  setUp(() {
+    final previousNative =
+        MapBackdropCacheHost.nativeFiltersForDiagnostics.value;
+    MapBackdropCacheHost.nativeFiltersForDiagnostics.value = false;
+    final previous = UiRuntimeFlags.mapDragGlassModeNotifier.value;
+    UiRuntimeFlags.mapDragGlassModeNotifier.value =
+        UiRuntimeFlags.mapDragGlassFull;
+    addTearDown(
+      () => MapBackdropCacheHost.nativeFiltersForDiagnostics.value =
+          previousNative,
+    );
+    addTearDown(() => UiRuntimeFlags.mapDragGlassModeNotifier.value = previous);
+  });
+
   for (final ratio in [1.0, 1.25]) {
     for (final layout in [
       (5.0, 50.0),

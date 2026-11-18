@@ -297,6 +297,12 @@ void main() async {
   final wolfx = WolfxService();
   final whews = WhewsService(apiToken: '');
   final jian = JianService();
+  whews.setDefaultServerIndex(
+    prefs.getInt(WhewsService.defaultServerPreferenceKey) ?? 0,
+  );
+  jian.setDefaultServerIndex(
+    prefs.getInt(JianService.defaultServerPreferenceKey) ?? 0,
+  );
   final fan = FanService(
     apiKey: prefs.getString(FanService.apiKeyPreferenceKey) ?? '',
   );
@@ -348,6 +354,7 @@ void main() async {
   SourceManager().registerSource(p2p);
   SourceManager().registerSource(mock);
   SourceManager().registerSource(sasmex);
+  final rhythmEnabled = prefs.getBool(SasmexService.enabledPreferenceKey) ?? true;
   if (KmaPewsEewService.supported) {
     SourceManager().registerSource(KmaPewsEewService());
     SourceManager().registerSource(RhythmKmaEewService());
@@ -357,13 +364,10 @@ void main() async {
     );
     SourceManager().setSourceEnabled(
       RhythmKmaEewService.sourceName,
-      prefs.getBool(RhythmKmaEewService.enabledPreferenceKey) ?? true,
+      rhythmEnabled,
     );
   }
-  SourceManager().setSourceEnabled(
-    SasmexService.sourceName,
-    prefs.getBool(SasmexService.enabledPreferenceKey) ?? true,
-  );
+  SourceManager().setSourceEnabled(SasmexService.sourceName, rhythmEnabled);
   if (AppEdition.hasGlobalQuake) SourceManager().registerSource(globalQuake);
   if (AppEdition.hasIcl) {
     SourceManager().registerSource(jianIcl);

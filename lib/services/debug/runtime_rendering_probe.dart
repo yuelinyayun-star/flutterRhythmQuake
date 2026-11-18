@@ -69,7 +69,7 @@ class RuntimeRenderingProbe {
 
   static void unbind(Object owner) {
     if (!identical(owner, _owner)) return;
-    MapBackdropCacheHost.nativeFiltersForDiagnostics.value = false;
+    MapBackdropCacheHost.nativeFiltersForDiagnostics.value = true;
     _restoreBackdrops();
     _stopTimings();
     _owner = null;
@@ -148,6 +148,7 @@ class RuntimeRenderingProbe {
     }
     painting.value = selected;
     MapBackdropCacheHost.nativeFiltersForDiagnostics.value =
+        selected == ProbePainting.all ||
         selected == ProbePainting.nativeBlur ||
         selected == ProbePainting.withoutBlur ||
         selected == ProbePainting.overlays ||
@@ -221,7 +222,7 @@ class RuntimeRenderingProbe {
   }
 
   static void reset() {
-    MapBackdropCacheHost.nativeFiltersForDiagnostics.value = false;
+    MapBackdropCacheHost.nativeFiltersForDiagnostics.value = true;
     _restoreBackdrops();
     _stopTimings();
     painting.value = ProbePainting.all;

@@ -37,7 +37,7 @@ class SourceIntensityPrediction {
         d == null ||
         !d.isFinite ||
         d < 0 ||
-        d > 150 ||
+        d > IntensityCalculator.maxJmaShindoPredictionDepthKm ||
         !latitude.isFinite ||
         !longitude.isFinite) {
       return null;

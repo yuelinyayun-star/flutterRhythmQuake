@@ -77,6 +77,75 @@ void main() {
     });
     JianAuthRetryPolicy.storeOverride = MemoryConnectionRetryStore();
   });
+  testWidgets(
+    'preferred backup uses paired auth, fails over and survives restart',
+    (tester) async {
+      final h = _Harness();
+      final service = h.service()..setDefaultServerIndex(1);
+      service.connect();
+      await tester.pump();
+      await tester.pump();
+      expect(h.authRequests.single.url.host, 'auth.jianproject.cloud');
+      expect(h.sockets.single.host, 'api.jianproject.cloud');
+      expect(
+        h.socketHeaders.single['Authorization'],
+        'Bearer at_backup_controlled',
+      );
+      h.peers.last.closeCode = 1006;
+      await h.peers.last.frames.close();
+      await tester.pump();
+      await h.advance(tester, const Duration(seconds: 45));
+      expect(h.sockets.last.host, 'api.sismotide.top');
+      expect(h.authRequests.last.url.host, 'auth.sismotide.top');
+      service.disconnect();
+      service.connect();
+      await tester.pump();
+      await h.advance(tester, const Duration(seconds: 45));
+      expect(h.sockets.last.host, 'api.jianproject.cloud');
+      service.dispose();
+      await tester.pump();
+      expect(NativeJianConnection.outputs, 0);
+    },
+  );
+  testWidgets(
+    'live preference switch keeps the cooldown and changes the issuer',
+    (tester) async {
+      final h = _Harness();
+      final service = h.service();
+      service.connect();
+      await tester.pump();
+      await tester.pump();
+      service.setDefaultServerIndex(1);
+      await tester.pump();
+      expect(h.sockets, hasLength(1));
+      await h.advance(tester, const Duration(seconds: 45));
+      expect(h.sockets.last.host, 'api.jianproject.cloud');
+      expect(h.authRequests.last.url.host, 'auth.jianproject.cloud');
+      expect(
+        h.socketHeaders.last['Authorization'],
+        'Bearer at_backup_controlled',
+      );
+      service.dispose();
+      await tester.pump();
+    },
+  );
+  testWidgets('server selection cannot resume stopped authorization', (
+    tester,
+  ) async {
+    final h = _Harness()
+      ..rejected = http.Response('{"ok":false,"error":"account_banned"}', 403);
+    final service = h.service();
+    service.connect();
+    await tester.pump();
+    await tester.pump();
+    final count = h.authRequests.length;
+    service.setDefaultServerIndex(1);
+    await h.advance(tester, const Duration(minutes: 10));
+    expect(h.authRequests, hasLength(count));
+    expect(h.sockets, isEmpty);
+    service.dispose();
+    await tester.pump();
+  });
   test(
     'Rust selects a paired issuer, rejects unknown hosts, and releases every output',
     () {

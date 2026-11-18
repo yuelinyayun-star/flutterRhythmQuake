@@ -13,5 +13,9 @@ void main() {
     expect(AppEdition.allowsUnifiedSource('globalQuakeEew'), !public);
     expect(AppEdition.allowsUnifiedSource('iclEew'), !public);
     expect(AppEdition.allowsUnifiedSource('jmaEew'), isTrue);
+    expect(AppEdition.allowsUnifiedSource('unadapted_jma_tsunami'), isFalse);
+    expect(AppEdition.allowsUnifiedSource('whews_unknown_agency'), isFalse);
+    expect(AppEdition.allowsUnifiedSource('whews_geonet'), isTrue);
+    expect(AppEdition.allowsUnifiedSource('whews_va'), isTrue);
   });
 }

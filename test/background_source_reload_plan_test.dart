@@ -59,6 +59,7 @@ void main() {
     for (final key in [
       'api_source_whews_authorized',
       'api_source_jian_enabled',
+      'api_source_sasmex_enabled',
       'source_mag_filter_jma',
       'future_setting',
     ]) {

@@ -2063,12 +2063,10 @@ class FanService extends BaseSourceService {
     required void Function(UnifiedQuakeData) onUnified,
   }) {
     if (source == QuakeSourceType.unadapted) {
-      onUnified(
-        QuakeEventAdapter.convertUnadapted(
-          apiName: apiName ?? '',
-          origin: 1,
-          data: data,
-        ).copyWith(sourcePayload: snapshotSourcePayload(rawPayload)),
+      // Keep the raw frame in diagnostics, but an unknown FAN agency has no
+      // display contract and must never become a generic earthquake card.
+      debugPrint(
+        'FAN: drop unadapted source frame${apiName == null ? '' : ' $apiName'}',
       );
       return;
     }

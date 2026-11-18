@@ -21,6 +21,11 @@ class JmaShindoLevel {
 class IntensityCalculator {
   static const double _earthRadius = 6371.0;
 
+  /// JMA's ordinary source-based intensity prediction is not applicable to
+  /// events deeper than 150 km. Callers with official regional intensities
+  /// keep using those values instead of this fallback calculation.
+  static const double maxJmaShindoPredictionDepthKm = 150.0;
+
   static bool pointInPolygon(double lat, double lng, List<LatLng> polygon) {
     if (polygon.length < 3) return false;
     bool inside = false;
@@ -112,7 +117,12 @@ class IntensityCalculator {
       0,
     ].reduce((a, b) => a > b ? a : b).toDouble();
 
-    final ceaCsis1 = _calcCeaCsis(m, dis);
+    // A zero distance is the public maximum-intensity path.  At that point
+    // the surface distance is zero, but the source is still below the
+    // surface, so the first attenuation term must use the hypocentral
+    // distance as well.  Keep non-zero station/region distances unchanged.
+    final firstDistance = dis == 0 ? lineDis : dis;
+    final ceaCsis1 = _calcCeaCsis(m, firstDistance);
     final ceaCsis2 = _calcCeaCsis(m, hypoDis);
     return (ceaCsis1 + ceaCsis2) / 2;
   }
@@ -148,7 +158,13 @@ class IntensityCalculator {
     double arv = 1.0,
   }) {
     if (mj.isNaN || dep.isNaN) return -3.0;
-    if (mj < 0 || dep < 0) return -3.0;
+    if (mj < 0 ||
+        dep < 0 ||
+        dep > maxJmaShindoPredictionDepthKm ||
+        !mj.isFinite ||
+        !dep.isFinite) {
+      return -3.0;
+    }
 
     final mw = mj - 0.171;
     final faultLength = pow(10, 0.5 * mw - 1.85) / 2;

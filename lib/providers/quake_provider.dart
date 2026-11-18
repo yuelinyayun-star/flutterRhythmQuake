@@ -1380,6 +1380,42 @@ class QuakeProvider with ChangeNotifier {
   };
   static const String _sourceMagFilterPrefix = 'source_mag_filter_';
 
+  /// 统一 UI 层面各 EEW 通道显示开关（source → 是否显示，默认 true）
+  final Map<String, bool> _eewChannelEnabled = {};
+  static const String _eewChannelEnabledPrefix = 'eew_channel_enabled_';
+
+  static const List<({String source, String title})> eewChannelDefinitions = [
+    (source: 'jmaEew', title: '日本气象厅 (JMA)'),
+    (source: 'cwaEew', title: '台湾中央气象署 (CWA)'),
+    (source: 'ceaEew', title: '中国地震预警网 (CEA)'),
+    (source: 'scEew', title: '四川省地震局'),
+    (source: 'fjEew', title: '福建省地震局'),
+    (source: 'cqEew', title: '重庆市地震局'),
+    (source: 'kmaEew', title: '韩国气象厅 (KMA)'),
+    (source: 'sa', title: 'ShakeAlert (美国)'),
+    (source: 'sasmex', title: 'SASMEX (墨西哥)'),
+  ];
+
+  static List<({String source, String title})> get eewChannels => [
+    for (final entry in eewChannelDefinitions)
+      if (AppEdition.allowsUnifiedSource(entry.source)) entry,
+  ];
+
+  bool isEewChannelEnabled(String source) => _eewChannelEnabled[source] ?? true;
+
+  Future<void> setEewChannelEnabled(
+    String source,
+    bool enabled, {
+    bool persist = true,
+  }) async {
+    _eewChannelEnabled[source] = enabled;
+    notifyListeners();
+    if (persist) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('$_eewChannelEnabledPrefix$source', enabled);
+    }
+  }
+
   /// 信息事件地点白名单，语义与 kanameishi 的 actionWhiteList 一致。
   String _infoActionWhitelist = '';
   bool _jmaVolcanoPushEnabled = true;
@@ -1513,6 +1549,12 @@ class QuakeProvider with ChangeNotifier {
       final threshold = prefs.getDouble(key);
       if (threshold != null && threshold != 0) {
         _sourceInfoMagFilters[source] = threshold;
+      }
+    }
+    for (final entry in eewChannels) {
+      final saved = prefs.getBool('$_eewChannelEnabledPrefix${entry.source}');
+      if (saved != null) {
+        _eewChannelEnabled[entry.source] = saved;
       }
     }
     usgsShakeMap.setMagnitudeFilter(
@@ -2575,6 +2617,7 @@ class QuakeProvider with ChangeNotifier {
       final visibleQuakes = cachedQuakes
           .where(
             (quake) =>
+                quake.source != QuakeSourceType.unadapted &&
                 (AppEdition.hasIcl || quake.source != QuakeSourceType.icl) &&
                 (AppEdition.hasGlobalQuake ||
                     quake.infoTypeName != 'GlobalQuake 地震预警'),
@@ -2603,11 +2646,20 @@ class QuakeProvider with ChangeNotifier {
           : EewHistoryRetention.defaultMaxPerSource,
       keepForever: prefs.getBool(EewHistoryRetention.keepForeverKey) ?? false,
     );
-    final restoredRows = await _eewHistoryStore.restoreForStartup(
-      prefs,
-      legacyFallbackKey: AppEdition.isPublic ? _eewHistoryPreferenceKey : null,
-      lazyReports: true,
-    );
+    final restoredRows =
+        (await _eewHistoryStore.restoreForStartup(
+              prefs,
+              legacyFallbackKey: AppEdition.isPublic
+                  ? _eewHistoryPreferenceKey
+                  : null,
+              lazyReports: true,
+            ))
+            .where(
+              (group) => group.reports.every(
+                (report) => AppEdition.allowsUnifiedSource(report.source),
+              ),
+            )
+            .toList(growable: false);
     if (_nativeUnifiedEnabled) {
       if (_disposed) return;
       _nativeStartupGroups = [...restoredRows, ..._eewHistory];
@@ -2631,11 +2683,7 @@ class QuakeProvider with ChangeNotifier {
       });
       return;
     }
-    final restored = restoredRows.where(
-      (group) => group.reports.every(
-        (report) => AppEdition.allowsUnifiedSource(report.source),
-      ),
-    );
+    final restored = restoredRows;
     final merged = {
       for (final group in restored) _eewHistoryStore.recordKey(group): group,
     };
@@ -2927,6 +2975,9 @@ class QuakeProvider with ChangeNotifier {
     if (wolfxService != null) {
       _unifiedSubscriptions.add(
         wolfxService.onUnifiedEvent.listen(_handleUnifiedEvent),
+      );
+      _unifiedSubscriptions.add(
+        wolfxService.onTsunamiEvent.listen(_handleTsunamiEvent),
       );
       wolfxService.onJmaEqlistUpdated = (items) {
         _eqlist.updateJmaList(items);
@@ -4863,6 +4914,11 @@ class QuakeProvider with ChangeNotifier {
     bool alreadyAccepted = false,
     bool suppressEffects = false,
   }) {
+    // Unknown source contracts are kept in raw diagnostics only. Apply this
+    // gate before either Dart or Rust unified pipelines so the native path
+    // cannot reintroduce an unadapted card.
+    if (!AppEdition.allowsUnifiedSource(event.source)) return;
+    if (event.isEew && !isEewChannelEnabled(event.source)) return;
     // Capture complete/partial observed long-period reports from JIAN and
     // WHEWS. A JSON relay remains a separate source event until UI policy is
     // chosen, but its bulletin can be linked by the native identity matcher.
@@ -4881,7 +4937,6 @@ class QuakeProvider with ChangeNotifier {
       return;
     }
     // Apply to direct API input and Android's already-accepted handoff alike.
-    if (!AppEdition.allowsUnifiedSource(event.source)) return;
     if (event.isVolcanoEvent && !_jmaVolcanoPushEnabled) return;
     if (!event.isEew && event.source == 'earlyEst') {
       final id = _unifiedCanonicalEventId(event);

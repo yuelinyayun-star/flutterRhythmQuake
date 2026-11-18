@@ -65,6 +65,83 @@ void main() {
   setUp(
     () => WhewsAuthorizationPolicy.storeOverride = MemoryConnectionRetryStore(),
   );
+  testWidgets('manual preference change waits for the old socket to close', (
+    tester,
+  ) async {
+    final held = _HeldPeer();
+    final h = _Harness()
+      ..peerFactory = (attempt) => attempt == 1 ? held : WhewsPeer();
+    final client = h.client();
+    client.start();
+    await h.ready(tester);
+    client.setDefaultServerIndex(1);
+    await tester.pump();
+    expect(h.requests, hasLength(1));
+    held.sink.releaseClose.complete();
+    await h.ready(tester);
+    expect(h.requests, hasLength(2));
+    expect(h.requests.last.host, 'api.2v8.cn');
+    client.dispose();
+    await tester.pump();
+    await client.closed;
+  });
+  testWidgets(
+    'preferred backup retains auth, fails over and survives restart',
+    (tester) async {
+      final h = _Harness();
+      final client = h.client()..setDefaultServerIndex(1);
+      client.start();
+      await h.ready(tester);
+      expect(h.requests.single.host, 'api.2v8.cn');
+      expect(h.requests.single.queryParameters['token'], 'wat_controlled');
+      for (final delay in [3, 6, 12, 24, 48]) {
+        await h.fail(tester, delay);
+      }
+      expect(h.requests.last.host, 'api.beecld.com');
+      client.stop();
+      await tester.pump();
+      await client.closed;
+      client.start();
+      await h.ready(tester);
+      expect(h.requests.last.host, 'api.2v8.cn');
+      client.dispose();
+      await tester.pump();
+      await client.closed;
+    },
+  );
+  testWidgets(
+    'live aggregate switch preserves CEA feed and stopped authorization',
+    (tester) async {
+      final h = _Harness();
+      final service = WhewsService(
+        apiToken: 'wat_controlled',
+        socketFactory: h.open,
+      );
+      service.connect();
+      await tester.pump();
+      final cea = h.peers[1];
+      for (final peer in h.peers) {
+        peer.frames.add('{"type":"pong"}');
+      }
+      await tester.pump();
+      service.setDefaultServerIndex(1);
+      await tester.pump();
+      expect(h.requests.last.host, 'api.2v8.cn');
+      expect(h.requests.last.path, '/ws/all');
+      expect(h.requests.last.queryParameters['token'], 'wat_controlled');
+      expect(h.requests.where((u) => u.path == '/ws/cea_all'), hasLength(1));
+      expect(cea.frames.isClosed, isFalse);
+      h.peers.last.closeCode = 4403;
+      await h.peers.last.frames.close();
+      await tester.pump();
+      final count = h.requests.length;
+      service.setDefaultServerIndex(0);
+      await tester.pump(const Duration(minutes: 10));
+      expect(h.requests, hasLength(count));
+      service.dispose();
+      await tester.pump();
+    },
+  );
   testWidgets(
     'replacement waits for the failed primary socket to finish closing',
     (tester) async {

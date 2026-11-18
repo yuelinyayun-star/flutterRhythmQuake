@@ -78,7 +78,7 @@ class _SettingsPageState extends State<SettingsPage>
     unawaited(BackgroundService().requestSourceReload(force: force));
   }
 
-  _SettingsCategory _selectedCategory = _SettingsCategory.data;
+  _SettingsCategory _selectedCategory = _SettingsCategory.api;
   String _settingsQuery = '';
   bool _fanEnabled = true;
   bool _fssnEnabled = true;
@@ -105,9 +105,8 @@ class _SettingsPageState extends State<SettingsPage>
   bool _wolfxEnabled = true;
   bool _wolfxSeisJsEnabled = true;
   bool _p2pquakeEnabled = true;
-  bool _sasmexEnabled = true;
+  bool _rhythmEnabled = true;
   bool _kmaLocalEewEnabled = true;
-  bool _rhythmKmaEewEnabled = true;
   bool _kmaPewsEnabled = true;
   bool _pAlertEnabled = AppEdition.hasPAlertStations;
   bool _niedMonitorEnabled = true;
@@ -115,6 +114,8 @@ class _SettingsPageState extends State<SettingsPage>
   bool _snetEnabled = true;
   bool _fdsnSeedLinkEnabled = false;
   int _fanServerIndex = 0;
+  int _jianServerIndex = 0;
+  int _whewsServerIndex = 0;
   String _tileKey = 'petalLight';
   bool _overlayCloud = false;
   bool _overlayWind = false;
@@ -291,42 +292,60 @@ class _SettingsPageState extends State<SettingsPage>
   static const double _panelHeaderHeight = 78;
   static const List<_SettingsCategoryInfo> _categories = [
     _SettingsCategoryInfo(
-      category: _SettingsCategory.data,
-      title: 'API与数据源',
-      subtitle: '接口开关、数据源和过滤',
+      category: _SettingsCategory.api,
+      title: 'API 管理',
+      subtitle: '连接开关、鉴权与服务器',
       icon: Icons.hub_outlined,
       accent: Color(0xFF62C6FF),
       keywords: [
         'api',
-        'jian',
-        '鉴权',
-        'token',
-        'whews',
-        'wauth',
-        '账号',
-        '授权',
         'fan',
-        'nowquake',
-        'cenc-ir',
-        '烈度速报',
         'wolfx',
+        'whews',
+        'jian',
+        'rhythm',
+        'sasmex',
         'p2pquake',
+        'fssn',
+        'nowquake',
+        'cmt',
+        'cenc',
+        'usgs',
+        'jma',
+        'f-net',
+        'hi-net',
         'kma',
         'pews',
         'p-alert',
         'palert',
         'trem',
-        'rts',
         'nied',
-        'lmoni',
-        'kmoni',
-        'yahoo',
         's-net',
         'fdsn',
         'seedlink',
-        '摇晃',
-        '灵敏度',
+        '测站',
+        '连接',
+        '开关',
+        '鉴权',
+        'token',
+        'wauth',
+        '账号',
+        '授权',
+        '服务器',
+      ],
+    ),
+    _SettingsCategoryInfo(
+      category: _SettingsCategory.data,
+      title: '预警及信息设置',
+      subtitle: '信息事件过滤与预警总开关',
+      icon: Icons.tune_outlined,
+      accent: Color(0xFF62C6FF),
+      keywords: [
+        '预警',
+        '信息',
+        '总开关',
         '过滤',
+        '震级',
       ],
     ),
     _SettingsCategoryInfo(
@@ -516,6 +535,16 @@ class _SettingsPageState extends State<SettingsPage>
       _fssnEnabled = prefs.getBool(FssnService.enabledPreferenceKey) ?? true;
       _whewsEnabled = prefs.getBool(_whewsEnabledKey) ?? false;
       _jianEnabled = prefs.getBool(JianService.enabledPreferenceKey) ?? false;
+      _jianServerIndex =
+          (prefs.getInt(JianService.defaultServerPreferenceKey) ?? 0).clamp(
+            0,
+            JianService.serverOptions.length - 1,
+          );
+      _whewsServerIndex =
+          (prefs.getInt(WhewsService.defaultServerPreferenceKey) ?? 0).clamp(
+            0,
+            WhewsService.serverOptions.length - 1,
+          );
       _whewsNiedEnabled = prefs.getBool(_whewsNiedEnabledKey) ?? false;
       _whewsSnetEnabled = prefs.getBool(_whewsSnetEnabledKey) ?? false;
       _whewsKmaEnabled = prefs.getBool(_whewsKmaEnabledKey) ?? false;
@@ -528,12 +557,10 @@ class _SettingsPageState extends State<SettingsPage>
       _wolfxEnabled = prefs.getBool(_wolfxEnabledKey) ?? true;
       _wolfxSeisJsEnabled = prefs.getBool(_wolfxSeisJsEnabledKey) ?? true;
       _p2pquakeEnabled = prefs.getBool(_p2pquakeEnabledKey) ?? true;
-      _sasmexEnabled =
+      _rhythmEnabled =
           prefs.getBool(SasmexService.enabledPreferenceKey) ?? true;
       _kmaLocalEewEnabled =
           prefs.getBool(KmaPewsEewService.enabledPreferenceKey) ?? true;
-      _rhythmKmaEewEnabled =
-          prefs.getBool(RhythmKmaEewService.enabledPreferenceKey) ?? true;
       _kmaPewsEnabled = prefs.getBool(_kmaPewsEnabledKey) ?? true;
       _pAlertEnabled =
           AppEdition.hasPAlertStations &&
@@ -700,14 +727,14 @@ class _SettingsPageState extends State<SettingsPage>
     if (!_hinetAquaCmtEnabled) EqlistManager().hinetAquaCmt.stop();
     SourceManager().setSourceEnabled('Wolfx', _wolfxEnabled);
     SourceManager().setSourceEnabled('P2P', _p2pquakeEnabled);
-    SourceManager().setSourceEnabled(SasmexService.sourceName, _sasmexEnabled);
+    SourceManager().setSourceEnabled(SasmexService.sourceName, _rhythmEnabled);
     SourceManager().setSourceEnabled(
       KmaPewsEewService.sourceName,
       _kmaLocalEewEnabled,
     );
     SourceManager().setSourceEnabled(
       RhythmKmaEewService.sourceName,
-      _rhythmKmaEewEnabled,
+      _rhythmEnabled,
     );
     UiRuntimeFlags.sideInfoAutoShowBetaNotifier.value = _sideInfoAutoShowBeta;
     UiRuntimeFlags.localEewDomesticNotifier.value = _localEewDomestic;
@@ -1712,7 +1739,7 @@ class _SettingsPageState extends State<SettingsPage>
                 thickness: 1,
                 color: _dividerColor,
               ),
-              Expanded(child: _buildSettingsContent()),
+              Expanded(child: _buildSettingsContent(showHeader: true)),
             ],
           )
         : Column(
@@ -1720,7 +1747,7 @@ class _SettingsPageState extends State<SettingsPage>
             children: [
               _buildCategoryNavigation(compactGrid: true),
               const Divider(height: 1, thickness: 1, color: _dividerColor),
-              Expanded(child: _buildSettingsContent()),
+              Expanded(child: _buildSettingsContent(showHeader: false)),
             ],
           );
 
@@ -1818,23 +1845,24 @@ class _SettingsPageState extends State<SettingsPage>
           children: [
             head,
             const SizedBox(height: 8),
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: _categories.length,
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                mainAxisSpacing: 8,
-                crossAxisSpacing: 8,
-                mainAxisExtent: 44,
+            SizedBox(
+              height: 44,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: EdgeInsets.zero,
+                itemCount: _categories.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (context, index) {
+                  return SizedBox(
+                    width: 124,
+                    child: _buildCategoryButton(
+                      _categories[index],
+                      expanded: false,
+                      fillWidth: true,
+                    ),
+                  );
+                },
               ),
-              itemBuilder: (context, index) {
-                return _buildCategoryButton(
-                  _categories[index],
-                  expanded: false,
-                  fillWidth: true,
-                );
-              },
             ),
           ],
         ),
@@ -1979,7 +2007,7 @@ class _SettingsPageState extends State<SettingsPage>
     );
   }
 
-  Widget _buildSettingsContent() {
+  Widget _buildSettingsContent({required bool showHeader}) {
     if (_settingsQuery.isEmpty && _selectedCategory == _SettingsCategory.obs) {
       return const ObsAutomationPresetsPage(embedded: true);
     }
@@ -1991,81 +2019,82 @@ class _SettingsPageState extends State<SettingsPage>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        SizedBox(
-          height: _panelHeaderHeight,
-          child: Column(
-            children: [
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 18),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Container(
-                        width: 36,
-                        height: 36,
-                        decoration: BoxDecoration(
-                          color:
-                              (_settingsQuery.isEmpty
-                                      ? activeInfo.accent
-                                      : _accentColor)
-                                  .withValues(alpha: 0.13),
-                          borderRadius: BorderRadius.circular(8),
+        if (showHeader)
+          SizedBox(
+            height: _panelHeaderHeight,
+            child: Column(
+              children: [
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 18),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color:
+                                (_settingsQuery.isEmpty
+                                        ? activeInfo.accent
+                                        : _accentColor)
+                                    .withValues(alpha: 0.13),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(
+                            _settingsQuery.isEmpty
+                                ? activeInfo.icon
+                                : Icons.search,
+                            color: _settingsQuery.isEmpty
+                                ? activeInfo.accent
+                                : _accentColor,
+                            size: 20,
+                          ),
                         ),
-                        child: Icon(
-                          _settingsQuery.isEmpty
-                              ? activeInfo.icon
-                              : Icons.search,
-                          color: _settingsQuery.isEmpty
-                              ? activeInfo.accent
-                              : _accentColor,
-                          size: 20,
-                        ),
-                      ),
-                      const SizedBox(width: 11),
-                      Expanded(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _settingsQuery.isEmpty
-                                  ? activeInfo.title
-                                  : '搜索结果',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w700,
-                                height: 1.2,
+                        const SizedBox(width: 11),
+                        Expanded(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _settingsQuery.isEmpty
+                                    ? activeInfo.title
+                                    : '搜索结果',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                  height: 1.2,
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              _settingsQuery.isEmpty
-                                  ? activeInfo.subtitle
-                                  : matches.isEmpty
-                                  ? '未找到“$_settingsQuery”'
-                                  : '${matches.length} 个相关分类',
-                              style: const TextStyle(
-                                color: _mutedTextColor,
-                                fontSize: 11.5,
-                                height: 1.2,
+                              const SizedBox(height: 2),
+                              Text(
+                                _settingsQuery.isEmpty
+                                    ? activeInfo.subtitle
+                                    : matches.isEmpty
+                                    ? '未找到“$_settingsQuery”'
+                                    : '${matches.length} 个相关分类',
+                                style: const TextStyle(
+                                  color: _mutedTextColor,
+                                  fontSize: 11.5,
+                                  height: 1.2,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
-              ),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 14),
-                child: _HeaderFadeDivider(),
-              ),
-            ],
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 14),
+                  child: _HeaderFadeDivider(),
+                ),
+              ],
+            ),
           ),
-        ),
         Expanded(
           child: _settingsQuery.isEmpty
               ? _buildCategoryScrollView(
@@ -2144,81 +2173,21 @@ class _SettingsPageState extends State<SettingsPage>
 
   List<Widget> _buildCategoryPanels(_SettingsCategory category) {
     switch (category) {
+      case _SettingsCategory.api:
+        return _buildApiManagementPanels();
       case _SettingsCategory.data:
         return [
           _buildSectionPanel(
-            icon: Icons.key_outlined,
-            title: '账号与 API 授权',
-            children: [
-              JianAuthSettings(
-                onChanged: () async {
-                  if (BackgroundService()
-                      .isAndroidConnectionHostedByForegroundService) {
-                    await BackgroundService().requestJianCredentialReload();
-                  } else {
-                    SourceManager()
-                        .getSource<JianService>()
-                        ?.reloadCredentials();
-                  }
-                },
-              ),
-              const _SettingsDivider(),
-              _buildFanApiKeySetting(),
-              const _SettingsDivider(),
-              _buildWAuthSetting(),
-            ],
+            key: const ValueKey('settings-eew-channels'),
+            icon: Icons.warning_amber_outlined,
+            title: '预警接收开关',
+            children: [_buildEewChannelSwitches()],
           ),
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 6),
-            child: Divider(height: 1, thickness: 1, color: _dividerColor),
-          ),
+          const _MinorSectionDivider(),
           _buildSectionPanel(
-            icon: Icons.power_settings_new_outlined,
-            title: 'API/数据接口开关',
-            children: [_buildApiInterfaceSwitches()],
-          ),
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 6),
-            child: Divider(height: 1, thickness: 1, color: _dividerColor),
-          ),
-          _buildSectionPanel(
-            icon: Icons.tune_outlined,
-            title: 'API/数据接口选项',
-            children: [
-              _buildFanServerSelector(),
-              const _SettingsDivider(),
-              _buildNiedDataSourceSelector(),
-              const _SettingsDivider(),
-              _buildKmaDataSourceSelector(),
-              const _SettingsDivider(),
-              _buildSnetDataSourceSelector(),
-              const _SettingsDivider(),
-              _buildNiedReplayControls(),
-              const _SettingsDivider(),
-              _buildShakeSensitivitySelector(),
-              const _SettingsDivider(),
-              _buildDisplayShindo0Switch(),
-              const _SettingsDivider(),
-              _buildKmaIntensityHoldSelector(),
-              const _SettingsDivider(),
-              if (!kIsWeb) ...[
-                _buildFdsnStationSelector(),
-                const _SettingsDivider(),
-                _buildSeedLinkShapeSelector(),
-                const _SettingsDivider(),
-                _buildFdsnIntensitySelector(),
-                const _SettingsDivider(),
-                _buildFdsnStationLimitSelector(),
-              ],
-            ],
-          ),
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 6),
-            child: Divider(height: 1, thickness: 1, color: _dividerColor),
-          ),
-          _buildSectionPanel(
+            key: const ValueKey('settings-info-mag-filter'),
             icon: Icons.filter_alt_outlined,
-            title: '信息事件震级过滤',
+            title: '信息情报接收过滤设置',
             children: [_buildMagFilterList()],
           ),
         ];
@@ -2262,28 +2231,19 @@ class _SettingsPageState extends State<SettingsPage>
               ),
             ],
           ),
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 6),
-            child: Divider(height: 1, thickness: 1, color: _dividerColor),
-          ),
+          const _MinorSectionDivider(),
           _buildSectionPanel(
             icon: Icons.my_location_outlined,
             title: '所在地定位',
             children: [_buildMapCenterControls()],
           ),
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 6),
-            child: Divider(height: 1, thickness: 1, color: _dividerColor),
-          ),
+          const _MinorSectionDivider(),
           _buildSectionPanel(
             icon: Icons.map_outlined,
             title: '视野切换',
             children: [_buildDefaultViewControls()],
           ),
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 6),
-            child: Divider(height: 1, thickness: 1, color: _dividerColor),
-          ),
+          const _MinorSectionDivider(),
           _buildSectionPanel(
             icon: Icons.notifications_outlined,
             title: '轻通知',
@@ -2297,10 +2257,7 @@ class _SettingsPageState extends State<SettingsPage>
             title: '信息显示',
             children: [_buildMapOverlaySelector()],
           ),
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 6),
-            child: Divider(height: 1, thickness: 1, color: _dividerColor),
-          ),
+          const _MinorSectionDivider(),
           _buildSectionPanel(
             icon: Icons.warning_amber_outlined,
             title: '气象预警与实况',
@@ -2350,10 +2307,7 @@ class _SettingsPageState extends State<SettingsPage>
             title: '预警历史记录',
             children: [const EewHistorySettings()],
           ),
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 6),
-            child: Divider(height: 1, thickness: 1, color: _dividerColor),
-          ),
+          const _MinorSectionDivider(),
           _buildSectionPanel(
             icon: Icons.visibility_outlined,
             title: '界面行为',
@@ -2377,10 +2331,7 @@ class _SettingsPageState extends State<SettingsPage>
               _buildPageBackgroundSettings(),
             ],
           ),
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 6),
-            child: Divider(height: 1, thickness: 1, color: _dividerColor),
-          ),
+          const _MinorSectionDivider(),
           _buildSectionPanel(
             icon: Icons.developer_mode_outlined,
             title: '开发工具',
@@ -2391,361 +2342,654 @@ class _SettingsPageState extends State<SettingsPage>
   }
 
   Widget _buildSectionPanel({
+    Key? key,
     required IconData icon,
     required String title,
     required List<Widget> children,
   }) {
+    return DecoratedBox(
+      key: key,
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.025),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.07)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, color: _accentColor, size: 18),
+                const SizedBox(width: 8),
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.94),
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Divider(
+              height: 1,
+              thickness: 1,
+              color: Colors.white.withValues(alpha: 0.12),
+            ),
+            const SizedBox(height: 12),
+            ...children,
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildApiGroupHeader({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+  }) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(2, 4, 2, 8),
+      padding: const EdgeInsets.fromLTRB(2, 4, 2, 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(icon, color: _accentColor, size: 18),
-              const SizedBox(width: 9),
-              Text(
-                title,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
+              Icon(icon, color: _accentColor, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      style: TextStyle(color: _mutedTextColor, fontSize: 12),
+                    ),
+                  ],
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 14),
-          ...children,
+          const SizedBox(height: 10),
+          Container(
+            height: 1.5,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(1),
+              gradient: LinearGradient(
+                colors: [
+                  _accentColor.withValues(alpha: 0.72),
+                  _accentColor.withValues(alpha: 0.22),
+                  Colors.white.withValues(alpha: 0.04),
+                ],
+                stops: const [0.0, 0.6, 1.0],
+              ),
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildApiInterfaceSwitches() {
-    final rows = [
-      _buildApiSwitch(
-        title: 'Jian Project 地震预警/情报/海啸',
-        value: _jianEnabled,
-        onChanged: (val) async {
-          setState(() => _jianEnabled = val);
-          await _saveApiSourceEnabled(JianService.enabledPreferenceKey, val);
-          SourceManager().setSourceEnabled(JianService.sourceName, val);
-          _requestForegroundConnectionReload();
-        },
-      ),
-      _buildApiSwitch(
-        title: 'FAN Studio',
-        value: _fanEnabled,
-        onChanged: (val) {
-          setState(() => _fanEnabled = val);
-          _saveApiSourceEnabled(_fanEnabledKey, val);
-          SourceManager().setSourceEnabled('FAN', val);
-          _requestForegroundConnectionReload();
-        },
-      ),
-      _buildApiSwitch(
-        title: 'FSSN 地震情报/震源机制解',
-        value: _fssnEnabled,
-        onChanged: (val) async {
-          setState(() => _fssnEnabled = val);
-          await _saveApiSourceEnabled(FssnService.enabledPreferenceKey, val);
-          SourceManager().getSource<FanService>()?.setFssnDeliveryEnabled(!val);
-          SourceManager().setSourceEnabled(FssnService.sourceName, val);
-          _requestForegroundConnectionReload();
-        },
-      ),
-      _buildApiSwitch(
-        title: 'WHEWS 地震预警/情报',
-        value: _whewsEnabled,
-        onChanged: (val) async {
-          if (val && !_canEnableWhews()) return;
-          setState(() => _whewsEnabled = val);
-          await _saveApiSourceEnabled(_whewsEnabledKey, val);
-          SourceManager().setSourceEnabled('WHEWS', val);
-          _requestForegroundConnectionReload();
-          await BackgroundService().stopForegroundService();
-        },
-      ),
-      _buildApiSwitch(
-        title: 'NowQuake',
-        value: _nowQuakeCencIrEnabled,
-        onChanged: (val) {
-          setState(() => _nowQuakeCencIrEnabled = val);
-          _saveApiSourceEnabled(_nowQuakeCencIrEnabledKey, val);
-          SourceManager().setSourceEnabled('NowQuake', val);
-          _requestForegroundConnectionReload();
-        },
-      ),
-      _buildApiSwitch(
-        title: 'CENC 震源机制解 (CMT)',
-        value: _cencCmtEnabled,
-        onChanged: (val) {
-          setState(() => _cencCmtEnabled = val);
-          _saveApiSourceEnabled(_cencCmtEnabledKey, val);
-          if (BackgroundService()
-              .isAndroidConnectionHostedByForegroundService) {
-            EqlistManager().cencCmt.stop();
-            _requestForegroundConnectionReload();
-          } else if (val) {
-            EqlistManager().cencCmt.start();
-          } else {
-            EqlistManager().cencCmt.stop();
-          }
-        },
-      ),
-      _buildApiSwitch(
-        title: 'USGS 震源机制解 (CMT)',
-        value: _usgsCmtEnabled,
-        onChanged: (val) {
-          setState(() => _usgsCmtEnabled = val);
-          _saveApiSourceEnabled(_usgsCmtEnabledKey, val);
-          if (BackgroundService()
-              .isAndroidConnectionHostedByForegroundService) {
-            EqlistManager().usgsCmt.stop();
-            _requestForegroundConnectionReload();
-          } else if (val) {
-            EqlistManager().usgsCmt.start();
-          } else {
-            EqlistManager().usgsCmt.stop();
-          }
-        },
-      ),
-      _buildApiSwitch(
-        title: 'JMA 震源机制解 (CMT)',
-        value: _jmaCmtEnabled,
-        onChanged: (val) {
-          setState(() => _jmaCmtEnabled = val);
-          _saveApiSourceEnabled(_jmaCmtEnabledKey, val);
-          if (BackgroundService()
-              .isAndroidConnectionHostedByForegroundService) {
-            EqlistManager().jmaCmt.stop();
-            _requestForegroundConnectionReload();
-          } else if (val) {
-            EqlistManager().jmaCmt.start();
-          } else {
-            EqlistManager().jmaCmt.stop();
-          }
-        },
-      ),
-      _buildApiSwitch(
-        title: 'F-net 震源机制解 (CMT)',
-        value: _fnetCmtEnabled,
-        onChanged: (val) {
-          setState(() => _fnetCmtEnabled = val);
-          _saveApiSourceEnabled(_fnetCmtEnabledKey, val);
-          if (BackgroundService()
-              .isAndroidConnectionHostedByForegroundService) {
-            EqlistManager().fnetCmt.stop();
-            _requestForegroundConnectionReload();
-          } else if (val) {
-            EqlistManager().fnetCmt.start();
-          } else {
-            EqlistManager().fnetCmt.stop();
-          }
-        },
-      ),
-      _buildApiSwitch(
-        title: 'Hi-net AQUA 震源机制解 (CMT)',
-        value: _hinetAquaCmtEnabled,
-        onChanged: (val) {
-          setState(() => _hinetAquaCmtEnabled = val);
-          _saveApiSourceEnabled(_hinetAquaCmtEnabledKey, val);
-          if (BackgroundService()
-              .isAndroidConnectionHostedByForegroundService) {
-            EqlistManager().hinetAquaCmt.stop();
-            _requestForegroundConnectionReload();
-          } else if (val) {
-            EqlistManager().hinetAquaCmt.start();
-          } else {
-            EqlistManager().hinetAquaCmt.stop();
-          }
-        },
-      ),
-      _buildApiSwitch(
-        title: 'Wolfx Project',
-        value: _wolfxEnabled,
-        onChanged: (val) {
-          setState(() => _wolfxEnabled = val);
-          _saveApiSourceEnabled(_wolfxEnabledKey, val);
-          SourceManager().setSourceEnabled('Wolfx', val);
-          _requestForegroundConnectionReload();
-        },
-      ),
-      _buildApiSwitch(
-        title: 'Wolfx SeisJS',
-        value: _wolfxSeisJsEnabled,
-        onChanged: (val) {
-          setState(() => _wolfxSeisJsEnabled = val);
-          _saveApiSourceEnabled(_wolfxSeisJsEnabledKey, val);
-          QuakeMapView.wolfxSeisJsEnabledNotifier.value = val;
-        },
-      ),
-      _buildApiSwitch(
-        title: 'P2PQuake',
-        value: _p2pquakeEnabled,
-        onChanged: (val) {
-          setState(() => _p2pquakeEnabled = val);
-          _saveApiSourceEnabled(_p2pquakeEnabledKey, val);
-          SourceManager().setSourceEnabled('P2P', val);
-          _requestForegroundConnectionReload();
-        },
-      ),
-      _buildApiSwitch(
-        title: 'Rhythm（SASMEX）',
-        value: _sasmexEnabled,
-        onChanged: (val) {
-          setState(() => _sasmexEnabled = val);
-          _saveApiSourceEnabled(SasmexService.enabledPreferenceKey, val);
-          SourceManager().setSourceEnabled(SasmexService.sourceName, val);
-          _requestForegroundConnectionReload();
-        },
-      ),
-      if (KmaPewsEewService.supported) ...[
+  List<Widget> _buildApiManagementPanels() => [
+    _buildApiGroupHeader(
+      icon: Icons.hub_outlined,
+      title: '聚合情报 API',
+      subtitle: '聚合服务、鉴权与主备服务器',
+    ),
+    _buildSectionPanel(
+      key: const ValueKey('settings-api-fan'),
+      icon: Icons.hub_outlined,
+      title: 'FAN Studio',
+      children: [
         _buildApiSwitch(
-          title: 'KMA 地震预警（Rhythm）',
-          value: _rhythmKmaEewEnabled,
+          title: '启用 FAN Studio API',
+          value: _fanEnabled,
           onChanged: (val) {
-            setState(() => _rhythmKmaEewEnabled = val);
-            _saveApiSourceEnabled(RhythmKmaEewService.enabledPreferenceKey, val);
-            SourceManager().setSourceEnabled(RhythmKmaEewService.sourceName, val);
+            setState(() => _fanEnabled = val);
+            _saveApiSourceEnabled(_fanEnabledKey, val);
+            SourceManager().setSourceEnabled('FAN', val);
             _requestForegroundConnectionReload();
           },
         ),
+        const _SettingsDivider(),
+        _buildFanApiKeySetting(),
+        const _SettingsDivider(),
+        _buildFanServerSelector(),
+      ],
+    ),
+    const _MinorSectionDivider(),
+    _buildSectionPanel(
+      key: const ValueKey('settings-api-wolfx'),
+      icon: Icons.hub_outlined,
+      title: 'Wolfx',
+      children: [
         _buildApiSwitch(
-          title: 'KMA-PEWS 本地预警',
-          value: _kmaLocalEewEnabled,
+          title: '启用 Wolfx API',
+          value: _wolfxEnabled,
           onChanged: (val) {
-            setState(() => _kmaLocalEewEnabled = val);
-            _saveApiSourceEnabled(KmaPewsEewService.enabledPreferenceKey, val);
-            SourceManager().setSourceEnabled(KmaPewsEewService.sourceName, val);
+            setState(() => _wolfxEnabled = val);
+            _saveApiSourceEnabled(_wolfxEnabledKey, val);
+            SourceManager().setSourceEnabled('Wolfx', val);
+            _requestForegroundConnectionReload();
+          },
+        ),
+        const _SettingsDivider(),
+        _buildApiSwitch(
+          title: 'Wolfx SeisJS',
+          value: _wolfxSeisJsEnabled,
+          onChanged: (val) {
+            setState(() => _wolfxSeisJsEnabled = val);
+            _saveApiSourceEnabled(_wolfxSeisJsEnabledKey, val);
+            QuakeMapView.wolfxSeisJsEnabledNotifier.value = val;
+          },
+        ),
+      ],
+    ),
+    const _MinorSectionDivider(),
+    _buildSectionPanel(
+      key: const ValueKey('settings-api-whews'),
+      icon: Icons.hub_outlined,
+      title: 'WHEWS',
+      children: [
+        _buildApiSwitch(
+          title: '启用 WHEWS API',
+          value: _whewsEnabled,
+          onChanged: (val) async {
+            if (val && !_canEnableWhews()) return;
+            setState(() => _whewsEnabled = val);
+            await _saveApiSourceEnabled(_whewsEnabledKey, val);
+            SourceManager().setSourceEnabled('WHEWS', val);
+            _requestForegroundConnectionReload();
+            await BackgroundService().stopForegroundService();
+          },
+        ),
+        const _SettingsDivider(),
+        _buildWAuthSetting(),
+        const _SettingsDivider(),
+        _buildAggregateServerSelector(jian: false),
+        const _SettingsDivider(),
+        _buildApiSwitch(
+          title: 'WHEWS NIED 实时测站',
+          value: _whewsNiedEnabled,
+          onChanged: (val) async {
+            if (val && !_canEnableWhews()) return;
+            if (!val && _niedDataSource == 'whews') {
+              _setNiedDataSource('lmoni');
+            }
+            setState(() => _whewsNiedEnabled = val);
+            await _saveApiSourceEnabled(_whewsNiedEnabledKey, val);
+            QuakeMapView.whewsNiedEnabledNotifier.value = val;
+            await BackgroundService().stopForegroundService();
+          },
+        ),
+        const _SettingsDivider(),
+        _buildApiSwitch(
+          title: 'WHEWS S-Net 实时测站',
+          value: _whewsSnetEnabled,
+          onChanged: (val) async {
+            if (val && !_canEnableWhews()) return;
+            if (!val && _snetDataSource == 'whews') {
+              _setSnetDataSource('msil');
+            }
+            setState(() => _whewsSnetEnabled = val);
+            await _saveApiSourceEnabled(_whewsSnetEnabledKey, val);
+            QuakeMapView.whewsSnetEnabledNotifier.value = val;
+            await BackgroundService().stopForegroundService();
+          },
+        ),
+        const _SettingsDivider(),
+        _buildApiSwitch(
+          title: 'WHEWS KMA 实时测站',
+          value: _whewsKmaEnabled,
+          onChanged: (val) async {
+            if (val && !_canEnableWhews()) return;
+            if (!val && _kmaDataSource == 'whews') {
+              _setKmaDataSource('pews');
+            }
+            setState(() => _whewsKmaEnabled = val);
+            await _saveApiSourceEnabled(_whewsKmaEnabledKey, val);
+            QuakeMapView.whewsKmaEnabledNotifier.value = val;
+            await BackgroundService().stopForegroundService();
+          },
+        ),
+      ],
+    ),
+    const _MinorSectionDivider(),
+    _buildSectionPanel(
+      key: const ValueKey('settings-api-jian'),
+      icon: Icons.hub_outlined,
+      title: 'JIAN',
+      children: [
+        _buildApiSwitch(
+          title: '启用 JIAN API',
+          value: _jianEnabled,
+          onChanged: (val) async {
+            setState(() => _jianEnabled = val);
+            await _saveApiSourceEnabled(JianService.enabledPreferenceKey, val);
+            SourceManager().setSourceEnabled(JianService.sourceName, val);
+            _requestForegroundConnectionReload();
+          },
+        ),
+        const _SettingsDivider(),
+        JianAuthSettings(
+          onChanged: () async {
+            if (BackgroundService()
+                .isAndroidConnectionHostedByForegroundService) {
+              await BackgroundService().requestJianCredentialReload();
+            } else {
+              SourceManager().getSource<JianService>()?.reloadCredentials();
+            }
+          },
+        ),
+        const _SettingsDivider(),
+        _buildAggregateServerSelector(jian: true),
+      ],
+    ),
+    const _MinorSectionDivider(),
+    _buildSectionPanel(
+      key: const ValueKey('settings-api-rhythm'),
+      icon: Icons.hub_outlined,
+      title: 'Rhythm',
+      children: [
+        _buildApiSwitch(
+          title: '启用 Rhythm API',
+          value: _rhythmEnabled,
+          onChanged: (val) async {
+            setState(() => _rhythmEnabled = val);
+            final manager = SourceManager();
+            manager.setSourceEnabled(SasmexService.sourceName, val);
+            manager.setSourceEnabled(RhythmKmaEewService.sourceName, val);
+            await _saveApiSourceEnabled(SasmexService.enabledPreferenceKey, val);
             _requestForegroundConnectionReload();
           },
         ),
       ],
-      _buildApiSwitch(
-        title: 'KMA 实时测站',
-        value: _kmaPewsEnabled,
-        onChanged: (val) {
-          setState(() => _kmaPewsEnabled = val);
-          _saveApiSourceEnabled(_kmaPewsEnabledKey, val);
-          QuakeMapView.kmaPewsEnabledNotifier.value = val;
-        },
+    ),
+    if (KmaPewsEewService.supported) ...[
+      const _MinorSectionDivider(),
+      _buildSectionPanel(
+        key: const ValueKey('settings-api-kma-local'),
+        icon: Icons.hub_outlined,
+        title: 'KMA-PEWS',
+        children: [
+          _buildApiSwitch(
+            title: 'KMA-PEWS 本地预警',
+            value: _kmaLocalEewEnabled,
+            onChanged: (val) {
+              setState(() => _kmaLocalEewEnabled = val);
+              _saveApiSourceEnabled(KmaPewsEewService.enabledPreferenceKey, val);
+              SourceManager().setSourceEnabled(KmaPewsEewService.sourceName, val);
+              _requestForegroundConnectionReload();
+            },
+          ),
+        ],
       ),
-      if (AppEdition.hasPAlertStations)
-        _buildApiSwitch(
-          title: 'P-Alert',
-          value: _pAlertEnabled,
-          onChanged: (val) {
-            setState(() => _pAlertEnabled = val);
-            _saveApiSourceEnabled(_pAlertEnabledKey, val);
-            QuakeMapView.pAlertEnabledNotifier.value = val;
-          },
-        ),
-      _buildApiSwitch(
-        title: 'TREM RTS',
-        value: _tremStationEnabled,
-        onChanged: (val) {
-          setState(() => _tremStationEnabled = val);
-          _saveTremStationEnabled(val);
-          QuakeMapView.tremStationEnabledNotifier.value = val;
-        },
-      ),
-      _buildApiSwitch(
-        title: 'NIED 強震モニタ',
-        value: _niedMonitorEnabled,
-        onChanged: (val) {
-          setState(() => _niedMonitorEnabled = val);
-          _saveApiSourceEnabled(_niedMonitorEnabledKey, val);
-          QuakeMapView.niedMonitorEnabledNotifier.value = val;
-        },
-      ),
-      _buildApiSwitch(
-        title: 'NIED 長周期地震動モニタ',
-        value: _niedLpgmEnabled,
-        onChanged: (val) {
-          setState(() => _niedLpgmEnabled = val);
-          _saveApiSourceEnabled(_niedLpgmEnabledKey, val);
-          QuakeMapView.niedLpgmEnabledNotifier.value = val;
-        },
-      ),
-      _buildApiSwitch(
-        title: 'S-net 日本海溝海底地震津波観測網',
-        value: _snetEnabled,
-        onChanged: (val) {
-          setState(() => _snetEnabled = val);
-          _saveApiSourceEnabled(_snetEnabledKey, val);
-          QuakeMapView.snetEnabledNotifier.value = val;
-        },
-      ),
-      _buildApiSwitch(
-        title: 'WHEWS NIED 实时测站',
-        value: _whewsNiedEnabled,
-        onChanged: (val) async {
-          if (val && !_canEnableWhews()) return;
-          if (!val && _niedDataSource == 'whews') {
-            _setNiedDataSource('lmoni');
-          }
-          setState(() => _whewsNiedEnabled = val);
-          await _saveApiSourceEnabled(_whewsNiedEnabledKey, val);
-          QuakeMapView.whewsNiedEnabledNotifier.value = val;
-          await BackgroundService().stopForegroundService();
-        },
-      ),
-      _buildApiSwitch(
-        title: 'WHEWS S-Net 实时测站',
-        value: _whewsSnetEnabled,
-        onChanged: (val) async {
-          if (val && !_canEnableWhews()) return;
-          if (!val && _snetDataSource == 'whews') {
-            _setSnetDataSource('msil');
-          }
-          setState(() => _whewsSnetEnabled = val);
-          await _saveApiSourceEnabled(_whewsSnetEnabledKey, val);
-          QuakeMapView.whewsSnetEnabledNotifier.value = val;
-          await BackgroundService().stopForegroundService();
-        },
-      ),
-      _buildApiSwitch(
-        title: 'WHEWS KMA 实时测站',
-        value: _whewsKmaEnabled,
-        onChanged: (val) async {
-          if (val && !_canEnableWhews()) return;
-          if (!val && _kmaDataSource == 'whews') {
-            _setKmaDataSource('pews');
-          }
-          setState(() => _whewsKmaEnabled = val);
-          await _saveApiSourceEnabled(_whewsKmaEnabledKey, val);
-          QuakeMapView.whewsKmaEnabledNotifier.value = val;
-          await BackgroundService().stopForegroundService();
-        },
-      ),
-      if (kIsWeb)
-        _buildSettingRow(
-          title: 'SeedLink全球测站连接',
-          subtitle: '浏览器无法直连 SeedLink TCP 测站流',
-          leading: Icons.link_off_outlined,
-          control: const Text('Web 暂不可用'),
-        )
-      else
-        _buildApiSwitch(
-          title: 'SeedLink全球测站连接',
-          value: _fdsnSeedLinkEnabled,
-          onChanged: (val) {
-            setState(() => _fdsnSeedLinkEnabled = val);
-            _saveApiSourceEnabled(_fdsnSeedLinkEnabledKey, val);
-            QuakeMapView.fdsnSeedLinkEnabledNotifier.value = val;
-          },
-        ),
-    ];
-    return Column(
+    ],
+    const _MinorSectionDivider(),
+    _buildSectionPanel(
+      key: const ValueKey('settings-api-p2p'),
+      icon: Icons.hub_outlined,
+      title: 'P2PQuake',
       children: [
-        for (var i = 0; i < rows.length; i++) ...[
-          rows[i],
-          if (i != rows.length - 1) const _SettingsDivider(),
+        _buildApiSwitch(
+          title: 'P2PQuake',
+          value: _p2pquakeEnabled,
+          onChanged: (val) {
+            setState(() => _p2pquakeEnabled = val);
+            _saveApiSourceEnabled(_p2pquakeEnabledKey, val);
+            SourceManager().setSourceEnabled('P2P', val);
+            _requestForegroundConnectionReload();
+          },
+        ),
+      ],
+    ),
+    const _MajorSectionDivider(),
+    _buildApiGroupHeader(
+      icon: Icons.extension_outlined,
+      title: '情报扩展 API',
+      subtitle: '独立情报与仪器烈度接口',
+    ),
+    _buildSectionPanel(
+      key: const ValueKey('settings-api-fssn'),
+      icon: Icons.hub_outlined,
+      title: 'FSSN',
+      children: [
+        _buildApiSwitch(
+          title: 'FSSN 地震情报/震源机制解',
+          value: _fssnEnabled,
+          onChanged: (val) async {
+            setState(() => _fssnEnabled = val);
+            await _saveApiSourceEnabled(FssnService.enabledPreferenceKey, val);
+            SourceManager().getSource<FanService>()?.setFssnDeliveryEnabled(
+              !val,
+            );
+            SourceManager().setSourceEnabled(FssnService.sourceName, val);
+            _requestForegroundConnectionReload();
+          },
+        ),
+      ],
+    ),
+    const _MinorSectionDivider(),
+    _buildSectionPanel(
+      key: const ValueKey('settings-api-nowquake'),
+      icon: Icons.hub_outlined,
+      title: 'NowQuake',
+      children: [
+        _buildApiSwitch(
+          title: 'NowQuake',
+          value: _nowQuakeCencIrEnabled,
+          onChanged: (val) {
+            setState(() => _nowQuakeCencIrEnabled = val);
+            _saveApiSourceEnabled(_nowQuakeCencIrEnabledKey, val);
+            SourceManager().setSourceEnabled('NowQuake', val);
+            _requestForegroundConnectionReload();
+          },
+        ),
+      ],
+    ),
+    const _MajorSectionDivider(),
+    _buildApiGroupHeader(
+      icon: Icons.public_outlined,
+      title: '震源机制 / CMT API',
+      subtitle: '各机构震源机制解接口',
+    ),
+    _buildSectionPanel(
+      key: const ValueKey('settings-api-cenc-cmt'),
+      icon: Icons.hub_outlined,
+      title: 'CENC CMT',
+      children: [
+        _buildApiSwitch(
+          title: 'CENC 震源机制解 (CMT)',
+          value: _cencCmtEnabled,
+          onChanged: (val) {
+            setState(() => _cencCmtEnabled = val);
+            _saveApiSourceEnabled(_cencCmtEnabledKey, val);
+            if (BackgroundService()
+                .isAndroidConnectionHostedByForegroundService) {
+              EqlistManager().cencCmt.stop();
+              _requestForegroundConnectionReload();
+            } else if (val) {
+              EqlistManager().cencCmt.start();
+            } else {
+              EqlistManager().cencCmt.stop();
+            }
+          },
+        ),
+      ],
+    ),
+    const _MinorSectionDivider(),
+    _buildSectionPanel(
+      key: const ValueKey('settings-api-usgs-cmt'),
+      icon: Icons.hub_outlined,
+      title: 'USGS CMT',
+      children: [
+        _buildApiSwitch(
+          title: 'USGS 震源机制解 (CMT)',
+          value: _usgsCmtEnabled,
+          onChanged: (val) {
+            setState(() => _usgsCmtEnabled = val);
+            _saveApiSourceEnabled(_usgsCmtEnabledKey, val);
+            if (BackgroundService()
+                .isAndroidConnectionHostedByForegroundService) {
+              EqlistManager().usgsCmt.stop();
+              _requestForegroundConnectionReload();
+            } else if (val) {
+              EqlistManager().usgsCmt.start();
+            } else {
+              EqlistManager().usgsCmt.stop();
+            }
+          },
+        ),
+      ],
+    ),
+    const _MinorSectionDivider(),
+    _buildSectionPanel(
+      key: const ValueKey('settings-api-jma-cmt'),
+      icon: Icons.hub_outlined,
+      title: 'JMA CMT',
+      children: [
+        _buildApiSwitch(
+          title: 'JMA 震源机制解 (CMT)',
+          value: _jmaCmtEnabled,
+          onChanged: (val) {
+            setState(() => _jmaCmtEnabled = val);
+            _saveApiSourceEnabled(_jmaCmtEnabledKey, val);
+            if (BackgroundService()
+                .isAndroidConnectionHostedByForegroundService) {
+              EqlistManager().jmaCmt.stop();
+              _requestForegroundConnectionReload();
+            } else if (val) {
+              EqlistManager().jmaCmt.start();
+            } else {
+              EqlistManager().jmaCmt.stop();
+            }
+          },
+        ),
+      ],
+    ),
+    const _MinorSectionDivider(),
+    _buildSectionPanel(
+      key: const ValueKey('settings-api-fnet'),
+      icon: Icons.hub_outlined,
+      title: 'F-net',
+      children: [
+        _buildApiSwitch(
+          title: 'F-net 震源机制解 (CMT)',
+          value: _fnetCmtEnabled,
+          onChanged: (val) {
+            setState(() => _fnetCmtEnabled = val);
+            _saveApiSourceEnabled(_fnetCmtEnabledKey, val);
+            if (BackgroundService()
+                .isAndroidConnectionHostedByForegroundService) {
+              EqlistManager().fnetCmt.stop();
+              _requestForegroundConnectionReload();
+            } else if (val) {
+              EqlistManager().fnetCmt.start();
+            } else {
+              EqlistManager().fnetCmt.stop();
+            }
+          },
+        ),
+      ],
+    ),
+    const _MinorSectionDivider(),
+    _buildSectionPanel(
+      key: const ValueKey('settings-api-hinet-aqua'),
+      icon: Icons.hub_outlined,
+      title: 'Hi-net AQUA',
+      children: [
+        _buildApiSwitch(
+          title: 'Hi-net AQUA 震源机制解 (CMT)',
+          value: _hinetAquaCmtEnabled,
+          onChanged: (val) {
+            setState(() => _hinetAquaCmtEnabled = val);
+            _saveApiSourceEnabled(_hinetAquaCmtEnabledKey, val);
+            if (BackgroundService()
+                .isAndroidConnectionHostedByForegroundService) {
+              EqlistManager().hinetAquaCmt.stop();
+              _requestForegroundConnectionReload();
+            } else if (val) {
+              EqlistManager().hinetAquaCmt.start();
+            } else {
+              EqlistManager().hinetAquaCmt.stop();
+            }
+          },
+        ),
+      ],
+    ),
+    const _MajorSectionDivider(),
+    _buildApiGroupHeader(
+      icon: Icons.sensors_outlined,
+      title: '测站类 API',
+      subtitle: '先控制测站连接，再配置各测站 API 的来源与专属参数',
+    ),
+    _buildSectionPanel(
+      key: const ValueKey('settings-api-station-common'),
+      icon: Icons.tune_outlined,
+      title: '测站共用选项',
+      children: [
+        _buildShakeSensitivitySelector(),
+        const _SettingsDivider(),
+        _buildDisplayShindo0Switch(),
+      ],
+    ),
+    const _MinorSectionDivider(),
+    _buildSectionPanel(
+      key: const ValueKey('settings-api-kma'),
+      icon: Icons.sensors_outlined,
+      title: 'KMA PEWS',
+      children: [
+        _buildApiSwitch(
+          title: 'KMA 实时测站',
+          value: _kmaPewsEnabled,
+          onChanged: (val) {
+            setState(() => _kmaPewsEnabled = val);
+            _saveApiSourceEnabled(_kmaPewsEnabledKey, val);
+            QuakeMapView.kmaPewsEnabledNotifier.value = val;
+          },
+        ),
+        const _SettingsDivider(),
+        _buildKmaDataSourceSelector(),
+        const _SettingsDivider(),
+        _buildKmaIntensityHoldSelector(),
+      ],
+    ),
+    const _MinorSectionDivider(),
+    _buildSectionPanel(
+      key: const ValueKey('settings-api-trem'),
+      icon: Icons.sensors_outlined,
+      title: 'TREM',
+      children: [
+        _buildApiSwitch(
+          title: 'TREM RTS',
+          value: _tremStationEnabled,
+          onChanged: (val) {
+            setState(() => _tremStationEnabled = val);
+            _saveTremStationEnabled(val);
+            QuakeMapView.tremStationEnabledNotifier.value = val;
+          },
+        ),
+      ],
+    ),
+    const _MinorSectionDivider(),
+    _buildSectionPanel(
+      key: const ValueKey('settings-api-nied'),
+      icon: Icons.sensors_outlined,
+      title: 'NIED',
+      children: [
+        _buildApiSwitch(
+          title: 'NIED 強震モニタ',
+          value: _niedMonitorEnabled,
+          onChanged: (val) {
+            setState(() => _niedMonitorEnabled = val);
+            _saveApiSourceEnabled(_niedMonitorEnabledKey, val);
+            QuakeMapView.niedMonitorEnabledNotifier.value = val;
+          },
+        ),
+        const _SettingsDivider(),
+        _buildApiSwitch(
+          title: 'NIED 長周期地震動モニタ',
+          value: _niedLpgmEnabled,
+          onChanged: (val) {
+            setState(() => _niedLpgmEnabled = val);
+            _saveApiSourceEnabled(_niedLpgmEnabledKey, val);
+            QuakeMapView.niedLpgmEnabledNotifier.value = val;
+          },
+        ),
+        const _SettingsDivider(),
+        _buildNiedDataSourceSelector(),
+        const _SettingsDivider(),
+        _buildNiedReplayControls(),
+      ],
+    ),
+    const _MinorSectionDivider(),
+    _buildSectionPanel(
+      key: const ValueKey('settings-api-snet'),
+      icon: Icons.sensors_outlined,
+      title: 'S-net',
+      children: [
+        _buildApiSwitch(
+          title: 'S-net 日本海溝海底地震津波観測網',
+          value: _snetEnabled,
+          onChanged: (val) {
+            setState(() => _snetEnabled = val);
+            _saveApiSourceEnabled(_snetEnabledKey, val);
+            QuakeMapView.snetEnabledNotifier.value = val;
+          },
+        ),
+        const _SettingsDivider(),
+        _buildSnetDataSourceSelector(),
+      ],
+    ),
+    const _MinorSectionDivider(),
+    _buildSectionPanel(
+      key: const ValueKey('settings-api-seedlink'),
+      icon: Icons.sensors_outlined,
+      title: 'FDSN / SeedLink',
+      children: [
+        if (kIsWeb)
+          _buildSettingRow(
+            title: 'SeedLink全球测站连接',
+            subtitle: '浏览器无法直连 SeedLink TCP 测站流',
+            leading: Icons.link_off_outlined,
+            control: const Text('Web 暂不可用'),
+          )
+        else
+          _buildApiSwitch(
+            title: 'SeedLink全球测站连接',
+            value: _fdsnSeedLinkEnabled,
+            onChanged: (val) {
+              setState(() => _fdsnSeedLinkEnabled = val);
+              _saveApiSourceEnabled(_fdsnSeedLinkEnabledKey, val);
+              QuakeMapView.fdsnSeedLinkEnabledNotifier.value = val;
+            },
+          ),
+        if (!kIsWeb) ...[
+          const _SettingsDivider(),
+          _buildFdsnStationSelector(),
+          const _SettingsDivider(),
+          _buildFdsnStationLimitSelector(),
+          const _SettingsDivider(),
+          _buildSeedLinkShapeSelector(),
+          const _SettingsDivider(),
+          _buildFdsnIntensitySelector(),
         ],
       ],
-    );
-  }
+    ),
+    if (AppEdition.hasPAlertStations) ...[
+      const _MinorSectionDivider(),
+      _buildSectionPanel(
+        key: const ValueKey('settings-api-p-alert'),
+        icon: Icons.sensors_outlined,
+        title: 'P-Alert',
+        children: [
+          _buildApiSwitch(
+            title: 'P-Alert',
+            value: _pAlertEnabled,
+            onChanged: (val) {
+              setState(() => _pAlertEnabled = val);
+              _saveApiSourceEnabled(_pAlertEnabledKey, val);
+              QuakeMapView.pAlertEnabledNotifier.value = val;
+            },
+          ),
+        ],
+      ),
+    ],
+  ];
 
   Widget _buildApiSwitch({
     required String title,
@@ -2766,6 +3010,56 @@ class _SettingsPageState extends State<SettingsPage>
           inactiveTrackColor: Colors.white24,
           onChanged: onChanged,
         ),
+      ),
+    );
+  }
+
+  Widget _buildAggregateServerSelector({required bool jian}) {
+    final name = jian ? 'JIAN' : 'WHEWS';
+    final options = jian
+        ? JianService.serverOptions
+        : WhewsService.serverOptions;
+    return _buildSettingRow(
+      title: '$name 默认服务器',
+      subtitle: '选择 $name 聚合情报优先连接的服务器，连接故障时仍自动切换',
+      leading: Icons.dns_outlined,
+      control: _buildDropdown<int>(
+        value: jian ? _jianServerIndex : _whewsServerIndex,
+        options: [
+          for (var i = 0; i < options.length; i++) _SelectOption(i, options[i]),
+        ],
+        onChanged: (value) async {
+          if (value == null) return;
+          setState(() {
+            if (jian) {
+              _jianServerIndex = value;
+            } else {
+              _whewsServerIndex = value;
+            }
+          });
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setInt(
+            jian
+                ? JianService.defaultServerPreferenceKey
+                : WhewsService.defaultServerPreferenceKey,
+            value,
+          );
+          if (BackgroundService()
+              .isAndroidConnectionHostedByForegroundService) {
+            BackgroundService().updateAggregateDefaultServer(
+              jian ? JianService.sourceName : 'WHEWS',
+              value,
+            );
+          } else if (jian) {
+            SourceManager().getSource<JianService>()?.setDefaultServerIndex(
+              value,
+            );
+          } else {
+            SourceManager().getSource<WhewsService>()?.setDefaultServerIndex(
+              value,
+            );
+          }
+        },
       ),
     );
   }
@@ -2860,64 +3154,75 @@ class _SettingsPageState extends State<SettingsPage>
 
   Widget _buildWAuthSetting() {
     final hasSavedLogin = _hasWAuthApiToken;
-    return _buildSettingRow(
-      title: 'WAuth 账号授权',
-      subtitle: _wauthSettingSubtitle(),
-      leading: _wauthBusy
-          ? Icons.hourglass_top_outlined
-          : hasSavedLogin
-          ? Icons.key_outlined
-          : Icons.account_circle_outlined,
-      control: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          WAuthTokenField(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildSettingRow(
+          title: 'WAuth API Token',
+          subtitle: _wauthSettingSubtitle(),
+          leading: Icons.key_outlined,
+          control: WAuthTokenField(
             controller: _wauthTokenController,
             busy: _wauthBusy || _wauthSaving,
             onSave: _saveWAuthApiToken,
           ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            alignment: WrapAlignment.end,
-            children: [
-              if (hasSavedLogin)
-                IconButton(
-                  tooltip: '清除 WAuth Token 并退出',
+        ),
+        const _SettingsDivider(),
+        _buildSettingRow(
+          title: 'WAuth 账号授权',
+          subtitle: _wauthBusy
+              ? _wauthSettingSubtitle()
+              : '通过浏览器登录获取 API Token',
+          leading: Icons.account_circle_outlined,
+          control: Align(
+            alignment: Alignment.centerRight,
+            child: SizedBox(
+              width: 160,
+              height: 40,
+              child: _buildGlassActionButton(
+                label: _wauthBusy
+                    ? _wauthBrowserOpened
+                          ? '等待登录'
+                          : '正在打开'
+                    : hasSavedLogin
+                    ? '重新登录'
+                    : '登录',
+                icon: _wauthBusy
+                    ? null
+                    : (hasSavedLogin
+                          ? Icons.refresh_outlined
+                          : Icons.login_outlined),
+                busy: _wauthBusy,
+                emphasized: true,
+                onPressed: _wauthBusy || _wauthSaving
+                    ? null
+                    : _startWAuthAuthorization,
+              ),
+            ),
+          ),
+        ),
+        if (hasSavedLogin) ...[
+          const _SettingsDivider(),
+          _buildSettingRow(
+            title: '退出 WAuth 授权',
+            subtitle: '清除已保存的 Token 并断开相关连接',
+            leading: Icons.logout_outlined,
+            control: Align(
+              alignment: Alignment.centerRight,
+              child: SizedBox(
+                width: 160,
+                child: _buildGlassActionButton(
+                  label: '退出授权',
+                  icon: Icons.logout_outlined,
                   onPressed: _wauthBusy || _wauthSaving
                       ? null
                       : _clearWAuthAuthorization,
-                  icon: const Icon(Icons.logout_outlined),
-                  color: Colors.white70,
-                ),
-              SizedBox(
-                width: 160,
-                height: 40,
-                child: _buildGlassActionButton(
-                  label: _wauthBusy
-                      ? _wauthBrowserOpened
-                            ? '等待登录'
-                            : '正在打开'
-                      : hasSavedLogin
-                      ? '重新登录'
-                      : '登录',
-                  icon: _wauthBusy
-                      ? null
-                      : (hasSavedLogin
-                            ? Icons.refresh_outlined
-                            : Icons.login_outlined),
-                  busy: _wauthBusy,
-                  emphasized: true,
-                  onPressed: _wauthBusy || _wauthSaving
-                      ? null
-                      : _startWAuthAuthorization,
                 ),
               ),
-            ],
+            ),
           ),
         ],
-      ),
+      ],
     );
   }
 
@@ -2949,24 +3254,23 @@ class _SettingsPageState extends State<SettingsPage>
     );
   }
 
-  /// Drag-time glass quality for map panels (see UiRuntimeFlags docs).
+  /// Glass quality for map panels (see UiRuntimeFlags docs).
   Widget _buildMapDragGlassSelector() {
     final mode = UiRuntimeFlags.mapDragGlassModeNotifier.value;
     return _buildSettingRow(
-      title: '拖拽时面板背景',
-      subtitle: '地图拖拽中的毛玻璃策略：低清/关闭可显著省电，停止拖拽后自动恢复',
+      title: '地图面板背景',
+      subtitle: '完整毛玻璃和轻量磨砂在移动和静止时均生效',
       leading: Icons.blur_on,
       control: _buildDropdown<int>(
         value: mode,
         options: const [
           _SelectOption(UiRuntimeFlags.mapDragGlassFull, '完整毛玻璃'),
-          _SelectOption(UiRuntimeFlags.mapDragGlassLowRes, '低清毛玻璃（省电）'),
-          _SelectOption(UiRuntimeFlags.mapDragGlassOff, '关闭毛玻璃（最省电）'),
+          _SelectOption(UiRuntimeFlags.mapDragGlassOff, '轻量磨砂（最低开销）'),
         ],
-        onChanged: (val) {
+        onChanged: (val) async {
           if (val == null) return;
-          UiRuntimeFlags.setMapDragGlassMode(val);
-          setState(() {});
+          await UiRuntimeFlags.setMapDragGlassMode(val);
+          if (mounted) setState(() {});
         },
       ),
     );
@@ -3236,36 +3540,6 @@ class _SettingsPageState extends State<SettingsPage>
     busy: busy,
     emphasized: emphasized,
   );
-
-  Widget _buildOverlayToggle({
-    required String label,
-    required bool selected,
-    required ValueChanged<bool> onTap,
-  }) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: () => onTap(!selected),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          height: 36,
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          alignment: Alignment.center,
-          decoration: _glassSelectableDecoration(selected: selected),
-          child: Text(
-            label,
-            style: TextStyle(
-              color: selected ? Colors.white : Colors.white70,
-              fontSize: 12.5,
-              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 
   Widget _buildMapCenterControls() {
     return _buildSettingRow(
@@ -3823,32 +4097,26 @@ class _SettingsPageState extends State<SettingsPage>
   }
 
   Widget _buildFdsnStationSelector() {
-    return _buildSettingRow(
-      title: 'SeedLink全球测站连接',
-      subtitle: 'SeedLink 实时测站',
-      leading: Icons.public_outlined,
-      control: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          for (final source in FdsnSourceCatalog.sources)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: _buildOverlayToggle(
-                label: source.name,
-                selected: _overlayFdsnSources[source.name] ?? false,
-                onTap: (val) async {
-                  setState(() => _overlayFdsnSources[source.name] = val);
-                  await _saveOverlayState(source.preferenceKey, val);
-                  if (!mounted) return;
-                  context.read<MapStateProvider>().setOverlayEnabled(
-                    source.overlayKey,
-                    val,
-                  );
-                },
-              ),
-            ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final (index, source) in FdsnSourceCatalog.sources.indexed) ...[
+          if (index != 0) const _SettingsDivider(),
+          _buildApiSwitch(
+            title: source.name,
+            value: _overlayFdsnSources[source.name] ?? false,
+            onChanged: (val) async {
+              setState(() => _overlayFdsnSources[source.name] = val);
+              await _saveOverlayState(source.preferenceKey, val);
+              if (!mounted) return;
+              context.read<MapStateProvider>().setOverlayEnabled(
+                source.overlayKey,
+                val,
+              );
+            },
+          ),
         ],
-      ),
+      ],
     );
   }
 
@@ -4823,6 +5091,44 @@ class _SettingsPageState extends State<SettingsPage>
     );
   }
 
+  Widget _buildEewChannelSwitches() {
+    final provider = context.watch<QuakeProvider>();
+    final channels = QuakeProvider.eewChannels;
+    return Column(
+      children: [
+        for (var i = 0; i < channels.length; i++) ...[
+          if (i != 0) const _SettingsDivider(),
+          Builder(
+            builder: (context) {
+              final channel = channels[i];
+              final enabled = provider.isEewChannelEnabled(channel.source);
+              return _buildSettingRow(
+                title: channel.title,
+                subtitle: enabled ? '已启用，显示该通道的地震预警' : '已关闭，不显示该通道的地震预警',
+                leading: enabled
+                    ? Icons.notifications_active_outlined
+                    : Icons.notifications_off_outlined,
+                control: Align(
+                  alignment: Alignment.centerRight,
+                  child: Switch(
+                    key: ValueKey('eew-channel-switch-${channel.source}'),
+                    value: enabled,
+                    activeThumbColor: _accentColor,
+                    activeTrackColor: _accentColor.withValues(alpha: 0.38),
+                    inactiveThumbColor: Colors.white70,
+                    inactiveTrackColor: Colors.white24,
+                    onChanged: (val) =>
+                        provider.setEewChannelEnabled(channel.source, val),
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
+      ],
+    );
+  }
+
   Widget _buildMagFilterList() {
     final sources = QuakeProvider.infoMagFilterSources;
     return Column(
@@ -5232,7 +5538,7 @@ class _SelectOption<T> {
   const _SelectOption(this.value, this.label);
 }
 
-enum _SettingsCategory { data, map, alert, voice, filter, obs, advanced }
+enum _SettingsCategory { api, data, map, alert, voice, filter, obs, advanced }
 
 class _SettingsCategoryInfo {
   final _SettingsCategory category;
@@ -5304,12 +5610,55 @@ class _SettingsDivider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: 14),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
       child: Divider(
         height: 1,
         thickness: 1,
-        color: _SettingsPageState._dividerColor,
+        color: Colors.white.withValues(alpha: 0.07),
+      ),
+    );
+  }
+}
+
+class _MinorSectionDivider extends StatelessWidget {
+  const _MinorSectionDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 20, bottom: 16),
+      child: Divider(
+        height: 1,
+        thickness: 1,
+        color: Colors.white.withValues(alpha: 0.14),
+      ),
+    );
+  }
+}
+
+class _MajorSectionDivider extends StatelessWidget {
+  const _MajorSectionDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 26, bottom: 18),
+      child: SizedBox(
+        height: 1,
+        width: double.infinity,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                _SettingsPageState._accentColor.withValues(alpha: 0.45),
+                Colors.white.withValues(alpha: 0.16),
+                Colors.transparent,
+              ],
+              stops: const [0.0, 0.55, 1.0],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -5414,8 +5763,7 @@ class _BlurredPageBackgroundState extends State<_BlurredPageBackground> {
   }
 
   String _sourceKey(PageBackgroundProvider pageBg) {
-    final custom =
-        !kIsWeb && pageBg.useCustom && pageBg.hasCustomImage
+    final custom = !kIsWeb && pageBg.useCustom && pageBg.hasCustomImage
         ? pageBg.customBytes
         : null;
     final source = custom ?? 'madoka';
@@ -5423,8 +5771,7 @@ class _BlurredPageBackgroundState extends State<_BlurredPageBackground> {
   }
 
   Future<Uint8List> _sourceBytes(PageBackgroundProvider pageBg) {
-    final custom =
-        !kIsWeb && pageBg.useCustom && pageBg.hasCustomImage
+    final custom = !kIsWeb && pageBg.useCustom && pageBg.hasCustomImage
         ? pageBg.customBytes
         : null;
     if (custom != null) return Future.value(custom);
@@ -5478,10 +5825,7 @@ class _BlurredPageBackgroundState extends State<_BlurredPageBackground> {
 
   static Future<ui.Image> _bake(Future<Uint8List> bytesFuture) async {
     final bytes = await bytesFuture;
-    final codec = await ui.instantiateImageCodec(
-      bytes,
-      targetWidth: 1440,
-    );
+    final codec = await ui.instantiateImageCodec(bytes, targetWidth: 1440);
     final frame = await codec.getNextFrame();
     final src = frame.image;
     try {
@@ -5491,7 +5835,10 @@ class _BlurredPageBackgroundState extends State<_BlurredPageBackground> {
         src,
         Offset.zero,
         Paint()
-          ..imageFilter = ImageFilter.blur(sigmaX: _blurSigma, sigmaY: _blurSigma),
+          ..imageFilter = ImageFilter.blur(
+            sigmaX: _blurSigma,
+            sigmaY: _blurSigma,
+          ),
       );
       return recorder.endRecording().toImageSync(src.width, src.height);
     } finally {

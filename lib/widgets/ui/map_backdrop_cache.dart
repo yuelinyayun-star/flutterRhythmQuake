@@ -13,13 +13,13 @@ import '../../services/debug/field_diagnostics.dart';
 class MapBackdropCacheHost extends StatefulWidget {
   const MapBackdropCacheHost({super.key, required this.child});
   final Widget child;
-  static final nativeFiltersForDiagnostics = ValueNotifier(false);
+  // Native backdrop filtering is the production full-glass path. Tests and
+  // diagnostics can set this to false to exercise the same-scene atlas.
+  static final nativeFiltersForDiagnostics = ValueNotifier(true);
   static _MapBackdropCache? _active;
 
-  /// True while the map camera is moving. Combined with [UiRuntimeFlags]
-  /// drag-glass mode: full glass keeps native baking, low-res glass bakes at
-  /// half resolution, off degrades panels to plain translucency. Restored
-  /// [mapMotionSettle] after the last camera event.
+  /// Camera motion notification for callers. Glass quality is selected by
+  /// [UiRuntimeFlags] independently of motion.
   static final ValueNotifier<bool> mapMotionActive = ValueNotifier(false);
 
   static Timer? _motionSettleTimer;
@@ -40,17 +40,14 @@ class MapBackdropCacheHost extends StatefulWidget {
   static void _scheduleMotionSettle(DateTime now) {
     _motionSettleTimer?.cancel();
     final delay = _motionDeadline.difference(now);
-    _motionSettleTimer = Timer(
-      delay.isNegative ? Duration.zero : delay,
-      () {
-        final remaining = _motionDeadline.difference(DateTime.now());
-        if (remaining > Duration.zero) {
-          _scheduleMotionSettle(DateTime.now());
-        } else if (mapMotionActive.value) {
-          mapMotionActive.value = false;
-        }
-      },
-    );
+    _motionSettleTimer = Timer(delay.isNegative ? Duration.zero : delay, () {
+      final remaining = _motionDeadline.difference(DateTime.now());
+      if (remaining > Duration.zero) {
+        _scheduleMotionSettle(DateTime.now());
+      } else if (mapMotionActive.value) {
+        mapMotionActive.value = false;
+      }
+    });
   }
 
   static void cameraMoved(BuildContext context) {
@@ -196,27 +193,22 @@ class _MapBackdropRegion {
 class _MapBackdropCache extends ChangeNotifier {
   _MapBackdropCache() {
     MapBackdropCacheHost.nativeFiltersForDiagnostics.addListener(_modeChanged);
-    MapBackdropCacheHost.mapMotionActive.addListener(_motionModeChanged);
-    UiRuntimeFlags.mapDragGlassModeNotifier.addListener(_motionModeChanged);
+    UiRuntimeFlags.mapDragGlassModeNotifier.addListener(_qualityModeChanged);
   }
 
-  /// Motion/quality switches change the bake scale or disable baking, so the
-  /// next frame must re-bake the atlas at the new scale.
-  void _motionModeChanged() {
+  void _qualityModeChanged() {
+    if (_frosted) {
+      final previous = _atlas;
+      _atlas = null;
+      _regions = {};
+      if (previous != null) _retire([previous]);
+    }
     mapPainted();
   }
 
-  bool get _glassOffDuringMotion =>
-      MapBackdropCacheHost.mapMotionActive.value &&
+  bool get _frosted =>
       UiRuntimeFlags.mapDragGlassModeNotifier.value ==
-          UiRuntimeFlags.mapDragGlassOff;
-
-  double get _bakeScale =>
-      MapBackdropCacheHost.mapMotionActive.value &&
-          UiRuntimeFlags.mapDragGlassModeNotifier.value ==
-              UiRuntimeFlags.mapDragGlassLowRes
-      ? 0.5
-      : 1.0;
+      UiRuntimeFlags.mapDragGlassOff;
 
   _MapBackdropSourceRender? source;
   final _users = <ui.ImageFilter, int>{};
@@ -313,7 +305,7 @@ class _MapBackdropCache extends ChangeNotifier {
 
   void ensureCurrentScene() {
     if (!_dirty) return;
-    if (_glassOffDuringMotion) return;
+    if (_frosted) return;
     final boundary = source;
     if (_disposed ||
         !_enabled ||
@@ -327,10 +319,7 @@ class _MapBackdropCache extends ChangeNotifier {
     final watch = Stopwatch()..start();
     final revision = _revision;
     final baseRatio = boundary.pixelRatio;
-    // Low-res glass: bake the moving map at half resolution. Displaying the
-    // smaller atlas scaled back up keeps the visual blur radius identical
-    // (sigma is applied in atlas pixels), while raster cost drops ~4x.
-    final ratio = baseRatio * _bakeScale;
+    final ratio = baseRatio;
     final size = boundary.size;
     final targets = <({ui.ImageFilter filter, Rect bounds})>[];
     final slots = <({ui.ImageFilter filter, Rect bounds}), Rect>{};
@@ -400,7 +389,9 @@ class _MapBackdropCache extends ChangeNotifier {
         if (aligned(height) > rowHeight) rowHeight = aligned(height);
       }
       final atlasHeight = y + rowHeight;
-      final bakeWatch = FieldDiagnostics.enabled ? (Stopwatch()..start()) : null;
+      final bakeWatch = FieldDiagnostics.enabled
+          ? (Stopwatch()..start())
+          : null;
       _readingSnapshotScene = true;
       try {
         // This returns a deferred engine texture synchronously. The same
@@ -526,10 +517,7 @@ class _MapBackdropCache extends ChangeNotifier {
     MapBackdropCacheHost.nativeFiltersForDiagnostics.removeListener(
       _modeChanged,
     );
-    MapBackdropCacheHost.mapMotionActive.removeListener(_motionModeChanged);
-    UiRuntimeFlags.mapDragGlassModeNotifier.removeListener(
-      _motionModeChanged,
-    );
+    UiRuntimeFlags.mapDragGlassModeNotifier.removeListener(_qualityModeChanged);
     source = null;
     _users.clear();
     _panels.clear();
@@ -586,6 +574,18 @@ class _CachedMapBackdropRender extends RenderBackdropFilter {
   _MapBackdropCache? _cache;
   ui.ImageFilter _imageFilter;
 
+  bool get _frosted =>
+      UiRuntimeFlags.mapDragGlassModeNotifier.value ==
+      UiRuntimeFlags.mapDragGlassOff;
+
+  @override
+  bool get alwaysNeedsCompositing => super.alwaysNeedsCompositing && !_frosted;
+
+  void _qualityModeChanged() {
+    markNeedsCompositingBitsUpdate();
+    markNeedsPaint();
+  }
+
   void configure(_MapBackdropCache? cache, ui.ImageFilter filter) {
     if (_cache == cache && _imageFilter == filter) return;
     if (attached) _unregister();
@@ -598,14 +598,14 @@ class _CachedMapBackdropRender extends RenderBackdropFilter {
   void _register() {
     _cache?._panels.add(this);
     _cache?.addListener(markNeedsPaint);
-    MapBackdropCacheHost.mapMotionActive.addListener(markNeedsPaint);
+    UiRuntimeFlags.mapDragGlassModeNotifier.addListener(_qualityModeChanged);
     _cache?.register(_imageFilter);
   }
 
   void _unregister() {
     _cache?._panels.remove(this);
     _cache?.removeListener(markNeedsPaint);
-    MapBackdropCacheHost.mapMotionActive.removeListener(markNeedsPaint);
+    UiRuntimeFlags.mapDragGlassModeNotifier.removeListener(_qualityModeChanged);
     _cache?.unregister(_imageFilter);
   }
 
@@ -623,6 +623,13 @@ class _CachedMapBackdropRender extends RenderBackdropFilter {
 
   @override
   void paint(PaintingContext context, Offset offset) {
+    if (_frosted && enabled) {
+      layer = null;
+      // Keep each panel's existing translucent Material/Container paint.
+      // A shared overlay here would flatten the original panel colors.
+      if (child != null) context.paintChild(child!, offset);
+      return;
+    }
     final cache = _cache;
     final source = cache?.source;
     if (!enabled ||
@@ -630,14 +637,6 @@ class _CachedMapBackdropRender extends RenderBackdropFilter {
         source == null ||
         !cache!.canUseMapPixels(this)) {
       if (layer is _SameSceneBackdropLayer) layer = null;
-      // "Glass off" motion degradation: draw the panel as plain translucent
-      // content; a full-price native blur here would defeat the atlas skip.
-      if (MapBackdropCacheHost.mapMotionActive.value &&
-          UiRuntimeFlags.mapDragGlassModeNotifier.value ==
-              UiRuntimeFlags.mapDragGlassOff) {
-        if (child != null) context.paintChild(child!, offset);
-        return;
-      }
       super.paint(context, offset);
       return;
     }
@@ -692,11 +691,6 @@ class _SameSceneBackdropLayer extends BackdropFilterLayer {
   @override
   bool get alwaysNeedsAddToScene => true;
 
-  bool get _degraded =>
-      MapBackdropCacheHost.mapMotionActive.value &&
-      UiRuntimeFlags.mapDragGlassModeNotifier.value ==
-          UiRuntimeFlags.mapDragGlassOff;
-
   void configure(
     _MapBackdropCache cache,
     ui.ImageFilter filter,
@@ -727,7 +721,7 @@ class _SameSceneBackdropLayer extends BackdropFilterLayer {
       cache.mapPainted();
     }
     _native
-      ..filter = _degraded ? null : filter
+      ..filter = filter
       ..backdropKey = key;
   }
 
@@ -739,16 +733,6 @@ class _SameSceneBackdropLayer extends BackdropFilterLayer {
 
   @override
   void addToScene(ui.SceneBuilder builder) {
-    // Motion degradation: skip the atlas re-bake (map toImageSync + per-panel
-    // blur) entirely and draw the panel children directly. The blur returns
-    // on the first frame after the motion window settles.
-    if (_degraded) {
-      _clip?.dispose();
-      _clip = null;
-      _clearPicture();
-      addChildrenToScene(builder);
-      return;
-    }
     final cache = _cache!;
     cache.ensureCurrentScene();
     final image = cache._atlas;

@@ -1,3 +1,5 @@
+import '../services/quake_event_adapter.dart';
+
 class AppEdition {
   static const String name = String.fromEnvironment(
     'RQ_EDITION',
@@ -12,6 +14,7 @@ class AppEdition {
   static bool allowsUnifiedSource(String source) {
     if (!hasGlobalQuake && source == 'globalQuakeEew') return false;
     if (!hasIcl && source == 'iclEew') return false;
+    if (QuakeEventAdapter.isUnadaptedSourceKey(source)) return false;
     return true;
   }
 }

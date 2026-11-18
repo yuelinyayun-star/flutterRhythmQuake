@@ -1,7 +1,9 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
+import '../../core/intensity_class.dart';
 import '../../models/quake_message.dart';
+import '../../models/unified_event_presentation.dart';
 import '../../models/unified_quake_data.dart';
 import 'wave_layer.dart';
 
@@ -33,6 +35,21 @@ class UnifiedEventWaveLayers extends StatelessWidget {
   final Color Function(String) waveColor;
   final bool blinkOn;
   final LatLng? userPosition;
+
+  Color _waveColorForEvent(UnifiedQuakeData event) {
+    final estimated = estimatedEewIntensityValue(event);
+    if (estimated == null) return waveColor(event.className);
+    // Reuse the badge estimate, translating weak/strong labels to the
+    // application's existing intensity palette without changing source data.
+    final intensity = switch (estimated) {
+      '5-' => 5.0,
+      '5+' => 5.5,
+      '6-' => 6.0,
+      '6+' => 6.5,
+      _ => double.parse(estimated),
+    };
+    return waveColor(intensityClassName(intensity, useShindo: event.useShindo));
+  }
 
   bool _product(UnifiedQuakeData event) =>
       event.source == 'usgsDyfi' || event.source == 'usgsShakeMap';
@@ -87,7 +104,7 @@ class UnifiedEventWaveLayers extends StatelessWidget {
             userPosition: userPosition,
             colorMode: SWaveColorMode.intensity,
             blinkOn: u.isEew ? blinkOn : true,
-            sWaveColor: waveColor(u.className),
+            sWaveColor: _waveColorForEvent(u),
           ),
         ),
       );

@@ -78,19 +78,35 @@ void main() {
     },
   );
 
-  test(
-    'unknown convert() sources no longer become CENC or FAN title defaults',
-    () {
-      final event = QuakeEventAdapter.convert('customfeed', geonetPayload(), 1);
+  test('unknown convert() sources are not displayable', () {
+    final event = QuakeEventAdapter.convert('customfeed', geonetPayload(), 1);
 
-      expect(event, isNotNull);
-      expect(event!.source, 'unadapted_customfeed');
-      expect(event.titleText, isEmpty);
-      expect(event.apiTypeLabel, 'FAN');
-      expect(event.titleText, isNot(contains('中国地震台网')));
-      expect(event.apiTypeLabel, isNot('geonet'));
-    },
-  );
+    expect(event, isNull);
+    expect(
+      QuakeEventAdapter.isUnadaptedSourceKey('unadapted_customfeed'),
+      isTrue,
+    );
+  });
+
+  test('Wolfx jma_tsunami frame is retained as raw input but not adapted', () {
+    final event = QuakeEventAdapter.convert('jma_tsunami', {
+      'type': 'jma_tsunami',
+      'status': 'expired',
+      'report': {
+        'product': 'VTSE41',
+        'title': '津波予報',
+        'eventIds': ['20261106193937'],
+      },
+      'areas': const [],
+      'observations': const [],
+    }, 0);
+
+    expect(event, isNull);
+    expect(
+      QuakeEventAdapter.isUnadaptedSourceKey('unadapted_jma_tsunami'),
+      isTrue,
+    );
+  });
 
   test(
     'FAN GeoNet payload uses its dedicated adapter and UTC+8 wall clock',
@@ -103,8 +119,10 @@ void main() {
       expect(event.apiTypeLabel, 'FAN');
       expect(event.timeZone, 8);
       expect(event.originTime, DateTime(2026, 8, 17, 9, 53, 29));
-      expect(event.hypocenter,
-          QuakeEventAdapter.convertWhews('geonet', geonetPayload())!.hypocenter);
+      expect(
+        event.hypocenter,
+        QuakeEventAdapter.convertWhews('geonet', geonetPayload())!.hypocenter,
+      );
       expect(event.lat, -38.3);
       expect(event.lng, 175.8);
       expect(event.depth, 192);
@@ -158,18 +176,14 @@ void main() {
     expect(background.process(event).type, BackgroundEventResultType.dropped);
   });
 
-  test('unknown WHEWS sources use title field and WHEWS badge', () {
+  test('unknown WHEWS sources are not displayable', () {
     final event = QuakeEventAdapter.convertWhews('newagency', {
       ...geonetPayload(title: 'New Agency 地震信息'),
       'updateTime': '2026-08-17 09:53:40',
     });
 
-    expect(event, isNotNull);
-    expect(event!.source, 'whews_newagency');
-    expect(event.titleText, 'New Agency 地震信息');
-    expect(event.apiTypeLabel, 'WHEWS');
-    expect(event.apiTypeLabel, isNot('newagency'));
-    expect(event.titleText, isNot(contains('中国地震台网')));
+    expect(event, isNull);
+    expect(QuakeEventAdapter.isUnadaptedSourceKey('whews_newagency'), isTrue);
   });
 
   test(
@@ -181,20 +195,9 @@ void main() {
         'shockTime': now.toString(),
         'createTime': now.toString(),
         'updateTime': now.add(const Duration(seconds: 1)).toString(),
-      })!;
+      });
 
-      final processor = BackgroundEventProcessor(
-        sourceInfoMagFilters: const {},
-      );
-      expect(processor.process(event).type, BackgroundEventResultType.dropped);
-
-      final explicitlyEnabled = BackgroundEventProcessor(
-        sourceInfoMagFilters: const {'source_mag_filter_unadapted': 0},
-      );
-      expect(
-        explicitlyEnabled.process(event).type,
-        BackgroundEventResultType.newEvent,
-      );
+      expect(event, isNull);
     },
   );
 
@@ -210,7 +213,7 @@ void main() {
       final unadapted = QuakeEventAdapter.convertWhews('newagency', payload);
       final adapted = QuakeEventAdapter.convertWhews('geonet', payload);
 
-      expect(unadapted!.titleText, payloadTitle);
+      expect(unadapted, isNull);
       expect(adapted!.titleText, payloadTitle);
     },
   );
@@ -322,7 +325,7 @@ void main() {
     expect(whewsGeonet.apiTypeLabel, 'WHEWS');
   });
 
-  test('provider maps unadapted unified events away from CENC', () {
+  test('provider drops unadapted unified events before display', () {
     final provider = QuakeProvider();
     addTearDown(provider.dispose);
     final event = QuakeEventAdapter.convertUnadapted(
@@ -331,6 +334,8 @@ void main() {
       data: geonetPayload(title: '新西兰 GeoNet 地震信息'),
     );
 
+    provider.handleUnifiedEventForTest(event);
+    expect(provider.unifiedEvents, isEmpty);
     expect(provider.unifiedSourceTypeForTest(event), QuakeSourceType.unadapted);
     final mapped = provider.unifiedToQuakeMessageForTest(event);
     expect(mapped.source, QuakeSourceType.unadapted);

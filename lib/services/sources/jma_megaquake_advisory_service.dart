@@ -148,6 +148,89 @@ class JmaMegaquakeAdvisoryService {
     activeNotifier.value = _sortedActive();
   }
 
+  /// Ingests the snapshot returned by Wolfx Open API
+  /// `jma_special_eq.json` or its WebSocket equivalent.
+  ///
+  /// The service keeps the same family, priority and expiry rules as the
+  /// existing JMA feed. The input map is copied and never rewritten.
+  void ingestWolfxSnapshot(Map<String, dynamic> snapshot) {
+    final rawReports = snapshot['reports'];
+    if (rawReports is! List) return;
+    final appendices = snapshot['appendices'] is List
+        ? (snapshot['appendices'] as List)
+              .map((item) => item?.toString() ?? '')
+              .toList(growable: false)
+        : const <String>[];
+    final parsed = <JmaMegaquakeAdvisory>[];
+    for (final raw in rawReports) {
+      if (raw is! Map) continue;
+      final report = Map<String, dynamic>.from(raw);
+      final code = report['product']?.toString().trim() ?? '';
+      final serialCode = report['code']?.toString().trim() ?? '';
+      final serialName =
+          report['label']?.toString().trim() ??
+          report['kind']?.toString().trim() ??
+          '';
+      final headTitle = report['title']?.toString().trim() ?? '';
+      final telegramCode = code;
+      final keyword = jmaMegaquakeKeywordFrom(
+        serialCode: serialCode,
+        serialName: serialName,
+        headTitle: headTitle,
+        telegramCode: telegramCode,
+      );
+      final reportTime = DateTime.tryParse(
+        report['time']?.toString() ?? report['issuedAt']?.toString() ?? '',
+      );
+      final appendixIndex = report['appendix'];
+      final appendix =
+          appendixIndex is num &&
+              appendixIndex.toInt() >= 0 &&
+              appendixIndex.toInt() < appendices.length
+          ? appendices[appendixIndex.toInt()]
+          : '';
+      final bodyText = report['text']?.toString().trim() ?? '';
+      final notice = report['notice']?.toString().trim() ?? '';
+      final next = report['next']?.toString().trim() ?? '';
+      final eventIds = report['eventIds'] is List
+          ? (report['eventIds'] as List)
+                .map((item) => item?.toString().trim() ?? '')
+                .where((item) => item.isNotEmpty)
+                .toList(growable: false)
+          : const <String>[];
+      if (telegramCode.isEmpty && headTitle.isEmpty && serialName.isEmpty) {
+        continue;
+      }
+      final isCancelled = report['status']?.toString().trim() == 'cancelled';
+      parsed.add(
+        JmaMegaquakeAdvisory(
+          id: report['id']?.toString().trim() ?? '',
+          eventId: eventIds.isNotEmpty ? eventIds.first : '',
+          family: telegramCode == 'VYSE60'
+              ? JmaMegaquakeFamily.hokkaidoSanriku
+              : JmaMegaquakeFamily.nankai,
+          telegramCode: telegramCode,
+          keyword: keyword,
+          title: headTitle.isNotEmpty ? headTitle : serialName,
+          headTitle: headTitle,
+          infoType: isCancelled ? '取消' : '',
+          serialName: serialName,
+          serialCode: serialCode,
+          headline: report['title']?.toString().trim() ?? '',
+          bodyText: [
+            bodyText,
+            notice,
+            appendix,
+          ].where((item) => item.isNotEmpty).join('\n\n'),
+          nextAdvisory: next,
+          reportTime: reportTime,
+          expiresAt: reportTime?.add(jmaMegaquakeTtl(keyword)),
+        ),
+      );
+    }
+    ingestExternal(parsed);
+  }
+
   Future<JmaMegaquakeAdvisory?> _fetchDetail(_FeedEntry entry) async {
     final url = entry.link;
     if (url == null) return null;

@@ -605,10 +605,14 @@ class QuakeEventAdapter {
         result = _hinetAquaCmt(source, data, origin);
         break;
       default:
-        result = convertUnadapted(apiName: source, origin: origin, data: data);
+        // A transport frame without a dedicated adapter is diagnostic input,
+        // not a displayable earthquake event. Keep convertUnadapted() for
+        // explicit diagnostics/tests, but never manufacture a normal card
+        // from an unknown source here.
+        result = null;
     }
     if (result == null) return null;
-    if (_isUnadaptedSourceKey(result.source)) {
+    if (isUnadaptedSourceKey(result.source)) {
       return result.copyWith(sourcePayload: payload);
     }
     final label = _apiTypeLabel(source, origin);
@@ -714,7 +718,7 @@ class QuakeEventAdapter {
         return _whewsGenericInfo(
           sourceKey,
           data,
-        ).copyWith(sourcePayload: Map<String, dynamic>.unmodifiable(raw));
+        )?.copyWith(sourcePayload: Map<String, dynamic>.unmodifiable(raw));
     }
   }
 
@@ -1114,18 +1118,13 @@ class QuakeEventAdapter {
     };
   }
 
-  static UnifiedQuakeData _whewsGenericInfo(
+  static UnifiedQuakeData? _whewsGenericInfo(
     String source,
     Map<String, dynamic> data,
   ) {
     final sourceType = whewsCatalogSources['whews_$source'];
     if (sourceType == null) {
-      return convertUnadapted(
-        apiName: source,
-        origin: _originWhews,
-        data: data,
-        sourceKey: 'whews_${_normalizeSourceKey(source)}',
-      );
+      return null;
     }
 
     final depth =
@@ -1255,7 +1254,7 @@ class QuakeEventAdapter {
     return whewsCatalogReportText(data);
   }
 
-  static bool _isUnadaptedSourceKey(String source) {
+  static bool isUnadaptedSourceKey(String source) {
     return source.startsWith('unadapted_') ||
         (source.startsWith('whews_') &&
             !whewsCatalogSources.containsKey(source) &&
@@ -2462,7 +2461,7 @@ class QuakeEventAdapter {
     String source,
     Map<String, dynamic> data,
     int origin,
-  ) => _whewsGenericInfo('geonet', data).copyWith(
+  ) => _whewsGenericInfo('geonet', data)!.copyWith(
     origin: origin,
     sourcePayload: Map<String, dynamic>.unmodifiable(data),
   );

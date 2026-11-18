@@ -31,6 +31,15 @@ void main() {
     expect(get(0, 10, 35, 140), isNull);
     expect(calls, 7);
     expect(get(1, 151, 35, 140), isNull);
+    expect(
+      get(
+        1,
+        IntensityCalculator.maxJmaShindoPredictionDepthKm + 0.1,
+        35,
+        140,
+      ),
+      isNull,
+    );
     expect(get(1, 10, double.nan, 140), isNull);
     expect(calls, 7);
   });

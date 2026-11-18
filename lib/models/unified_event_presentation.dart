@@ -363,12 +363,18 @@ class UnifiedEventPresentation {
       event.originTime,
       event.timeZone,
     );
-    final intensityValue = infoIntensityDisplayValue(event);
+    final gqIntensity = double.tryParse(event.maxIntensity.trim());
+    final intensityValue =
+        event.source == 'globalQuakeEew' &&
+            gqIntensity != null &&
+            gqIntensity == 0
+        ? '0'
+        : infoIntensityDisplayValue(event);
 
     final isForeignVolcano = event.titleText.contains('遠地噴火');
     final intensityLabel = isForeignVolcano
         ? '噴火'
-        : event.source == 'usgsShakeMap'
+        : event.source == 'usgsShakeMap' || event.source == 'globalQuakeEew'
         ? 'MMI'
         : (event.useShindo ? '震度' : '烈度');
     final displayIntensityValue =

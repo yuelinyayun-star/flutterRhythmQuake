@@ -113,51 +113,84 @@ class _JianAuthSettingsState extends State<JianAuthSettings> {
   }
 
   @override
-  Widget build(BuildContext context) => SettingsControlRow(
-    title: 'Jian 个人鉴权',
-    subtitle:
-        _error ??
-        (_busy
-            ? '正在读取'
-            : _saved
-            ? '长期凭证已保存'
-            : '未配置 · 需要鉴权'),
-    leading: _saved ? Icons.verified_user_outlined : Icons.key_outlined,
-    control: Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      alignment: WrapAlignment.end,
-      children: [
-        if (_saved)
-          IconButton(
-            tooltip: '查看长期 Token',
-            onPressed: _busy ? null : _showToken,
-            icon: const Icon(Icons.visibility_outlined),
-            color: Colors.white70,
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      SettingsControlRow(
+        title: 'Jian 个人鉴权',
+        subtitle:
+            _error ??
+            (_busy
+                ? '正在读取'
+                : _saved
+                ? '长期凭证已保存'
+                : '未配置 · 需要鉴权'),
+        leading: _saved ? Icons.verified_user_outlined : Icons.key_outlined,
+        control: Align(
+          alignment: Alignment.centerRight,
+          child: Tooltip(
+            message: '配置凭证',
+            child: SizedBox(
+              width: 160,
+              height: 40,
+              child: SettingsGlassAction(
+                label: _saved ? '更换凭证' : '配置凭证',
+                icon: _saved ? Icons.edit_outlined : Icons.key_outlined,
+                emphasized: true,
+                busy: _busy,
+                onPressed: _busy ? null : _edit,
+              ),
+            ),
           ),
-        if (_saved)
-          IconButton(
-            tooltip: '移除凭证',
-            onPressed: _busy ? null : _clear,
-            icon: const Icon(Icons.delete_outline),
-            color: Colors.white70,
+        ),
+      ),
+      if (_saved) ...[
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 14),
+          child: Divider(height: 1, color: SettingsControlStyle.divider),
+        ),
+        SettingsControlRow(
+          title: '查看长期 Token',
+          leading: Icons.visibility_outlined,
+          control: Align(
+            alignment: Alignment.centerRight,
+            child: Tooltip(
+              message: '查看长期 Token',
+              child: SizedBox(
+                width: 160,
+                child: SettingsGlassAction(
+                  label: '查看',
+                  icon: Icons.visibility_outlined,
+                  onPressed: _busy ? null : _showToken,
+                ),
+              ),
+            ),
           ),
-        Tooltip(
-          message: '配置凭证',
-          child: SizedBox(
-            width: 160,
-            height: 40,
-            child: SettingsGlassAction(
-              label: _saved ? '更换凭证' : '配置凭证',
-              icon: _saved ? Icons.edit_outlined : Icons.key_outlined,
-              emphasized: true,
-              busy: _busy,
-              onPressed: _busy ? null : _edit,
+        ),
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 14),
+          child: Divider(height: 1, color: SettingsControlStyle.divider),
+        ),
+        SettingsControlRow(
+          title: '移除凭证',
+          leading: Icons.delete_outline,
+          control: Align(
+            alignment: Alignment.centerRight,
+            child: Tooltip(
+              message: '移除凭证',
+              child: SizedBox(
+                width: 160,
+                child: SettingsGlassAction(
+                  label: '移除凭证',
+                  icon: Icons.delete_outline,
+                  onPressed: _busy ? null : _clear,
+                ),
+              ),
             ),
           ),
         ),
       ],
-    ),
+    ],
   );
 }
 

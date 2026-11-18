@@ -47,6 +47,7 @@ class WhewsSocketClient {
     NativeWhewsConnection.prepare({'op': 'endpoints', 'url': url}) as List,
   );
   int _endpointIndex = 0;
+  int _defaultEndpointIndex = 0;
   String get activeUrl => _urls[_endpointIndex];
   final void Function(dynamic) onMessage;
   final void Function(WhewsSocketState)? onStateChanged;
@@ -101,6 +102,17 @@ class WhewsSocketClient {
     if (restart) start();
   }
 
+  void setDefaultServerIndex(int index) {
+    if (index < 0 || index >= _urls.length) return;
+    final changed = _defaultEndpointIndex != index || _endpointIndex != index;
+    _defaultEndpointIndex = index;
+    if (!changed || _authorizationRejected) return;
+    final restart = _running;
+    if (restart) stop();
+    _endpointIndex = index;
+    if (restart) start();
+  }
+
   void start() {
     if (_running) return;
     if (_apiToken.isEmpty) {
@@ -111,7 +123,7 @@ class WhewsSocketClient {
     _running = true;
     _authorizationRejected = false;
     _retrySeconds = 3;
-    _endpointIndex = 0;
+    _endpointIndex = _defaultEndpointIndex;
     unawaited(_connect());
   }
 

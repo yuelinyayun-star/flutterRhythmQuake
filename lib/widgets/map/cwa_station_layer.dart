@@ -35,6 +35,12 @@ class _CwaStationLayerState extends State<CwaStationLayer>
   List<double> _gridDecimal = const [0.0, 0.0];
   final Map<String, _CwaGridCell> _heldGridCells = {};
 
+  // Snapshot render values because services can mutate station lists in place.
+  final _symbolSnapshot = <(LatLng, int, bool, StationDot?, Marker?)>[];
+  List<Widget>? _symbolWidgets;
+  double? _symbolZoom;
+  bool? _symbolDisplay0;
+
   static const Color _idleColor = Color(0x804466AA);
 
   @override
@@ -46,13 +52,13 @@ class _CwaStationLayerState extends State<CwaStationLayer>
   @override
   Widget build(BuildContext context) {
     final data = widget.stations;
-    if (data == null || data.isEmpty) return const SizedBox.shrink();
+    if (data == null || data.isEmpty) {
+      _symbolSnapshot.clear();
+      _symbolWidgets = null;
+      return const SizedBox.shrink();
+    }
 
     final zoom = mapStyleZoomOf(context);
-
-    final overview = _overviewFactor(zoom);
-    final idleDotSize = (0.9 + (zoom - 3) * 0.95).clamp(0.9, 7.5);
-    final idleBorderWidth = (0.35 + overview * 0.55).clamp(0.35, 0.9);
 
     final prepared = widget.preparedGrids;
     if (prepared == null) {
@@ -67,71 +73,120 @@ class _CwaStationLayerState extends State<CwaStationLayer>
       widget.onGridCellsChanged,
     );
 
-    final dots = <StationDot>[];
-    final iconMarkers = <Marker>[];
+    return Stack(
+      children: [
+        if (showGrids)
+          PolygonLayer(polygons: _buildGridPolygons(widget.blinkOn)),
+        ..._stationSymbols(zoom),
+      ],
+    );
+  }
 
-    for (var station in data) {
-      final intensity = station.currentIntensity;
+  List<Widget> _stationSymbols(double zoom) {
+    final data = widget.stations!;
+    final snapshot = _symbolSnapshot;
+    final reuseStyle =
+        _symbolZoom == zoom && _symbolDisplay0 == widget.displayShindo0;
+    final rebuild =
+        !reuseStyle || _symbolWidgets == null || snapshot.length != data.length;
+    final overview = _overviewFactor(zoom);
+    final idleDotSize = (0.9 + (zoom - 3) * 0.95).clamp(0.9, 7.5);
+    final idleBorderWidth = (0.35 + overview * 0.55).clamp(0.35, 0.9);
+    List<StationDot>? dots = rebuild ? [] : null;
+    List<Marker>? iconMarkers = rebuild ? [] : null;
+
+    for (var i = 0; i < data.length; i++) {
+      final station = data[i];
+      final coordinate = station.coordinate;
       final level =
           station.preparedGridLevel ??
-          CwaStationService.gridLevelFromInstShindo(intensity);
+          CwaStationService.gridLevelFromInstShindo(station.currentIntensity);
+      final hasAlert = station.hasAlert;
+      final cached = i < snapshot.length ? snapshot[i] : null;
+      if (reuseStyle &&
+          cached != null &&
+          cached.$1 == coordinate &&
+          cached.$2 == level &&
+          cached.$3 == hasAlert) {
+        if (cached.$4 case final dot?) dots?.add(dot);
+        if (cached.$5 case final marker?) iconMarkers?.add(marker);
+        continue;
+      }
+      // Allocate output lists only at the first change. Earlier entries are
+      // already checked, and their immutable symbols can be appended directly.
+      if (dots == null) {
+        dots = [];
+        iconMarkers = [];
+        for (var j = 0; j < i; j++) {
+          final earlier = snapshot[j];
+          if (earlier.$4 case final dot?) dots.add(dot);
+          if (earlier.$5 case final marker?) iconMarkers.add(marker);
+        }
+      }
       // Keep the pre-change KA colours and dot styling. Source triggering
       // only selects whether this station can enter the numeric-marker path.
       final showMarker =
-          station.hasAlert &&
+          hasAlert &&
           KaShindoMarkerStyle.shouldShowMarker(
             level: level,
             zoom: zoom,
             displayShindo0: widget.displayShindo0,
           );
 
+      StationDot? dot;
+      Marker? marker;
+
       if (showMarker) {
-        iconMarkers.add(
-          Marker(
-            width: _getSize(level),
-            height: _getSize(level),
-            point: station.coordinate,
-            child: _CwaIntensityMarker(
-              color: KaShindoMarkerStyle.colorForLevel(level),
-              label: KaShindoMarkerStyle.labelForLevel(level),
-              level: level,
-            ),
+        marker = Marker(
+          width: _getSize(level),
+          height: _getSize(level),
+          point: coordinate,
+          child: _CwaIntensityMarker(
+            color: KaShindoMarkerStyle.colorForLevel(level),
+            label: KaShindoMarkerStyle.labelForLevel(level),
+            level: level,
           ),
         );
       } else if (level >= 0) {
         final dotColor = KaShindoMarkerStyle.colorForLevel(level);
-        dots.add(
-          StationDot(
-            coordinate: station.coordinate,
-            color: dotColor,
-            radius: idleDotSize / 2,
-            fillOpacity: 0.14 + overview * 0.22,
-            borderOpacity: 0.45 + overview * 0.45,
-            borderWidth: idleBorderWidth,
-          ),
+        dot = StationDot(
+          coordinate: coordinate,
+          color: dotColor,
+          radius: idleDotSize / 2,
+          fillOpacity: 0.14 + overview * 0.22,
+          borderOpacity: 0.45 + overview * 0.45,
+          borderWidth: idleBorderWidth,
         );
       } else {
-        dots.add(
-          StationDot(
-            coordinate: station.coordinate,
-            color: _idleColor,
-            radius: idleDotSize / 2,
-            fillOpacity: 0.08 + overview * 0.10,
-            borderOpacity: 0.22 + overview * 0.38,
-            borderWidth: idleBorderWidth,
-          ),
+        dot = StationDot(
+          coordinate: coordinate,
+          color: _idleColor,
+          radius: idleDotSize / 2,
+          fillOpacity: 0.08 + overview * 0.10,
+          borderOpacity: 0.22 + overview * 0.38,
+          borderWidth: idleBorderWidth,
         );
       }
+      final next = (coordinate, level, hasAlert, dot, marker);
+      if (i < snapshot.length) {
+        snapshot[i] = next;
+      } else {
+        snapshot.add(next);
+      }
+      if (dot != null) dots.add(dot);
+      if (marker != null) iconMarkers!.add(marker);
     }
 
-    return Stack(
-      children: [
-        if (showGrids)
-          PolygonLayer(polygons: _buildGridPolygons(widget.blinkOn)),
-        StationDotPainterLayer(dots: dots, sizeWithCameraZoom: true),
-        if (iconMarkers.isNotEmpty) MarkerLayer(markers: iconMarkers),
-      ],
-    );
+    if (dots == null) return _symbolWidgets!;
+    if (snapshot.length > data.length) {
+      snapshot.removeRange(data.length, snapshot.length);
+    }
+    _symbolZoom = zoom;
+    _symbolDisplay0 = widget.displayShindo0;
+    return _symbolWidgets = [
+      StationDotPainterLayer(dots: dots, sizeWithCameraZoom: true),
+      if (iconMarkers!.isNotEmpty) MarkerLayer(markers: iconMarkers),
+    ];
   }
 
   void _syncHeldGridCells(List<CwaStation> alertStations) {

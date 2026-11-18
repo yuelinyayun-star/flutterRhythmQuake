@@ -172,6 +172,32 @@ void main() {
     },
   );
 
+  test('GlobalQuake presentation keeps its MMI scale and zero level', () {
+    UnifiedQuakeData event(String intensity) => UnifiedQuakeData(
+      source: 'globalQuakeEew',
+      origin: 3,
+      eventId: 'gq-mmi-test',
+      isEew: true,
+      timeZone: 8,
+      titleText: 'GlobalQuake 地震预警',
+      reportNumText: '第1报',
+      useShindo: false,
+      maxIntensity: intensity,
+      className: 'gray',
+      hypocenter: '测试地区',
+      magnitude: 4.5,
+      depth: 300,
+    );
+
+    final mmi = UnifiedEventPresentation.fromEvent(event('3'));
+    expect(mmi.intensityLabel, 'MMI');
+    expect(mmi.intensityValue, 'III');
+    expect(mmi.notificationBody, contains('MMI III'));
+
+    final belowMmi = UnifiedEventPresentation.fromEvent(event('0'));
+    expect(belowMmi.intensityLabel, 'MMI');
+    expect(belowMmi.intensityValue, '0');
+  });
   test('compact volcano text omits the repeated ashfall time range', () {
     final startTime = DateTime.utc(2026, 8, 8, 15);
     final event = UnifiedQuakeData(
