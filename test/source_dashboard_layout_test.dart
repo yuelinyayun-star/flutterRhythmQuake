@@ -104,6 +104,10 @@ void main() {
     provider.statuses[rhythm.name] = SourceStatus.error;
     stationEnabled.value = true;
     stationSource.value = 'pews';
+    Finder stationLabel(String name) => find.textContaining(
+      '$name:',
+      findRichText: true,
+    );
 
     await tester.pumpWidget(
       ChangeNotifierProvider<QuakeProvider>.value(
@@ -113,7 +117,7 @@ void main() {
         ),
       ),
     );
-    expect(find.text('Rhythm:'), findsOneWidget);
+    expect(stationLabel('Rhythm'), findsOneWidget);
     expect(
       tester.widget<Text>(find.text(direct.name)).style?.color,
       const Color(0xFF008000),
@@ -127,8 +131,8 @@ void main() {
     manager.setSourceEnabled(rhythm.name, false);
     provider.sourceStatusListenable.value++;
     await tester.pump();
-    expect(find.text('Rhythm:'), findsNothing);
-    expect(find.text('KMA-PEWS:'), findsOneWidget);
+    expect(stationLabel('Rhythm'), findsNothing);
+    expect(stationLabel('KMA-PEWS'), findsOneWidget);
     expect(find.text(rhythm.name), findsNothing);
     expect(find.text(direct.name), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
