@@ -363,6 +363,33 @@ void main() {
       expect(provider.jmaTsunamiListenable.value, isEmpty);
     },
   );
+  test('resume removes an expired original forecast from the left list', () async {
+    final warning = TsunamiMessage.fromMap(official('02'));
+    final forecast = TsunamiMessage.fromMap(official('13'));
+    final deadline = forecast.displayUntilUtc!;
+    var now = DateTime.parse(forecast.reportTime);
+    final provider = QuakeProvider(
+      startCatalogServices: false,
+      nativeUnifiedEvents: false,
+      displayNow: () => now,
+    );
+    addTearDown(provider.dispose);
+    await provider.eewHistoryReadyForTest;
+    provider.handleTsunamiEventForTest(warning);
+    provider.handleTsunamiEventForTest(forecast);
+    await provider.jmaTsunamiListReadyForTest;
+    expect(provider.jmaTsunamiListenable.value, isNotEmpty);
+
+    now = deadline.subtract(const Duration(seconds: 1));
+    provider.checkLiveEventExpiry();
+    expect(provider.jmaTsunamiListenable.value, isNotEmpty);
+
+    now = deadline;
+    provider.checkLiveEventExpiry();
+    await provider.jmaTsunamiListReadyForTest;
+    expect(provider.jmaTsunamiListenable.value, isEmpty);
+    expect(provider.jmaTsunami, same(forecast));
+  });
   for (final width in [220.0, 390.0, 420.0]) {
     for (final textScale in [1.0, 1.6, 2.0]) {
       testWidgets(

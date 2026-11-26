@@ -192,7 +192,9 @@ void main() {
     'late older product cannot replace a newer cached grid or selection',
     () async {
       var detail = dyfiDetail();
+      var elapsedUs = 0;
       final service = UsgsDyfiService(
+        elapsedUs: () => elapsedUs,
         client: MockClient(
           (r) async => r.url.path.endsWith('.geojson')
               ? dyfiGridResponse(r.url)
@@ -207,6 +209,14 @@ void main() {
       await service.select(dyfiEvent(detail));
       expect(service.manualFrame?.product.responses, 210);
       expect(service.automaticFrame?.product.responses, 210);
+
+      elapsedUs = const Duration(minutes: 2).inMicroseconds - 1;
+      service.recheckAutomaticExpiry();
+      expect(service.automaticFrame?.product.responses, 210);
+      elapsedUs++;
+      service.recheckAutomaticExpiry();
+      expect(service.automaticFrame, isNull);
+      expect(service.frame?.product.responses, 210);
     },
   );
 

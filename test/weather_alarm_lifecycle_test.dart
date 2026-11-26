@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutterrhythmquake/models/weather_alarm.dart';
 import 'package:flutterrhythmquake/providers/quake_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -52,6 +53,46 @@ void main() {
     provider.acceptRemoteWeatherAlarmForTest(expired);
 
     expect(provider.weatherAlarm?.id, 'weather-current');
+  });
+
+  testWidgets('a visible window rechecks the held weather alarm deadline', (
+    tester,
+  ) async {
+    var now = DateTime.utc(2026, 11, 1);
+    final provider = QuakeProvider(
+      startCatalogServices: false,
+      displayNow: () => now,
+    );
+    final listener = AppLifecycleListener(
+      onShow: provider.checkLiveEventExpiry,
+    );
+    void lifecycle(AppLifecycleState state) =>
+        tester.binding.handleAppLifecycleStateChanged(state);
+
+    try {
+      final alarm = _alarm(id: 'held', issueUtc: now);
+      provider.acceptRemoteWeatherAlarmForTest(alarm);
+
+      lifecycle(AppLifecycleState.resumed);
+      lifecycle(AppLifecycleState.inactive);
+      lifecycle(AppLifecycleState.hidden);
+      lifecycle(AppLifecycleState.paused);
+      now = alarm.validUntilUtc.subtract(const Duration(seconds: 1));
+      lifecycle(AppLifecycleState.hidden);
+      lifecycle(AppLifecycleState.inactive);
+      expect(provider.weatherAlarm, same(alarm));
+
+      lifecycle(AppLifecycleState.hidden);
+      lifecycle(AppLifecycleState.paused);
+      now = alarm.validUntilUtc;
+      lifecycle(AppLifecycleState.hidden);
+      lifecycle(AppLifecycleState.inactive);
+      expect(provider.weatherAlarm, isNull);
+      lifecycle(AppLifecycleState.resumed);
+    } finally {
+      listener.dispose();
+      provider.dispose();
+    }
   });
 }
 

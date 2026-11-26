@@ -149,6 +149,10 @@ class EqlistManager {
 
   /// 任意列表更新时的回调
   void Function()? onAnyUpdated;
+
+  /// For each summary, the reported map payload index selected by Rust.
+  List<int?> Function(List<QuakeMessage> summaries, List<QuakeMessage> reports)?
+      onJmaObservedMapBindings;
   /// Native policy returns references to the original rows for UI binding.
   ({List<QuakeMessage> rows, int notifications}) Function(
     String bucket, List<QuakeMessage> current, QuakeMessage incoming, bool replayOnly
@@ -460,11 +464,87 @@ class EqlistManager {
 
   void updateJmaList(List<QuakeMessage> items) {
     jma.noteExternalUpdate();
+    final rows = List<QuakeMessage>.of(items);
+    _trim(rows);
+    // A summary refresh owns the rows and their ordering. Its arrival must not
+    // discard the observed regions already received for the same event.
+    final summaryIndices = [
+      for (var index = 0; index < rows.length; index++)
+        if (rows[index].isInfoEvent &&
+            !rows[index].isCanceled &&
+            rows[index].informationMap == null &&
+            _isJmaHistorySource(rows[index].source))
+          index,
+    ];
+    if (summaryIndices.isNotEmpty) {
+      final reports = _jmaList.where((row) {
+        final data = row.informationMap;
+        return row.isInfoEvent &&
+            !row.isCanceled &&
+            _isJmaHistorySource(row.source) &&
+            data != null &&
+            data.lpgm == null &&
+            data.warnArea.isNotEmpty;
+      }).toList(growable: false);
+      if (reports.isNotEmpty) {
+        final summaries = [for (final index in summaryIndices) rows[index]];
+        final bindings =
+            onJmaObservedMapBindings?.call(summaries, reports) ??
+            [
+              for (final summary in summaries)
+                _portableJmaObservedMapIndex(summary, reports),
+            ];
+        for (var index = 0; index < summaryIndices.length; index++) {
+          final reportIndex = bindings[index];
+          if (reportIndex == null) continue;
+          final rowIndex = summaryIndices[index];
+          rows[rowIndex] = rows[rowIndex].copyWith(
+            informationMap: reports[reportIndex].informationMap,
+          );
+        }
+      }
+    }
     _jmaList
       ..clear()
-      ..addAll(items);
-    _trim(_jmaList);
+      ..addAll(rows);
     onAnyUpdated?.call();
+  }
+
+  int? _portableJmaObservedMapIndex(
+    QuakeMessage summary,
+    List<QuakeMessage> reports,
+  ) {
+    final id = summary.eventId;
+    if (id.isNotEmpty) {
+      final exact = reports.indexWhere((report) => report.eventId == id);
+      if (exact >= 0) return exact;
+    }
+    final officialId = RegExp(r'^[0-9]{14}$');
+    final summaryHasOfficialId = officialId.hasMatch(id);
+    int second(QuakeMessage row) =>
+        _toComparableUtc(row).millisecondsSinceEpoch ~/
+        Duration.millisecondsPerSecond;
+    final origin = second(summary);
+    int? match;
+    for (final (index, report) in reports.indexed) {
+      if ((summaryHasOfficialId && officialId.hasMatch(report.eventId)) ||
+          origin != second(report) ||
+          summary.location.isEmpty ||
+          summary.location != report.location ||
+          !summary.latitude.isFinite ||
+          !summary.longitude.isFinite ||
+          !summary.magnitude.isFinite ||
+          !summary.depth.isFinite ||
+          summary.latitude != report.latitude ||
+          summary.longitude != report.longitude ||
+          summary.magnitude != report.magnitude ||
+          summary.depth != report.depth) {
+        continue;
+      }
+      if (match != null) return null;
+      match = index;
+    }
+    return match;
   }
 
   /// 更新USGS列表

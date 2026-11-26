@@ -77,6 +77,7 @@ pub(super) struct Frame {
     pub entries: Vec<[i64; 4]>,
     pub grids: Vec<f64>,
     pub detection_signature: String,
+    pub detector_name: &'static str,
     // Ready OBS station index, intensity and strong flag; no UI selection.
     pub automation: Vec<i32>,
     pub data_changed: bool,
@@ -278,6 +279,7 @@ impl Frame {
         detection.push(entry_rows);
         detection.push(arena.string(&self.detection_signature));
         detection.push(arena.doubles(&self.grids));
+        detection.push(arena.string(self.detector_name));
         let detection = arena.array(detection);
         let signals = arena.ints(signals);
         let changed = arena.boolean(self.data_changed);

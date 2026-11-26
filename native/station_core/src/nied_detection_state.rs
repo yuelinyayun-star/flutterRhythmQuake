@@ -1,6 +1,6 @@
-//! NIED display detection owner: KA association, 10.5 s holds, expiry,
+//! NIED display detection owner: SREV permissions, disconnect expiry,
 //! grid preparation, notification decisions and immutable UI projections.
-use crate::{ka_detector::Detector, station_json::pack_value};
+use crate::{ka_detector::Detector, srev_nied::SrevNied, station_json::pack_value};
 use serde_json::{json, Value};
 use std::fmt::Write as _;
 use std::{
@@ -30,9 +30,11 @@ struct View {
     active: bool,
     state: i64,
     reason: String,
+    trigger_ms: i64,
 }
 struct State {
-    detector: Detector,
+    detector: Option<Detector>,
+    srev: Option<SrevNied>,
     xy: Vec<f64>,
     codes: Vec<String>,
     ids: Vec<i64>,
@@ -54,6 +56,7 @@ struct State {
     signature: Option<Value>,
     layer: String,
     pending_layer: Option<String>,
+    pending_sources: Option<Value>,
     pending: Option<i64>,
     queue: VecDeque<Vec<u8>>,
     closed: bool,
@@ -87,10 +90,12 @@ impl State {
                 active: r.1,
                 state: r.2,
                 reason: r.3.clone(),
+                trigger_ms: 0,
             })
             .collect::<Vec<_>>();
         Self {
-            detector: crate::nied_topology::display_detector(&xy),
+            detector: Some(crate::nied_topology::display_detector(&xy)),
+            srev: None,
             xy,
             ids: rows.iter().map(|r| r.4).collect(),
             codes: rows.into_iter().map(|r| r.0).collect(),
@@ -112,16 +117,22 @@ impl State {
             signature: None,
             layer: String::new(),
             pending_layer: None,
+            pending_sources: None,
             pending: None,
             queue: VecDeque::new(),
             closed: false,
         }
+    }
+    fn enable_srev(&mut self, names: &[String]) {
+        self.srev = Some(SrevNied::new(&self.xy, names));
+        self.detector = None;
     }
     fn expire(&mut self) -> bool {
         let mut expired = false;
         for i in 0..self.view.len() {
             if self.until[i].is_some_and(|t| t <= self.clock) {
                 self.view[i].active = false;
+                if self.srev.is_some(){self.view[i].state=0;self.view[i].reason.clear();self.view[i].trigger_ms=0;}
                 self.until[i] = None;
                 expired = true;
             }
@@ -143,7 +154,8 @@ impl State {
         let mut rows = vec![];
         for (i, (value, previous)) in self.view.iter().zip(&mut self.sent).enumerate() {
             if value != previous {
-                rows.push(json!([i, value.active, value.state, value.reason]));
+                if self.srev.is_some(){rows.push(json!([i, value.active, value.state, value.reason,value.trigger_ms]));}
+                else{rows.push(json!([i, value.active, value.state, value.reason]));}
                 *previous = value.clone();
             }
         }
@@ -152,9 +164,11 @@ impl State {
     fn emit(&mut self, actions: Vec<Value>, projection: Option<Value>) {
         let changes = self.changes();
         let layer = self.pending_layer.take();
-        if !changes.is_empty() || !actions.is_empty() || projection.is_some() || layer.is_some() {
-            self.queue
-                .push_back(pack_value(&json!([changes, actions, projection, layer])));
+        let sources=self.pending_sources.take();
+        if !changes.is_empty() || !actions.is_empty() || projection.is_some() || layer.is_some() || sources.is_some() {
+            let mut result=json!([changes, actions, projection, layer]);
+            if let Some(sources)=sources {result.as_array_mut().unwrap().push(sources);}
+            self.queue.push_back(pack_value(&result));
         }
     }
     fn advance(&mut self) {
@@ -200,8 +214,27 @@ impl State {
                 self.source_time = Some((row[5], row[6] != 0));
             }
         }
+        if let Some(srev) = &mut self.srev {
+            if let Some((time,_))=self.source_time {
+                srev.solve_enabled=rows.first().is_some() && rows[7]&4!=0;
+                let picks=srev.process(rows,time)?;
+                let strongest=picks.iter().enumerate().filter(|(_,p)|p.active).max_by_key(|(i,_)|self.info[i*6]).map(|(i,_)|i);
+                if !self.has_grid {
+                    if let Some(i)=strongest {
+                        for axis in 0..2 {self.decimal[axis]=((self.xy[i*2+axis]+180.).rem_euclid(1.)*10.).round()/10.;}
+                    }
+                }
+                for (i,p) in picks.iter().enumerate(){
+                    let v=shindo(self.info[i*6]);
+                    self.view[i]=View{active:p.active,state:if !p.active{0}else if v>=4{6}else if v>=1{5}else{1},
+                        reason:if p.active{"srev-permission".into()}else{String::new()},trigger_ms:p.trigger_ms};
+                    self.until[i]=if p.active{Some(self.clock.saturating_add(10500))}else{None};
+                }
+                if srev.solve_enabled{self.pending_sources=Some(srev.source_rows());}
+            }
+        } else {
         let strongest =
-            self.detector
+            self.detector.as_mut().unwrap()
                 .detect_policy(&self.info, sensitivity, self.has_grid, true, 0)?;
         if strongest >= 0 {
             let i = strongest as usize;
@@ -210,7 +243,7 @@ impl State {
                 self.decimal[axis] = (fraction * 10.0).round() / 10.0;
             }
         }
-        for &index in &self.detector.active {
+        for &index in &self.detector.as_ref().unwrap().active {
             let i = index as usize;
             let v = shindo(self.info[i * 6]);
             self.view[i] = View {
@@ -225,8 +258,10 @@ impl State {
                     0
                 },
                 reason: "kanameishi-chain".into(),
+                trigger_ms: 0,
             };
             self.until[i] = Some(self.clock.saturating_add(10500));
+        }
         }
         self.project();
         FRAMES.fetch_add(1, Ordering::Relaxed);
@@ -427,6 +462,7 @@ impl State {
         self.signature = None;
         self.layer.clear();
         self.pending_layer = None;
+        self.pending_sources = None;
         self.pending = None;
         self.queue.clear();
         if clear {
@@ -435,10 +471,12 @@ impl State {
                     active: false,
                     state: 0,
                     reason: String::new(),
+                    trigger_ms: 0,
                 };
                 self.until[i] = None;
             }
         }
+        if let Some(d)=&mut self.srev{d.reset();}
         self.sent = self.view.clone();
     }
 }
@@ -513,9 +551,11 @@ pub unsafe extern "C" fn rq_nied_detection_create(
     }
     std::panic::catch_unwind(|| {
         let rows = unsafe { std::slice::from_raw_parts(catalogue, len) };
-        let Ok(rows) = serde_json::from_slice::<Vec<(String, bool, i64, String, i64)>>(rows) else {
-            return ptr::null_mut();
-        };
+        let (rows,names) = if let Ok(v)=serde_json::from_slice::<Vec<(String,bool,i64,String,i64,String)>>(rows){
+            let names=v.iter().map(|r|r.5.clone()).collect::<Vec<_>>();
+            (v.into_iter().map(|(a,b,c,d,e,_)|(a,b,c,d,e)).collect::<Vec<_>>(),Some(names))
+        }else if let Ok(v)=serde_json::from_slice::<Vec<(String,bool,i64,String,i64)>>(rows){(v,None)}
+        else{return ptr::null_mut()};
         if rows.len() != count {
             return ptr::null_mut();
         }
@@ -527,8 +567,10 @@ pub unsafe extern "C" fn rq_nied_detection_create(
         if xy.iter().any(|v| !v.is_finite()) {
             return ptr::null_mut();
         }
+        let mut state=State::new(xy,rows);
+        if let Some(names)=names{state.enable_srev(&names);}
         let shared = Arc::new(Shared {
-            state: Mutex::new(State::new(xy, rows)),
+            state: Mutex::new(state),
             wake: Condvar::new(),
             start: Instant::now(),
             manual: manual != 0,

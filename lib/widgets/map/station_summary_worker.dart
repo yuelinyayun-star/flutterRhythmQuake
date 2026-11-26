@@ -236,8 +236,8 @@ String _detectSignature(NiedDetectSummary? detect) {
       final name = station.prefecture.isEmpty
           ? station.code
           : station.prefecture;
-      if (station.jmaShindo > (prefs[name] ?? -1)) {
-        prefs[name] = station.jmaShindo;
+      if (station.jmaIndex > (prefs[name] ?? -1)) {
+        prefs[name] = station.jmaIndex;
       }
     }
   }

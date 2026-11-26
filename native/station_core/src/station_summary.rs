@@ -40,7 +40,7 @@ fn jma(value: f64) -> i32 {
         .position(|&n| value < n)
         .unwrap_or(9) as i32
 }
-fn ka_number(level: i32) -> i32 {
+fn ka_jma_index(level: i32) -> i32 {
     match level {
         i32::MIN..=-1 => -1,
         0..=7 => 0,
@@ -48,9 +48,11 @@ fn ka_number(level: i32) -> i32 {
         10..=11 => 2,
         12..=13 => 3,
         14..=15 => 4,
-        16..=17 => 5,
-        18..=19 => 6,
-        _ => 7,
+        16 => 5,
+        17 => 6,
+        18 => 7,
+        19 => 8,
+        _ => 9,
     }
 }
 fn dart_trim(value: &[u16]) -> &[u16] {
@@ -230,7 +232,7 @@ impl Summary {
                     });
                 }
             }
-            let level = ka_number(cell[2] as i32);
+            let level = ka_jma_index(cell[2] as i32);
             for name in names {
                 let name = dart_trim(name);
                 if !name.is_empty() {
@@ -542,6 +544,13 @@ mod tests {
         assert_eq!(double_order(0., -0.), Cmp::Greater);
     }
     #[test]
+    fn sidebar_preserves_all_jma_ranks() {
+        let expected = [-1,0,0,0,0,0,0,0,0,1,1,2,2,3,3,4,4,5,6,7,8,9];
+        for (level, rank) in (-1..=20).zip(expected) {
+            assert_eq!(ka_jma_index(level), rank, "KA level {level}");
+        }
+    }
+    #[test]
     fn areas_cell_members_nearest_trim_and_order() {
         let mut s = Summary::default();
         s.cells = vec![[35., 140., 16.], [36., 140., 18.]];
@@ -551,6 +560,6 @@ mod tests {
             vec![(vec![65], vec![0xfeff, 66, 32]), (vec![67], vec![])],
         );
         s.refresh_areas();
-        assert_eq!(s.areas, vec![(vec![67], 6), (vec![66], 5)]);
+        assert_eq!(s.areas, vec![(vec![67], 7), (vec![66], 5)]);
     }
 }

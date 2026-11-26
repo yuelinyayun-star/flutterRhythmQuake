@@ -1,4 +1,6 @@
 import 'package:flutter/foundation.dart';
+import '../core/background_api.dart';
+import '../core/background_station_connection.dart';
 import '../core/mobile_weather_layers.dart';
 
 /// Only explicitly supported station settings can bypass a full source reload.
@@ -9,7 +11,9 @@ class BackgroundSourceReloadPlan {
     Map<String, Object> after,
   ) {
     for (final key in {...before.keys, ...after.keys}) {
-      if (runtimeKeys.contains(key)) continue;
+      if (runtimeKeys.contains(key) || visibilityConnectionKeys.contains(key)) {
+        continue;
+      }
       final left = before[key];
       final right = after[key];
       final equal = left is List && right is List
@@ -27,6 +31,17 @@ class BackgroundSourceReloadPlan {
 
   bool requiresFullReload = false;
   final Set<String> stations = {};
+
+  static final stationConnectionKeys = {
+    for (final station in BackgroundStationConnection.values)
+      station.preferenceKey,
+  };
+
+  static final visibilityConnectionKeys = {
+    ...stationConnectionKeys,
+    BackgroundApi.automaticPreferenceKey,
+    BackgroundApi.manualSelectionPreferenceKey,
+  };
 
   static const runtimeKeys = {
     // Owned by the dedicated weather-map sync channel, not EEW reloads.

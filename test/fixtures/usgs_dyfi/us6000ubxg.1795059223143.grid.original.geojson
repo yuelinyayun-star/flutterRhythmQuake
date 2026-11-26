@@ -1,0 +1,38 @@
+{
+   "type" : "FeatureCollection",
+   "features" : [
+      {
+         "geometry" : {
+            "type" : "Polygon",
+            "coordinates" : [
+               [
+                  [
+                     32.82009,
+                     -2.53321
+                  ],
+                  [
+                     32.91004,
+                     -2.53322
+                  ],
+                  [
+                     32.91005,
+                     -2.44275
+                  ],
+                  [
+                     32.8201,
+                     -2.44274
+                  ]
+               ]
+            ]
+         },
+         "type" : "Feature",
+         "properties" : {
+            "cdi" : 2,
+            "stddev" : 0.33,
+            "nresp" : 1,
+            "name" : "UTM:(36M 048 972 10000)<br>Mwanza",
+            "dist" : 418
+         }
+      }
+   ]
+}

@@ -17,6 +17,10 @@ Uri webSourceUri(Uri upstream, Uri appBase) {
         when path.startsWith('/monitor/data/data/map_img/') =>
       '/api/lpgm-image/${path.substring('/monitor/data/data/map_img/'.length)}',
     'd1.weather.com.cn' => '/api/china-weather-media$path',
+    'img.weather.com.cn'
+        when RegExp(r'^/newwebgis/sk/(?:[01]\d|2[0-3])/p_r\.json$')
+            .hasMatch(path) =>
+      '/api/china-weather-stations/${path.substring('/newwebgis/sk/'.length)}',
     'd4.weather.com.cn' when path == '/geong/v1/api' =>
       '/api/china-weather-location$path',
     'weather.cma.cn' when path.startsWith('/api/') =>

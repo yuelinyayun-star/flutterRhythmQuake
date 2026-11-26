@@ -34,6 +34,7 @@ pub struct Engine {
     bucket_policy: crate::unified_catalog_bucket::BucketPolicy,
     early_rows: Vec<Value>,
     lpgm_display: crate::jma_lpgm_display::LpgmDisplay,
+    product_revision: u64,
 }
 impl Engine {
     fn remember_ignored(&mut self, key: String, number: i64) {
@@ -103,37 +104,40 @@ impl Engine {
                 groups.push((j, id, first, rows.clone()));
             }
         }
-        self.history = groups.iter().map(|v| v.3.clone()).collect();
-        self.history_ids = groups.iter().map(|v| v.1.clone()).collect();
-        self.history_first = groups.iter().map(|v| v.2).collect();
+        let mut history_tokens = Vec::with_capacity(groups.len());
+        self.history.clear();
+        self.history_ids.clear();
+        self.history_first.clear();
+        for (input_index, id, first, rows) in groups {
+            history_tokens.push(json!([
+                input_index,
+                rows.iter().map(|e| i(e, "$token")).collect::<Vec<_>>()
+            ]));
+            self.history.push(rows);
+            self.history_ids.push(id);
+            self.history_first.push(first);
+        }
         for j in (0..self.history.len()).rev() {
-            let first = self.history[j][0].clone();
-            let mut anchor = first.clone();
-            for k in 0..self.active.len() {
-                let active = self.active[k].clone();
-                if self.identity.same_eew(&active, &first) {
+            let first = &self.history[j][0];
+            let mut anchor = first;
+            for active in &self.active {
+                if self.identity.same_eew(active, first) {
                     anchor = active;
                     break;
                 }
             }
             for report in &self.history[j] {
-                self.identity.remember_alias(&anchor, report, true);
+                self.identity.remember_alias(anchor, report, true);
             }
-            if b(&first, "isCanceled") {
+            if b(first, "isCanceled") {
                 self.canceled.put(
-                    self.key(&first),
-                    absolute(s(&first, "arrivedAt"), self.offset).unwrap_or(self.history_first[j]),
+                    self.key(first),
+                    absolute(s(first, "arrivedAt"), self.offset).unwrap_or(self.history_first[j]),
                 );
             }
         }
         self.canceled.prune(self.now, 24 * 3600 * SECOND, 200);
-        self.actions.push(json!([
-            "startupHistory",
-            groups
-                .iter()
-                .map(|v| json!([v.0, v.3.iter().map(|e| i(e, "$token")).collect::<Vec<_>>()]))
-                .collect::<Vec<_>>()
-        ]));
+        self.actions.push(json!(["startupHistory", history_tokens]));
         self.retain_history();
         self.action("persistSeen", &Value::Null);
     }
@@ -247,31 +251,20 @@ impl Engine {
         }
     }
     fn same_eew_index(&mut self, e: &Value) -> Option<usize> {
-        for j in 0..self.active.len() {
-            let old = self.active[j].clone();
-            if b(&old, "isEew") && self.identity.same_eew(&old, e) {
-                return Some(j);
-            }
-        }
-        None
+        self.active
+            .iter()
+            .position(|old| b(old, "isEew") && self.identity.same_eew(old, e))
     }
     fn add_history(&mut self, e: Value) {
-        let mut index = None;
-        for j in 0..self.history.len() {
-            if self.history[j].is_empty() {
-                continue;
-            }
-            let old = self.history[j][0].clone();
-            if (s(&old, "source") == s(&e, "source") && self.history_ids[j] == s(&e, "eventId"))
-                || self.identity.same_eew(&old, &e)
-            {
-                index = Some(j);
-                break;
-            }
-        }
-        let old_index = index;
-        if let Some(j) = index {
-            let records = &mut self.history[j];
+        let old_index = self.history.iter().enumerate().position(|(j, group)| {
+            group.first().is_some_and(|old| {
+                (s(old, "source") == s(&e, "source") && self.history_ids[j] == s(&e, "eventId"))
+                    || self.identity.same_eew(old, &e)
+            })
+        });
+        let index = old_index.unwrap_or(0);
+        if old_index.is_some() {
+            let records = &mut self.history[index];
             let duplicate = records.iter().position(|v| {
                 if s(v, "source") == "iclEew" && s(&e, "source") == "iclEew" {
                     report_sort(v) == report_sort(&e)
@@ -281,10 +274,10 @@ impl Engine {
             });
             if let Some(k) = duplicate {
                 if s(&e, "source") != "iclEew" {
-                    records[k] = e.clone();
+                    records[k] = e;
                 }
             } else {
-                records.insert(0, e.clone());
+                records.insert(0, e);
             }
             records.sort_by(|a, bv| {
                 b(bv, "isCanceled")
@@ -292,15 +285,13 @@ impl Engine {
                     .then_with(|| report_sort(bv).cmp(&report_sort(a)))
             });
         } else {
-            self.history.insert(0, vec![e.clone()]);
             self.history_first.insert(
                 0,
                 absolute(s(&e, "arrivedAt"), self.offset).unwrap_or(self.now),
             );
             self.history_ids.insert(0, s(&e, "eventId").into());
-            index = Some(0);
+            self.history.insert(0, vec![e]);
         }
-        let index = index.unwrap();
         self.actions.push(json!([
             "history",
             old_index,
@@ -331,7 +322,11 @@ impl Engine {
             order.len() == self.history.len() && order.iter().enumerate().all(|(i, &j)| i == j);
         if !unchanged {
             self.actions.push(json!(["historyOrder", order]));
-            self.history = order.iter().map(|&j| self.history[j].clone()).collect();
+            let mut history = std::mem::take(&mut self.history);
+            self.history = order
+                .iter()
+                .map(|&j| std::mem::take(&mut history[j]))
+                .collect();
             self.history_first = order.iter().map(|&j| self.history_first[j]).collect();
             self.history_ids = order.iter().map(|&j| self.history_ids[j].clone()).collect();
         }
@@ -873,13 +868,14 @@ impl Engine {
         }
     }
     pub fn remove(&mut self, key: &str) {
+        // An identity change can leave a deadline without a matching active view.
+        // Consume it even then so the worker can wait for the next deadline.
+        self.deadlines.remove(key);
         let Some(index) = self.active.iter().position(|v| self.key(v) == key) else {
             return;
         };
-        let e = self.active[index].clone();
+        let e = self.active.remove(index);
         if !s(&e, "$replaySessionId").is_empty() {
-            self.active.remove(index);
-            self.deadlines.remove(key);
             self.effects.remove(key);
             self.action("stopReplay", &e);
             return;
@@ -893,9 +889,7 @@ impl Engine {
                 self.reviewed.values.remove(key);
             }
         }
-        self.deadlines.remove(key);
         self.effects.remove(key);
-        self.active.remove(index);
         if b(&e, "isEew") {
             let count = self.ignored.get(key).copied().unwrap_or(0).max(report(&e));
             self.remember_ignored(key.into(), count);
@@ -916,10 +910,10 @@ impl Engine {
         let mut groups = vec![];
         if b(&e, "isEew") {
             for j in 0..self.history.len() {
-                let latest = self.history[j][0].clone();
-                if s(&latest, "source") == s(&e, "source")
+                let latest = &self.history[j][0];
+                if s(latest, "source") == s(&e, "source")
                     && (self.history_ids[j] == s(&e, "eventId")
-                        || self.identity.same_eew(&latest, &e))
+                        || self.identity.same_eew(latest, &e))
                 {
                     groups.push(j);
                 }
@@ -1173,19 +1167,6 @@ impl Engine {
                     }
                 }
             }
-            "product" => {
-                let previous = &c["previous"];
-                if !previous.is_null() {
-                    self.active.retain(|v| {
-                        !(s(v, "source") == s(previous, "source")
-                            && s(v, "eventId") == s(previous, "eventId"))
-                    });
-                }
-                if !c["event"].is_null() {
-                    self.active.push(c["event"].clone());
-                }
-                self.sort();
-            }
             "replay" => {
                 let e = &c["event"];
                 let index = self.same_eew_index(e);
@@ -1224,12 +1205,20 @@ impl Engine {
                 let e = &c["event"];
                 let mut tokens = vec![];
                 for j in (0..self.active.len()).rev() {
-                    let old = self.active[j].clone();
-                    if s(&old, "$replaySessionId") == s(e, "$replaySessionId")
-                        && s(&old, "source") == s(e, "source")
-                        && (old["eventId"] == e["eventId"] || self.identity.same_eew(&old, e))
+                    let old = &self.active[j];
+                    // The timer belongs to a saved group, even when the live
+                    // identity joins it with another CEA transport in replay.
+                    let different_cea_transport = s(old, "source") == "ceaEew"
+                        && i(old, "origin") != i(e, "origin")
+                        && (jian_cea_wire_event_id(old).is_some()
+                            || jian_cea_wire_event_id(e).is_some())
+                        && eew_id(old) == eew_id(e);
+                    if s(old, "$replaySessionId") == s(e, "$replaySessionId")
+                        && s(old, "source") == s(e, "source")
+                        && (old["eventId"] == e["eventId"]
+                            || (!different_cea_transport && self.identity.same_eew(old, e)))
                     {
-                        tokens.push(i(&old, "$token"));
+                        tokens.push(i(old, "$token"));
                         self.active.remove(j);
                     }
                 }
@@ -1276,13 +1265,48 @@ impl Engine {
             .chain(self.effects.values().map(|v| &v.1))
             .map(|v| i(v, "$token"))
             .collect::<std::collections::HashSet<_>>();
-        json!({"views":std::mem::take(&mut self.views),"actions":std::mem::take(&mut self.actions),"active":self.active.iter().map(|v|i(v,"$token")).collect::<Vec<_>>(),"jmaLpgmDisplay":lpgm_display,"keys":keys,"retained":retained,"nextDeadline":self.next_deadline(),"nowUs":self.now,"catalogRevision":self.catalog.revision(),"catalogRetained":self.catalog.retained()})
+        let mut batch = json!({"views":std::mem::take(&mut self.views),"actions":std::mem::take(&mut self.actions),"active":self.active.iter().map(|v|i(v,"$token")).collect::<Vec<_>>(),"jmaLpgmDisplay":lpgm_display,"keys":keys,"retained":retained,"nextDeadline":self.next_deadline(),"nowUs":self.now,"catalogRevision":self.catalog.revision(),"catalogRetained":self.catalog.retained()});
+        if self.product_revision != 0 {
+            batch["productRevision"] = json!(self.product_revision);
+            batch["productTokens"] = json!(self
+                .active
+                .iter()
+                .filter(|e| b(e, "$productSlot"))
+                .map(|e| i(e, "$token"))
+                .collect::<Vec<_>>());
+        }
+        batch
+    }
+
+    /// Automatic USGS products already passed their service's publication
+    /// rules. Replace their slot without queueing a general event command.
+    fn replace_product_slot(&mut self, c: &Value) -> Value {
+        let source = s(c, "source");
+        let event = &c["event"];
+        if !matches!(source, "usgsDyfi" | "usgsShakeMap")
+            || (!event.is_null()
+                && (s(event, "source") != source || i(event, "$token") <= 0))
+        {
+            return Value::Null;
+        }
+        self.active
+            .retain(|view| !b(view, "$productSlot") || s(view, "source") != source);
+        if !event.is_null() {
+            let mut view = event.clone();
+            view["$productSlot"] = json!(true);
+            self.active.push(view);
+        }
+        self.sort();
+        self.product_revision += 1;
+        json!(self.product_revision)
     }
     pub fn query(&mut self, c: &Value) -> Value {
         let e = &c["event"];
         let a = &c["previous"];
         match s(c, "op") {
+            "replaceProductSlot" => self.replace_product_slot(c),
             "bucketUpsert" => self.bucket_policy.upsert(c),
+            "jmaObservedMapBindings" => crate::unified_catalog_bucket::jma_observed_map_bindings(c),
             "effectiveWarn" => json!(effective_warn(e)),
             "messageFields" => message_fields(e),
             "renderCencIrIndex" => render_cenc_ir_index(c),
@@ -1385,4 +1409,30 @@ fn report_sort(e: &Value) -> i64 {
             text.parse().ok()
         })
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expired_deadline_without_active_event_is_consumed_once() {
+        let mut engine = Engine::default();
+        let active = json!({"source": "ceaEew", "eventId": "active", "isEew": true, "$token": 1});
+        let active_key = engine.key(&active);
+        engine.active.push(active);
+        engine.deadlines.insert(active_key.clone(), 20);
+        engine.deadlines.insert("ceaEew|stale".into(), 10);
+
+        assert_eq!(engine.next_deadline(), Some(10));
+        engine.advance(10);
+        assert_eq!(engine.next_deadline(), Some(20));
+        assert_eq!(engine.active.len(), 1);
+        assert!(engine.actions.is_empty());
+
+        engine.advance(20);
+        assert_eq!(engine.next_deadline(), None);
+        assert!(engine.active.is_empty());
+        assert_eq!(engine.actions, vec![json!(["removed", 1, active_key, []])]);
+    }
 }

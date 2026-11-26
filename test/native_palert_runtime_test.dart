@@ -85,6 +85,7 @@ void main() {
         final ids = [for (final s in stations) s.id];
         history.setStations(ids);
         final held = <String, int?>{for (final id in ids) id: null};
+        final taiwanFrames = <Map<String, Object?>>[];
         var count = 0, active = 0;
         DateTime? previousReceived;
         for (final saved in frames) {
@@ -136,6 +137,20 @@ void main() {
             reason: 'max frame $count',
           );
           if ((latest!['detectedStationIds'] as List).isNotEmpty) active++;
+          taiwanFrames.add({
+            'time': stamp.millisecondsSinceEpoch,
+            'levels': [
+              for (final s in views)
+                if (a['dataVals'][s.id] == null) -1 else s.currentGridLevel,
+            ],
+            'fine': List.filled(views.length, null),
+            'baseline': latest!['detectedStationIds'],
+          });
+          for (final row in latest!['detectionGrid'] as List) {
+            expect((row[0] as num) % 1, 0.5);
+            expect((row[1] as num) % 1, 0.5);
+          }
+
           expect(native.original!['data'], raw);
           expect(
             nativeSignals,
@@ -161,6 +176,24 @@ void main() {
           expect(grids, expectedGrids, reason: 'map cells frame $count');
         }
         expect(active, greaterThan(0));
+        final export = Platform.environment['RQ_TAIWAN_EXPORT'];
+        if (export != null) {
+          File(export).writeAsStringSync(
+            jsonEncode({
+              'source': 'palert-real',
+              'stations': [
+                for (final s in stations)
+                  {
+                    'id': s.id,
+                    'lat': s.coordinate.latitude,
+                    'lon': s.coordinate.longitude,
+                  },
+              ],
+              'frames': taiwanFrames,
+            }),
+          );
+        }
+
         debugPrint(
           'NATIVE_PALERT originalFrames=$count activeFrames=$active stations=${ids.length}',
         );
@@ -179,7 +212,7 @@ void main() {
       final service = PAlertService.nativeForTesting(
         settings: {'testing': true},
       );
-      var updates = 0;
+      var updates = 0, confirmedFrames = 0;
       final captured = <StationHistoryFrame>[];
       void capture(StationHistoryFrame frame) {
         if (frame.kind == 'palert') captured.add(frame);
@@ -247,6 +280,19 @@ void main() {
                 .toList(),
           );
           expect(service.processingIsolateName, 'rust-palert-runtime');
+          final entries = service.detectionSnapshot.detectedStations;
+          if (entries.isNotEmpty) {
+            confirmedFrames++;
+            expect(
+              entries.every((e) => e.detectReason == 'srev-palert-spatial'),
+              isTrue,
+            );
+          }
+          for (final grid in service.nativeGrids) {
+            expect(grid.center.latitude % 1, 0.5);
+            expect(grid.center.longitude % 1, 0.5);
+          }
+
           expect(
             service.stations.every(
               (s) => s.sampledLevel != null || s.dataTime == null,
@@ -280,6 +326,10 @@ void main() {
         }
         expect(service.nativeLayerSignature, isNotEmpty);
         expect(updates, greaterThan(1));
+        expect(confirmedFrames, greaterThan(0));
+        debugPrint(
+          "SREV_PALERT_PREPARED confirmedFrames=$confirmedFrames frames=$count",
+        );
         expect(
           ForegroundStationPayload.decodePAlert(
             service.historySnapshot()['stations'],
@@ -305,6 +355,87 @@ void main() {
       }
     },
     skip: !NativeStationRuntime.supported,
+  );
+
+  test(
+    'SREV native P-Alert background windows from independent archived events',
+    () async {
+      final input = Platform.environment['RQ_PALERT_BACKGROUND_INPUT']!;
+      final cases = jsonDecode(File(input).readAsStringSync()) as List;
+      final report = <Map<String, Object?>>[];
+      for (final c in cases) {
+        final runtime = NativeStationRuntime();
+        Map<String, dynamic>? latest;
+        runtime.onFrame = (f) => latest = f;
+        runtime.start({
+          'kind': 'palert',
+          'testing': true,
+          'palertDetection': 'srev',
+          'sensitivity': 2,
+        });
+        try {
+          await until(() => latest != null);
+          final frames = c['frames'] as List;
+          DateTime time(Map f) => DateTime.fromMillisecondsSinceEpoch(
+            f['time'] as int,
+            isUtc: true,
+          );
+          final metadata = {
+            'data': {
+              'stationList': {'staInfos': c['stations']},
+            },
+          };
+          runtime.injectOriginal(
+            utf8.encode(jsonEncode(metadata)),
+            time(frames.first as Map),
+          );
+          await until(() => (latest!['stations'] as List).isNotEmpty);
+          var count = 0, active = 0, peak = 0, oldActive = 0;
+          for (final f in frames) {
+            final stamp = time(f as Map);
+            final packet = {
+              'data': {
+                'pga': {
+                  'timestamp': stamp.toIso8601String(),
+                  'dataVals': f['pga'],
+                },
+                'pgv': {
+                  'timestamp': stamp.toIso8601String(),
+                  'dataVals': f['pgv'],
+                },
+              },
+            };
+            runtime.injectOriginal(utf8.encode(jsonEncode(packet)), stamp);
+            count++;
+            await until(() => latest!['frames'] == count);
+            final ids = latest!['detectedStationIds'] as List;
+            if (ids.isNotEmpty) active++;
+            if (ids.length > peak) peak = ids.length;
+            if ((f['old'] as List).isNotEmpty) oldActive++;
+          }
+          final row = {
+            'case': c['case'],
+            'frames': count,
+            'oldActiveFrames': oldActive,
+            'newActiveFrames': active,
+            'newPeak': peak,
+          };
+          print(row);
+          report.add(row);
+        } finally {
+          runtime.stop();
+          await until(() => NativeStationRuntime.workers == 0);
+        }
+      }
+      File(
+        File(input).parent.path + '/palert_background_runtime_report.json',
+      ).writeAsStringSync(jsonEncode(report));
+      expect(report.length, 4);
+    },
+    skip:
+        !NativeStationRuntime.supported ||
+        Platform.environment['RQ_PALERT_BACKGROUND_INPUT'] == null,
+    timeout: const Timeout(Duration(minutes: 3)),
   );
 
   test(

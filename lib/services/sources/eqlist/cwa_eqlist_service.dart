@@ -49,6 +49,7 @@ class CwaEqlistService {
   bool _fetching = false;
   int _generation = 0;
   final _details = <String, ({Map<String, dynamic> raw, DateTime at})>{};
+  final _detailRequests = <String, Future<Map<String, dynamic>?>>{};
 
   /// ExpTech v2 API地址
   static const String _url =
@@ -99,9 +100,7 @@ class CwaEqlistService {
     _fetching = true;
     final generation = _generation;
     try {
-      final resp =
-          await (_client?.get(Uri.parse(_url)) ?? http.get(Uri.parse(_url)))
-              .timeout(const Duration(seconds: 15));
+      final resp = await _requestList();
       if (generation != _generation) return;
       if (resp.statusCode != 200) {
         onStatusChanged?.call(false);
@@ -149,6 +148,59 @@ class CwaEqlistService {
   @visibleForTesting
   Future<void> fetchForTesting() => _fetch();
 
+  Future<http.Response> _requestList() =>
+      (_client?.get(Uri.parse(_url)) ?? http.get(Uri.parse(_url))).timeout(
+        const Duration(seconds: 15),
+      );
+
+  /// Older list rows do not receive the automatic request for the newest
+  /// report. Resolve their official detail without updating the live list.
+  Future<Map<String, dynamic>?> observedDetailFor(
+    QuakeMessage selected,
+    bool Function(QuakeMessage) matches,
+  ) async {
+    final raw = selected.informationMap?.cwaSourcePayload;
+    if (raw != null &&
+        raw['id'] == selected.eventId &&
+        raw['time'] is num &&
+        raw['lat'] is num &&
+        raw['lon'] is num &&
+        raw['mag'] is num) {
+      return _loadDetail(raw);
+    }
+
+    final retained = _latestList.where(matches).toList();
+    if (retained.length == 1) {
+      final summary = retained.single.informationMap?.cwaSourcePayload;
+      return summary == null ? null : _loadDetail(summary);
+    }
+    if (retained.isNotEmpty) return null;
+
+    final response = await _requestList();
+    if (response.statusCode != 200) return null;
+    final rows = decodeApiJsonBytes(response.bodyBytes);
+    if (rows is! List) return null;
+    final candidates = <Map<String, dynamic>>[];
+    for (final row in rows.whereType<Map>()) {
+      final summary = Map<String, dynamic>.from(row);
+      final parsed = _parseCwaItem(summary);
+      if (parsed != null && matches(parsed)) candidates.add(summary);
+    }
+    return candidates.length == 1 ? _loadDetail(candidates.single) : null;
+  }
+
+  static bool _matchesDetail(
+    Map<String, dynamic> summary,
+    Map<String, dynamic> detail,
+  ) => const [
+    'id',
+    'time',
+    'lat',
+    'lon',
+    'mag',
+    'depth',
+  ].every((field) => detail[field] == summary[field]);
+
   Future<Map<String, dynamic>?> _loadDetail(
     Map<String, dynamic> summary,
   ) async {
@@ -157,10 +209,25 @@ class CwaEqlistService {
     final key = '$id|${summary['md5'] ?? ''}';
     final cached = _details.remove(key);
     if (cached != null &&
-        DateTime.now().difference(cached.at) < const Duration(minutes: 5)) {
+        DateTime.now().difference(cached.at) < const Duration(minutes: 5) &&
+        _matchesDetail(summary, cached.raw)) {
       _details[key] = cached;
       return cached.raw;
     }
+    final detail = await (_detailRequests[key] ??= _fetchDetail(id)
+        .whenComplete(() {
+          _detailRequests.remove(key);
+        }));
+    // Bind the original detail to this exact summary, never the nearest quake.
+    if (detail == null || !_matchesDetail(summary, detail)) return null;
+    _details[key] = (raw: detail, at: DateTime.now());
+    while (_details.length > 16) {
+      _details.remove(_details.keys.first);
+    }
+    return detail;
+  }
+
+  Future<Map<String, dynamic>?> _fetchDetail(String id) async {
     try {
       final uri = Uri.https('api.core.exptech.dev', '/api/v2/eq/report/$id');
       final resp = await (_client?.get(uri) ?? http.get(uri)).timeout(
@@ -170,23 +237,7 @@ class CwaEqlistService {
       final decoded = decodeApiJsonBytes(resp.bodyBytes);
       if (decoded is! Map) return null;
       final detail = Map<String, dynamic>.from(decoded);
-      // Bind the original detail to this exact summary, never the nearest quake.
-      if (detail['id'] != id ||
-          ![
-            'time',
-            'lat',
-            'lon',
-            'mag',
-            'depth',
-          ].every((field) => detail[field] == summary[field]) ||
-          CwaReportIntensities.countyRanks(detail).isEmpty) {
-        return null;
-      }
-      _details[key] = (raw: detail, at: DateTime.now());
-      while (_details.length > 16) {
-        _details.remove(_details.keys.first);
-      }
-      return detail;
+      return CwaReportIntensities.countyRanks(detail).isEmpty ? null : detail;
     } catch (e) {
       debugPrint('CWA report detail fetch error: $e');
       return null;

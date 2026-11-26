@@ -1,4 +1,7 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -109,6 +112,87 @@ var alarminfo={"head":"云南省普洱市景谷傣族彝族自治县发布雷电
   });
 
   group('WeatherAlertMapLayer Widget', () {
+    testWidgets('a zoomed fill mask follows CMA warning updates and removal', (
+      tester,
+    ) async {
+      const center = LatLng(30, 110);
+      WeatherAlertMapItem warning(String level) => WeatherAlertMapItem(
+        id: level,
+        aid: '101280403',
+        areaName: '测试区',
+        title: '暴雨$level预警',
+        fileId: 'test.html',
+        center: center,
+        signalType: '暴雨',
+        signalLevel: level,
+        typeCode: '02',
+        levelCode: level == '蓝色' ? '01' : '04',
+        polygons: const [
+          [LatLng(29, 109), LatLng(29, 111), LatLng(31, 111), LatLng(31, 109)],
+        ],
+      );
+      final controller = MapController();
+      final items = ValueNotifier([warning('蓝色')]);
+      final boundary = GlobalKey();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RepaintBoundary(
+            key: boundary,
+            child: FlutterMap(
+              mapController: controller,
+              options: const MapOptions(
+                initialCenter: center,
+                initialZoom: 5.8,
+                backgroundColor: Colors.black,
+              ),
+              children: [
+                ValueListenableBuilder(
+                  valueListenable: items,
+                  builder: (context, alerts, _) =>
+                      WeatherAlertMapLayer(alerts: alerts),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      Future<({int red, int blue})> centerColor() async {
+        await tester.pump();
+        return (await tester.runAsync(() async {
+          final render =
+              boundary.currentContext!.findRenderObject()!
+                  as RenderRepaintBoundary;
+          final image = await render.toImage();
+          try {
+            final data = (await image.toByteData(
+              format: ui.ImageByteFormat.rawRgba,
+            ))!;
+            final p = (image.width * (image.height ~/ 2) + image.width ~/ 2) * 4;
+            return (red: data.getUint8(p), blue: data.getUint8(p + 2));
+          } finally {
+            image.dispose();
+          }
+        }))!;
+      }
+
+      controller.move(center, 6.1);
+      final blue = await centerColor();
+      expect(blue.blue, greaterThan(blue.red));
+      items.value = [warning('红色')];
+      final red = await centerColor();
+      expect(red.red, greaterThan(red.blue));
+      controller.move(center, 6.0);
+      items.value = [];
+      expect(await centerColor(), (red: 0, blue: 0));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(await centerColor(), (red: 0, blue: 0));
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      items.dispose();
+      controller.dispose();
+    });
+
     testWidgets('renders badge and popup card when selectedAlert is provided', (tester) async {
       final alert = WeatherAlertMapItem(
         id: 'test_1',

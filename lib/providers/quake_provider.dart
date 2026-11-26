@@ -61,6 +61,7 @@ import '../services/sources/jma_local_weather_service.dart';
 import '../services/epicenter_region_service.dart';
 import '../services/sources/typhoon_service.dart';
 import '../services/sources/wolfx_service.dart';
+import '../services/sources/wolfx_jma_detail_feed.dart';
 import '../services/sources/whews_service.dart';
 import '../services/sources/jian_service.dart';
 import '../services/sources/p2pquake_service.dart';
@@ -71,6 +72,8 @@ import '../services/sources/chinaeew_icl_service.dart';
 import '../services/sources/sasmex_service.dart';
 import '../services/sources/kma_pews_eew_service.dart';
 import '../services/sources/eqlist/eqlist_manager.dart';
+import '../services/sources/eqlist/cwa_eqlist_service.dart';
+import '../services/sources/eqlist/jma_eqlist_service.dart';
 import '../services/quake_event_adapter.dart';
 import '../core/intensity_calculator.dart';
 import '../core/calculator.dart';
@@ -81,6 +84,7 @@ import '../services/render_information_loader.dart';
 import '../models/whews_catalog.dart';
 import '../core/utils/information_report_order.dart';
 import '../models/unified_quake_data.dart';
+import '../models/unified_event_presentation.dart' show cwaObservedFillAvailable;
 import '../models/cmt_catalog.dart';
 import '../models/eew_event_group.dart';
 import '../models/eew_history_retention.dart';
@@ -304,13 +308,13 @@ class QuakeProvider with ChangeNotifier {
   Future<void> get jmaTsunamiListReadyForTest => _jmaTsunamiListReady;
 
   // Presentation handles only: source decoding and grade grouping run in Rust.
-  void _refreshJmaTsunamiList(TsunamiMessage message) {
+  void _refreshJmaTsunamiList(TsunamiMessage message, {DateTime? now}) {
     if (!NativeJmaTsunami.supported) return;
     final revision = ++_jmaTsunamiListRevision;
     _jmaTsunamiListReady =
         NativeJmaTsunami.prepareAsync({
               'op': 'project',
-              'nowMs': DateTime.now().millisecondsSinceEpoch,
+              'nowMs': (now ?? DateTime.now()).millisecondsSinceEpoch,
               'message': {
                 'id': message.id,
                 'eventId': message.eventId,
@@ -347,7 +351,10 @@ class QuakeProvider with ChangeNotifier {
   Future<void> get internationalTsunamiListReadyForTest =>
       _internationalTsunamiListReady;
 
-  void _refreshInternationalTsunamiList(TsunamiMessage message) {
+  void _refreshInternationalTsunamiList(
+    TsunamiMessage message, {
+    DateTime? now,
+  }) {
     if (!NativeJmaTsunami.supported) return;
     final revision = (_internationalTsunamiRevisions[message.source] ?? 0) + 1;
     _internationalTsunamiRevisions[message.source] = revision;
@@ -355,7 +362,7 @@ class QuakeProvider with ChangeNotifier {
         NativeJmaTsunami.prepareAsync({
               'op': 'internationalProject',
               'message': message.toMap(),
-              'nowMs': DateTime.now().millisecondsSinceEpoch,
+              'nowMs': (now ?? DateTime.now()).millisecondsSinceEpoch,
             })
             .then((view) {
               if (_disposed ||
@@ -400,6 +407,26 @@ class QuakeProvider with ChangeNotifier {
   NativeUnifiedEventOwner? _nativeUnified;
   List<EewEventGroup>? _nativeStartupGroups;
   void _notifyNativeUnifiedListeners() => notifyListeners();
+
+  void checkLiveEventExpiry() {
+    if (_disposed) return;
+    final owner = _nativeUnified;
+    if (owner?.usesWorker ?? false) {
+      owner!.queryRaw({'op': 'wakeDeadlines'});
+    }
+    final currentTime = _displayNow();
+    usgsShakeMap.recheckAutomaticExpiry();
+    usgsDyfi.recheckAutomaticExpiry();
+    if (_scheduleWeatherAlarmExpiry(currentTime)) _notifyWeatherSlice();
+    for (final source in _tsunamiInformationExpiryTimers.keys.toList()) {
+      final tsunami = _currentTsunami(source);
+      if (tsunami != null &&
+          _scheduleTsunamiInformationExpiry(tsunami, currentTime)) {
+        _refreshExpiredTsunami(tsunami, currentTime);
+      }
+    }
+  }
+
   late final HistoryReplayController historyReplay = HistoryReplayController(
     now: () => _eewClock().toUtc(),
     onReport: _presentReplayReport,
@@ -428,7 +455,8 @@ class QuakeProvider with ChangeNotifier {
               event.replaySessionId == session &&
               event.source == replay.source &&
               (event.eventId == replay.eventId ||
-                  _isSameUnifiedEewEvent(event, replay)),
+                  (_isSameUnifiedEewEvent(event, replay) &&
+                      !isDifferentCeaReplayTransport(event, replay))),
         )
         .toList();
     if (expired.isEmpty) return;
@@ -524,6 +552,10 @@ class QuakeProvider with ChangeNotifier {
   QuakeMessage? _selectedMapHistoryEvent;
   String? _selectedCencIrBinding;
   UnifiedQuakeData? _selectedHistoryInfo;
+  String? _selectedObservedWarnArea;
+  WolfxJmaDetailFeed? _manualWolfxDetails;
+  final CwaEqlistService? _manualCwaCatalog;
+  final JmaEqlistService? _manualJmaCatalog;
   final _selectedInformationMapViews =
       Expando<({int revision, UnifiedQuakeData view})>();
   UnifiedQuakeData? _shakeMapInfo;
@@ -561,12 +593,118 @@ class QuakeProvider with ChangeNotifier {
     // Reuse the established card matching; an already retained full report is
     // richer than an older HTTP summary of that same event.
     final focused = unifiedDisplayEvents.first;
-    final view = identical(focused, info) ? _informationMapView(info) : focused;
+    final rowView = _informationMapView(info);
+    var view = identical(focused, info) ? rowView : focused;
+    if (_canLoadManualObservation(rowView) &&
+        _canLoadManualObservation(view) &&
+        !_hasManualObservation(view)) {
+      final warnArea = _hasManualObservation(rowView)
+          ? rowView.warnArea
+          : _selectedObservedWarnArea;
+      if (warnArea != null) view = view.copyWith(warnArea: warnArea);
+    }
     _selectedInformationMapViews[info] = (
       revision: unifiedMapRevision,
       view: view,
     );
     return view;
+  }
+
+  static bool _isJmaInformation(UnifiedQuakeData event) =>
+      event.source == 'jmaEqlist' || event.source == 'p2pJmaEqlist';
+
+  static bool _canLoadManualObservation(UnifiedQuakeData event) =>
+      !event.isEew &&
+      !event.isCanceled &&
+      !event.isVolcanoEvent &&
+      !event.isJmaLpgm &&
+      (_isJmaInformation(event) || event.source == 'cwaEqlist');
+
+  static bool _hasManualObservation(UnifiedQuakeData event) =>
+      _isJmaInformation(event)
+      ? !event.isCanceled && event.warnArea.isNotEmpty
+      : cwaObservedFillAvailable(event);
+
+  Future<void> _loadManualObservation(UnifiedQuakeData selection) async {
+    final view = selectedInformationMapEvent;
+    if (view == null ||
+        !_canLoadManualObservation(view) ||
+        _hasManualObservation(view)) {
+      return;
+    }
+    bool selectionIsCurrent() =>
+        !_disposed && identical(_selectedHistoryInfo, selection);
+    final row = selection.rawEvent!;
+    String? warnArea;
+    try {
+      if (_isJmaInformation(view)) {
+        final sources = SourceManager();
+        int? findMatch(List<QuakeMessage> candidates) {
+          if (candidates.isEmpty) return null;
+          return _nativeEventOwner
+              .jmaObservedMapBindings([row], candidates)
+              .single;
+        }
+
+        if (sources.isSourceEnabled('Wolfx')) {
+          final running = sources
+              .getSource<WolfxService>()
+              ?.readJmaObservationSnapshot();
+          final reports = await (running ??
+              (_manualWolfxDetails ??= WolfxJmaDetailFeed()).observedReports());
+          if (!selectionIsCurrent()) return;
+          if (sources.isSourceEnabled('Wolfx')) {
+            final candidates = [
+              for (final report in reports)
+                if (report.originTime != null) report,
+            ];
+            final match = findMatch([
+              for (final report in candidates)
+                QuakeMessage(
+                  source: QuakeSourceType.wolfx,
+                  eventId: report.eventId,
+                  originTime: report.originTime!,
+                  location: report.hypocenter,
+                  latitude: report.lat ?? double.nan,
+                  longitude: report.lng ?? double.nan,
+                  magnitude: report.magnitude,
+                  depth: report.depth,
+                ),
+            ]);
+            if (match != null) warnArea = candidates[match].warnArea;
+          }
+        }
+        if (warnArea == null && sources.isSourceEnabled('P2P')) {
+          final reports = await (_manualJmaCatalog ?? _eqlist.jma)
+              .observedReports();
+          if (!selectionIsCurrent()) return;
+          if (sources.isSourceEnabled('P2P')) {
+            final match = findMatch(reports);
+            if (match != null) {
+              warnArea = reports[match].informationMap?.warnArea;
+            }
+          }
+        }
+      } else {
+        final detail = await (_manualCwaCatalog ?? _eqlist.cwa)
+            .observedDetailFor(
+              row,
+              (candidate) =>
+                  selectionIsCurrent() &&
+                  matchesInformationRenderEvent(selection, _catalogInfo(candidate)),
+            );
+        if (detail != null) warnArea = CwaReportIntensities.toWarnArea(detail);
+      }
+    } catch (error) {
+      if (selectionIsCurrent()) {
+        debugPrint('${selection.source} manual map detail error: $error');
+      }
+      return;
+    }
+    if (!selectionIsCurrent() || warnArea == null || warnArea.isEmpty) return;
+    _selectedObservedWarnArea = warnArea;
+    _selectedInformationMapViews[selection] = null;
+    notifyListeners();
   }
 
   /// Snapshot the clicked row for an independent rendering window. Does not
@@ -739,12 +877,13 @@ class QuakeProvider with ChangeNotifier {
     if (_shakeMapInfoIdentity != identity ||
         _shakeMapInfo?.rawEvent != frame?.event) {
       final newPublication = _shakeMapInfoIdentity != identity;
-      _shakeMapInfoIdentity = identity;
       _shakeMapInfo = _syncProductInfoSlot(
+        'usgsShakeMap',
         _shakeMapInfo,
         frame == null ? null : QuakeEventAdapter.shakeMapInfo(frame),
         newPublication: newPublication,
       );
+      _shakeMapInfoIdentity = identity;
     }
     notifyListeners();
   }
@@ -755,12 +894,13 @@ class QuakeProvider with ChangeNotifier {
     if (_dyfiInfoIdentity != frame?.product.identity ||
         _dyfiInfo?.rawEvent != frame?.event) {
       final newPublication = _dyfiInfoIdentity != frame?.product.identity;
-      _dyfiInfoIdentity = frame?.product.identity;
       _dyfiInfo = _syncProductInfoSlot(
+        'usgsDyfi',
         _dyfiInfo,
         frame == null ? null : QuakeEventAdapter.dyfiInfo(frame),
         newPublication: newPublication,
       );
+      _dyfiInfoIdentity = frame?.product.identity;
     }
     if (_selectedMapProduct == HistoryMapProduct.dyfi) {
       final manual = usgsDyfi.manualFrame;
@@ -774,6 +914,7 @@ class QuakeProvider with ChangeNotifier {
   /// Product slots share the information carousel/map index, while their
   /// service owns expiry. They stay separate from USGS quake dedupe and audio.
   UnifiedQuakeData? _syncProductInfoSlot(
+    String source,
     UnifiedQuakeData? previous,
     UnifiedQuakeData? next, {
     required bool newPublication,
@@ -783,23 +924,16 @@ class QuakeProvider with ChangeNotifier {
         newPublication &&
         next != null &&
         (previous == null || previous.eventId != next.eventId);
-    if (previous != null) _unifiedEvents.remove(previous);
     final accepted = next?.copyWith(
       arrivedAt: newInformation
           ? DateTime.now()
           : previous?.arrivedAt ?? DateTime.now(),
     );
-    if (accepted != null) _unifiedEvents.add(accepted);
     if (_nativeUnifiedEnabled) {
-      _nativeEventOwner.send({
-        'op': 'product',
-        'previous': previous == null
-            ? null
-            : _nativeEventOwner.describe(previous),
-        'event': accepted == null ? null : _nativeEventOwner.describe(accepted),
-        'context': _nativeUnifiedContext(),
-      });
+      _nativeEventOwner.replaceProductSlot(source, accepted);
     }
+    if (previous != null) _unifiedEvents.remove(previous);
+    if (accepted != null) _unifiedEvents.add(accepted);
     _sortUnifiedEvents();
     _unifiedMapRevision++;
     final retainedIndex = focused == null
@@ -839,6 +973,7 @@ class QuakeProvider with ChangeNotifier {
     _selectedHistoryInfo = event == null || product == HistoryMapProduct.dyfi
         ? null
         : _catalogInfo(event);
+    _selectedObservedWarnArea = null;
     _selectedCencIrBinding = null;
     _manualCencIrRequestSerial++;
     _pendingManualCencIrId = null;
@@ -855,6 +990,11 @@ class QuakeProvider with ChangeNotifier {
       usgsDyfi.select(event, showProduct: product == HistoryMapProduct.dyfi),
     );
     if (product != HistoryMapProduct.dyfi) _loadBoundCencIr();
+    if (_selectedHistoryInfo case final selection?
+        when _nativeUnifiedEnabled &&
+            _canLoadManualObservation(_informationMapView(selection))) {
+      unawaited(_loadManualObservation(selection));
+    }
     notifyListeners();
   }
 
@@ -1679,9 +1819,6 @@ class QuakeProvider with ChangeNotifier {
   void _reconcileLocalWeatherAlarm() {
     if (!_weatherLocalOnly) return;
 
-    _weatherAlarmExpiryTimer?.cancel();
-    _weatherAlarmExpiryTimer = null;
-
     final candidates = <WeatherAlarm>[
       if (_chinaWeatherLocalAlarm != null &&
           !_chinaWeatherLocalAlarm!.isExpired())
@@ -1707,20 +1844,7 @@ class QuakeProvider with ChangeNotifier {
     }
 
     _weatherAlarm = next;
-    if (next != null) {
-      final delay = next.validUntilUtc.difference(DateTime.now().toUtc());
-      if (delay > Duration.zero) {
-        final revisionKey = next.revisionKey;
-        _weatherAlarmExpiryTimer = Timer(delay, () {
-          if (_weatherAlarm?.revisionKey != revisionKey) return;
-          _weatherAlarm = null;
-          _weatherAlarmExpiryTimer = null;
-          _notifyWeatherSlice();
-        });
-      } else {
-        _weatherAlarm = null;
-      }
-    }
+    _scheduleWeatherAlarmExpiry(DateTime.now());
 
     if (_unifiedEvents.isEmpty) {
       final hadEvent = _currentEvent != null;
@@ -2218,7 +2342,7 @@ class QuakeProvider with ChangeNotifier {
       return;
     }
     _rememberJmaLpgmCompanion(bulletin);
-    _handleUnifiedEvent(_jmaLpgmToUnified(bulletin));
+    _handleUnifiedEvent(QuakeEventAdapter.jmaLpgmToUnified(bulletin));
   }
 
   // An alternate relay's VXSE62 reaches us via onUnifiedEvent instead of
@@ -2271,47 +2395,14 @@ class QuakeProvider with ChangeNotifier {
     }
   }
 
-  UnifiedQuakeData _jmaLpgmToUnified(JmaLpgmBulletin bulletin) {
-    return UnifiedQuakeData(
-      source: 'jmaLpgm',
-      origin: 7,
-      eventId: bulletin.eventId,
-      isEew: false,
-      timeZone: 9,
-      titleText: jmaLpgmObservationTitle,
-      reportNumText: bulletin.serial > 0 ? '第${bulletin.serial}报' : '',
-      useShindo: false,
-      maxIntensity: bulletin.maxLgInt.toString(),
-      className: switch (bulletin.maxLgInt) {
-        1 => 'yellow',
-        2 => 'orange',
-        3 => 'red',
-        4 => 'purple',
-        _ => 'gray',
-      },
-      hypocenter: bulletin.hypocenter,
-      originTime: bulletin.originTime,
-      reportTime: bulletin.reportTime,
-      magnitude: bulletin.magnitude ?? -1,
-      depth: bulletin.depthKm ?? -1,
-      depthText: bulletin.depthKm == null
-          ? ''
-          : '深度 ${bulletin.depthKm!.toStringAsFixed(0)}km',
-      lat: bulletin.latitude,
-      lng: bulletin.longitude,
-      apiTypeLabel: 'JMA · VXSE62',
-      isJmaLpgm: true,
-      jmaLpgmBulletin: bulletin,
-    );
-  }
-
   /// 是否应该显示气象警报UI
   /// 仅当预警和信息事件都为空时才显示
   bool get shouldShowWeatherAlarm =>
       _unifiedEvents.isEmpty && _weatherAlarm != null;
 
   void _acceptRemoteWeatherAlarm(WeatherAlarm alarm) {
-    if (_weatherLocalOnly || alarm.isExpired()) return;
+    final now = _displayNow();
+    if (_weatherLocalOnly || alarm.isExpired(now)) return;
     final current = _weatherAlarm;
     if (current != null &&
         current.source != WeatherAlarmSource.chinaWeatherLocal &&
@@ -2323,19 +2414,7 @@ class QuakeProvider with ChangeNotifier {
     }
 
     _weatherAlarm = alarm;
-    _weatherAlarmExpiryTimer?.cancel();
-    final delay = alarm.validUntilUtc.difference(DateTime.now().toUtc());
-    if (delay <= Duration.zero) {
-      _weatherAlarm = null;
-    } else {
-      final revisionKey = alarm.revisionKey;
-      _weatherAlarmExpiryTimer = Timer(delay, () {
-        if (_weatherAlarm?.revisionKey != revisionKey) return;
-        _weatherAlarm = null;
-        _weatherAlarmExpiryTimer = null;
-        _notifyWeatherSlice();
-      });
-    }
+    _scheduleWeatherAlarmExpiry(now);
     if (_unifiedEvents.isEmpty) {
       final hadEvent = _currentEvent != null;
       _currentEvent = null;
@@ -2343,6 +2422,24 @@ class QuakeProvider with ChangeNotifier {
       if (hadEvent) notifyListeners();
     }
     _notifyWeatherSlice();
+  }
+
+  bool _scheduleWeatherAlarmExpiry(DateTime now) {
+    _weatherAlarmExpiryTimer?.cancel();
+    _weatherAlarmExpiryTimer = null;
+    final alarm = _weatherAlarm;
+    if (alarm == null) return false;
+
+    final remaining = alarm.validUntilUtc.difference(now);
+    if (remaining <= Duration.zero) {
+      _weatherAlarm = null;
+      return true;
+    }
+    _weatherAlarmExpiryTimer = Timer(remaining, () {
+      if (_disposed || !identical(_weatherAlarm, alarm)) return;
+      if (_scheduleWeatherAlarmExpiry(_displayNow())) _notifyWeatherSlice();
+    });
+    return false;
   }
 
   @visibleForTesting
@@ -2366,8 +2463,16 @@ class QuakeProvider with ChangeNotifier {
     UsgsDyfiService? dyfiService,
     bool startCatalogServices = true,
     DateTime Function()? eewClock,
+    DateTime Function()? displayNow,
     bool? nativeUnifiedEvents,
+    WolfxJmaDetailFeed? manualWolfxDetails,
+    CwaEqlistService? manualCwaCatalog,
+    JmaEqlistService? manualJmaCatalog,
   }) : _eewClock = eewClock ?? (() => NtpService().now),
+       _displayNow = displayNow ?? DateTime.now,
+       _manualWolfxDetails = manualWolfxDetails,
+       _manualCwaCatalog = manualCwaCatalog,
+       _manualJmaCatalog = manualJmaCatalog,
        _nativeUnifiedEnabled =
            nativeUnifiedEvents ?? NativeUnifiedEventOwner.supported {
     _diagnosticOwner = WeakReference(this);
@@ -2385,6 +2490,9 @@ class QuakeProvider with ChangeNotifier {
     TtsService().speakingNotifier.addListener(_onJmaLpgmSpeechChanged);
 
     _eqlist.onAnyUpdated = _rebuildFlat;
+    _eqlist.onJmaObservedMapBindings = _nativeUnifiedEnabled
+        ? _nativeEventOwner.jmaObservedMapBindings
+        : null;
     _eqlist.onBucketUpsert = _nativeUnifiedEnabled
         ? (bucket, current, incoming, replayOnly) => _nativeEventOwner
               .upsertBucket(bucket, current, incoming, replayOnly: replayOnly)
@@ -2979,6 +3087,7 @@ class QuakeProvider with ChangeNotifier {
       _unifiedSubscriptions.add(
         wolfxService.onTsunamiEvent.listen(_handleTsunamiEvent),
       );
+      wolfxService.onCencEqlistUpdated = _eqlist.updateCencList;
       wolfxService.onJmaEqlistUpdated = (items) {
         _eqlist.updateJmaList(items);
       };
@@ -3282,33 +3391,45 @@ class QuakeProvider with ChangeNotifier {
         _tsunamiReceipts[next.source.name]?.$1 != receipt) {
       _tsunamiReceipts[next.source.name] = (receipt, ++_listReceiptSerial);
     }
+    final now = _displayNow();
     if (next.source == TsunamiSource.jma) {
-      _refreshJmaTsunamiList(next);
+      _refreshJmaTsunamiList(next, now: now);
     } else {
-      _refreshInternationalTsunamiList(next);
+      _refreshInternationalTsunamiList(next, now: now);
     }
-    _scheduleTsunamiInformationExpiry(next);
+    _scheduleTsunamiInformationExpiry(next, now);
     notifyListeners();
     ObsAutomationInputService().emitTsunamiEvent(next);
   }
 
-  void _scheduleTsunamiInformationExpiry(TsunamiMessage tsunami) {
+  bool _scheduleTsunamiInformationExpiry(
+    TsunamiMessage tsunami,
+    DateTime now,
+  ) {
     _tsunamiInformationExpiryTimers.remove(tsunami.source)?.cancel();
     final deadline = tsunami.displayUntilUtc;
-    if (deadline == null) return;
-    final delay = deadline.difference(DateTime.now().toUtc());
-    if (delay <= Duration.zero) return;
+    if (deadline == null) return false;
+    final delay = deadline.difference(now);
+    if (delay <= Duration.zero) return true;
     _tsunamiInformationExpiryTimers[tsunami.source] = Timer(delay, () {
-      _tsunamiInformationExpiryTimers.remove(tsunami.source);
-      if (!_disposed) {
-        if (tsunami.source == TsunamiSource.jma) {
-          _refreshJmaTsunamiList(tsunami);
-        } else {
-          _refreshInternationalTsunamiList(tsunami);
-        }
-        notifyListeners();
+      if (_disposed || !identical(_currentTsunami(tsunami.source), tsunami)) {
+        return;
+      }
+      final now = _displayNow();
+      if (_scheduleTsunamiInformationExpiry(tsunami, now)) {
+        _refreshExpiredTsunami(tsunami, now);
       }
     });
+    return false;
+  }
+
+  void _refreshExpiredTsunami(TsunamiMessage tsunami, DateTime now) {
+    if (tsunami.source == TsunamiSource.jma) {
+      _refreshJmaTsunamiList(tsunami, now: now);
+    } else {
+      _refreshInternationalTsunamiList(tsunami, now: now);
+    }
+    notifyListeners();
   }
 
   TsunamiMessage? _currentTsunami(TsunamiSource source) {
@@ -4849,6 +4970,7 @@ class QuakeProvider with ChangeNotifier {
   }
 
   final DateTime Function() _eewClock;
+  final DateTime Function() _displayNow;
 
   bool _isSameReportEewRevision(
     UnifiedQuakeData oldEvent,
@@ -4919,11 +5041,19 @@ class QuakeProvider with ChangeNotifier {
     // cannot reintroduce an unadapted card.
     if (!AppEdition.allowsUnifiedSource(event.source)) return;
     if (event.isEew && !isEewChannelEnabled(event.source)) return;
-    // Capture complete/partial observed long-period reports from JIAN and
-    // WHEWS. A JSON relay remains a separate source event until UI policy is
-    // chosen, but its bulletin can be linked by the native identity matcher.
+    // Relay observations share the existing VXSE62 association path.
     final observedLpgm = event.jmaLpgmBulletin;
     if (event.isJmaLpgm && observedLpgm != null) {
+      if (event.apiTypeLabel == 'Wolfx' && observedLpgm.isCanceled) {
+        final existing = _jmaLpgmCompanions[observedLpgm.eventId];
+        final incomingTime = observedLpgm.freshnessTime;
+        final existingTime = existing?.freshnessTime;
+        if (incomingTime != null &&
+            (existingTime == null || !incomingTime.isBefore(existingTime))) {
+          acceptJmaLpgm(observedLpgm);
+        }
+        return;
+      }
       _rememberJmaLpgmCompanion(observedLpgm);
     }
     if (_nativeUnifiedEnabled) {
@@ -6195,6 +6325,11 @@ class QuakeProvider with ChangeNotifier {
     }
     if (event.isEew) {
       return QuakeTime.calcPassedSecondsUnified(event, now: _eewClock());
+    }
+    final bulletin = event.isJmaLpgm ? event.jmaLpgmBulletin : null;
+    final stamp = bulletin?.publishedAt == null ? null : bulletin?.freshnessTime;
+    if (stamp != null) {
+      return (_eewClock().difference(stamp).inSeconds).clamp(0, 999999);
     }
     if (_shouldUseArrivalTimeForUnifiedInfo(event) &&
         !event.useSourceTimeForExpiry &&
@@ -7785,6 +7920,7 @@ class QuakeProvider with ChangeNotifier {
     usgsDyfi.removeListener(_onDyfiChanged);
     usgsDyfi.dispose();
     _disposed = true;
+    _manualWolfxDetails?.dispose();
     for (final event in _unifiedEvents.where((event) => !event.isEew)) {
       TtsService().discardEvent(_unifiedEventKey(event));
     }
@@ -7817,7 +7953,12 @@ class QuakeProvider with ChangeNotifier {
     _pendingUnifiedUpdateEffects.clear();
     _eqlistStartTimer?.cancel();
     _eqlistStartTimer = null;
+    final wolfx = SourceManager().getSource<WolfxService>();
+    if (wolfx != null && wolfx.onCencEqlistUpdated == _eqlist.updateCencList) {
+      wolfx.onCencEqlistUpdated = null;
+    }
     _eqlist.onAnyUpdated = null;
+    _eqlist.onJmaObservedMapBindings = null;
     _eqlist.onBucketUpsert = null;
     _eqlist.onBucketUpsertAsync = null;
     _eqlist.onUsgsCurrentUpdated = null;

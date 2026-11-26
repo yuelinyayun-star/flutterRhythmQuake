@@ -21,6 +21,7 @@ import '../../services/sources/kma_pews_eew_service.dart';
 import '../../services/sources/nied_monitor.dart';
 import '../../services/sources/nied_yahoo_service.dart';
 import '../../services/sources/palert_service.dart';
+import '../../services/sources/sasmex_service.dart';
 import '../../services/sources/seisjs_service.dart';
 import '../../services/sources/source_manager.dart';
 import 'quake_map_view.dart';
@@ -248,6 +249,13 @@ class _SourceDashboardState extends State<SourceDashboard> {
     final chinaEewIclStatus =
         provider.sourceStatuses[ChinaEewIclService.sourceName];
     final manager = SourceManager();
+    final rhythmConnections = <String>[
+      if (manager.isSourceEnabled(SasmexService.sourceName))
+        SasmexService.sourceName,
+      if (manager.getSource<RhythmKmaEewService>() != null &&
+          manager.isSourceEnabled(RhythmKmaEewService.sourceName))
+        RhythmKmaEewService.sourceName,
+    ];
     final names = <(String, String)>[
       if (SourceManager().isSourceEnabled('Wolfx')) ('Wolfx', 'Wolfx'),
       if (SourceManager().isSourceEnabled('FAN'))
@@ -265,10 +273,7 @@ class _SourceDashboardState extends State<SourceDashboard> {
         ),
       if (SourceManager().isSourceEnabled('NowQuake')) ('NowQuake', 'NowQuake'),
       if (SourceManager().isSourceEnabled('P2P')) ('P2PQ', 'P2P'),
-      if (SourceManager().isSourceEnabled('SASMEX')) ('Rhythm', 'SASMEX'),
-      if (manager.getSource<RhythmKmaEewService>() != null &&
-          manager.isSourceEnabled(RhythmKmaEewService.sourceName))
-        (RhythmKmaEewService.sourceName, RhythmKmaEewService.sourceName),
+      if (rhythmConnections.isNotEmpty) ('Rhythm', 'Rhythm'),
       if (manager.getSource<KmaPewsEewService>() != null &&
           manager.isSourceEnabled(KmaPewsEewService.sourceName))
         (KmaPewsEewService.sourceName, KmaPewsEewService.sourceName),
@@ -301,7 +306,17 @@ class _SourceDashboardState extends State<SourceDashboard> {
         if (separateJian && names.isNotEmpty) SizedBox(height: _s(2, context)),
         _buildSourceRow(context, [
           for (final (label, key) in names)
-            _buildStatusName(context, label, provider.sourceStatuses[key]),
+            _buildStatusName(
+              context,
+              label,
+              key == 'Rhythm'
+                  ? _rhythmDisplayStatus([
+                      for (final connection in rhythmConnections)
+                        provider.sourceStatuses[connection] ??
+                            SourceStatus.disconnected,
+                    ])
+                  : provider.sourceStatuses[key],
+            ),
         ]),
       ],
     );
@@ -309,6 +324,25 @@ class _SourceDashboardState extends State<SourceDashboard> {
 
   bool _showIclStatus(bool enabled, SourceStatus? status) =>
       enabled || (status != null && status != SourceStatus.disconnected);
+
+  // Match the aggregate API display convention used by WHEWS. A failed peer
+  // makes a live API yellow, while a peer still handshaking keeps it green.
+  SourceStatus _rhythmDisplayStatus(List<SourceStatus> statuses) {
+    if (statuses.length == 1) return statuses.single;
+    if (statuses.contains(SourceStatus.connected)) {
+      return statuses.contains(SourceStatus.error) ||
+              statuses.contains(SourceStatus.disconnected)
+          ? SourceStatus.connecting
+          : SourceStatus.connected;
+    }
+    if (statuses.contains(SourceStatus.connecting) ||
+        statuses.contains(SourceStatus.synchronizing)) {
+      return SourceStatus.connecting;
+    }
+    return statuses.contains(SourceStatus.error)
+        ? SourceStatus.error
+        : SourceStatus.disconnected;
+  }
 
   Widget _buildJianCredentialLine(
     BuildContext context,
@@ -386,13 +420,6 @@ class _SourceDashboardState extends State<SourceDashboard> {
     );
     final tremTime = CwaStationService().dataTimeNotifier.value;
     final kmaTime = KmaMonitorService().dataTimeNotifier.value;
-    final kmaLabel = switch (QuakeMapView.kmaSourceNotifier.value) {
-      'pews_local' => 'KMA-PEWS',
-      'fan' => 'FAN',
-      'whews' => 'WHEWS',
-      'jian' => 'Jian',
-      _ => 'Rhythm',
-    };
     final seisJsTime = SeisJsService().dataTimeNotifier.value;
     final pAlertTime = PAlertService().dataTimeNotifier.value;
     final lines = <Widget>[
@@ -424,7 +451,7 @@ class _SourceDashboardState extends State<SourceDashboard> {
       if (QuakeMapView.kmaPewsEnabledNotifier.value)
         _buildStationLine(
           context,
-          '$kmaLabel:',
+          'KMA:',
           provider.sourceStatuses['KMA'],
           time: kmaTime,
           utcOffsetHours: 9,

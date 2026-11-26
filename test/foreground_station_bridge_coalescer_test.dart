@@ -1,8 +1,22 @@
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutterrhythmquake/services/background_service.dart';
 import 'package:flutterrhythmquake/services/foreground_station_bridge_coalescer.dart';
 
 void main() {
+  test(
+    'Android map visibility survives focus loss and an unfocused return',
+    () {
+      final visible = BackgroundService.isAndroidMapUiVisible;
+      expect(visible(AppLifecycleState.inactive), isTrue);
+      expect(visible(AppLifecycleState.resumed), isTrue);
+      expect(visible(AppLifecycleState.hidden), isFalse);
+      expect(visible(AppLifecycleState.paused), isFalse);
+      expect(visible(AppLifecycleState.detached), isFalse);
+    },
+  );
+
   test(
     'keeps only the latest display snapshot per source and preserves originalJson',
     () async {

@@ -127,6 +127,7 @@ class NiedDetectSummary {
 
 class NiedDetectVisualArea {
   final String name;
+  /// Full JMA rank index: 0..9, including separate 5-/5+/6-/6+/7.
   final int jmaShindo;
 
   const NiedDetectVisualArea({required this.name, required this.jmaShindo});

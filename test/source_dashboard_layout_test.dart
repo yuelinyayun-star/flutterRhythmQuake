@@ -79,64 +79,155 @@ void main() {
     'P2PQ',
   ];
 
-  testWidgets('KMA station labels and EEW connection states are independent', (
-    tester,
-  ) async {
-    final manager = SourceManager();
-    final direct = KmaPewsEewService();
-    final rhythm = RhythmKmaEewService();
-    final stationEnabled = QuakeMapView.kmaPewsEnabledNotifier;
-    final stationSource = QuakeMapView.kmaSourceNotifier;
-    final oldEnabled = stationEnabled.value;
-    final oldSource = stationSource.value;
-    addTearDown(() {
-      manager.reset();
-      direct.dispose();
-      rhythm.dispose();
-      stationEnabled.value = oldEnabled;
-      stationSource.value = oldSource;
-    });
-    manager.registerSource(direct);
-    manager.registerSource(rhythm);
-    final provider = _StatusProvider();
-    addTearDown(provider.dispose);
-    provider.statuses[direct.name] = SourceStatus.connected;
-    provider.statuses[rhythm.name] = SourceStatus.error;
-    stationEnabled.value = true;
-    stationSource.value = 'pews';
-    Finder stationLabel(String name) => find.textContaining(
-      '$name:',
-      findRichText: true,
-    );
+  for (final mobile in [false, true]) {
+    testWidgets(
+      'Rhythm has one API label and KMA keeps its station name / $mobile',
+      (tester) async {
+        final manager = SourceManager();
+        final direct = KmaPewsEewService();
+        final rhythm = RhythmKmaEewService();
+        final stationEnabled = QuakeMapView.kmaPewsEnabledNotifier;
+        final stationSource = QuakeMapView.kmaSourceNotifier;
+        final oldEnabled = stationEnabled.value;
+        final oldSource = stationSource.value;
+        addTearDown(() {
+          manager.reset();
+          direct.dispose();
+          rhythm.dispose();
+          stationEnabled.value = oldEnabled;
+          stationSource.value = oldSource;
+        });
+        manager.registerSource(direct);
+        manager.registerSource(rhythm);
+        final provider = _StatusProvider();
+        addTearDown(provider.dispose);
+        provider.statuses[direct.name] = SourceStatus.connected;
+        provider.statuses[rhythm.name] = SourceStatus.error;
+        provider.statuses['SASMEX'] = SourceStatus.connected;
+        stationEnabled.value = true;
+        stationSource.value = 'pews';
+        Finder stationLabel(String name) =>
+            find.textContaining('$name:', findRichText: true);
 
-    await tester.pumpWidget(
-      ChangeNotifierProvider<QuakeProvider>.value(
-        value: provider,
-        child: const MaterialApp(
-          home: Scaffold(body: Stack(children: [SourceDashboard()])),
-        ),
-      ),
-    );
-    expect(stationLabel('Rhythm'), findsOneWidget);
-    expect(
-      tester.widget<Text>(find.text(direct.name)).style?.color,
-      const Color(0xFF008000),
-    );
-    expect(
-      tester.widget<Text>(find.text(rhythm.name)).style?.color,
-      const Color(0xFFFF0000),
-    );
+        await tester.pumpWidget(
+          ChangeNotifierProvider<QuakeProvider>.value(
+            value: provider,
+            child: MaterialApp(
+              home: Scaffold(
+                body: Stack(children: [SourceDashboard(mobile: mobile)]),
+              ),
+            ),
+          ),
+        );
+        expect(stationLabel('KMA'), findsOneWidget);
+        expect(stationLabel('Rhythm'), findsNothing);
+        expect(find.text('Rhythm'), findsOneWidget);
+        expect(find.text(rhythm.name), findsNothing);
+        expect(
+          tester.widget<Text>(find.text(direct.name)).style?.color,
+          const Color(0xFF008000),
+        );
+        expect(
+          tester.widget<Text>(find.text('Rhythm')).style?.color,
+          const Color(0xFFFFFF00),
+        );
 
-    stationSource.value = 'pews_local';
-    manager.setSourceEnabled(rhythm.name, false);
-    provider.sourceStatusListenable.value++;
-    await tester.pump();
-    expect(stationLabel('Rhythm'), findsNothing);
-    expect(stationLabel('KMA-PEWS'), findsOneWidget);
-    expect(find.text(rhythm.name), findsNothing);
-    expect(find.text(direct.name), findsOneWidget);
-    await tester.pumpWidget(const SizedBox());
-  });
+        for (final (sasmexStatus, kmaStatus, color) in [
+          (
+            SourceStatus.connected,
+            SourceStatus.connected,
+            const Color(0xFF008000),
+          ),
+          (
+            SourceStatus.connected,
+            SourceStatus.connecting,
+            const Color(0xFF008000),
+          ),
+          (SourceStatus.error, SourceStatus.connected, const Color(0xFFFFFF00)),
+          (
+            SourceStatus.disconnected,
+            SourceStatus.connected,
+            const Color(0xFFFFFF00),
+          ),
+          (SourceStatus.error, SourceStatus.error, const Color(0xFFFF0000)),
+          (
+            SourceStatus.error,
+            SourceStatus.connecting,
+            const Color(0xFFFFFF00),
+          ),
+          (
+            SourceStatus.synchronizing,
+            SourceStatus.error,
+            const Color(0xFFFFFF00),
+          ),
+          (SourceStatus.disconnected, SourceStatus.disconnected, Colors.white),
+        ]) {
+          provider.statuses['SASMEX'] = sasmexStatus;
+          provider.statuses[rhythm.name] = kmaStatus;
+          provider.sourceStatusListenable.value++;
+          await tester.pump();
+          expect(find.text('Rhythm'), findsOneWidget);
+          expect(find.text(rhythm.name), findsNothing);
+          expect(tester.widget<Text>(find.text('Rhythm')).style?.color, color);
+          expect(
+            tester.widget<Text>(find.text(direct.name)).style?.color,
+            const Color(0xFF008000),
+          );
+        }
+
+        for (final source in ['pews_local', 'fan', 'whews', 'jian', 'pews']) {
+          stationSource.value = source;
+          await tester.pump();
+          expect(stationLabel('KMA'), findsOneWidget);
+          expect(stationLabel('Rhythm'), findsNothing);
+          expect(stationLabel('KMA-PEWS'), findsNothing);
+          expect(stationLabel('FAN'), findsNothing);
+          expect(stationLabel('WHEWS'), findsNothing);
+          expect(stationLabel('Jian'), findsNothing);
+        }
+
+        stationSource.value = 'pews_local';
+        manager.setSourceEnabled(rhythm.name, false);
+        provider.statuses['SASMEX'] = SourceStatus.connected;
+        provider.sourceStatusListenable.value++;
+        await tester.pump();
+        expect(stationLabel('Rhythm'), findsNothing);
+        expect(stationLabel('KMA'), findsOneWidget);
+        expect(find.text('Rhythm'), findsOneWidget);
+        expect(
+          tester.widget<Text>(find.text('Rhythm')).style?.color,
+          const Color(0xFF008000),
+        );
+        expect(find.text(rhythm.name), findsNothing);
+        expect(find.text(direct.name), findsOneWidget);
+
+        manager.setSourceEnabled('SASMEX', false);
+        manager.setSourceEnabled(rhythm.name, true);
+        provider.statuses[rhythm.name] = SourceStatus.error;
+        provider.sourceStatusListenable.value++;
+        await tester.pump();
+        expect(find.text('Rhythm'), findsOneWidget);
+        expect(
+          tester.widget<Text>(find.text('Rhythm')).style?.color,
+          const Color(0xFFFF0000),
+        );
+
+        manager.setSourceEnabled(rhythm.name, false);
+        provider.sourceStatusListenable.value++;
+        await tester.pump();
+        expect(find.text('Rhythm'), findsNothing);
+        expect(stationLabel('KMA'), findsOneWidget);
+        expect(find.text(direct.name), findsOneWidget);
+
+        stationEnabled.value = false;
+        await tester.pump();
+        expect(stationLabel('KMA'), findsNothing);
+        expect(find.text(direct.name), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
 
   for (final width in [800.0, 1280.0, 1600.0, 1920.0]) {
     for (final textScale in [1.0, 1.25]) {

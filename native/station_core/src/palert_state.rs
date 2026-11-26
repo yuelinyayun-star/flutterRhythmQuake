@@ -173,6 +173,9 @@ pub(super) struct PAlert {
     stations: Vec<Station>,
     levels: Levels,
     detector: Option<Detector>,
+    srev: Option<crate::palert_srev::PAlertSrev>,
+    pub(super) use_srev: bool,
+    pub(super) hyp_shadow: bool,
     pub(super) last: Option<i64>,
     pub(super) received: Option<i64>,
     pub(super) status: String,
@@ -186,7 +189,6 @@ pub(super) struct PAlert {
     pub(super) signals: Vec<i32>,
     pub(super) last_error: Option<String>,
     grids: Vec<(f64, f64, i32)>,
-    decimal: (f64, f64),
     previous_shindo: i32,
     low: bool,
     strong: bool,
@@ -199,6 +201,9 @@ impl Default for PAlert {
             stations: vec![],
             levels: Levels::default(),
             detector: None,
+            srev: None,
+            use_srev: false,
+            hyp_shadow: false,
             last: None,
             received: None,
             status: "connecting".into(),
@@ -215,7 +220,6 @@ impl Default for PAlert {
             signals: vec![],
             last_error: None,
             grids: vec![],
-            decimal: (0.0, 0.0),
             previous_shindo: -1,
             low: false,
             strong: false,
@@ -251,11 +255,11 @@ impl PAlert {
     }
     pub(super) fn reset_detection(&mut self) {
         self.inference.clear_episode();
+        if let Some(srev)=self.srev.as_mut(){srev.reset();}
         for s in &mut self.stations {
             s.invalidate();
         }
         self.grids.clear();
-        self.decimal = (0.0, 0.0);
         self.sound(-1);
         self.revision += 1;
     }
@@ -323,6 +327,16 @@ impl PAlert {
             }
         }
         self.detector = Some(Detector::from_topology(&adj, distances));
+        self.grids.clear();
+        self.sound(-1);
+        self.srev = if self.use_srev {
+            let names=self.stations.iter().map(|s|s.row["id"].as_str().unwrap().to_owned()).collect::<Vec<_>>();
+            crate::palert_srev::PAlertSrev::new(&points,&names).map(|mut detector|{
+                if self.hyp_shadow{detector.enable_hyp_candidate(points.clone());}
+                detector
+            })
+        }else{None};
+
     }
     pub(super) fn input(&mut self, v: &Value, clock: i64, sensitivity: i32) -> bool {
         if self.replay_mode {
@@ -538,18 +552,24 @@ impl PAlert {
                     s.result.trigger_ms,
                 ]);
             }
-            if let Some(detector) = self.detector.as_mut() {
-                let strongest = detector
+            if let Some(srev)=self.srev.as_mut(){
+                if let Some(stamp)=self.last{
+                    let samples=self.stations.iter().map(|s|{
+                        if time(&s.row["dataTime"])!=Some(stamp) || !time(&s.row["receivedAt"]).is_some_and(|t|clock-t<=6000){return None}
+                        Some((measurement(&s.row["pgaGal"])?,s.row["sampledLevel"].as_i64()?))
+                    }).collect::<Vec<_>>();
+                    if let Some(indices)=srev.process(stamp,&samples,sensitivity){
+                        for i in indices{
+                            let s=&mut self.stations[i];
+                            s.until=clock+10500;
+                            s.state=match jma(s.result.level as i32){4.. => 6,1..=3 => 5,0 => 1,_ => 0};
+                        }
+                    }
+                }
+            } else if let Some(detector) = self.detector.as_mut() {
+                detector
                     .detect_policy(&info, sensitivity as i64, !self.grids.is_empty(), false, 3)
                     .expect("P-Alert topology pair");
-                if strongest >= 0 {
-                    let s = &self.stations[strongest as usize];
-                    let decimal = |v: f64| ((v + 180.0).rem_euclid(1.0) * 10.0).round() / 10.0;
-                    self.decimal = (
-                        decimal(number(&s.row["coordinate"]["lat"]).unwrap()),
-                        decimal(number(&s.row["coordinate"]["lng"]).unwrap()),
-                    );
-                }
                 for &i in &detector.active {
                     let s = &mut self.stations[i as usize];
                     s.until = clock + 10500;
@@ -578,18 +598,13 @@ impl PAlert {
             if level < 0 {
                 continue;
             }
-            let lat = (number(&s.row["coordinate"]["lat"]).unwrap() - self.decimal.0).round()
-                + self.decimal.0;
-            let lon = (number(&s.row["coordinate"]["lng"]).unwrap() - self.decimal.1).round()
-                + self.decimal.1;
+            let lat = number(&s.row["coordinate"]["lat"]).unwrap().floor() + 0.5;
+            let lon = number(&s.row["coordinate"]["lng"]).unwrap().floor() + 0.5;
             if let Some(g) = self.grids.iter_mut().find(|g| g.0 == lat && g.1 == lon) {
                 g.2 = g.2.max(level);
             } else {
                 self.grids.push((lat, lon, level));
             }
-        }
-        if self.grids.is_empty() {
-            self.decimal = (0.0, 0.0);
         }
         self.sound(max);
     }
@@ -694,7 +709,7 @@ impl PAlert {
                 counts[1] += 1;
             }
             entries.push([i as i64, s.result.level, shindo as i64, s.state as i64]);
-            json_entries.push(json!({"code":s.row["id"],"prefecture":s.row["area"],"level":s.result.level,"jmaShindo":shindo,"detectState":s.state,"detectReason":"kanameishi-chain"}));
+            json_entries.push(json!({"code":s.row["id"],"prefecture":s.row["area"],"level":s.result.level,"jmaShindo":shindo,"detectState":s.state,"detectReason":if self.srev.is_some(){"srev-palert-spatial"}else{"kanameishi-chain"}}));
         }
         let stage = if entries.is_empty() {
             "idle"
@@ -753,6 +768,7 @@ impl PAlert {
             entries,
             grids,
             detection_signature,
+            detector_name: if self.srev.is_some() {"srev-palert-spatial"} else {"kanameishi-chain"},
             automation,
             data_changed,
             original: self.original.clone(),
@@ -780,6 +796,7 @@ impl PAlert {
             entries: vec![],
             grids: vec![],
             detection_signature: String::new(),
+            detector_name: "kanameishi-chain",
             automation: vec![],
             data_changed: true,
             original: Original::default(),
@@ -865,6 +882,7 @@ impl PAlert {
                 station.row = (*row).clone();
                 station.row["sampledLevel"] = json!(level(row));
             }
+            self.last = time(&v["dataTime"]);
             self.detect(clock, sensitivity);
         }
         let ids = explicit
@@ -938,7 +956,7 @@ impl PAlert {
         } else {
             "weak"
         };
-        let entries=active.iter().map(|s|json!({"code":s.row["id"],"prefecture":s.row["area"],"level":s.result.level,"jmaShindo":jma(s.result.level as i32),"detectState":s.state,"detectReason":"kanameishi-chain"})).collect::<Vec<_>>();
+        let entries=active.iter().map(|s|json!({"code":s.row["id"],"prefecture":s.row["area"],"level":s.result.level,"jmaShindo":jma(s.result.level as i32),"detectState":s.state,"detectReason":if self.srev.is_some(){"srev-palert-spatial"}else{"kanameishi-chain"}})).collect::<Vec<_>>();
         let grids = self
             .grids
             .iter()
@@ -969,7 +987,10 @@ impl PAlert {
         }
         let detection = json!({"stage":stage,"weakCount":weak,"detectedCount":detected,"strongCount":strong,"maxShindo":max,"entries":entries});
         let detection_signature = serde_json::to_string(&json!([&detection, &grids])).unwrap();
-        let header = json!({"kind":"palert","source":"palert","status":self.status,"dataTime":self.last.map(iso),"receivedTime":self.received.map(iso),"receivedAt":iso(clock),"signature":signature,"automation":automation,"frames":self.frames,"lastError":self.last_error,"dataChanged":data_changed,"detectedStationIds":active.iter().map(|s|s.row["id"].clone()).collect::<Vec<_>>(),"detectionGrid":grids,"detection":detection,"detectionSignature":detection_signature,"grids":self.grids.iter().map(|&(lat,lon,level)|json!({"center":[lat,lon],"level":level,"shindo":if level<0{-3.0}else if level==0{-3.0}else if level>=20{6.5}else{(level as f64+0.5-7.0)/2.0},"points":[[lat-0.495,lon-0.495],[lat+0.495,lon-0.495],[lat+0.495,lon+0.495],[lat-0.495,lon+0.495]]})).collect::<Vec<_>>()});
+        let mut header = json!({"kind":"palert","source":"palert","status":self.status,"dataTime":self.last.map(iso),"receivedTime":self.received.map(iso),"receivedAt":iso(clock),"signature":signature,"automation":automation,"frames":self.frames,"lastError":self.last_error,"dataChanged":data_changed,"detectedStationIds":active.iter().map(|s|s.row["id"].clone()).collect::<Vec<_>>(),"detectionGrid":grids,"detection":detection,"detectionSignature":detection_signature,"grids":self.grids.iter().map(|&(lat,lon,level)|json!({"center":[lat,lon],"level":level,"shindo":if level<0{-3.0}else if level==0{-3.0}else if level>=20{6.5}else{(level as f64+0.5-7.0)/2.0},"points":[[lat-0.495,lon-0.495],[lat+0.495,lon-0.495],[lat+0.495,lon+0.495],[lat-0.495,lon+0.495]]})).collect::<Vec<_>>()});
+        if let Some(shadow)=self.srev.as_ref().and_then(|d|d.candidate_snapshot()){
+            header["palertHypShadow"]=shadow;
+        }
         let display_row = |row| DisplayRow {
             row,
             recent: time(&row["receivedAt"]).is_some_and(|t| clock - t <= 12000),

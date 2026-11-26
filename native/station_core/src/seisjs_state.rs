@@ -1,6 +1,6 @@
 //! SeisJS domain owner. Receives untouched decoded ingress on the source actor;
 //! only immutable display/archive projections cross the UI boundary.
-use super::{iso, number, text, timestamp};
+use super::{iso, number, text, timestamp, SEISJS_STATION_MAX_AGE_MS};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
@@ -64,7 +64,8 @@ impl SeisJs {
         *next = clock + 5000;
         let before = self.rows.len();
         self.rows.retain(|row| {
-            timestamp(&row["lastUpdate"], false, 0).is_none_or(|t| clock - t < 31000)
+            timestamp(&row["lastUpdate"], false, 0)
+                .is_none_or(|t| clock - t < SEISJS_STATION_MAX_AGE_MS)
         });
         if before == self.rows.len() {
             return false;

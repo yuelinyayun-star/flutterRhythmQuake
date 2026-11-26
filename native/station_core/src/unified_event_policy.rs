@@ -526,9 +526,32 @@ pub fn catalog_id(source: &str, id: &str) -> String {
     }
     id.into()
 }
+fn is_cea_agency_event_id(bytes: &[u8]) -> bool {
+    bytes.len() == 17
+        && bytes[12] == b'.'
+        && bytes[..12].iter().chain(&bytes[13..]).all(u8::is_ascii_digit)
+}
+
+pub fn jian_cea_wire_event_id(e: &Value) -> Option<&str> {
+    // The codec forwards the original eventId only for Jian CEA reports.
+    let id = s(&e["sourcePayload"], "eventId").trim();
+    is_cea_agency_event_id(id.as_bytes()).then_some(id)
+}
+
+#[no_mangle]
+/// `data` points to `len` readable bytes owned by the caller.
+pub unsafe extern "C" fn rq_cea_eew_is_agency_event_id(data: *const u8, len: usize) -> u32 {
+    if data.is_null() || len != 17 {
+        return 0;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(data, len) };
+    u32::from(is_cea_agency_event_id(bytes))
+}
+
 pub fn eew_id(e: &Value) -> String {
     let original = s(e, "eventId").trim();
-    if !b(e, "isEew") || s(e, "source") != "cwaEew" {
+    let source = s(e, "source");
+    if !b(e, "isEew") || !matches!(source, "ceaEew" | "cwaEew") {
         return original.into();
     }
     let prefix = if s(e, "$replaySessionId").is_empty() {
@@ -536,6 +559,12 @@ pub fn eew_id(e: &Value) -> String {
     } else {
         format!("{}:", s(e, "$replaySessionId"))
     };
+    if source == "ceaEew" {
+        if let Some(id) = jian_cea_wire_event_id(e) {
+            return format!("{prefix}{id}");
+        }
+        return original.into();
+    }
     let id = original.strip_prefix(&prefix).unwrap_or(original);
     let id = id.strip_prefix("cwa.gov.tw_earthquakeEW_").unwrap_or(id);
     if id.len() == 7 && id.chars().all(|v| v.is_ascii_digit()) {
@@ -1694,8 +1723,9 @@ pub fn elapsed(e: &Value, now: i64, source_now: i64, offset: i64, show_stale: bo
         // VXSE62 dates have already been parsed as absolute instants. They
         // must not pass through the source-wall-clock conversion a second time.
         let bulletin = &e["jmaLpgmBulletin"];
-        let stamp = bulletin["reportEpochUs"]
+        let stamp = bulletin["freshnessEpochUs"]
             .as_i64()
+            .or_else(|| bulletin["reportEpochUs"].as_i64())
             .or_else(|| bulletin["originEpochUs"].as_i64());
         return stamp.map_or(0, |v| ((source_now - v) / SECOND).clamp(0, 999999));
     }

@@ -118,6 +118,10 @@ class IntensityFillLayer extends StatefulWidget {
 
   /// UI labels only; callers explicitly opt in for ordinary JMA information.
   final bool showRegionValues;
+
+  /// JMA information without regional observations must stay empty instead
+  /// of falling back to the EEW-style station estimate.
+  final bool allowJmaEstimate;
   final String warnAreaJson;
   final CwaIntensityForecast? cwaForecast;
   final List<InstrumentIntensity>? observedStations;
@@ -138,6 +142,7 @@ class IntensityFillLayer extends StatefulWidget {
     this.showBorder = true,
     this.enabled = true,
     this.showRegionValues = false,
+    this.allowJmaEstimate = true,
     this.warnAreaJson = '',
     this.cwaForecast,
     this.observedStations,
@@ -154,6 +159,7 @@ class IntensityFillLayer extends StatefulWidget {
     this.showBorder = true,
     this.enabled = true,
     this.showRegionValues = false,
+    this.allowJmaEstimate = true,
     this.onInformationGeometry,
     this.onInformationFillSummary,
     this.informationGeometryKey,
@@ -234,6 +240,7 @@ class _IntensityFillLayerState extends State<IntensityFillLayer> {
     final warnAreaChanged = oldWidget.warnAreaJson != widget.warnAreaJson;
     final modelChanged =
         oldWidget.mode != widget.mode ||
+        oldWidget.allowJmaEstimate != widget.allowJmaEstimate ||
         !identical(oldWidget.observedStations, widget.observedStations) ||
         oldWidget.cwaForecast != widget.cwaForecast;
 
@@ -341,6 +348,13 @@ class _IntensityFillLayerState extends State<IntensityFillLayer> {
       setState(() {
         _regionIntensities = intensities;
         _regionClassNames = classNames;
+      });
+      return;
+    }
+    if (widget.mode == IntensityFillMode.jma && !widget.allowJmaEstimate) {
+      setState(() {
+        _regionIntensities = const {};
+        _regionClassNames = const {};
       });
       return;
     }

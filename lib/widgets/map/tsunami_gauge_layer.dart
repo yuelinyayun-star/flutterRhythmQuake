@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -26,6 +27,7 @@ class TsunamiGaugeLayer extends StatefulWidget {
 class _TsunamiGaugeLayerState extends State<TsunamiGaugeLayer> {
   late Future<TsunamiGaugePlan> _future;
   Timer? _expiry;
+  AppLifecycleListener? _lifecycle;
   DateTime? _deadline;
   int _generation = 0;
   TsunamiGaugePlan? _displayPlan;
@@ -35,6 +37,7 @@ class _TsunamiGaugeLayerState extends State<TsunamiGaugeLayer> {
   DateTime get _now => widget.now?.call() ?? DateTime.now();
   void _scheduleExpiry(DateTime? deadline) {
     _expiry?.cancel();
+    _expiry = null;
     _deadline = deadline;
     if (deadline != null) {
       final remaining = deadline.difference(_now.toUtc());
@@ -73,6 +76,16 @@ class _TsunamiGaugeLayerState extends State<TsunamiGaugeLayer> {
   @override
   void initState() {
     super.initState();
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      _lifecycle = AppLifecycleListener(
+        onShow: () {
+          final deadline = _deadline;
+          if (deadline == null) return;
+          _scheduleExpiry(deadline);
+          if (!deadline.isAfter(_now)) setState(() {});
+        },
+      );
+    }
     _load();
   }
 
@@ -89,6 +102,7 @@ class _TsunamiGaugeLayerState extends State<TsunamiGaugeLayer> {
 
   @override
   void dispose() {
+    _lifecycle?.dispose();
     _expiry?.cancel();
     super.dispose();
   }

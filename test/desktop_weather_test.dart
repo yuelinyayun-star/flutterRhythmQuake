@@ -364,6 +364,25 @@ void main() {
             .width,
         lessThanOrEqualTo(680),
       );
+      Navigator.of(tester.element(find.byType(BottomSheet))).pop();
+      await tester.pumpAndSettle();
+      final stationData = find.byKey(const ValueKey('precipitation-station-data'));
+      expect(stationData, findsNothing);
+      await tester.tap(find.byKey(const ValueKey(
+        'weather-map-quick-precipitationChinaLayer',
+      )));
+      await tester.pumpAndSettle();
+      expect(find.text('站点数据'), findsOneWidget);
+      expect(map.mobileWeatherPrecipitationStations, isFalse);
+      await tester.tap(stationData);
+      await tester.pumpAndSettle();
+      expect(map.mobileWeatherPrecipitationStations, isTrue);
+      expect(
+        (await SharedPreferences.getInstance())
+            .getBool(mobileWeatherPrecipitationStationsKey),
+        isTrue,
+      );
+      expect(map.mobileWeatherLayerEnabled('weatherStationLayer'), isFalse);
       await tester.pumpWidget(const SizedBox.shrink());
       expect(playback.source, isNull);
       playback.dispose();

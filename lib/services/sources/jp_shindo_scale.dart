@@ -34,8 +34,34 @@ class JpShindoScale {
     6.5,
   ];
 
+  /// Original SREV observation code (0 missing, 1..30 valid).
+  /// Matches the Rust NIED adapter's 0.1 instrumental-intensity quantization.
+  /// Never pass this code to a legacy map style or a JMA/CSIS/MMI label.
+  static int srevCodeFromShindo(double? shindo) {
+    if (shindo == null || !shindo.isFinite || shindo < -3.0) return 0;
+    final q = ((shindo.clamp(-3.0, 6.8) * 10).round() + 30).clamp(0, 98);
+    if (q < 15) return 1 + q ~/ 5;
+    if (q < 75) return 4 + (q - 15) * 3 ~/ 10;
+    if (q < 95) return 22 + (q - 75) * 4 ~/ 10;
+    return 30;
+  }
+
+  /// Lossy bridge for KA-compatible quantized input without a measured
+  /// continuous value. Uses the same representative raw q as native SREV.
+  /// For PGA/PGV-derived bands this is an equivalent interval, not a measured I.
+  static int srevCodeFromKanameishiLevel(int level) {
+    if (level < 0 || level > 20) return 0;
+    final q = switch (level) {
+      0 => 0,
+      1 => 3,
+      20 => 97,
+      _ => level * 5 - 3,
+    };
+    return srevCodeFromShindo((q - 30) / 10);
+  }
+
   static int levelFromShindo(double shindo) {
-    if (shindo.isNaN || shindo < scratchValues.first) return -1;
+    if (!shindo.isFinite || shindo < scratchValues.first) return -1;
     if (shindo >= scratchValues.last) return scratchValues.length - 1;
     for (int i = scratchValues.length - 1; i >= 0; i--) {
       if (shindo >= scratchValues[i]) return i;
@@ -47,7 +73,7 @@ class JpShindoScale {
     // KA getLevelFromInstShindo parity:
     // -1: < -3.0, 0: exactly -3.0, 1: (-3.0, -2.5),
     // 2..19: [(level - 7) / 2, (level - 6) / 2), 20: >= 6.5.
-    if (shindo.isNaN || shindo < -3.0) return -1;
+    if (!shindo.isFinite || shindo < -3.0) return -1;
     if (shindo == -3.0) return 0;
     if (shindo >= 6.5) return 20;
     return (shindo * 2 + 7).floor();

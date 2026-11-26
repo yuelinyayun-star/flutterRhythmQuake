@@ -64,6 +64,24 @@ void main() {
     expect(service.parseDetailForTesting(_vyse50Xml(status: '訓練')), isNull);
   });
 
+  test('external advisory still expires when its timer has not run', () {
+    var now = DateTime.parse('2019-11-07T14:05:00+09:00');
+    final service = JmaMegaquakeAdvisoryService(now: () => now);
+    addTearDown(service.dispose);
+    final advisory = service.parseDetailForTesting(_vyse50Xml())!;
+    final deadline = advisory.expiresAt!;
+    service.ingestExternal([advisory]);
+    now = deadline.subtract(const Duration(seconds: 1));
+    service.recheckExpiry();
+    expect(service.active, [advisory]);
+
+    now = deadline;
+    service.recheckExpiry();
+    expect(service.active, isEmpty);
+    service.ingestExternal([advisory]);
+    expect(service.active, isEmpty);
+  });
+
   test('parses monthly VYSE52 routine commentary', () {
     final service = JmaMegaquakeAdvisoryService();
     addTearDown(service.dispose);

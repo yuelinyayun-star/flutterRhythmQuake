@@ -101,7 +101,8 @@ class PAlertStationLayer extends StatelessWidget {
 
     return Stack(
       children: [
-        if (detectionGridCells.isNotEmpty && !hideGrid)
+        if ((preparedGrids?.isNotEmpty ?? detectionGridCells.isNotEmpty) &&
+            !hideGrid)
           PolygonLayer(polygons: _buildGridPolygons()),
         StationDotPainterLayer(dots: dots, sizeWithCameraZoom: true),
         if (markers.isNotEmpty) MarkerLayer(markers: markers),
@@ -110,41 +111,23 @@ class PAlertStationLayer extends StatelessWidget {
   }
 
   List<Polygon> _buildGridPolygons() {
-    if (preparedGrids case final grids?) {
-      return [
-        for (final grid in grids)
-          Polygon(
-            points: grid.points,
-            borderStrokeWidth: 2.0,
-            borderColor: blinkOn
-                ? _gridColor(grid.level)
-                : _gridColor(grid.level).withValues(alpha: 0),
-            color: Colors.transparent,
-          ),
-      ];
-    }
-    const halfStep = 0.99 / 2;
-    return detectionGridCells
-        .map((cell) {
-          final center = cell.center;
-          final color = cell.level <= 7
-              ? const Color(0xFF008000)
-              : cell.level <= 13
-              ? const Color(0xFFFFFF00)
-              : const Color(0xFFFF0000);
-          return Polygon(
-            points: [
-              LatLng(center.latitude - halfStep, center.longitude - halfStep),
-              LatLng(center.latitude + halfStep, center.longitude - halfStep),
-              LatLng(center.latitude + halfStep, center.longitude + halfStep),
-              LatLng(center.latitude - halfStep, center.longitude + halfStep),
-            ],
-            borderStrokeWidth: 2.0,
-            borderColor: blinkOn ? color : color.withValues(alpha: 0),
-            color: Colors.transparent,
-          );
-        })
-        .toList(growable: false);
+    final cells = alignTaiwanDetectionCells(
+      preparedGrids?.map(
+            (g) => PAlertDetectionGridCell(center: g.center, level: g.level),
+          ) ??
+          detectionGridCells,
+    );
+    return [
+      for (final cell in cells)
+        Polygon(
+          points: taiwanDetectionGridVertices(cell.center),
+          borderStrokeWidth: 2.0,
+          borderColor: blinkOn
+              ? _gridColor(cell.level)
+              : _gridColor(cell.level).withValues(alpha: 0),
+          color: Colors.transparent,
+        ),
+    ];
   }
 
   static double _markerSize(int level) => 14.0;

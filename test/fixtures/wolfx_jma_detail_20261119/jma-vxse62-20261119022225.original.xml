@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Report xmlns="http://xml.kishou.go.jp/jmaxml1/" xmlns:jmx="http://xml.kishou.go.jp/jmaxml1/">
+<Control>
+<Title>長周期地震動に関する観測情報</Title>
+<DateTime>2026-11-18T17:31:54Z</DateTime>
+<Status>通常</Status>
+<EditorialOffice>気象庁本庁</EditorialOffice>
+<PublishingOffice>気象庁</PublishingOffice>
+</Control>
+<Head xmlns="http://xml.kishou.go.jp/jmaxml1/informationBasis1/">
+<Title>長周期地震動に関する観測情報</Title>
+<ReportDateTime>2026-11-19T02:31:00+09:00</ReportDateTime>
+<TargetDateTime>2026-11-19T02:31:00+09:00</TargetDateTime>
+<EventID>20261119022225</EventID>
+<InfoType>発表</InfoType>
+<Serial>1</Serial>
+<InfoKind>長周期地震動に関する観測情報</InfoKind>
+<InfoKindVersion>1.3_0</InfoKindVersion>
+<Headline>
+<Text>１９日０２時２２分ころの地震により、長周期地震動階級２を観測した地域があります。</Text>
+<Information type="長周期地震動に関する観測情報（細分区域）">
+<Item>
+<Kind><Name>長周期地震動階級２</Name></Kind>
+<Areas codeType="地震情報／細分区域">
+<Area><Name>熊本県熊本</Name><Code>741</Code></Area>
+<Area><Name>熊本県天草・芦北</Name><Code>743</Code></Area>
+</Areas>
+</Item>
+<Item>
+<Kind><Name>長周期地震動階級１</Name></Kind>
+<Areas codeType="地震情報／細分区域">
+<Area><Name>熊本県球磨</Name><Code>742</Code></Area>
+<Area><Name>宮崎県南部山沿い</Name><Code>763</Code></Area>
+</Areas>
+</Item>
+</Information>
+</Headline>
+</Head>
+<Body xmlns="http://xml.kishou.go.jp/jmaxml1/body/seismology1/" xmlns:jmx_eb="http://xml.kishou.go.jp/jmaxml1/elementBasis1/">
+<Earthquake>
+<OriginTime>2026-11-19T02:22:00+09:00</OriginTime>
+<ArrivalTime>2026-11-19T02:22:00+09:00</ArrivalTime>
+<Hypocenter>
+<Area>
+<Name>熊本県天草・芦北地方</Name>
+<Code type="震央地名">743</Code>
+<jmx_eb:Coordinate description="北緯３２．３度　東経１３０．４度　深さ　１０ｋｍ">+32.3+130.4-10000/</jmx_eb:Coordinate>
+</Area>
+</Hypocenter>
+<jmx_eb:Magnitude type="Mj" description="Ｍ５．７">5.7</jmx_eb:Magnitude>
+</Earthquake>
+<Intensity>
+<Observation>
+<CodeDefine>
+<Type xpath="Pref/Code">地震情報／都道府県等</Type>
+<Type xpath="Pref/Area/Code">地震情報／細分区域</Type>
+<Type xpath="Pref/Area/IntensityStation/Code">長周期地震動観測点</Type>
+</CodeDefine>
+<MaxInt>5-</MaxInt>
+<MaxLgInt>2</MaxLgInt>
+<LgCategory>2</LgCategory>
+<Pref>
+<Name>熊本県</Name>
+<Code>43</Code>
+<MaxInt>5-</MaxInt>
+<MaxLgInt>2</MaxLgInt>
+<Area>
+<Name>熊本県熊本</Name>
+<Code>741</Code>
+<MaxInt>4</MaxInt>
+<MaxLgInt>2</MaxLgInt>
+<IntensityStation>
+<Name>八代市平山新町</Name>
+<Code>4320200</Code>
+<Int>4</Int>
+<LgInt>2</LgInt>
+<LgIntPerPeriod PeriodicBand="1" PeriodUnit="秒台">2</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="2" PeriodUnit="秒台">1</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="3" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="4" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="5" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="6" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="7" PeriodUnit="秒台">0</LgIntPerPeriod>
+<Sva unit="cm/s">17.6</Sva>
+<SvaPerPeriod unit="cm/s" PeriodicBand="1" PeriodUnit="秒台">17.6</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="2" PeriodUnit="秒台">8.7</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="3" PeriodUnit="秒台">3.3</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="4" PeriodUnit="秒台">2.0</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="5" PeriodUnit="秒台">1.5</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="6" PeriodUnit="秒台">1.1</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="7" PeriodUnit="秒台">0.8</SvaPerPeriod>
+</IntensityStation>
+</Area>
+<Area>
+<Name>熊本県天草・芦北</Name>
+<Code>743</Code>
+<MaxInt>5-</MaxInt>
+<MaxLgInt>2</MaxLgInt>
+<IntensityStation>
+<Name>芦北町芦北</Name>
+<Code>4348201</Code>
+<Int>5-</Int>
+<LgInt>2</LgInt>
+<LgIntPerPeriod PeriodicBand="1" PeriodUnit="秒台">2</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="2" PeriodUnit="秒台">2</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="3" PeriodUnit="秒台">1</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="4" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="5" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="6" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="7" PeriodUnit="秒台">0</LgIntPerPeriod>
+<Sva unit="cm/s">29.2</Sva>
+<SvaPerPeriod unit="cm/s" PeriodicBand="1" PeriodUnit="秒台">29.2</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="2" PeriodUnit="秒台">18.0</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="3" PeriodUnit="秒台">6.6</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="4" PeriodUnit="秒台">3.7</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="5" PeriodUnit="秒台">2.3</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="6" PeriodUnit="秒台">1.5</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="7" PeriodUnit="秒台">1.1</SvaPerPeriod>
+</IntensityStation>
+</Area>
+<Area>
+<Name>熊本県球磨</Name>
+<Code>742</Code>
+<MaxInt>5-</MaxInt>
+<MaxLgInt>1</MaxLgInt>
+<IntensityStation>
+<Name>人吉市西間下町</Name>
+<Code>4320301</Code>
+<Int>4</Int>
+<LgInt>1</LgInt>
+<LgIntPerPeriod PeriodicBand="1" PeriodUnit="秒台">1</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="2" PeriodUnit="秒台">1</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="3" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="4" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="5" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="6" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="7" PeriodUnit="秒台">0</LgIntPerPeriod>
+<Sva unit="cm/s">8.3</Sva>
+<SvaPerPeriod unit="cm/s" PeriodicBand="1" PeriodUnit="秒台">8.3</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="2" PeriodUnit="秒台">7.1</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="3" PeriodUnit="秒台">2.4</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="4" PeriodUnit="秒台">1.4</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="5" PeriodUnit="秒台">1.0</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="6" PeriodUnit="秒台">0.7</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="7" PeriodUnit="秒台">0.5</SvaPerPeriod>
+</IntensityStation>
+<IntensityStation>
+<Name>多良木町多良木</Name>
+<Code>4350500</Code>
+<Int>4</Int>
+<LgInt>1</LgInt>
+<LgIntPerPeriod PeriodicBand="1" PeriodUnit="秒台">1</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="2" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="3" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="4" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="5" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="6" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="7" PeriodUnit="秒台">0</LgIntPerPeriod>
+<Sva unit="cm/s">5.7</Sva>
+<SvaPerPeriod unit="cm/s" PeriodicBand="1" PeriodUnit="秒台">5.7</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="2" PeriodUnit="秒台">4.3</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="3" PeriodUnit="秒台">2.4</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="4" PeriodUnit="秒台">1.6</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="5" PeriodUnit="秒台">1.5</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="6" PeriodUnit="秒台">0.9</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="7" PeriodUnit="秒台">0.7</SvaPerPeriod>
+</IntensityStation>
+</Area>
+</Pref>
+<Pref>
+<Name>宮崎県</Name>
+<Code>45</Code>
+<MaxInt>4</MaxInt>
+<MaxLgInt>1</MaxLgInt>
+<Area>
+<Name>宮崎県南部山沿い</Name>
+<Code>763</Code>
+<MaxInt>4</MaxInt>
+<MaxLgInt>1</MaxLgInt>
+<IntensityStation>
+<Name>小林市真方</Name>
+<Code>4520501</Code>
+<Int>4</Int>
+<LgInt>1</LgInt>
+<LgIntPerPeriod PeriodicBand="1" PeriodUnit="秒台">1</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="2" PeriodUnit="秒台">1</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="3" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="4" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="5" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="6" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="7" PeriodUnit="秒台">0</LgIntPerPeriod>
+<Sva unit="cm/s">8.0</Sva>
+<SvaPerPeriod unit="cm/s" PeriodicBand="1" PeriodUnit="秒台">8.0</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="2" PeriodUnit="秒台">6.8</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="3" PeriodUnit="秒台">1.4</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="4" PeriodUnit="秒台">0.8</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="5" PeriodUnit="秒台">0.6</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="6" PeriodUnit="秒台">0.4</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="7" PeriodUnit="秒台">0.4</SvaPerPeriod>
+</IntensityStation>
+</Area>
+</Pref>
+</Observation>
+</Intensity>
+<Comments>
+<ForecastComment codeType="固定付加文">
+<Text>この地震について、緊急地震速報を発表しています。</Text>
+<Code>0241</Code>
+</ForecastComment>
+<FreeFormComment>各長周期地震動階級に対する簡易な現象表現
+ 階級１やや大きな揺れ
+ 階級２大きな揺れ
+ 階級３非常に大きな揺れ
+ 階級４極めて大きな揺れ
+波形、スペクトル等、本地震の長周期地震動に関する詳細な情報は気象庁の長周期地震動に関する観測情報のウェブサイト ( https://www.data.jma.go.jp/eew/data/ltpgm/event.php?eventId=20261119022225 ) もあわせてご活用ください。
+</FreeFormComment>
+<URI>https://www.data.jma.go.jp/eew/data/ltpgm/event.php?eventId=20261119022225</URI>
+</Comments>
+</Body>
+</Report>

@@ -75,12 +75,11 @@ void main() {
       },
     );
   }
-  testWidgets('explicit same-token save restores aggregate clients once', (
+  testWidgets('explicit same-token save restores the aggregate client once', (
     tester,
   ) async {
     final policy = WhewsAuthorizationPolicy();
     await policy.block(WhewsService.aggregateUrl, 'wat_controlled', 4401);
-    await policy.block(WhewsService.ceaAggregateUrl, 'wat_controlled', 4401);
     final peers = <WhewsPeer>[];
     final service = WhewsService(
       apiToken: 'wat_controlled',
@@ -99,14 +98,14 @@ void main() {
     await policy.resumeToken('wat_controlled');
     service.setApiToken('wat_controlled', retryRejected: true);
     await tester.pump();
-    expect(peers, hasLength(2));
+    expect(peers, hasLength(1));
     for (final peer in peers) {
       peer.closeCode = 4401;
       await peer.frames.close();
     }
     await tester.pump();
     await tester.pump(const Duration(hours: 1));
-    expect(peers, hasLength(2));
+    expect(peers, hasLength(1));
     expect(
       await policy.blockedCode(WhewsService.aggregateUrl, 'wat_controlled'),
       4401,

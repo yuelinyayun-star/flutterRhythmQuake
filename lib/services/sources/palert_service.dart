@@ -15,6 +15,7 @@ import '../../core/source_estimation/source_estimation_models.dart';
 import 'palert_detection.dart';
 import 'palert_http_client.dart';
 import 'palert_intensity.dart';
+import 'jp_shindo_scale.dart';
 import 'palert_level_history.dart';
 import 'palert_wire_values.dart';
 import 'station_json_decoder.dart';
@@ -83,6 +84,16 @@ class PAlertStation {
       PAlertIntensity.estimateFromPga(pgaGal);
 
   int get detectionLevel => currentGridLevel;
+
+  /// A quantized KA-equivalent intensity interval, not true measured JMA I.
+  /// Keep the PGV branch at high PGA; never substitute the PGA-only estimate.
+  /// No detection policy consumes this candidate until separately validated.
+  int get srevObservationCode => dataTime == null
+      ? 0
+      : JpShindoScale.srevCodeFromKanameishiLevel(currentGridLevel);
+  int get srevDisplayCode => dataTime == null
+      ? 0
+      : JpShindoScale.srevCodeFromKanameishiLevel(gridLevel);
 
   // Kept as an index-shaped compatibility getter for existing callers.
   int get jmaIndex => displayCwaIntensityIndex ?? -1;
@@ -245,8 +256,11 @@ class PAlertService {
       _nativeRuntime.automation;
   PAlertPreparedSummary? get nativeSummary => _nativeRuntime.summary;
   List<SeismicActiveEvent> get nativeSourceEvents => _nativeRuntime.events;
+  // P-Alert retains its KA PGA/PGV scale; do not feed it to NIED SREV HYP.
+  static const bool sourceEstimationAvailable = false;
   bool _nativeInferenceEnabled = false;
   void setInferenceEnabled(bool enabled) {
+    enabled = enabled && sourceEstimationAvailable;
     if (_nativeInferenceEnabled == enabled) return;
     _nativeInferenceEnabled = enabled;
     if (nativeActive) _nativeRuntime.setInferenceEnabled(enabled);

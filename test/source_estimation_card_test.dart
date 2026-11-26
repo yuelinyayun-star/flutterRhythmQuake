@@ -24,6 +24,64 @@ void main() {
   tearDown(tracker.resetNied);
 
   testWidgets(
+    'SREV card persists past HYP cutoff and clears on event removal',
+    (tester) async {
+      final started = DateTime.utc(2026, 11, 25, 9);
+      SeismicActiveEvent fixture(int age, {int report = 17}) =>
+          SeismicActiveEvent(
+            eventId: 'srev-lifecycle-ui-audit',
+            sourceId: 'nied',
+            startedAt: started,
+            updatedAt: started.add(Duration(seconds: age)),
+            stageName: 'detected',
+            maxShindo: 2,
+            estimate: SourceEstimate(
+              latitude: 34.15,
+              longitude: 135.7833,
+              depthKm: 40,
+              magnitude: 3.393,
+              originTime: started.subtract(const Duration(seconds: 5)),
+              confidence: 0,
+              method: 'nied_srev_hyp_rust_v1',
+              supportingStationCount: 100,
+              diagnostics: {
+                'srev_error': 24.0,
+                'srev_p_radius_km': 800.0,
+                'srev_s_radius_km': 500.0,
+                'confidence_available': false,
+                'srev_hyp_state': age >= 120 ? 'finished' : 'updating',
+                'srev_hyp_report_num': report,
+                'srev_hyp_report_time': started
+                    .add(const Duration(seconds: 110))
+                    .toIso8601String(),
+              },
+            ),
+          );
+      tracker.currentNiedEvent.value = fixture(119);
+      await _pumpAlertModule(tester);
+      await tester.pump();
+      expect(find.textContaining('SREV HYP'), findsNothing);
+      expect(find.textContaining('M3.4'), findsOneWidget);
+      expect(find.text('震源本地推算 第17报'), findsOneWidget);
+      expect(find.textContaining('更新中'), findsNothing);
+      tracker.currentNiedEvent.value = fixture(119, report: 18);
+      await tester.pump();
+      expect(find.text('震源本地推算 第18报'), findsOneWidget);
+      tracker.currentNiedEvent.value = fixture(120, report: 18);
+      await tester.pump();
+      expect(find.textContaining('SREV HYP'), findsNothing);
+      expect(find.textContaining('M3.4'), findsOneWidget);
+      expect(find.textContaining('更新结束'), findsOneWidget);
+      expect(find.text('震源本地推算 第18报（更新结束）'), findsOneWidget);
+      tracker.currentNiedEvent.value = null;
+      await tester.pump();
+      expect(find.textContaining('SREV HYP'), findsNothing);
+      expect(find.textContaining('M3.4'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'Japanese source-estimation card resolves its unchanged coordinates',
     (tester) async {
       // UI boundary fixture only; this is not an injected earthquake report.
@@ -96,6 +154,7 @@ void main() {
     expect(find.text('预估震度'), findsOneWidget);
     expect(find.textContaining('M4.2'), findsOneWidget);
     expect(find.textContaining('PGA 初估'), findsOneWidget);
+    expect(find.textContaining('P-Alert HYP'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -132,7 +191,7 @@ void main() {
     expect(find.text('3'), findsOneWidget);
     expect(find.text('\u9884\u4f30\u9707\u5ea6'), findsOneWidget);
     expect(find.text('\u68c0\u51fa\u9707\u5ea6'), findsNothing);
-    expect(find.textContaining('JS\u8bef\u5dee 1.250'), findsOneWidget);
+    expect(find.textContaining('\u8bef\u5dee 1.250'), findsOneWidget);
     expect(find.textContaining('\u89e6\u53d1 4\u7ad9'), findsOneWidget);
     expect(find.textContaining('\u652f\u6301 4\u7ad9'), findsWidgets);
   });
@@ -264,9 +323,7 @@ void main() {
     expect(find.text('\u68c0\u51fa\u9707\u5ea6'), findsNothing);
     expect(find.text(getFEName(35.783, 141.317)), findsOneWidget);
     expect(
-      find.text(
-        'M4.6 \u00b7 \u6df1\u5ea6 40km \u00b7 \u652f\u6301 5\u7ad9 \u00b7 Dart HYP',
-      ),
+      find.text('M4.6 \u00b7 \u6df1\u5ea6 40km \u00b7 \u652f\u6301 5\u7ad9'),
       findsOneWidget,
     );
     expect(

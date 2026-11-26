@@ -22,6 +22,7 @@ class PAlertSourceDriver {
   final ValueNotifier<List<SeismicActiveEvent>> events;
   final VoidCallback? onChanged;
   Timer? _expiry;
+  DateTime? _expiresAt;
   int _generation = 0;
   bool _disposed = false;
   Object? lastError;
@@ -60,11 +61,9 @@ class PAlertSourceDriver {
       clear();
       return;
     }
+    _expiresAt = received.add(PAlertService.frameStaleAfter);
     _expiry?.cancel();
-    _expiry = Timer(
-      received.add(PAlertService.frameStaleAfter).difference(now),
-      clear,
-    );
+    _expiry = Timer(_expiresAt!.difference(now), clear);
     final generation = _generation;
     try {
       final result = await submit(now);
@@ -87,6 +86,18 @@ class PAlertSourceDriver {
     }
   }
 
+  void recheckExpiry({DateTime? now}) {
+    final deadline = _expiresAt;
+    if (deadline == null) return;
+    _expiry?.cancel();
+    final remaining = deadline.difference(now ?? _clock());
+    if (remaining <= Duration.zero) {
+      clear();
+    } else {
+      _expiry = Timer(remaining, clear);
+    }
+  }
+
   /// Expiry clears visible output, retaining raw warm-up and immutable geometry.
   /// Source-time gaps still invalidate individual picks in the estimator.
   /// Disable/dispose are the only normal operations that release the worker.
@@ -94,6 +105,7 @@ class PAlertSourceDriver {
     _generation++;
     _expiry?.cancel();
     _expiry = null;
+    _expiresAt = null;
     if (releaseWorker) _worker.reset();
     if (events.value.isNotEmpty) {
       events.value = const [];

@@ -2,6 +2,8 @@
 
 #include <optional>
 
+#include <flutter/standard_method_codec.h>
+
 #include "flutter/generated_plugin_registrant.h"
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
@@ -27,6 +29,40 @@ bool FlutterWindow::OnCreate() {
   RegisterPlugins(flutter_controller_->engine());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
+  external_subtitle_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(),
+          "flutterrhythmquake/external_subtitle",
+          &flutter::StandardMethodCodec::GetInstance());
+  external_subtitle_channel_->SetMethodCallHandler(
+      [this](const auto& call, auto result) {
+        if (call.method_name() == "close") {
+          if (external_subtitle_) external_subtitle_->Hide();
+          result->Success();
+          return;
+        }
+        if (call.method_name() != "present") {
+          result->NotImplemented();
+          return;
+        }
+        const auto* lines = call.arguments()
+                                ? std::get_if<flutter::EncodableList>(
+                                      call.arguments())
+                                : nullptr;
+        if (!lines) {
+          result->Error("external_subtitle_arguments");
+          return;
+        }
+        if (!external_subtitle_) {
+          external_subtitle_ = std::make_unique<ExternalSubtitleWindow>();
+        }
+        if (external_subtitle_->Present(GetHandle(), *lines)) {
+          result->Success();
+        } else {
+          result->Error("external_subtitle_window");
+        }
+      });
+
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     this->Show();
   });
@@ -40,6 +76,8 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  external_subtitle_channel_.reset();
+  external_subtitle_.reset();
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }

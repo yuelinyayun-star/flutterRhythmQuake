@@ -77,7 +77,9 @@ List<(String, int)> referenceAreas(
         );
       }
     }
-    final rank = JpShindoScale.jmaNumberFromKanameishiLevel(cell.level);
+    final rank = (cell.level < 0
+        ? -1
+        : JpShindoScale.jmaIndexFromKanameishiLevel(cell.level));
     for (final pref in prefs) {
       final name = pref.trim();
       if (name.isNotEmpty && rank > (prefMax[name] ?? -1)) prefMax[name] = rank;
@@ -303,6 +305,66 @@ void main() {
     skip: skip,
   );
 
+  test(
+    'NIED sidebar distinguishes 5 weak, 5 strong, 6 weak, 6 strong and 7',
+    () {
+      final p = StationSummaryProjection();
+      addTearDown(p.dispose);
+      final stations = <NiedStation>[];
+      final cells = <String, NiedDetectionGridCell>{};
+      for (var i = 0; i < 5; i++) {
+        final code = 'R$i', level = 16 + i;
+        final coordinate = LatLng(32.0 + i * 2, 140);
+        stations.add(
+          NiedStation(
+            id: i,
+            code: code,
+            name: code,
+            coordinate: coordinate,
+            network: '',
+            prefecture: code,
+            expireSeconds: 10,
+            level: level,
+          )..isActive = true,
+        );
+        cells[code] = NiedDetectionGridCell(
+          center: coordinate,
+          level: level,
+          shindo: JpShindoScale.rawShindoFromKanameishiLevel(level),
+        );
+        final entry = DetectedStationEntry(
+          code: code,
+          prefecture: code,
+          level: level,
+          jmaShindo: JpShindoScale.jmaNumberFromKanameishiLevel(level),
+          detectState: 6,
+          detectReason: 'srev-permission',
+        );
+        expect(entry.jmaIndex, 5 + i);
+      }
+      final actual = project(
+        p,
+        nied: stations,
+        detection: ShakeDetectionSnapshot(
+          stage: ShakeDetectStage.strong,
+          weakCount: 0,
+          detectedCount: 0,
+          strongCount: 5,
+          maxShindo: 7,
+          gridCells: cells,
+        ),
+      );
+      expect(actual.niedDetect!.visualAreas.map((e) => (e.name, e.jmaShindo)), [
+        ('R4', 9),
+        ('R3', 8),
+        ('R2', 7),
+        ('R1', 6),
+        ('R0', 5),
+      ]);
+      expect(actual.niedDetect!.maxShindo, 7);
+    },
+    skip: skip,
+  );
   test(
     'NIED regions match original cell and nearest rules, then clear on empty data',
     () {

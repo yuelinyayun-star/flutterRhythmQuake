@@ -10,9 +10,10 @@ import 'web_source_proxy.dart';
 
 /// Polls the JMA eqvol Atom feed for VXSE62 long-period observation bulletins.
 class JmaLpgmService {
-  JmaLpgmService({http.Client? client})
+  JmaLpgmService({http.Client? client, DateTime Function()? now})
     : _client = client ?? createSourceHttpClient(),
-      _ownsClient = client == null;
+      _ownsClient = client == null,
+      _now = now ?? DateTime.now;
 
   static const String feedUrl =
       'https://www.data.jma.go.jp/developer/xml/feed/eqvol.xml';
@@ -25,6 +26,7 @@ class JmaLpgmService {
 
   final http.Client _client;
   final bool _ownsClient;
+  final DateTime Function() _now;
   final ValueNotifier<JmaLpgmBulletin?> latestNotifier =
       ValueNotifier<JmaLpgmBulletin?>(null);
   // Atom 条目 ID 可能在同一 Serial 修订时保持不变；记录条目内容指纹，
@@ -115,7 +117,7 @@ class JmaLpgmService {
           }
           continue;
         }
-        if (!bulletin.isActive()) continue;
+        if (!bulletin.isActive(now: _now())) continue;
         final current = latest;
         if (current == null || _isNewer(bulletin, current)) {
           _setLatest(bulletin);
@@ -193,6 +195,7 @@ class JmaLpgmService {
     final headline = _section(head, 'Headline');
     final headlineText = _decode(_tag(headline ?? '', 'Text'));
     final reportTime = _date(_tag(head, 'ReportDateTime'));
+    final publishedAt = _date(_tag(control ?? '', 'DateTime'));
 
     if (infoType.contains('取消')) {
       return JmaLpgmBulletin(
@@ -204,6 +207,7 @@ class JmaLpgmService {
         maxLgInt: 0,
         lgCategory: '',
         reportTime: reportTime,
+        publishedAt: publishedAt,
         detailUrl: detailUrl,
       );
     }
@@ -269,6 +273,7 @@ class JmaLpgmService {
       lgCategory: _tag(observation ?? '', 'LgCategory').trim(),
       originTime: _date(_tag(earthquake ?? '', 'OriginTime')),
       reportTime: reportTime,
+      publishedAt: publishedAt,
       hypocenter: _decode(_tag(hypocenterArea ?? '', 'Name')),
       latitude: coordinate?.$1,
       longitude: coordinate?.$2,
@@ -440,7 +445,7 @@ class JmaLpgmService {
   void _expireIfNeeded() {
     if (_disposed) return;
     final current = latest;
-    if (current != null && !current.isActive()) {
+    if (current != null && !current.isActive(now: _now())) {
       _setLatest(null);
     }
   }
@@ -451,12 +456,13 @@ class JmaLpgmService {
     _expiryTimer?.cancel();
     _expiryTimer = null;
     latestNotifier.value = bulletin;
-    if (bulletin != null && bulletin.isActive()) {
-      final stamp = bulletin.reportTime ?? bulletin.originTime;
+    final now = _now();
+    if (bulletin != null && bulletin.isActive(now: now)) {
+      final stamp = bulletin.freshnessTime;
       if (stamp != null) {
         final remaining =
             const Duration(minutes: 1) -
-            DateTime.now().toUtc().difference(stamp.toUtc());
+            now.toUtc().difference(stamp.toUtc());
         _expiryTimer = Timer(
           remaining.isNegative ? Duration.zero : remaining,
           _expireIfNeeded,

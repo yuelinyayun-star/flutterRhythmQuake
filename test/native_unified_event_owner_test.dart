@@ -5,8 +5,6 @@ import 'dart:io';
 import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutterrhythmquake/core/utils/jian_cea_eew.dart';
-import 'package:flutterrhythmquake/core/intensity_calculator.dart';
 import 'package:flutterrhythmquake/core/utils/quake_time.dart';
 import 'package:flutterrhythmquake/models/quake_message.dart';
 import 'package:flutterrhythmquake/models/unified_quake_data.dart';
@@ -278,23 +276,31 @@ void main() {
   );
 
   test(
-    'derived warning effects match current badge rules without writing estimates',
+    'native warning effects preserve report intensity and warning flags',
     () {
       final owner = NativeUnifiedEventOwner(onBatch: (_, _) {});
       addTearDown(owner.dispose);
-      for (final event in [
-        for (var m = 0.1; m < 10; m += 0.125) model(magnitude: m),
-        model(magnitude: 6).copyWith(isHistory: true),
-        model(magnitude: 6).copyWith(sourcePayload: {'isWarn': false}),
-        model(magnitude: 6).copyWith(isCanceled: true),
-        model(magnitude: 6).copyWith(maxIntensity: '6.5'),
-        model(magnitude: 6).copyWith(magnitude: double.nan),
+      final strong = model(magnitude: 6);
+      for (final (event, expected) in [
+        (model(magnitude: 4), false),
+        (strong, true),
+        (strong.copyWith(isHistory: true), false),
+        (strong.copyWith(sourcePayload: {'isWarn': false}), false),
+        (strong.copyWith(sourcePayload: {'isTraining': true}), false),
+        (strong.copyWith(isCanceled: true), false),
+        (strong.copyWith(isAssumption: true), false),
+        (strong.copyWith(maxIntensity: '6.4'), false),
+        (strong.copyWith(maxIntensity: '6.5'), true),
+        (strong.copyWith(magnitude: double.nan), false),
+        (strong.copyWith(depth: -1), false),
+        (strong.copyWith(apiTypeLabel: 'FAN'), false),
+        (model(magnitude: 4).copyWith(isWarn: true), true),
       ]) {
-        expect(
-          owner.query('effectiveWarn', event: event),
-          effectiveEewWarn(event),
-        );
-        expect(event.isWarn, isFalse);
+        final before = event.toMap();
+        expect(owner.query('effectiveWarn', event: event), expected);
+        expect(event.isWarn, before['isWarn']);
+        expect(event.maxIntensity, before['maxIntensity']);
+        expect(event.sourcePayload, before['sourcePayload']);
       }
     },
   );
@@ -365,27 +371,28 @@ void main() {
     },
   );
 
-  test('history fallback intensity keeps the original calculation', () {
+  test('native history fallback preserves current CSIS levels', () {
     final owner = NativeUnifiedEventOwner(onBatch: (_, _) {});
     addTearDown(owner.dispose);
-    for (final depth in [
-      -1.0,
-      0.0,
-      10.0,
-      50.0,
-      300.0,
-      700.0,
-      double.nan,
-      double.infinity,
+    for (final (mag, depth, expected) in [
+      (0.0, 100.0, 0),
+      (0.25, -1.0, 1),
+      (3.0, 0.0, 4),
+      (6.0, 10.0, 8),
+      (6.0, 50.0, 7),
+      (6.0, 300.0, 5),
+      (6.0, 700.0, 4),
+      (6.0, double.nan, 8),
+      (6.0, double.infinity, 0),
+      (double.nan, 10.0, 0),
+      (20.0, 100.0, 12),
     ]) {
-      for (var mag = 0.0; mag <= 10; mag += 0.125) {
-        final event = model(magnitude: mag).copyWith(depth: depth);
-        expect(
-          owner.messageFields(event)['fallbackIntensity'],
-          IntensityCalculator.calcCsisLevel(mag, depth, 0),
-          reason: 'M$mag depth=$depth',
-        );
-      }
+      final event = model(magnitude: mag).copyWith(depth: depth);
+      expect(
+        owner.messageFields(event)['fallbackIntensity'],
+        expected,
+        reason: 'M$mag depth=$depth',
+      );
     }
   });
 
@@ -419,6 +426,12 @@ void main() {
           NativeUnifiedEventOwner.diagnostics['workers'],
           baseline['workers']! + 1,
         );
+        final beforeWake = owner.queryRaw({'op': 'runtimeStats'}) as Map;
+        owner.queryRaw({'op': 'wakeDeadlines'});
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+        expect(active.single.isCanceled, isTrue);
+        final afterWake = owner.queryRaw({'op': 'runtimeStats'}) as Map;
+        expect(afterWake['commands'], beforeWake['commands']);
         await Future<void>.delayed(const Duration(milliseconds: 20100));
         expect(active, isEmpty);
         expect(
@@ -562,6 +575,67 @@ void main() {
         owner.dispose();
       }
       expect(NativeUnifiedEventOwner.diagnostics, baseline);
+    },
+  );
+
+  test(
+    'rejected submissions release handles and a catalog retry binds',
+    () async {
+      final telegrams = _originalTelegrams();
+      final queued = telegrams.first;
+      final rejected = telegrams.last;
+      final context = _context(queued)..['blockedSources'] = [queued.source];
+      final originalCatalog = File(
+        'test/fixtures/early_est_history_20261009.original.json',
+      ).readAsStringSync(encoding: utf8);
+      final row = QuakeMessage.fromMap(
+        Map<String, dynamic>.from((jsonDecode(originalCatalog) as List).first),
+      );
+      final received = Completer<List<QuakeMessage>>();
+      var handled = 0;
+      var handledWithView = 0;
+      final owner = NativeUnifiedEventOwner(
+        manualClock: false,
+        onBatch: (batch, pool) {
+          final consumed = batch['consumed'] as List? ?? const [];
+          handled += consumed.length;
+          handledWithView += consumed.where(pool.containsKey).length;
+        },
+        onCatalog: (rows) => received.complete(rows),
+      );
+      addTearDown(owner.dispose);
+      void project() => owner.projectCatalog(
+        {
+          'earlyEst': [row],
+        },
+        sourceFilter: {'earlyEst'},
+        magnitudeFilter: 0,
+        bucketFilters: {},
+      );
+      for (var j = 0; j < 256; j++) {
+        owner.admit(queued, context);
+      }
+      expect(() => owner.admit(rejected, context), throwsStateError);
+      expect(() => owner.admit(queued, context), throwsStateError);
+      expect(project, throwsStateError);
+      expect(owner.retainsView(queued), isTrue);
+      expect(owner.retainsView(rejected), isFalse);
+      final diagnostics = NativeUnifiedEventOwner.runtimeDiagnostics.single;
+      expect(diagnostics['pendingViews'], 1);
+      expect(diagnostics['pendingCatalogRevisions'], 0);
+      expect(diagnostics['catalogViews'], 0);
+
+      owner.send({'op': 'ready'});
+      final timeout = Stopwatch()..start();
+      while (owner.retainsView(queued) &&
+          timeout.elapsed < const Duration(seconds: 5)) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      expect(owner.retainedViewCount, 0);
+      expect(handled, 256);
+      expect(handledWithView, handled);
+      project();
+      expect(await received.future.timeout(const Duration(seconds: 5)), [row]);
     },
   );
 

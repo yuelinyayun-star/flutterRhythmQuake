@@ -2,7 +2,10 @@
 find_program(RQ_CARGO_EXECUTABLE cargo REQUIRED)
 set(RQ_CARGO_TARGET_DIR "${CMAKE_CURRENT_BINARY_DIR}/cargo")
 file(GLOB_RECURSE RQ_STATION_CORE_SOURCES CONFIGURE_DEPENDS
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/*.rs")
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/*.rs"
+  "${CMAKE_CURRENT_SOURCE_DIR}/vendor/srev-detector/src/*.rs"
+  "${CMAKE_CURRENT_SOURCE_DIR}/vendor/srev-detector/src/*.json"
+  "${CMAKE_CURRENT_SOURCE_DIR}/vendor/srev-detector/Cargo.toml")
 set(RQ_STATION_CORE_DLL "${RQ_CARGO_TARGET_DIR}/x86_64-pc-windows-msvc/release/rq_station_core.dll")
 add_custom_command(
   OUTPUT "${RQ_STATION_CORE_DLL}"

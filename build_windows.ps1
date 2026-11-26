@@ -7,6 +7,8 @@ param(
     [switch]$Clean,
     [switch]$Release,
     [switch]$SkipProcessCleanup,
+    [switch]$FieldLog,
+    [string]$FieldLogDir = '',
     [ValidateSet('personal', 'public')]
     [string]$Edition = 'personal'
 )
@@ -100,9 +102,17 @@ Write-Host "      Cache ready: $cacheDll" -ForegroundColor Green
 # ============================================================
 Write-Host "[4/4] Running Flutter..." -ForegroundColor Cyan
 
+$dartDefines = @("--dart-define=RQ_EDITION=$Edition")
+if ($FieldLog) {
+    $dartDefines += '--dart-define=RQ_FIELD_LOG=true'
+    if (-not [string]::IsNullOrWhiteSpace($FieldLogDir)) {
+        $dartDefines += "--dart-define=RQ_FIELD_LOG_DIR=$FieldLogDir"
+    }
+}
+
 if ($Release) {
     Write-Host "      Mode: Release build" -ForegroundColor Yellow
-    flutter build windows --release --no-pub "--dart-define=RQ_EDITION=$Edition"
+    flutter build windows --release --no-pub @dartDefines
 } else {
-    flutter run -d windows "--dart-define=RQ_EDITION=$Edition"
+    flutter run -d windows @dartDefines
 }

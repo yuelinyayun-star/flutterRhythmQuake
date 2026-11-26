@@ -19,7 +19,10 @@ class DetectedStationEntry {
   final String code;
   final String prefecture;
   final int level;
-  final int jmaShindo;
+  final int
+  jmaShindo; // Legacy numerical class (-1..7), not the ten-rank index.
+  int get jmaIndex =>
+      level < 0 ? -1 : JpShindoScale.jmaIndexFromKanameishiLevel(level);
   final int detectState;
   final String detectReason;
 
@@ -87,7 +90,8 @@ class ShakeDetectionService {
     : _sourceId = 'nied',
       _minimumJointStations = 0,
       _allowActiveRiseShortcut = true,
-      _nativeOwnerRequested = false;
+      _nativeOwnerRequested = false,
+      _useSrev = true;
 
   /// Independent state and timers while reusing the NIED detection algorithm.
   ShakeDetectionService.forSource(
@@ -95,14 +99,17 @@ class ShakeDetectionService {
     int minimumJointStations = 0,
     bool allowActiveRiseShortcut = true,
     bool nativeOwner = false,
+    bool useSrev = true,
   }) : assert(minimumJointStations >= 0),
        _minimumJointStations = minimumJointStations,
        _allowActiveRiseShortcut = allowActiveRiseShortcut,
-       _nativeOwnerRequested = nativeOwner;
+       _nativeOwnerRequested = nativeOwner,
+       _useSrev = useSrev;
   final String _sourceId;
   final int _minimumJointStations;
   final bool _allowActiveRiseShortcut;
   final bool _nativeOwnerRequested;
+  final bool _useSrev;
 
   /// Android hosted mode promotes the shared NIED singleton to the Rust
   /// detection owner at setStations(background: true) time. iOS has no
@@ -168,6 +175,8 @@ class ShakeDetectionService {
     bool detachStations = false,
     bool emitSnapshot = true,
   }) {
+    final wasSrev = _nativeOwner && _useSrev;
+    srevSourceRows = const [];
     _nativeGeneration++;
     _detectionOwner?.reset(clearHolds: clearStationState);
     _stationExpiryRefreshTimer?.cancel();
@@ -219,7 +228,9 @@ class ShakeDetectionService {
       onDetectionSnapshotChanged?.call(idleSnapshot);
       onEventDetectionChanged?.call(
         EventDetection(
-          detectorId: 'legacy_shake_detection_adapter',
+          detectorId: wasSrev
+              ? 'srev_nied_detection_adapter'
+              : 'legacy_shake_detection_adapter',
           sourceId: _sourceId,
           eventId: null,
           state: EventDetectionState.idle,
@@ -268,7 +279,7 @@ class ShakeDetectionService {
           .map(
             (s) =>
                 '${s.id}:${s.code}:${s.coordinate.latitude},'
-                '${s.coordinate.longitude}:${s.pixelClusterId}',
+                '${s.coordinate.longitude}:${s.pixelClusterId}:${s.name}',
           )
           .join('|');
       final sameLayout =
@@ -337,6 +348,7 @@ class ShakeDetectionService {
         _detectionOwner = NativeNiedDetectionOwner(
           stations,
           onUpdate: _bindNativeDetection,
+          useSrev: _useSrev,
         );
         for (var i = 0; i < stations.length; i++) {
           stations[i]
@@ -397,6 +409,9 @@ class ShakeDetectionService {
     _sensitivity = level.clamp(1, 3);
   }
 
+  List<dynamic> srevSourceRows = const [];
+  bool solveSrev = false;
+
   void processUpdate({bool background = false}) {
     if (_nativeOwner) {
       _processNativeOwnedUpdate();
@@ -420,7 +435,9 @@ class ShakeDetectionService {
     if (stations == null || stations.isEmpty) return;
     final owner = _detectionOwner;
     if (owner == null) throw StateError('NIED native detector not configured');
-    owner.process(stations, _sensitivity);
+    srevSourceRows = const [];
+    owner.process(stations, _sensitivity, solveSrev: solveSrev);
+    owner.rebind(stations);
   }
 
   // This path only binds prepared native views and dispatches native effects.
@@ -428,12 +445,14 @@ class ShakeDetectionService {
   void _bindNativeDetection(List<dynamic> result) {
     final stations = _stations;
     if (stations == null) return;
+    if (result.length > 4) srevSourceRows = result[4] as List;
     final generation = _nativeGeneration;
     for (final row in result[0] as List) {
       stations[row[0] as int]
         ..isActive = row[1] as bool
         ..detectState = row[2] as int
         ..detectReason = row[3] as String;
+      if (row.length > 4) stations[row[0] as int].triggerStamp = row[4] as int;
     }
     for (final action in result[1] as List) {
       switch (action[0] as int) {
@@ -501,7 +520,9 @@ class ShakeDetectionService {
           );
     final state = EventDetectionState.values[view[10] as int];
     final event = EventDetection(
-      detectorId: 'legacy_shake_detection_adapter',
+      detectorId: _useSrev
+          ? 'srev_nied_detection_adapter'
+          : 'legacy_shake_detection_adapter',
       sourceId: _sourceId,
       eventId: startedAt == null
           ? null
@@ -851,20 +872,24 @@ class ShakeDetectionService {
       // resulting max level to JMA shindo, so level<=7 must remain as a real
       // "震度0" detect grid instead of being dropped here.
       if (station.kaLevel < 0) continue;
-      final lat = niedDetectionGridAxisCenter(
-        niedDetectionGridAxisIndex(
-          station.coordinate.latitude,
-          _gridDecimal[0],
-        ),
-        _gridDecimal[0],
-      );
-      final lng = niedDetectionGridAxisCenter(
-        niedDetectionGridAxisIndex(
-          station.coordinate.longitude,
-          _gridDecimal[1],
-        ),
-        _gridDecimal[1],
-      );
+      final lat = _sourceId == "palert"
+          ? station.coordinate.latitude.floor() + 0.5
+          : niedDetectionGridAxisCenter(
+              niedDetectionGridAxisIndex(
+                station.coordinate.latitude,
+                _gridDecimal[0],
+              ),
+              _gridDecimal[0],
+            );
+      final lng = _sourceId == "palert"
+          ? station.coordinate.longitude.floor() + 0.5
+          : niedDetectionGridAxisCenter(
+              niedDetectionGridAxisIndex(
+                station.coordinate.longitude,
+                _gridDecimal[1],
+              ),
+              _gridDecimal[1],
+            );
       final key = '$lat,$lng';
       final existing = next[key];
       final level = existing == null || station.kaLevel > existing.level

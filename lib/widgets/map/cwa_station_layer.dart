@@ -6,6 +6,7 @@ import 'ka_shindo_marker_style.dart';
 import 'map_style_zoom.dart';
 import 'station_dot_painter_layer.dart';
 import '../../services/sources/native_station_display.dart';
+import '../../services/sources/palert_detection_grid.dart';
 
 class CwaStationLayer extends StatefulWidget {
   final List<CwaStation>? stations;
@@ -31,8 +32,6 @@ class CwaStationLayer extends StatefulWidget {
 
 class _CwaStationLayerState extends State<CwaStationLayer>
     with GridCentersEmitMixin {
-  bool _hadAlertStations = false;
-  List<double> _gridDecimal = const [0.0, 0.0];
   final Map<String, _CwaGridCell> _heldGridCells = {};
 
   // Snapshot render values because services can mutate station lists in place.
@@ -68,7 +67,10 @@ class _CwaStationLayerState extends State<CwaStationLayer>
         (prepared?.isNotEmpty ?? _heldGridCells.isNotEmpty) && !widget.hideGrid;
 
     emitGridCentersIfChanged(
-      prepared?.map((c) => c.center).toList(growable: false) ??
+      prepared
+              ?.map((c) => taiwanDetectionGridCenter(c.center))
+              .toSet()
+              .toList(growable: false) ??
           _heldGridCells.values.map((c) => c.center).toList(growable: false),
       widget.onGridCellsChanged,
     );
@@ -192,34 +194,13 @@ class _CwaStationLayerState extends State<CwaStationLayer>
   void _syncHeldGridCells(List<CwaStation> alertStations) {
     if (alertStations.isEmpty) {
       _heldGridCells.clear();
-      if (_hadAlertStations) {
-        _hadAlertStations = false;
-        _gridDecimal = const [0.0, 0.0];
-      }
       return;
     }
-
-    if (!_hadAlertStations) {
-      final strongest = alertStations.reduce(
-        (a, b) => a.alertIntensity >= b.alertIntensity ? a : b,
-      );
-      _gridDecimal = [
-        _gridDecimalPart(strongest.coordinate.latitude),
-        _gridDecimalPart(strongest.coordinate.longitude),
-      ];
-      _hadAlertStations = true;
-    }
-
     final currentGridCells = <String, _CwaGridCell>{};
     for (final station in alertStations) {
-      final latRounded = _roundCoord(
-        station.coordinate.latitude,
-        _gridDecimal[0],
-      );
-      final lngRounded = _roundCoord(
-        station.coordinate.longitude,
-        _gridDecimal[1],
-      );
+      final center = taiwanDetectionGridCenter(station.coordinate);
+      final latRounded = center.latitude;
+      final lngRounded = center.longitude;
       final key = '$latRounded,$lngRounded';
       final level = CwaStationService.gridLevelFromInstShindo(
         station.alertIntensity,
@@ -241,9 +222,13 @@ class _CwaStationLayerState extends State<CwaStationLayer>
   List<Polygon> _buildGridPolygons(bool blinkOn) {
     if (widget.preparedGrids case final prepared?) {
       return [
-        for (final cell in prepared)
+        for (final cell in alignTaiwanDetectionCells(
+          prepared.map(
+            (g) => PAlertDetectionGridCell(center: g.center, level: g.level),
+          ),
+        ))
           Polygon(
-            points: cell.points,
+            points: taiwanDetectionGridVertices(cell.center),
             borderStrokeWidth: 2.0,
             borderColor: _gridColor(
               cell.level,
@@ -255,19 +240,13 @@ class _CwaStationLayerState extends State<CwaStationLayer>
     final grids = _heldGridCells.values.toList(growable: false);
     final polygons = <Polygon>[];
     if (grids.isEmpty) return polygons;
-    const step = 0.99;
     final blinkAlpha = blinkOn ? 1.0 : 0.0;
     for (final cell in grids) {
       final center = cell.center;
       final color = _gridColor(cell.level);
       polygons.add(
         Polygon(
-          points: [
-            LatLng(center.latitude - step / 2, center.longitude - step / 2),
-            LatLng(center.latitude + step / 2, center.longitude - step / 2),
-            LatLng(center.latitude + step / 2, center.longitude + step / 2),
-            LatLng(center.latitude - step / 2, center.longitude + step / 2),
-          ],
+          points: taiwanDetectionGridVertices(center),
           borderStrokeWidth: 2.0,
           borderColor: color.withValues(alpha: 0.8 * blinkAlpha),
           color: Colors.transparent,
@@ -284,15 +263,6 @@ class _CwaStationLayerState extends State<CwaStationLayer>
     if (level <= 7) return colorGreen;
     if (level <= 13) return colorYellow;
     return colorRed;
-  }
-
-  double _roundCoord(double val, double decimal) {
-    return (val - decimal).roundToDouble() + decimal;
-  }
-
-  static double _gridDecimalPart(double val) {
-    final fraction = (val + 180) % 1;
-    return (fraction * 10).roundToDouble() / 10;
   }
 
   double _getSize(int level) {

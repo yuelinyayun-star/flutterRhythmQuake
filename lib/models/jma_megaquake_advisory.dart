@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../services/live_display_time.dart';
+
 enum JmaMegaquakeFamily { nankai, hokkaidoSanriku }
 
 enum JmaMegaquakeKeyword {
@@ -238,18 +240,11 @@ JmaMegaquakeKeyword jmaMegaquakeKeywordFrom({
   return JmaMegaquakeKeyword.unknown;
 }
 
-Duration jmaMegaquakeTtl(JmaMegaquakeKeyword keyword) {
-  return switch (keyword) {
-    JmaMegaquakeKeyword.megaquakeWarning ||
-    JmaMegaquakeKeyword.megaquakeAdvisory ||
-    JmaMegaquakeKeyword.subsequentQuakeWatch ||
-    JmaMegaquakeKeyword.investigating ||
-    JmaMegaquakeKeyword.extraCommentary ||
-    JmaMegaquakeKeyword.routineCommentary ||
-    JmaMegaquakeKeyword.unknown => const Duration(minutes: 5),
-    JmaMegaquakeKeyword.investigationEnded => const Duration(minutes: 3),
-  };
-}
+Duration jmaMegaquakeTtl(JmaMegaquakeKeyword keyword) => liveDisplayLifetime(
+  keyword == JmaMegaquakeKeyword.investigationEnded
+      ? LiveDisplayLifetime.jmaInvestigationEnded
+      : LiveDisplayLifetime.jmaAdvisory,
+);
 
 int jmaMegaquakePriority(JmaMegaquakeKeyword keyword) {
   return switch (keyword) {

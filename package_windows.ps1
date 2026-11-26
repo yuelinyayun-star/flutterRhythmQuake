@@ -8,7 +8,9 @@
 param(
     [ValidateSet('personal', 'public')]
     [string]$Edition = 'personal',
-    [switch]$SkipProcessCleanup
+    [switch]$SkipProcessCleanup,
+    [switch]$FieldLog,
+    [string]$FieldLogDir = ''
 )
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -26,6 +28,12 @@ if (-not $pubspecVersionLine -or
 $appVersion = $Matches[1]
 $appBuild = $Matches[2]
 $packageVersion = "$appVersion.$appBuild"
+$installerBaseName = "RhythmQuake_Setup_${packageVersion}_${Edition}_x64"
+$installerOptions = @()
+if ($FieldLog) {
+    $installerBaseName += '_fieldlog'
+    $installerOptions += "/F$installerBaseName"
+}
 
 $installerCacheDir = Join-Path $env:LOCALAPPDATA "RhythmQuake\build-cache\inno"
 $chineseMessagesFile = Join-Path $installerCacheDir "ChineseSimplified.isl"
@@ -51,7 +59,7 @@ foreach ($path in $isccPaths) {
 
 # 步骤 1: 构建 Release
 Write-Host "[1/4] Building Windows Release $appVersion+$appBuild..." -ForegroundColor Cyan
-& ".\build_windows.ps1" -Release -Edition $Edition -SkipProcessCleanup:$SkipProcessCleanup
+& ".\build_windows.ps1" -Release -Edition $Edition -SkipProcessCleanup:$SkipProcessCleanup -FieldLog:$FieldLog -FieldLogDir $FieldLogDir
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  Build failed! Exit code: $LASTEXITCODE" -ForegroundColor Red
@@ -108,6 +116,9 @@ $releaseManifest = [ordered]@{
     architecture = "x64"
     files = $manifestFiles
 }
+if ($FieldLog) {
+    $releaseManifest['fieldLog'] = $true
+}
 $releaseManifest | ConvertTo-Json -Depth 5 |
     Set-Content -LiteralPath $manifestPath -Encoding UTF8
 Write-Host "      Payload manifest: $($manifestFiles.Count) files" -ForegroundColor Green
@@ -148,7 +159,7 @@ Write-Host "      Verified: $chineseMessagesHash" -ForegroundColor Green
 
 # 步骤 4: 编译安装包
 Write-Host "[4/4] Compiling branded installer..." -ForegroundColor Cyan
-& $iscc "/DMyAppVersion=$appVersion" "/DMyAppBuild=$appBuild" "/DMyAppEdition=$Edition" "/DChineseMessagesFile=$chineseMessagesFile" "installer_rhythmquake.iss"
+& $iscc @installerOptions "/DMyAppVersion=$appVersion" "/DMyAppBuild=$appBuild" "/DMyAppEdition=$Edition" "/DChineseMessagesFile=$chineseMessagesFile" "installer_rhythmquake.iss"
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  Installer compilation failed! Exit code: $LASTEXITCODE" -ForegroundColor Red
@@ -159,7 +170,7 @@ Write-Host "============================================" -ForegroundColor Green
 Write-Host "  Done! Installer created in: build\installer" -ForegroundColor Green
 Write-Host "============================================" -ForegroundColor Green
 
-$installerPath = Join-Path $projectDir "build\installer\RhythmQuake_Setup_${packageVersion}_${Edition}_x64.exe"
+$installerPath = Join-Path $projectDir "build\installer\$installerBaseName.exe"
 if (-not (Test-Path -LiteralPath $installerPath)) {
     throw "Expected installer was not created: $installerPath"
 }

@@ -89,9 +89,9 @@ class WhewsStationService {
   Stream<WhewsStationFrame> get frameStream => _frameController.stream;
 
   String get _url => switch (kind) {
-    WhewsStationKind.nied => 'wss://api.beecld.com/ws/nied',
-    WhewsStationKind.snet => 'wss://api.beecld.com/ws/snet',
-    WhewsStationKind.kma => 'wss://api.beecld.com/ws/kma_station',
+    WhewsStationKind.nied => 'wss://api.2v8.cn/ws/nied',
+    WhewsStationKind.snet => 'wss://api.2v8.cn/ws/snet',
+    WhewsStationKind.kma => 'wss://api.2v8.cn/ws/kma_station',
   };
 
   String get _stationFrameType => switch (kind) {
@@ -190,7 +190,8 @@ class WhewsStationService {
   void _handleObservationTimeout() {
     final deadline = _observationDeadline;
     _observationTimer = null;
-    if (deadline != null && DateTime.now().difference(deadline) > const Duration(seconds: 5)) {
+    if (deadline != null &&
+        DateTime.now().difference(deadline) > const Duration(seconds: 5)) {
       _armObservationTimer(const Duration(seconds: 20));
       return;
     }
@@ -335,7 +336,11 @@ class WhewsStationService {
     _observationTimer = null;
     final client = _client;
     _client = null;
-    if (client != null) _closing.close(() async { client.dispose(); await client.closed; });
+    if (client != null)
+      _closing.close(() async {
+        client.dispose();
+        await client.closed;
+      });
     _coordinates = const [];
     _lastDataTime = null;
     _hasPublishedStations = false;

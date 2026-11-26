@@ -46,15 +46,29 @@ class CencIrLayer extends StatelessWidget {
     this.onInformationFillSummary,
   });
 
-  @override
-  Widget build(BuildContext context) {
-    if (data == null) return const SizedBox.shrink();
+  static bool hasContourFill(BuildContext context, CencIrData data) {
+    if (data.contourGeojson == null) return false;
+    return _painter(context, data)._contours().pathsByIntensity.values.any(
+      (contour) => !contour.bounds.isEmpty,
+    );
+  }
+
+  static CencIrPainter _painter(BuildContext context, CencIrData data) {
     final mediaSize = MediaQuery.of(context).size;
     final compact =
         mediaSize.shortestSide < 700 ||
         defaultTargetPlatform == TargetPlatform.android ||
         defaultTargetPlatform == TargetPlatform.iOS;
+    return CencIrPainter(
+      data: data,
+      camera: MapCamera.of(context),
+      compact: compact,
+    );
+  }
 
+  @override
+  Widget build(BuildContext context) {
+    if (data == null) return const SizedBox.shrink();
     return Stack(
       children: [
         IntensityFillLayer.cencObserved(
@@ -63,11 +77,7 @@ class CencIrLayer extends StatelessWidget {
           onInformationFillSummary: onInformationFillSummary,
         ),
         CustomPaint(
-          painter: CencIrPainter(
-            data: data!,
-            camera: MapCamera.of(context),
-            compact: compact,
-          ),
+          painter: _painter(context, data!),
           size: Size.infinite,
           isComplex: true,
           willChange: false,
@@ -202,9 +212,9 @@ class CencIrPainter extends CustomPainter {
     );
   }
 
-  void _drawContours(Canvas canvas, Size size) {
+  _CachedCencContours _contours() {
     final geojson = data.contourGeojson;
-    if (geojson == null) return;
+    if (geojson == null) return const _CachedCencContours.empty();
 
     final cacheKey = _CencContourCacheKey(
       eventId: data.uniEventId,
@@ -212,11 +222,14 @@ class CencIrPainter extends CustomPainter {
       zoomKey: (camera.zoom * 1000).round(),
       compact: compact,
     );
-    final contours = _contourPathCache.getOrBuild(
+    return _contourPathCache.getOrBuild(
       cacheKey,
       () => _buildContourPaths(geojson),
     );
+  }
 
+  void _drawContours(Canvas canvas, Size size) {
+    final contours = _contours();
     if (contours.pathsByIntensity.isEmpty) return;
 
     final origin = camera.pixelOrigin;

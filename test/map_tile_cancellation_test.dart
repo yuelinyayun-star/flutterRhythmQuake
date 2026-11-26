@@ -84,11 +84,15 @@ void main() {
       final firstImage = await _loadedImage(
         first.resolve(ImageConfiguration.empty),
       );
+      final firstKey = await first.obtainKey(ImageConfiguration.empty);
+      final decodedCache = PaintingBinding.instance.imageCache;
+      expect(decodedCache.containsKey(firstKey), isTrue);
       firstImage.dispose();
+      provider.evictActiveDecodedTiles();
+      await Future<void>.delayed(Duration.zero);
+      expect(decodedCache.containsKey(firstKey), isFalse);
       firstCancel.complete();
       await Future<void>.delayed(Duration.zero);
-      PaintingBinding.instance.imageCache.clear();
-      PaintingBinding.instance.imageCache.clearLiveImages();
 
       final secondCancel = Completer<void>();
       final second = provider.getImageWithCancelLoadingSupport(

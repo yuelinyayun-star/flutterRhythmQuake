@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'native_japan_sea_regions.dart';
 import 'native_east_asia_regions.dart';
+import 'native_epicenter_regions.dart';
 
 /// Loads compact offline data used to turn epicenter coordinates into names.
 class EpicenterRegionService {
@@ -17,21 +18,28 @@ class EpicenterRegionService {
   static const _japanLandAsset = 'assets/regions/japan_land_regions.bin';
 
   EpicenterRegionResolver? _resolver;
+  bool _nativeLoaded = false;
   Future<void>? _loading;
 
-  bool get isLoaded => _resolver != null;
+  bool get isLoaded => _nativeLoaded || _resolver != null;
 
   Future<void> load({AssetBundle? bundle}) {
-    if (_resolver != null) return Future.value();
-    return _loading ??= _load(bundle ?? rootBundle);
+    if (isLoaded) return Future.value();
+    return _loading ??= _load(bundle).whenComplete(() => _loading = null);
   }
 
-  Future<void> _load(AssetBundle bundle) async {
+  Future<void> _load(AssetBundle? bundle) async {
+    if (bundle == null && NativeEpicenterRegions.supported) {
+      NativeEpicenterRegions.prepare();
+      _nativeLoaded = true;
+      return;
+    }
+    final assets = bundle ?? rootBundle;
     try {
-      final china = await bundle.load(_chinaAsset);
-      final chinaAdmin = await bundle.load(_chinaAdminAsset);
-      final cwa = await bundle.load(_cwaAsset);
-      final japanLand = await bundle.load(_japanLandAsset);
+      final china = await assets.load(_chinaAsset);
+      final chinaAdmin = await assets.load(_chinaAdminAsset);
+      final cwa = await assets.load(_cwaAsset);
+      final japanLand = await assets.load(_japanLandAsset);
       _resolver = EpicenterRegionResolver.fromByteData(
         china: china,
         chinaAdmin: chinaAdmin,
@@ -42,8 +50,6 @@ class EpicenterRegionService {
     } catch (error, stackTrace) {
       debugPrint('Epicenter region data load failed: $error');
       debugPrintStack(stackTrace: stackTrace);
-    } finally {
-      _loading = null;
     }
   }
 
@@ -52,6 +58,9 @@ class EpicenterRegionService {
     if (!latitude.isFinite || !longitude.isFinite) return null;
     if (latitude < -90 || latitude > 90) return null;
     if (longitude < -180 || longitude > 180) return null;
+    if (_nativeLoaded) {
+      return NativeEpicenterRegions.lookup(latitude, longitude);
+    }
     return _resolver?.lookup(latitude, longitude);
   }
 
@@ -60,12 +69,20 @@ class EpicenterRegionService {
     if (!latitude.isFinite || !longitude.isFinite) return null;
     if (latitude < -90 || latitude > 90) return null;
     if (longitude < -180 || longitude > 180) return null;
+    if (_nativeLoaded) {
+      return NativeEpicenterRegions.lookup(
+        latitude,
+        longitude,
+        chinaOnly: true,
+      );
+    }
     return _resolver?.lookupChinaPlace(latitude, longitude);
   }
 
   @visibleForTesting
   void setResolverForTesting(EpicenterRegionResolver? resolver) {
     _resolver = resolver;
+    _nativeLoaded = false;
     _loading = null;
   }
 }

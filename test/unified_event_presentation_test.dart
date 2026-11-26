@@ -154,21 +154,22 @@ void main() {
         apiTypeLabel: api,
       );
 
-      final whewsZero = UnifiedEventPresentation.fromEvent(
-        event(origin: 3, api: 'WHEWS', intensity: '0'),
-      );
+      final whewsEvent = event(origin: 3, api: 'WHEWS', intensity: '0');
+      final whewsZero = UnifiedEventPresentation.fromEvent(whewsEvent);
       expect(whewsZero.intensityLabel, '烈度');
-      expect(whewsZero.intensityValue, isNot('0'));
+      final estimate = forcedInfoIntensityValue(whewsEvent);
+      expect(estimate, isNotNull);
+      expect(whewsZero.intensityValue, unifiedRomanIntensityLabel(estimate!));
 
       final whewsReported = UnifiedEventPresentation.fromEvent(
         event(origin: 3, api: 'WHEWS', intensity: '4.2'),
       );
       expect(whewsReported.intensityValue, 'IV');
 
-      final otherSource = UnifiedEventPresentation.fromEvent(
-        event(origin: 1, api: 'Jian Project', intensity: '0'),
-      );
-      expect(otherSource.intensityValue, '0');
+      final jianEvent = event(origin: 1, api: 'Jian Project', intensity: '0');
+      expect(forcedInfoIntensityValue(jianEvent), isNull);
+      expect(UnifiedEventPresentation.fromEvent(jianEvent).intensityValue, 'I');
+      expect(jianEvent.maxIntensity, '0');
     },
   );
 

@@ -6,6 +6,7 @@ import 'dart:isolate';
 import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 import 'package:clock/clock.dart' as test_clock;
+import '../core/utils/eew_event_identity.dart';
 import '../models/source_payload.dart';
 import '../models/unified_quake_data.dart';
 import '../models/quake_message.dart';
@@ -74,10 +75,13 @@ final class NativeUnifiedEventOwner implements Finalizable {
   final _ids = Expando<int>(), _keys = Expando<String>();
   final _messageFields = Expando<Map<String, dynamic>>();
   final _displayRetained = <int>{};
+  final _productTokens = <String, int>{};
+  int _productRevision = 0;
   final _pool = <int, UnifiedQuakeData>{};
   int get retainedViewCount => _pool.length;
   bool retainsView(UnifiedQuakeData event) => _pool.containsValue(event);
-  final _pending = <int>{};
+  // A view may be referenced by several commands before the first batch arrives.
+  final _pending = <int, int>{};
   final _descriptors = Expando<Map<String, dynamic>>();
   late final RawReceivePort _port;
   Pointer<Void> _owner = nullptr;
@@ -151,7 +155,7 @@ final class NativeUnifiedEventOwner implements Finalizable {
               'originEpochUs': e.jmaLpgmBulletin!.originTime
                   ?.toUtc()
                   .microsecondsSinceEpoch,
-              'reportEpochUs': e.jmaLpgmBulletin!.reportTime
+              'freshnessEpochUs': e.jmaLpgmBulletin!.freshnessTime
                   ?.toUtc()
                   .microsecondsSinceEpoch,
               'lat': e.jmaLpgmBulletin!.latitude,
@@ -169,6 +173,7 @@ final class NativeUnifiedEventOwner implements Finalizable {
       // Only these original source scalars enter admission policy; original
       // reports/rawEvent remain attached to their existing read-only views.
       'sourcePayload': {
+        'eventId': ?jianCeaWireEventId(e),
         if (e.apiTypeLabel == 'Jian Project')
           'infoTypeName': e.sourcePayload?['infoTypeName'],
         if (e.source == 'kmaEew')
@@ -192,11 +197,9 @@ final class NativeUnifiedEventOwner implements Finalizable {
     bool alreadyAccepted = false,
     bool suppressEffects = false,
   }) {
-    final descriptor = describe(event);
-    _pending.add(descriptor['\u0024token'] as int);
     send({
       'op': 'admit',
-      'event': descriptor,
+      'event': describe(event),
       'context': context,
       'alreadyAccepted': alreadyAccepted,
       'suppressEffects': suppressEffects,
@@ -204,19 +207,42 @@ final class NativeUnifiedEventOwner implements Finalizable {
   }
 
   void send(Map<String, dynamic> command) {
-    if (_disposed) throw StateError('Native unified event session disposed');
-    if (_manual) {
-      _clock = test_clock.clock.now().difference(_testStartedAt).inMicroseconds;
-    }
+    final tokens = <int>[];
     if (command['event'] case final Map event) {
-      if (event['\u0024token'] case final int id) _pending.add(id);
+      if (event['\u0024token'] case final int id) tokens.add(id);
     }
     if (command['groups'] case final List groups) {
       for (final group in groups) {
         for (final event in group as List) {
-          _pending.add((event as Map)['\u0024token'] as int);
+          tokens.add((event as Map)['\u0024token'] as int);
         }
       }
+    }
+    if (command['op'] == 'rebindHistory') {
+      for (final row in command['mappings'] as List<List<int>>) {
+        tokens.add(row[1]);
+      }
+    }
+    try {
+      _submit(command);
+    } catch (_) {
+      if (!_draining) {
+        for (final id in tokens) {
+          if (!_keepView(id, _displayRetained)) _pool.remove(id);
+        }
+      }
+      rethrow;
+    }
+    for (final id in tokens) {
+      _pending[id] = (_pending[id] ?? 0) + 1;
+    }
+    if (_manual) _drain();
+  }
+
+  void _submit(Map<String, dynamic> command) {
+    if (_disposed) throw StateError('Native unified event session disposed');
+    if (_manual) {
+      _clock = test_clock.clock.now().difference(_testStartedAt).inMicroseconds;
     }
     final bytes = JsonUtf8Encoder().convert(command);
     using((arena) {
@@ -227,7 +253,73 @@ final class NativeUnifiedEventOwner implements Finalizable {
         throw StateError('Native unified event command rejected ($error)');
       }
     });
-    if (_manual) _drain();
+  }
+
+  /// Commit a display-only product even when the ordinary worker queue is
+  /// full. Only the current product handles are owned outside that queue.
+  void replaceProductSlot(String source, UnifiedQuakeData? event) {
+    final descriptor = event == null ? null : describe(event);
+    final token = descriptor?['\u0024token'] as int?;
+    final int revision;
+    try {
+      final result = queryRaw({
+        'op': 'replaceProductSlot',
+        'source': source,
+        'event': descriptor,
+      });
+      if (result is! int || result <= _productRevision) {
+        throw StateError('Native unified product slot update failed: $source');
+      }
+      revision = result;
+    } catch (_) {
+      if (token != null && !_keepView(token, _displayRetained)) {
+        _pool.remove(token);
+      }
+      rethrow;
+    }
+    _productRevision = revision;
+    final previous = _productTokens.remove(source);
+    if (token != null) _productTokens[source] = token;
+    if (previous != null && !_keepView(previous, _displayRetained)) {
+      _pool.remove(previous);
+    }
+  }
+
+  bool _keepView(int id, Set<int> retained) =>
+      retained.contains(id) ||
+      _pending.containsKey(id) ||
+      _productTokens.containsValue(id);
+
+  Map<String, dynamic> _bindCurrentProductSlots(Map<String, dynamic> batch) {
+    if ((batch['productRevision'] as int? ?? 0) >= _productRevision) {
+      return batch;
+    }
+    // Ordinary commands may already have produced snapshots while this
+    // isolate was busy. Keep their ordinary events and effects in order, but
+    // do not let their old product views undo a synchronous replacement.
+    final oldProducts = (batch['productTokens'] as List? ?? const []).toSet();
+    final display = batch['jmaLpgmDisplay'] as Map;
+    final visible = (display['active'] as List).toSet()
+      ..removeAll(oldProducts)
+      ..addAll(_productTokens.values);
+    var tokens = [
+      for (final id in (batch['active'] as List).cast<int>())
+        if (!oldProducts.contains(id)) id,
+      ..._productTokens.values,
+    ];
+    if (_productTokens.isNotEmpty && tokens.length > 1) {
+      tokens = sortViews([
+        for (final id in tokens) _pool[id]!,
+      ]).map((view) => _ids[view]!).toList();
+    }
+    return {
+      ...batch,
+      'active': tokens,
+      'jmaLpgmDisplay': {
+        ...display,
+        'active': tokens.where(visible.contains).toList(),
+      },
+    };
   }
 
   dynamic query(
@@ -243,9 +335,7 @@ final class NativeUnifiedEventOwner implements Finalizable {
       if (previous != null) 'previous': describe(previous),
     });
     if (!_draining) {
-      _pool.removeWhere(
-        (id, _) => !_displayRetained.contains(id) && !_pending.contains(id),
-      );
+      _pool.removeWhere((id, _) => !_keepView(id, _displayRetained));
     }
     return result;
   }
@@ -287,7 +377,6 @@ final class NativeUnifiedEventOwner implements Finalizable {
       if (old == null) continue;
       final next = _ids[summaries[j]] ??= ++_serial;
       _pool[next] = summaries[j];
-      _pending.add(next);
       mappings.add([old, next]);
       final key = _keys[original[j]];
       if (key != null) _keys[summaries[j]] = key;
@@ -304,23 +393,22 @@ final class NativeUnifiedEventOwner implements Finalizable {
     required Map<String, double> bucketFilters,
   }) {
     final rows = <Map<String, dynamic>>[], ids = <int>{};
+    final newViews = <int, QuakeMessage>{};
     final names = <Object>[];
     for (final entry in buckets.entries) {
       final tokens = <int>[];
       for (final e in entry.value) {
         final token = _catalogIds[e] ??= ++_catalogSerial;
-        _catalogPool[token] = e;
-        ids.add(token);
-        tokens.add(token);
-        if (_catalogKnown.add(token)) {
+        if (ids.add(token) && !_catalogKnown.contains(token)) {
+          newViews[token] = e;
           rows.add(_describeCatalog(e));
         }
+        tokens.add(token);
       }
       names.add([entry.key, tokens]);
     }
-    final revision = ++_catalogRevision;
-    _catalogPending[revision] = ids;
-    send({
+    final revision = _catalogRevision + 1;
+    _submit({
       'op': 'catalog',
       'catalogRevision': revision,
       'rows': rows,
@@ -329,6 +417,11 @@ final class NativeUnifiedEventOwner implements Finalizable {
       'magnitudeFilter': magnitudeFilter,
       'bucketFilters': bucketFilters,
     });
+    _catalogRevision = revision;
+    _catalogPool.addAll(newViews);
+    _catalogKnown.addAll(newViews.keys);
+    _catalogPending[revision] = ids;
+    if (_manual) _drain();
   }
 
   Map<String, dynamic> _describeCatalog(QuakeMessage e) =>
@@ -360,6 +453,15 @@ final class NativeUnifiedEventOwner implements Finalizable {
         'usgsUpdated': e.usgsUpdated,
         'usgsProductTypes': e.usgsProductTypes,
       };
+
+  List<int?> jmaObservedMapBindings(
+    List<QuakeMessage> summaries,
+    List<QuakeMessage> reports,
+  ) => (queryRaw({
+    'op': 'jmaObservedMapBindings',
+    'summaries': summaries.map(_describeCatalog).toList(growable: false),
+    'reports': reports.map(_describeCatalog).toList(growable: false),
+  }) as List).cast<int?>();
 
   ({List<QuakeMessage> rows, int notifications}) upsertBucket(
     String bucket,
@@ -520,18 +622,25 @@ final class NativeUnifiedEventOwner implements Finalizable {
               ]);
             }
           }
-          onBatch(batch, _pool);
+          onBatch(_bindCurrentProductSlots(batch), _pool);
           if (_disposed) break;
           for (final id in batch['consumed'] as List? ?? const []) {
-            _pending.remove(id);
+            final count = _pending[id];
+            if (count == null) continue;
+            if (count == 1) {
+              _pending.remove(id);
+            } else {
+              _pending[id] = count - 1;
+            }
           }
           final retained = (batch['retained'] as List).cast<int>().toSet();
+          // Automatic slots have their own retention below. A queued snapshot
+          // must not keep an already replaced slot alive after the last batch.
+          retained.removeAll(batch['productTokens'] as List? ?? const []);
           _displayRetained
             ..clear()
             ..addAll(retained);
-          _pool.removeWhere(
-            (id, _) => !retained.contains(id) && !_pending.contains(id),
-          );
+          _pool.removeWhere((id, _) => !_keepView(id, retained));
           final catalogAck = batch['catalogRevision'] as int;
           _catalogPending.removeWhere((revision, _) => revision <= catalogAck);
           _catalogKnown
@@ -584,6 +693,7 @@ final class NativeUnifiedEventOwner implements Finalizable {
     _catalogKnown.clear();
     _catalogPending.clear();
     _pending.clear();
+    _productTokens.clear();
   }
 }
 

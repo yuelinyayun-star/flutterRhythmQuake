@@ -12,7 +12,7 @@ pub(crate) fn prefers_base_fe(lat: f64, lon: f64) -> bool {
         && (0.0..=65.0).contains(&lat) && (70.0..=180.0).contains(&lon)
         && regions().lookup(lat, lon) == Some("__BASE_FE__")
 }
-fn china_land(lat: f64, lon: f64) -> Option<&'static str> {
+pub(crate) fn china_land(lat: f64, lon: f64) -> Option<&'static str> {
     if !lat.is_finite()
         || !lon.is_finite()
         || !(0.0..=65.0).contains(&lat)
@@ -30,7 +30,7 @@ fn china_land(lat: f64, lon: f64) -> Option<&'static str> {
     .lookup(lat, lon)
     .and_then(|name| name.strip_prefix("中国|"))
 }
-fn lookup(lat: f64, lon: f64) -> Option<&'static str> {
+pub(crate) fn lookup(lat: f64, lon: f64) -> Option<&'static str> {
     if !lat.is_finite()
         || !lon.is_finite()
         || !(0.0..=65.0).contains(&lat)

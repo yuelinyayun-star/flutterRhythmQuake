@@ -257,6 +257,9 @@ class MapStateProvider with ChangeNotifier {
   String _weatherStationMode = 'auto';
   Map<String, bool>? _mobileWeatherLayers;
   String? _mobileWeatherStationMode;
+  bool _mobileWeatherPrecipitationStations = false;
+  bool get mobileWeatherPrecipitationStations =>
+      _mobileWeatherPrecipitationStations;
   int? _mobileWeatherSourceMask;
   bool get _usesMobileWeatherLayers => _mobileViewportIsolation && _viewport == MapViewport.weather;
   bool get hasMobileWeatherLayerProfile => _mobileWeatherLayers != null;
@@ -283,6 +286,12 @@ class MapStateProvider with ChangeNotifier {
   void setMobileWeatherStationMode(String value) {
     if (!const {'auto', 'rain', 'temperature', 'wind'}.contains(value) || mobileWeatherStationMode == value) return;
     _mobileWeatherStationMode = value;
+    notifyListeners();
+  }
+
+  void setMobileWeatherPrecipitationStations(bool enabled) {
+    if (_mobileWeatherPrecipitationStations == enabled) return;
+    _mobileWeatherPrecipitationStations = enabled;
     notifyListeners();
   }
 
@@ -316,6 +325,7 @@ class MapStateProvider with ChangeNotifier {
   Timer? _autoZoomResumeTimer;
   Timer? _gestureAutoFollowResumeTimer;
   DateTime? _autoZoomResumeAt;
+  DateTime? _gestureAutoFollowResumeAt;
   Timer? _moveAnimationTimer;
   MapCameraMode _cameraMode = MapCameraMode.autoFollow;
   bool _isGestureAutoFollowPaused = false;
@@ -415,6 +425,7 @@ class MapStateProvider with ChangeNotifier {
   void pauseAutoZoom({Duration resumeAfter = const Duration(seconds: 60)}) {
     if (!isSeismicViewportVisible) return;
     _gestureAutoFollowResumeTimer?.cancel();
+    _gestureAutoFollowResumeAt = null;
     _isGestureAutoFollowPaused = false;
     _pauseAutoZoom(resumeAfter);
   }
@@ -449,13 +460,42 @@ class MapStateProvider with ChangeNotifier {
     _stopMoveAnimation();
     if (!isSeismicViewportVisible) return;
     _isGestureAutoFollowPaused = true;
-    _gestureAutoFollowResumeTimer?.cancel();
-    _gestureAutoFollowResumeTimer = Timer(gestureAutoFollowResumeDelay, () {
-      if (!_isGestureAutoFollowPaused) return;
-      _isGestureAutoFollowPaused = false;
-      notifyListeners();
-    });
+    final now = DateTime.now();
+    _gestureAutoFollowResumeAt = now.add(gestureAutoFollowResumeDelay);
+    _scheduleGestureAutoFollowResume(gestureAutoFollowResumeDelay);
     _pauseAutoZoom(gestureAutoFollowResumeDelay, preserveLongerPause: true);
+  }
+
+  void recheckAutoFollowPause({DateTime? now}) {
+    final currentTime = now ?? DateTime.now();
+    if (_autoZoomResumeAt case final resumeAt?) {
+      final remaining = resumeAt.difference(currentTime);
+      if (remaining <= Duration.zero) {
+        _resumeSeismicAutoZoom();
+        return;
+      }
+      _autoZoomResumeTimer?.cancel();
+      _autoZoomResumeTimer = Timer(remaining, _resumeSeismicAutoZoom);
+    }
+    if (_gestureAutoFollowResumeAt case final resumeAt?) {
+      _scheduleGestureAutoFollowResume(resumeAt.difference(currentTime));
+    }
+  }
+
+  void _scheduleGestureAutoFollowResume(Duration remaining) {
+    _gestureAutoFollowResumeTimer?.cancel();
+    if (remaining <= Duration.zero) {
+      _resumeGestureAutoFollow();
+    } else {
+      _gestureAutoFollowResumeTimer = Timer(remaining, _resumeGestureAutoFollow);
+    }
+  }
+
+  void _resumeGestureAutoFollow() {
+    _gestureAutoFollowResumeAt = null;
+    if (!_isGestureAutoFollowPaused) return;
+    _isGestureAutoFollowPaused = false;
+    notifyListeners();
   }
 
   void resumeAutoZoom() {
@@ -465,6 +505,7 @@ class MapStateProvider with ChangeNotifier {
 
   void _resumeSeismicAutoZoom() {
     _gestureAutoFollowResumeTimer?.cancel();
+    _gestureAutoFollowResumeAt = null;
     _isGestureAutoFollowPaused = false;
     _isAutoZoom = true;
     _autoZoomResumeTimer?.cancel();

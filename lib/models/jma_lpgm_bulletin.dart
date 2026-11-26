@@ -111,6 +111,7 @@ class JmaLpgmBulletin {
     required this.lgCategory,
     this.originTime,
     this.reportTime,
+    this.publishedAt,
     this.hypocenter = '',
     this.latitude,
     this.longitude,
@@ -130,6 +131,7 @@ class JmaLpgmBulletin {
   final String lgCategory;
   final DateTime? originTime;
   final DateTime? reportTime;
+  final DateTime? publishedAt;
   final String hypocenter;
   final double? latitude;
   final double? longitude;
@@ -141,9 +143,19 @@ class JmaLpgmBulletin {
 
   bool get isCanceled => infoType.contains('取消');
 
+  DateTime? get freshnessTime {
+    final publication = publishedAt;
+    final report = reportTime;
+    if (publication != null &&
+        (report == null || publication.isAfter(report))) {
+      return publication;
+    }
+    return report ?? originTime;
+  }
+
   bool isActive({DateTime? now, Duration maxAge = const Duration(minutes: 1)}) {
     if (isCanceled || maxLgInt < 1) return false;
-    final stamp = reportTime ?? originTime;
+    final stamp = freshnessTime;
     if (stamp == null) return true;
     return nowUtc(now).difference(stamp.toUtc()) <= maxAge;
   }
@@ -204,6 +216,7 @@ class JmaLpgmBulletin {
       lgCategory,
       originTime?.toUtc().toIso8601String() ?? '',
       reportTime?.toUtc().toIso8601String() ?? '',
+      if (publishedAt != null) publishedAt!.toUtc().toIso8601String(),
       hypocenter,
       latitude,
       longitude,
@@ -224,6 +237,7 @@ class JmaLpgmBulletin {
     'lgCategory': lgCategory,
     'originTime': originTime?.toIso8601String(),
     'reportTime': reportTime?.toIso8601String(),
+    if (publishedAt != null) 'publishedAt': publishedAt!.toIso8601String(),
     'hypocenter': hypocenter,
     'latitude': latitude,
     'longitude': longitude,
@@ -244,6 +258,7 @@ class JmaLpgmBulletin {
     lgCategory: map['lgCategory']?.toString() ?? '',
     originTime: DateTime.tryParse(map['originTime']?.toString() ?? ''),
     reportTime: DateTime.tryParse(map['reportTime']?.toString() ?? ''),
+    publishedAt: DateTime.tryParse(map['publishedAt']?.toString() ?? ''),
     hypocenter: map['hypocenter']?.toString() ?? '',
     latitude: double.tryParse(map['latitude']?.toString() ?? ''),
     longitude: double.tryParse(map['longitude']?.toString() ?? ''),

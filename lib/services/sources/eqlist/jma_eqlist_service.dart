@@ -79,9 +79,7 @@ class JmaEqlistService {
   Future<void> fetch() async {
     if (_pushGate.shouldSkipHttp) return;
     try {
-      final resp = await
-          (_client?.get(Uri.parse(_url)) ?? http.get(Uri.parse(_url)))
-          .timeout(const Duration(seconds: 15));
+      final resp = await _requestReports();
       if (resp.statusCode != 200) {
         onStatusChanged?.call(false);
         return;
@@ -91,17 +89,34 @@ class JmaEqlistService {
       onStatusChanged?.call(true);
       if (list == null || list.isEmpty) return;
 
-      final items = <QuakeMessage>[];
-      for (final item in list) {
-        if (item is! Map) continue;
-        final parsed = _parseP2PQuakeItem(Map<String, dynamic>.from(item));
-        if (parsed != null) items.add(parsed);
-      }
-
+      final items = _parseReports(list).toList();
       if (items.isNotEmpty) onListUpdated?.call(items);
     } catch (e) {
       debugPrint('JMA Eqlist fetch error: $e');
       onStatusChanged?.call(false);
+    }
+  }
+
+  Future<http.Response> _requestReports() =>
+      (_client?.get(Uri.parse(_url)) ?? http.get(Uri.parse(_url))).timeout(
+        const Duration(seconds: 15),
+      );
+
+  /// Read observed reports for a manual map lookup without publishing a list.
+  Future<List<QuakeMessage>> observedReports() async {
+    final response = await _requestReports();
+    if (response.statusCode != 200) return const [];
+    final rows = decodeApiJsonBytes(response.bodyBytes);
+    if (rows is! List) return const [];
+    return _parseReports(
+      rows,
+    ).where((row) => row.informationMap?.warnArea.isNotEmpty == true).toList();
+  }
+
+  Iterable<QuakeMessage> _parseReports(List rows) sync* {
+    for (final item in rows.whereType<Map>()) {
+      final parsed = _parseP2PQuakeItem(Map<String, dynamic>.from(item));
+      if (parsed != null) yield parsed;
     }
   }
 

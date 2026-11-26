@@ -8,6 +8,7 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+srev-detector = { path = "vendor/srev-detector" }
 image = { version = "=0.25.10", default-features = false, features = ["gif", "png", "bmp"] }
 flate2 = { version = "=1.1.10", default-features = false, features = ["zlib-rs"] }
 serde_json = { version = "=1.0.151", features = ["raw_value", "float_roundtrip"] }

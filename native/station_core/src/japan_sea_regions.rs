@@ -53,8 +53,15 @@ impl Regions {
         std::str::from_utf8(self.data.get(base + start..base + end)?).ok()
     }
     pub(crate) fn lookup(&self, lat: f64, lon: f64) -> Option<&'static str> {
+        self.find(lat, lon, false)
+    }
+    pub(crate) fn lookup_by_source_order(&self, lat: f64, lon: f64) -> Option<&'static str> {
+        self.find(lat, lon, true).filter(|name| !name.is_empty())
+    }
+    fn find(&self, lat: f64, lon: f64, use_source_order: bool) -> Option<&'static str> {
         let mut best = None;
         let mut best_area = f64::INFINITY;
+        let mut best_order = usize::MAX;
         for i in 0..self.features {
             let o = self.feature_offset + i * self.feature_size;
             let scalar = self.point_size / 2;
@@ -71,15 +78,21 @@ impl Regions {
                 continue;
             }
             let area = (ymax - ymin) * (xmax - xmin);
-            if area >= best_area {
+            let fields = o + 4 * scalar;
+            let order = if use_source_order {
+                read_u32(self.data, fields + 12)
+            } else {
+                usize::MAX
+            };
+            if area >= best_area && (!use_source_order || area > best_area || order >= best_order) {
                 continue;
             }
-            let fields = o + 4 * scalar;
             let first = read_u32(self.data, fields + 4);
             let count = read_u32(self.data, fields + 8);
             if (first..first + count).any(|p| self.polygon(p, lat, lon)) {
                 best = self.name(read_u32(self.data, fields));
                 best_area = area;
+                best_order = order;
             }
         }
         best
@@ -131,13 +144,13 @@ impl Regions {
         }
     }
 }
-fn read_u32(d: &[u8], o: usize) -> usize {
+pub(crate) fn read_u32(d: &[u8], o: usize) -> usize {
     u32::from_le_bytes(d[o..o + 4].try_into().unwrap()) as usize
 }
 fn read_f32(d: &[u8], o: usize) -> f64 {
     f32::from_le_bytes(d[o..o + 4].try_into().unwrap()) as f64
 }
-fn read_f64(d: &[u8], o: usize) -> f64 {
+pub(crate) fn read_f64(d: &[u8], o: usize) -> f64 {
     f64::from_le_bytes(d[o..o + 8].try_into().unwrap())
 }
 fn domestic_regions() -> &'static Regions {
@@ -164,7 +177,7 @@ fn land() -> &'static Regions {
         ))
     })
 }
-fn lookup(lat: f64, lon: f64, domestic: bool) -> Option<&'static str> {
+pub(crate) fn lookup(lat: f64, lon: f64, domestic: bool) -> Option<&'static str> {
     if !lat.is_finite()
         || !lon.is_finite()
         || !(-90.0..=90.0).contains(&lat)

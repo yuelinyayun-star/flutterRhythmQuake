@@ -121,7 +121,9 @@ class _PAlertNativeRuntime {
               level: row[1] as int,
               jmaShindo: row[2] as int,
               detectState: row[3] as int,
-              detectReason: 'kanameishi-chain',
+              detectReason: detection.length > 8
+                  ? detection[8] as String
+                  : 'kanameishi-chain',
             ),
         ],
       );
@@ -171,6 +173,7 @@ class _PAlertNativeRuntime {
     runtime.start({
       'kind': 'palert',
       'nativeDisplay': true,
+      'palertDetection': 'srev',
       'inference': owner._nativeInferenceEnabled,
       'sensitivity': owner._sensitivity,
       'pollMillis': owner._pollInterval.inMilliseconds,

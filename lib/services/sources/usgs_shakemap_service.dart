@@ -8,11 +8,17 @@ import 'package:http/http.dart' as http;
 import '../../models/quake_message.dart';
 import '../../models/usgs_shakemap.dart';
 import '../../core/utils/quake_time.dart';
+import 'usgs_automatic_product_expiry.dart';
 
 /// Observes the existing USGS catalogue; product updates never emit earthquakes.
 class UsgsShakeMapService extends ChangeNotifier {
-  UsgsShakeMapService({http.Client? client})
-    : _client = client ?? createSourceHttpClient();
+  UsgsShakeMapService({http.Client? client, int Function()? elapsedUs})
+    : _client = client ?? createSourceHttpClient() {
+    _autoExpiry = UsgsAutomaticProductExpiry(() {
+      _autoFrame = null;
+      notifyListeners();
+    }, elapsedUs: elapsedUs);
+  }
   final http.Client _client;
   final Map<String, QuakeMessage> _events = {};
   final Map<String, int> _summaryVersions = {};
@@ -25,7 +31,7 @@ class UsgsShakeMapService extends ChangeNotifier {
   bool _showSelectedProduct = true;
   int _selectionSerial = 0;
   QuakeMessage? _selected;
-  Timer? _autoExpiry;
+  late final UsgsAutomaticProductExpiry _autoExpiry;
   UsgsShakeMapFrame? _autoFrame, _manualFrame;
   String? status;
   double _magnitudeFilter = 0;
@@ -33,6 +39,7 @@ class UsgsShakeMapService extends ChangeNotifier {
 
   /// Automatic product cards remain independent of a manually selected map.
   UsgsShakeMapFrame? get automaticFrame => _autoFrame;
+  void recheckAutomaticExpiry() => _autoExpiry.recheck();
 
   bool _passesMagnitudeFilter(QuakeMessage event) =>
       _magnitudeFilter >= 0 &&
@@ -58,7 +65,7 @@ class UsgsShakeMapService extends ChangeNotifier {
     if (automatic != null &&
         !_passesMagnitudeFilter(_resolve(automatic.event))) {
       _autoFrame = null;
-      _autoExpiry?.cancel();
+      _autoExpiry.cancel();
       changed = true;
     }
     final selected = _selected;
@@ -172,7 +179,7 @@ class UsgsShakeMapService extends ChangeNotifier {
             if (result.contours.isEmpty) {
               if (_autoFrame?.event.eventId == event.eventId) {
                 _autoFrame = null;
-                _autoExpiry?.cancel();
+                _autoExpiry.cancel();
                 notifyListeners();
               }
               return;
@@ -183,12 +190,7 @@ class UsgsShakeMapService extends ChangeNotifier {
               return;
             }
             _autoFrame = result;
-            _autoExpiry?.cancel();
-            _autoExpiry = Timer(const Duration(minutes: 2), () {
-              if (_disposed) return;
-              _autoFrame = null;
-              notifyListeners();
-            });
+            _autoExpiry.start();
             notifyListeners();
           } catch (_) {
             // Retain the previous map and retry on the next catalogue update.
@@ -376,7 +378,7 @@ class UsgsShakeMapService extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _selectionSerial++;
-    _autoExpiry?.cancel();
+    _autoExpiry.cancel();
     _client.close();
     super.dispose();
   }

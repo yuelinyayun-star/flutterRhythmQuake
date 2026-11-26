@@ -38,6 +38,7 @@ class NiedSourceEstimationDriver {
   final SourceTriggerContinuityGate sourceContinuityGate;
   final StationEventTracker stationEventTracker;
   final String sourceId;
+  final bool srevDetectionInput;
   final void Function(String?, DateTime, String, Map<String, Object?>)?
   onSourceTrigger;
 
@@ -71,6 +72,7 @@ class NiedSourceEstimationDriver {
   _descriptorCache = {};
 
   NiedSourceEstimationDriver({
+    this.srevDetectionInput = false,
     StationTriggerDetector? stationTriggerDetector,
     EventDetector? eventDetector,
     this.observationAdapter = const NiedStationObservationAdapter(),
@@ -200,7 +202,9 @@ class NiedSourceEstimationDriver {
             'source_family': 'nied',
             'source_id': sourceId,
             'nied_input_kind': inputKind,
-            'source_estimation_entry': 'ka_nied_hypocenter_direct',
+            'source_estimation_entry': srevDetectionInput
+                ? 'srev_nied_hypocenter_direct'
+                : 'ka_nied_hypocenter_direct',
             'nied_hypocenter_input_format':
                 'nied_station_hypocenter_snapshot_v1',
             'source_trigger_state': eventDetection.state.name,
@@ -239,7 +243,9 @@ class NiedSourceEstimationDriver {
         metadata: {
           'source_family': 'nied',
           'nied_input_kind': inputKind,
-          'source_estimation_entry': 'ka_nied_hypocenter_direct',
+          'source_estimation_entry': srevDetectionInput
+              ? 'srev_nied_hypocenter_direct'
+              : 'ka_nied_hypocenter_direct',
           'nied_hypocenter_input_format': 'nied_station_hypocenter_snapshot_v1',
           'nied_hypocenter_frame_key': resolvedObservedAt
               .toUtc()
@@ -580,11 +586,16 @@ class NiedSourceEstimationDriver {
       );
     }
 
-    final nativeResult = _processNativeKa(
-      stations,
-      hadActiveGrid: _dartHypGridInitialized,
-    );
-    if (nativeResult != null) {
+    final nativeResult = srevDetectionInput
+        ? null
+        : _processNativeKa(stations, hadActiveGrid: _dartHypGridInitialized);
+    if (srevDetectionInput) {
+      activeStationsSet.addAll(
+        stations
+            .where((s) => s.isActive && s.detectReason == "srev-permission")
+            .map((s) => s.code),
+      );
+    } else if (nativeResult != null) {
       for (final index in nativeResult.activeIndices) {
         if (index >= 0 && index < stations.length) {
           activeStationsSet.add(stations[index].code);
@@ -701,13 +712,13 @@ class NiedSourceEstimationDriver {
         if (triggerAt != null) {
           _dartHypActiveTriggerAtByCode[station.code] = triggerAt;
         }
-        station.setActive();
+        if (!srevDetectionInput) station.setActive();
         final snap = snapshot(station, active: true);
         activeStations.add(snap);
         if (!wasWorkerActive) {
           newActiveStations.add(snap);
         }
-      } else if (station.isActive) {
+      } else if (station.isActive && !srevDetectionInput) {
         final triggerAt =
             _dartHypocenterStationTriggerAt(station) ??
             _dartHypActiveTriggerAtByCode[station.code];
@@ -904,7 +915,7 @@ class NiedSourceEstimationDriver {
     final cached = _stationTopology;
     if (cached != null && cached.matchesStations(stations)) return cached;
     final topology = NiedStationTopology.fromStations(stations);
-    _configureNativeKaDetector(stations, topology);
+    if (!srevDetectionInput) _configureNativeKaDetector(stations, topology);
     return _stationTopology = topology;
   }
 

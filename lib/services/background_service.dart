@@ -3,7 +3,7 @@
 /// 负责：
 /// - 监听应用生命周期（前台 / 后台，仅移动端）
 /// - 初始化并调度系统本地通知
-/// - 在前后台切换时发布状态变更，供地图/数据源组件响应
+/// - 发布地图窗口的可见状态，供地图和测站组件响应
 /// - 在后台收到 EEW / 信息事件时弹出系统通知
 /// - 在 Android 上启动前台服务，保证切后台后 EEW / 信息源仍能连接
 library;
@@ -12,7 +12,8 @@ import 'dart:async';
 import '../core/platform_info.dart';
 import 'dart:ui' show DartPluginRegistrant;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart'
+    show ValueListenable, kIsWeb, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
@@ -89,11 +90,11 @@ class BackgroundService {
   AppLifecycleStateExt get state => _state;
   bool get isInBackground => _state == AppLifecycleStateExt.background;
 
+  final _mapUiVisibility = ValueNotifier<bool>(!Platform.isAndroid);
+  ValueListenable<bool> get mapUiVisibility => _mapUiVisibility;
+
   BackgroundSettingsProvider? _settings;
   final ValueNotifier<bool> connectionHostingNotifier = ValueNotifier(false);
-
-  /// 状态变化回调集合
-  final Set<void Function(AppLifecycleStateExt)> _stateListeners = {};
 
   bool _initialized = false;
   int _notificationId = 0;
@@ -224,13 +225,13 @@ class BackgroundService {
     FlutterBackgroundService().invoke('requestSourceStatuses');
   }
 
-  void _sendAppVisibility() {
+  void _sendAppVisibility({bool sendHistoryState = true}) {
     if (!isAndroidConnectionHostedByForegroundService) return;
     FlutterBackgroundService().invoke('appVisibility', {
       'visible': _state == AppLifecycleStateExt.foreground,
-      'inBackground': isInBackground,
+      'stationUiVisible': _mapUiVisibility.value,
     });
-    _sendStationHistoryRecording();
+    if (sendHistoryState) _sendStationHistoryRecording();
   }
 
   void updateStationHistoryRecording(
@@ -311,16 +312,6 @@ class BackgroundService {
     }
   }
 
-  /// 注册状态监听器
-  void addStateListener(void Function(AppLifecycleStateExt) listener) {
-    _stateListeners.add(listener);
-  }
-
-  /// 移除状态监听器
-  void removeStateListener(void Function(AppLifecycleStateExt) listener) {
-    _stateListeners.remove(listener);
-  }
-
   /// 初始化通知渠道与生命周期监听
   ///
   /// Web 平台不初始化。Windows 使用 local_notifier；Android / iOS / macOS /
@@ -387,6 +378,10 @@ class BackgroundService {
     _initialized = true;
   }
 
+  @visibleForTesting
+  static bool isAndroidMapUiVisible(AppLifecycleState state) =>
+      state == AppLifecycleState.resumed || state == AppLifecycleState.inactive;
+
   /// 监听生命周期变化
   ///
   /// 通常在 MyApp 的 State 中通过 [AppLifecycleListener] 调用。
@@ -400,25 +395,39 @@ class BackgroundService {
       AppLifecycleState.paused => AppLifecycleStateExt.background,
       _ => AppLifecycleStateExt.unknown,
     };
-    if (_state == ext) return;
+    // Android 小窗和分屏失去焦点时，地图仍然可见。
+    final mapUiVisible = Platform.isAndroid
+        ? isAndroidMapUiVisible(state)
+        : ext != AppLifecycleStateExt.background;
+    final mapVisibilityChanged = _mapUiVisibility.value != mapUiVisible;
+    final lifecycleChanged = _state != ext;
+    if (!mapVisibilityChanged && !lifecycleChanged) return;
     _state = ext;
-    _sendAppVisibility();
-    if (ext == AppLifecycleStateExt.foreground) requestBufferedEvents();
+    _mapUiVisibility.value = mapUiVisible;
+    _sendAppVisibility(sendHistoryState: lifecycleChanged);
+    if (lifecycleChanged && ext == AppLifecycleStateExt.foreground) {
+      requestBufferedEvents();
+    }
 
     // Android：后台功能开启时，数据连接由独立前台服务 isolate 维护。
     // 生命周期变化只负责确保服务继续运行；主 isolate 不再建立第二套连接。
-    if (Platform.isAndroid && (_settings?.enabled ?? false)) {
+    final mapBecameVisible = mapVisibilityChanged && mapUiVisible;
+    if ((lifecycleChanged || mapBecameVisible) &&
+        Platform.isAndroid &&
+        (_settings?.enabled ?? false)) {
       unawaited(() async {
         await _startForegroundServiceIfNeededSafely();
-        if (_state == AppLifecycleStateExt.foreground) {
+        if (_state == AppLifecycleStateExt.foreground ||
+            (mapBecameVisible && _mapUiVisibility.value)) {
           syncSatelliteCloudLayers();
         }
       }());
     }
+  }
 
-    for (final listener in _stateListeners.toList()) {
-      listener(ext);
-    }
+  void syncStationConnections() {
+    if (!isAndroidConnectionHostedByForegroundService) return;
+    FlutterBackgroundService().invoke('syncStationConnections');
   }
 
   /// 发送 EEW 后台系统通知
@@ -864,6 +873,7 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
   WidgetsFlutterBinding.ensureInitialized();
   DartPluginRegistrant.ensureInitialized();
   await initializeNativeCore();
+  await initializeHistoryFileStorage();
 
   // Boot/watchdog starts have no UI provider; consult persisted user consent.
   final preferences = await SharedPreferences.getInstance();
@@ -875,7 +885,6 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
 
   final notificationSettings = BackgroundSettingsProvider();
   await notificationSettings.load(preferences);
-  await initializeHistoryFileStorage();
   final stationHistoryRecorder = BackgroundStationHistoryRecorder(
     preferenceKey: AppEdition.isPublic
         ? '${_backgroundEewHistoryPreferenceKey}_public'
@@ -906,7 +915,7 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
   await initializeNotifications();
   final bufferedEvents = BackgroundAcceptedEventBuffer(preferences);
   var appVisible = false;
-  var appInBackground = false;
+  var stationUiVisible = false;
   var stationHistoryRecording = false;
   final pendingEewNotifications = <String, Timer>{};
   final eewWarnStates = <String, bool>{};
@@ -1046,7 +1055,7 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
     stationHistoryRecorder.observeStationPayload(payload);
     notifications._stationBridgeCoalescer ??= ForegroundStationBridgeCoalescer(
       emit: (latest) => service.invoke('foregroundStationData', latest),
-      paused: appInBackground,
+      paused: !stationUiVisible,
       recording: stationHistoryRecording,
     );
     notifications._stationBridgeCoalescer!.submit(payload);
@@ -1068,7 +1077,8 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
   Future<void>? reloadFuture;
   bool reloadPending = false;
   bool forceReloadPending = false;
-  late Future<void> Function({bool force}) reloadSources;
+  bool stationSyncPending = false;
+  late Future<void> Function({bool force, bool stationSyncOnly}) reloadSources;
 
   Future<void> startSources() async {
     if (stopping) return;
@@ -1091,6 +1101,7 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
         onStationData: sendStationData,
         onCmtList: sendCmtList,
         onAuxData: sendAuxData,
+        isStationUiVisible: () => stationUiVisible,
         isStationHistoryRecording: () => stationHistoryRecording,
       );
     } catch (error, stack) {
@@ -1103,17 +1114,26 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
     }
   }
 
-  reloadSources = ({bool force = false}) {
-    reloadPending = true;
+  reloadSources = ({bool force = false, bool stationSyncOnly = false}) {
+    if (stopping) return Future<void>.value();
+    stationSyncPending |= stationSyncOnly;
+    reloadPending |= !stationSyncOnly;
     forceReloadPending = forceReloadPending || force;
     return reloadFuture ??= () async {
       try {
-        while (reloadPending) {
+        while (!stopping && (reloadPending || stationSyncPending)) {
+          final updateSources = reloadPending;
+          final updateStations = stationSyncPending;
           reloadPending = false;
+          stationSyncPending = false;
           final forceReload = forceReloadPending;
           forceReloadPending = false;
-          if (forceReload || !await reloadBackgroundStationSettings()) {
+          if (updateSources &&
+              (forceReload || !await reloadBackgroundStationSettings())) {
             await startSources();
+          }
+          if (updateStations && !stopping) {
+            await syncBackgroundStationConnections(uiVisible: stationUiVisible);
           }
         }
       } finally {
@@ -1155,12 +1175,20 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
 
   service.on('reloadJianCredentials').listen((_) {
     reloadBackgroundJianCredentials();
+    unawaited(reloadSources(stationSyncOnly: true));
   });
 
   service.on('appVisibility').listen((event) {
     appVisible = event?['visible'] == true;
-    appInBackground = event?['inBackground'] == true;
-    notifications._stationBridgeCoalescer?.setPaused(appInBackground);
+    final nextStationUiVisible = event?['stationUiVisible'] == true;
+    if (stationUiVisible != nextStationUiVisible) {
+      stationUiVisible = nextStationUiVisible;
+      notifications._stationBridgeCoalescer?.setPaused(!stationUiVisible);
+      unawaited(reloadSources(stationSyncOnly: true));
+    }
+  });
+  service.on('syncStationConnections').listen((_) {
+    unawaited(reloadSources(stationSyncOnly: true));
   });
   service.on('stationHistoryRecording').listen((event) {
     final groups = (event?['groups'] as List? ?? const [])
@@ -1243,6 +1271,7 @@ Future<void> backgroundEntryPoint(ServiceInstance service) async {
         timer.cancel();
       }
       await bufferedEvents.flush();
+      await reloadFuture;
       await stopBackgroundSources();
       service.stopSelf();
     }());

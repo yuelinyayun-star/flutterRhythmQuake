@@ -57,6 +57,7 @@ import 'services/sources/kma_pews_eew_service.dart';
 import 'services/sources/fdsn_motion_service.dart';
 import 'services/sources/fdsn_source_catalog.dart';
 import 'services/debug/local_inject_server.dart';
+import 'widgets/ui/external_subtitle_host.dart';
 import 'services/sources/china_weather_alert_map_service.dart';
 import 'widgets/map/quake_map_view.dart';
 import 'widgets/ui/ui_runtime_flags.dart';
@@ -217,6 +218,16 @@ void main() async {
   FlutterError.onError = (details) {
     final msg = details.exceptionAsString();
     if (_shouldDropLogMessage(msg)) return;
+    final stackText = details.stack?.toString() ?? '';
+    // VM-service evaluations use a stack frame such as
+    // `QuakeProvider.Eval.<anonymous closure> ()`, which Flutter's structured
+    // error formatter cannot parse in debug mode. Keep the original exception
+    // visible in logs without sending that malformed frame to WidgetInspector.
+    if (stackText.contains('QuakeProvider.Eval')) {
+      debugPrint('[FlutterError] $msg');
+      if (stackText.isNotEmpty) debugPrint(stackText);
+      return;
+    }
     FlutterError.presentError(details);
   };
 
@@ -421,6 +432,10 @@ void main() async {
         ChangeNotifierProvider.value(value: notificationSettings),
         ChangeNotifierProvider.value(value: backgroundSettings),
         ChangeNotifierProvider.value(value: pageBackground),
+        if (ExternalSubtitleSettings.supported)
+          ChangeNotifierProvider(
+            create: (_) => ExternalSubtitleSettings(prefs),
+          ),
       ],
       child: const RhythmQuakeApp(),
     ),
@@ -550,6 +565,12 @@ class _RhythmQuakeAppState extends State<RhythmQuakeApp> {
   void initState() {
     super.initState();
     _lifecycleListener = AppLifecycleListener(
+      onShow: () {
+        if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+          context.read<QuakeProvider>().checkLiveEventExpiry();
+          context.read<MapStateProvider>().recheckAutoFollowPause();
+        }
+      },
       onStateChange: (state) {
         SoundEffectService().onLifecycleStateChanged(state);
         BackgroundService().onLifecycleStateChanged(state);
@@ -585,7 +606,7 @@ class _RhythmQuakeAppState extends State<RhythmQuakeApp> {
               fontFamily: 'MPLUSRounded1c',
             ),
           ),
-      home: const MainScreen(),
+      home: const ExternalSubtitleHost(child: MainScreen()),
     );
   }
 }

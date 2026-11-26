@@ -83,6 +83,7 @@ class InformationEventFillLayer extends StatelessWidget {
           : region == 'jp' || region == 'kr'
           ? IntensityFillMode.jma
           : IntensityFillMode.csis,
+      allowJmaEstimate: region != 'jp',
       cwaForecast: region == 'tw' ? cwaForecastForEvent(event) : null,
       minIntensity: 1.0,
       opacity: 0.55,

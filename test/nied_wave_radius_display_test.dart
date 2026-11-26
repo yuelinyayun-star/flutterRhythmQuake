@@ -5,6 +5,21 @@ import 'package:flutterrhythmquake/core/source_estimation/source_estimation_mode
 import 'package:flutterrhythmquake/widgets/map/quake_map_view.dart';
 
 void main() {
+  test('SREV native radii are displayed without old HYP override', () {
+    const estimate = SourceEstimate(
+      latitude: 34.15,
+      longitude: 135.7833,
+      depthKm: 40,
+      confidence: 0,
+      method: 'nied_srev_hyp_rust_v1',
+      supportingStationCount: 100,
+      diagnostics: {'srev_p_radius_km': 800.0, 'srev_s_radius_km': 500.0},
+    );
+    final radii = niedWaveRadiiFromEstimate(estimate);
+    expect(radii.pRadiusKm, 800);
+    expect(radii.sRadiusKm, 500);
+  });
+
   test(
     'NIED wave display uses algorithm radii for historical replay frames',
     () {

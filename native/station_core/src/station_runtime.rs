@@ -12,6 +12,7 @@ mod palert_state;
 mod replay_block;
 #[path = "seisjs_state.rs"]
 mod seisjs_state;
+pub(crate) const SEISJS_STATION_MAX_AGE_MS: i64 = 31_000;
 #[path = "trem_protocol.rs"]
 mod trem_protocol;
 #[path = "pews_network.rs"]
@@ -419,6 +420,9 @@ impl Engine {
         let mut palert = palert_state::PAlert::default();
         palert.set_inference(settings["inference"] == true);
         palert.replay_mode = settings["sourceDisplayOnly"] == true;
+        palert.use_srev = settings["palertDetection"] == "srev";
+        palert.hyp_shadow = settings["testing"] == true && settings["palertHypShadow"] == true;
+
         Self {
             events: vec![],
             pews_latest: None,
@@ -1003,7 +1007,7 @@ impl Engine {
             self.grid_decimal = None;
             return;
         }
-        if self.grid_decimal.is_none() {
+        if self.kind == "kma" && self.grid_decimal.is_none() {
             let mut best = &active[0];
             for row in &active[1..] {
                 if row.3 > best.3 {
@@ -1013,7 +1017,7 @@ impl Engine {
             let decimal = |v: f64| ((v + 180.0).rem_euclid(1.0) * 10.0).round() / 10.0;
             self.grid_decimal = Some((decimal(best.0), decimal(best.1)));
         }
-        let (dlat, dlon) = self.grid_decimal.unwrap();
+        let (dlat, dlon) = self.grid_decimal.unwrap_or((0.5, 0.5));
         if self.kind != "kma" {
             self.grids.clear();
         }
@@ -1021,8 +1025,8 @@ impl Engine {
             if level < 0 {
                 continue;
             }
-            let lat = (lat - dlat).round() + dlat;
-            let lon = (lon - dlon).round() + dlon;
+            let lat = if self.kind == "kma" { (lat - dlat).round() + dlat } else { lat.floor() + 0.5 };
+            let lon = if self.kind == "kma" { (lon - dlon).round() + dlon } else { lon.floor() + 0.5 };
             if let Some(g) = self.grids.iter_mut().find(|g| g.0 == lat && g.1 == lon) {
                 g.2 = g.2.max(level);
             } else {
@@ -2622,5 +2626,88 @@ mod tests {
         );
         assert_eq!(iso(0), "1970-01-01T00:00:00.000Z");
         assert_eq!(timestamp(&json!("20260230000000"), true, 0), None);
+    }
+}
+
+#[cfg(test)]
+mod palert_hyp_audit {
+    use crate::palert_srev::PAlertSrev;
+    #[test]
+    fn palert_shadow_raw_runtime_parity() {
+        use super::Engine;
+        use serde_json::{Value,json};
+        let Ok(root)=std::env::var("RQ_PALERT_GATE_DIR")else{return};
+        let read=|name:&str|->Value{serde_json::from_str(&std::fs::read_to_string(std::path::Path::new(&root).join(name)).unwrap()).unwrap()};
+        let cases=read("palert_hyp_six_event_input.json");
+        let reference=read("palert_hyp_gate_rust_parity.json");
+        let c=cases.as_array().unwrap().iter().find(|c|c["source"]=="20261125191853-palert-fixed0.0").unwrap();
+        let want=reference.as_array().unwrap().iter().find(|r|r["case"]==c["source"]).unwrap()["commits"].as_array().unwrap();
+        let mut ordinary=Engine::new(&json!({"kind":"palert","palertDetection":"srev","palertHypShadow":true}));
+        let mut shadow=Engine::new(&json!({"kind":"palert","testing":true,"palertDetection":"srev","palertHypShadow":true}));
+        let names=c["stations"].as_array().unwrap().iter().map(|s|s["id"].as_str().unwrap()).collect::<Vec<_>>();
+        let meta=json!({"data":{"stationList":{"staInfos":c["stations"].as_array().unwrap().iter().map(|s|json!({"station":s["id"],"lat":s["lat"],"lon":s["lon"]})).collect::<Vec<_>>()}}});
+        let first=c["frames"][0]["time"].as_i64().unwrap();
+        assert!(ordinary.palert.input(&meta,first,2));
+        assert!(shadow.palert.input(&meta,first,2));
+        let mut got=vec![];
+        let mut seen=std::collections::BTreeSet::new();
+        for f in c["frames"].as_array().unwrap(){
+            let t=f["time"].as_i64().unwrap();
+            let pga:serde_json::Map<String,Value>=names.iter().zip(f["pga"].as_array().unwrap()).filter(|(_,v)|v.is_number()).map(|(id,v)|(id.to_string(),v.clone())).collect();
+            let packet=json!({"data":{"pga":{"timestamp":super::iso(t),"dataVals":pga}}});
+            assert!(ordinary.palert.input(&packet,t,2));assert!(shadow.palert.input(&packet,t,2));
+            let a:Value=serde_json::from_slice(&ordinary.palert.encoded_snapshot(t,true)).unwrap();
+            let b:Value=serde_json::from_slice(&shadow.palert.encoded_snapshot(t,true)).unwrap();
+            assert!(a.get("palertHypShadow").is_none());
+            assert_eq!(a["detectedStationIds"],b["detectedStationIds"]);
+            assert_eq!(a["detectionGrid"],b["detectionGrid"]);
+            for row in b["palertHypShadow"].as_array().unwrap(){
+                let key=(row["id"].as_u64().unwrap(),row["start"].as_f64().unwrap().to_bits(),row["report"].as_u64().unwrap());
+                if seen.insert(key){got.push(row.clone());}
+            }
+        }
+        assert_eq!(got,want.clone());
+        shadow.palert.reset_detection();
+        let b:Value=serde_json::from_slice(&shadow.palert.encoded_snapshot(first+300_000,true)).unwrap();
+        assert_eq!(b["palertHypShadow"],json!([]));
+        println!("209 raw PGA frames, {} candidate reports, default detection unchanged, reset cleared",got.len());
+    }
+    // Offline comparison only. Keep the live HYP gate disabled.
+    #[test] fn compare_taiwan_hyp_on_archived_event(){
+        use super::palert_inference::{Inference,Sample};
+        use super::palert_display::Catalogue;
+        use std::sync::Arc;
+        use serde_json::{Value,json};
+        let Ok(path)=std::env::var("RQ_PALERT_HYP_AUDIT_INPUT") else{return};
+        let cases:Value=serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let mut report=vec![];
+        for c in cases.as_array().unwrap(){
+            if !c["source"].as_str().unwrap().ends_with("-palert-fixed0.0"){continue}
+            let cat=c["stations"].as_array().unwrap();
+            let names=cat.iter().map(|s|s["id"].as_str().unwrap().to_owned()).collect::<Vec<_>>();
+            let points=cat.iter().map(|s|(s["lat"].as_f64().unwrap(),s["lon"].as_f64().unwrap())).collect::<Vec<_>>();
+            let catalogue=Arc::new(Catalogue{revision:1,rows:names.iter().zip(&points).map(|(name,p)|([name.clone(),String::new(),name.clone(),String::new()],[p.0,p.1])).collect()});
+            let mut old=Inference::default();old.configure(catalogue.clone());
+            let mut old_newdet=Inference::default();old_newdet.configure(catalogue);
+            let mut d=PAlertSrev::new(&points,&names).unwrap();
+            d.enable_hyp_for_audit();
+            let mut hold=vec![0i64;names.len()];
+            let mut frames=vec![];
+            for f in c["frames"].as_array().unwrap(){
+                let stamp=f["time"].as_i64().unwrap();
+                let samples=f["pga"].as_array().unwrap().iter().zip(f["levels"].as_array().unwrap()).map(|(p,k)|Some((p.as_f64()?,k.as_i64()?))).collect::<Vec<_>>();
+                let old_ids=f["baseline"].as_array().unwrap();
+                let confirmed=d.process(stamp,&samples,2).unwrap();
+                for &i in &confirmed{hold[i]=stamp+10500;}
+                let make=|_i:usize,s:&Option<(f64,i64)>,confirmed:bool|Sample{stamp:s.map(|_|stamp),received:s.map(|_|stamp),pga:s.map(|v|v.0).unwrap_or(f64::NAN),level:s.map(|v|v.1 as i32).unwrap_or(-1),confirmed};
+                old.update(&samples.iter().enumerate().map(|(i,s)|make(i,s,old_ids.iter().any(|v|v.as_str()==Some(names[i].as_str())))).collect::<Vec<_>>(),stamp);
+                old_newdet.update(&samples.iter().enumerate().map(|(i,s)|make(i,s,hold[i]>stamp)).collect::<Vec<_>>(),stamp);
+                let slots=d.audit_source_rows();
+                frames.push(json!({"time":stamp,"old":old.events,"old_hyp_new_detection":old_newdet.events,"srev":slots,"confirmed":confirmed,"held":hold.iter().enumerate().filter_map(|(i,t)|(*t>stamp).then_some(i)).collect::<Vec<_>>()}));
+            }
+            println!("{} frames={} old={} old_new={} srev={}",c["source"],frames.len(),frames.iter().filter(|f|!f["old"].as_array().unwrap().is_empty()).count(),frames.iter().filter(|f|!f["old_hyp_new_detection"].as_array().unwrap().is_empty()).count(),frames.iter().filter(|f|f["srev"].as_array().unwrap().iter().any(|r|r["estimate"].is_object())).count());
+            report.push(json!({"case":c["source"],"frames":frames}));
+        }
+        std::fs::write(std::env::var("RQ_PALERT_HYP_AUDIT_OUTPUT").unwrap(),serde_json::to_string_pretty(&report).unwrap()).unwrap();
     }
 }

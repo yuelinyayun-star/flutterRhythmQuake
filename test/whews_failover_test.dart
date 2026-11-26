@@ -27,7 +27,7 @@ class _Harness {
     return peer;
   }
 
-  WhewsSocketClient client([String url = WhewsService.aggregateUrl]) =>
+  WhewsSocketClient client([String url = 'wss://api.beecld.com/ws/all']) =>
       WhewsSocketClient(
         url: url,
         apiToken: 'wat_controlled',
@@ -110,7 +110,7 @@ void main() {
     },
   );
   testWidgets(
-    'live aggregate switch preserves CEA feed and stopped authorization',
+    'WHEWS aggregate uses one domestic socket and stops after authorization rejection',
     (tester) async {
       final h = _Harness();
       final service = WhewsService(
@@ -119,18 +119,15 @@ void main() {
       );
       service.connect();
       await tester.pump();
-      final cea = h.peers[1];
-      for (final peer in h.peers) {
-        peer.frames.add('{"type":"pong"}');
-      }
+      expect(h.requests, hasLength(1));
+      expect(h.requests.single.host, 'api.2v8.cn');
+      expect(h.requests.single.path, '/ws/all');
+      h.peers.single.frames.add('{"type":"pong"}');
       await tester.pump();
       service.setDefaultServerIndex(1);
       await tester.pump();
-      expect(h.requests.last.host, 'api.2v8.cn');
-      expect(h.requests.last.path, '/ws/all');
-      expect(h.requests.last.queryParameters['token'], 'wat_controlled');
-      expect(h.requests.where((u) => u.path == '/ws/cea_all'), hasLength(1));
-      expect(cea.frames.isClosed, isFalse);
+      expect(h.requests, hasLength(2));
+      expect(h.requests.last.host, 'api.beecld.com');
       h.peers.last.closeCode = 4403;
       await h.peers.last.frames.close();
       await tester.pump();
@@ -191,7 +188,7 @@ void main() {
         });
       });
       final client = WhewsSocketClient(
-        url: WhewsService.aggregateUrl,
+        url: 'wss://api.beecld.com/ws/all',
         apiToken: 'wat_local_only',
         onMessage: (message) {
           if (!received.isCompleted) received.complete(message);
@@ -259,6 +256,7 @@ void main() {
         });
       }
     },
+    skip: !NativeWhewsConnection.supported,
   );
   test(
     'native routing limits backups to documented shared feeds and releases output',
@@ -268,7 +266,7 @@ void main() {
         isTrue,
         reason: 'Run against the actual Release DLL',
       );
-      for (final path in ['all', 'nied', 'snet', 'kma_station']) {
+      for (final path in ['all', 'cea_all', 'nied', 'snet', 'kma_station']) {
         expect(
           NativeWhewsConnection.prepare({
             'op': 'endpoints',
@@ -276,19 +274,20 @@ void main() {
           }),
           ['wss://api.beecld.com/ws/$path', 'wss://api.2v8.cn/ws/$path'],
         );
+        expect(
+          NativeWhewsConnection.prepare({
+            'op': 'endpoints',
+            'url': 'wss://api.2v8.cn/ws/$path',
+          }),
+          ['wss://api.2v8.cn/ws/$path', 'wss://api.beecld.com/ws/$path'],
+        );
       }
-      expect(
-        NativeWhewsConnection.prepare({
-          'op': 'endpoints',
-          'url': WhewsService.ceaAggregateUrl,
-        }),
-        [WhewsService.ceaAggregateUrl],
-      );
       expect(NativeWhewsConnection.outputs, 0);
     },
+    skip: !NativeWhewsConnection.supported,
   );
   test(
-    'aggregate failover retains deduplication while the CEA connection stays live',
+    'aggregate reconnect retains deduplication on the single domestic socket',
     () => fakeAsync((clock) {
       final h = _Harness();
       final service = WhewsService(
@@ -299,11 +298,10 @@ void main() {
       final subscription = service.onUnifiedEvent.listen(events.add);
       service.connect();
       clock.flushMicrotasks();
-      expect(h.requests.map((u) => u.path), ['/ws/all', '/ws/cea_all']);
-      final ceaPeer = h.peers[1];
+      expect(h.requests.map((u) => u.path), ['/ws/all']);
+      expect(h.requests.single.host, 'api.2v8.cn');
       var aggregate = h.peers.first;
       aggregate.frames.add('{"type":"pong"}');
-      ceaPeer.frames.add('{"type":"pong"}');
       clock.flushMicrotasks();
       final original = File(
         'test/fixtures/cwa_catalog_20261028/whews_cwa.original.json',
@@ -321,10 +319,8 @@ void main() {
         aggregate.frames.add('{"type":"pong"}');
         clock.flushMicrotasks();
       }
-      expect(h.requests.last.host, 'api.2v8.cn');
+      expect(h.requests.last.host, 'api.beecld.com');
       expect(h.requests.last.path, '/ws/all');
-      expect(h.requests.where((u) => u.path == '/ws/cea_all'), hasLength(1));
-      expect(ceaPeer.frames.isClosed, isFalse);
       aggregate.frames.add(original);
       clock.flushMicrotasks();
       expect(events, hasLength(1));
@@ -428,7 +424,7 @@ void main() {
           WhewsService.aggregateUrl,
           'wat_controlled',
         ),
-        isNull,
+        4403,
       );
       await tester.pump(const Duration(minutes: 10));
       expect(h.requests, hasLength(6));
@@ -437,31 +433,24 @@ void main() {
     },
   );
 
-  testWidgets(
-    'manual stop cancels pending switch; CEA remains a separate domestic feed',
-    (tester) async {
-      final h = _Harness();
-      final cea = h.client(WhewsService.ceaAggregateUrl);
-      cea.start();
-      await h.ready(tester);
-      for (final delay in [3, 6, 12, 24, 48, 96]) {
-        await h.fail(tester, delay);
-      }
-      expect(
-        h.requests.every(
-          (u) => u.host == 'api.2v8.cn' && u.path == '/ws/cea_all',
-        ),
-        isTrue,
-      );
-      h.peers.last.closeCode = 1006;
-      await h.peers.last.frames.close();
-      await tester.pump();
-      cea.stop();
-      await tester.pump();
-      await cea.closed;
-      final count = h.requests.length;
-      await tester.pump(const Duration(minutes: 10));
-      expect(h.requests, hasLength(count));
-    },
-  );
+  testWidgets('manual stop cancels pending aggregate reconnect', (
+    tester,
+  ) async {
+    final h = _Harness();
+    final client = h.client();
+    client.start();
+    await h.ready(tester);
+    for (final delay in [3, 6, 12, 24, 48, 96]) {
+      await h.fail(tester, delay);
+    }
+    h.peers.last.closeCode = 1006;
+    await h.peers.last.frames.close();
+    await tester.pump();
+    client.stop();
+    await tester.pump();
+    await client.closed;
+    final count = h.requests.length;
+    await tester.pump(const Duration(minutes: 10));
+    expect(h.requests, hasLength(count));
+  });
 }

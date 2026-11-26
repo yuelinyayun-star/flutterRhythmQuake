@@ -177,7 +177,13 @@ void main() {
         'nied',
         nativeOwner: true,
       );
-      final actual = ShakeDetectionService.forSource('nied', nativeOwner: true);
+      // This test explicitly verifies the historical KA owner contract. The new
+      // SREV production path has an independent original-SREV parity test.
+      final actual = ShakeDetectionService.forSource(
+        'nied',
+        nativeOwner: true,
+        useSrev: false,
+      );
       final expectedViews = <Object>[], actualViews = <Object>[];
       final expectedEvents = <Object>[], actualEvents = <Object>[];
       final expectedActions = <Object>[], actualActions = <Object>[];
@@ -431,10 +437,7 @@ void main() {
         // Re-entering hosted mode recreates it exactly once (no leaks).
         service.setStations(input, background: true);
         service.processUpdate(background: true);
-        expect(
-          NativeNiedDetectionOwner.diagnostics['sessions'],
-          baseline! + 1,
-        );
+        expect(NativeNiedDetectionOwner.diagnostics['sessions'], baseline! + 1);
       } finally {
         service.reset(detachStations: true, emitSnapshot: false);
       }

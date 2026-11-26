@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
+import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 
@@ -46,15 +47,33 @@ class _FdsnStationLayerState extends State<FdsnStationLayer> {
   Crs? _crs;
   FdsnIntensityScale? _preparedScale;
   Timer? _expiry;
+  int? _nextMotionExpiryUs;
+  AppLifecycleListener? _lifecycle;
 
   @override
   void initState() {
     super.initState();
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      _lifecycle = AppLifecycleListener(onShow: _scheduleMotionExpiry);
+    }
     SeedLinkStationStyle.shape.addListener(_scaleChanged);
     FdsnIntensity.scale.addListener(_scaleChanged);
   }
 
   void _scaleChanged() => setState(() => _dirty = true);
+
+  void _scheduleMotionExpiry() {
+    _expiry?.cancel();
+    _expiry = null;
+    final deadline = _nextMotionExpiryUs;
+    if (deadline == null) return;
+    final remaining = deadline - DateTime.now().microsecondsSinceEpoch;
+    if (remaining <= 0) {
+      _scaleChanged();
+    } else {
+      _expiry = Timer(Duration(microseconds: remaining + 1000), _scaleChanged);
+    }
+  }
 
   @override
   void didUpdateWidget(FdsnStationLayer oldWidget) {
@@ -67,7 +86,6 @@ class _FdsnStationLayerState extends State<FdsnStationLayer> {
     _dirty = false;
     final sameCrs = _crs == camera.crs;
     _crs = camera.crs;
-    _expiry?.cancel();
     final now = DateTime.now().microsecondsSinceEpoch;
     int? expires;
     final mode = SeedLinkStationStyle.shape.value;
@@ -196,11 +214,11 @@ class _FdsnStationLayerState extends State<FdsnStationLayer> {
       _glyphs = glyphs;
       if (_glyphs.isEmpty) _scene.clear();
     }
-    if (expires != null) {
-      _expiry = Timer(Duration(microseconds: expires - now + 1000), () {
-        if (mounted) setState(() => _dirty = true);
-      });
-    }
+    _nextMotionExpiryUs = expires;
+    _expiry?.cancel();
+    _expiry = expires == null
+        ? null
+        : Timer(Duration(microseconds: expires - now + 1000), _scaleChanged);
     widget.diagnostics?.preparationMicros += watch!.elapsedMicroseconds;
   }
 
@@ -254,6 +272,7 @@ class _FdsnStationLayerState extends State<FdsnStationLayer> {
 
   @override
   void dispose() {
+    _lifecycle?.dispose();
     _expiry?.cancel();
     SeedLinkStationStyle.shape.removeListener(_scaleChanged);
     FdsnIntensity.scale.removeListener(_scaleChanged);

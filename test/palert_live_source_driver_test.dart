@@ -196,6 +196,12 @@ void main() {
     expect(find.text('预估震度'), findsOneWidget);
     expect(find.textContaining('中央氣象署'), findsOneWidget);
     expect(tester.takeException(), isNull);
+    clock = clock.add(const Duration(seconds: 7));
+    driver.recheckExpiry();
+    await tester.pump();
+    expect(driver.events.value, isEmpty);
+    expect(find.textContaining('PGA 初估'), findsNothing);
+    expect(find.textContaining('中央氣象署'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     driver.dispose();
     provider.dispose();

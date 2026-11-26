@@ -23,6 +23,7 @@ void main() {
       final controller = MapController();
       final selected = ValueNotifier(true);
       final rebuild = ValueNotifier(0);
+      var retainGraphics = true;
       addTearDown(controller.dispose);
       addTearDown(selected.dispose);
       addTearDown(rebuild.dispose);
@@ -55,11 +56,15 @@ void main() {
                   ValueListenableBuilder<bool>(
                     valueListenable: selected,
                     builder: (_, enabled, child) => enabled
-                        ? VectorBasemapLayer(service: service)
+                        ? VectorBasemapLayer(
+                            service: service,
+                            retainGraphics: retainGraphics,
+                          )
                         : const ColoredBox(color: Colors.black),
                   ),
                   const VectorBasemapLabels(),
                   const MarkerLayer(
+                    key: ValueKey('event-layer'),
                     markers: [
                       Marker(
                         point: LatLng(32, 120),
@@ -157,6 +162,24 @@ void main() {
       await tester.pumpAndSettle();
       expect(controller.camera.center, isNot(center));
       final retained = controller.camera.center;
+      final zoom = controller.camera.zoom;
+      final vectorState = tester.state(find.byType(VectorBasemapLayer));
+      retainGraphics = false;
+      rebuild.value++;
+      await tester.pump();
+      expect(find.byType(PolygonLayer), findsNothing);
+      expect(find.byType(PolylineLayer), findsNothing);
+      expect(find.byKey(const ValueKey('event-layer')), findsOneWidget);
+      expect(tester.state(find.byType(VectorBasemapLayer)), same(vectorState));
+      retainGraphics = true;
+      rebuild.value++;
+      await tester.pump();
+      expect(find.byType(PolygonLayer), findsNWidgets(3));
+      expect(tester.state(find.byType(VectorBasemapLayer)), same(vectorState));
+      expect(controller.camera.center, retained);
+      expect(controller.camera.zoom, zoom);
+      expect(reads, 3);
+
       selected.value = false;
       await tester.pumpAndSettle();
       expect(find.byType(PolygonLayer), findsNothing);

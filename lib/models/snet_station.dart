@@ -22,6 +22,7 @@
 /// - **0120A**: 加速度计网络
 
 import 'package:latlong2/latlong.dart';
+import '../services/sources/jp_shindo_scale.dart';
 
 /// S-net 海底观测站
 ///
@@ -129,6 +130,11 @@ class SnetStation {
   ///
   /// 有震度或水压数据时返回 true。
   bool get hasData => intensity != null || pressure != null;
+
+  /// Both GIF and WHEWS array sources use the original measured shindo.
+  int get srevObservationCode => isActive && level >= 0 && lastUpdate != null
+      ? JpShindoScale.srevCodeFromShindo(shindo)
+      : 0;
 
   /// 字符串表示
   @override

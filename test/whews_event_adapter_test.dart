@@ -516,6 +516,7 @@ void main() {
       'depth': 10,
       'magnitude': 5.1,
       'placeName': '경상북도',
+      'placename_zh': '韩国中部',
       'maxMmi': 5,
       'maxMmiLabel': 'Ⅴ',
     };
@@ -528,6 +529,7 @@ void main() {
     expect(event.originTime, DateTime(2026, 7, 26, 15, 30));
     expect(event.reportTime, DateTime(2026, 7, 26, 15, 30, 4));
     expect(event.maxIntensity, 'Ⅴ');
+    expect(event.hypocenter, '韩国中部');
     expect(raw['originTime'], 1784269800000);
   });
 

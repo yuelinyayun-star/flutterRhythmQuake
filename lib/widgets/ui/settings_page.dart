@@ -13,6 +13,8 @@ import '../../core/app_edition.dart';
 import '../../providers/map_state_provider.dart';
 import '../../providers/notification_settings_provider.dart';
 import '../../providers/background_settings_provider.dart';
+import '../../core/background_api.dart';
+import '../../core/background_station_connection.dart';
 import '../../providers/page_background_provider.dart';
 import '../../models/notification_event_settings.dart';
 import '../../services/location_service.dart';
@@ -50,6 +52,7 @@ import 'debug_page.dart';
 import 'manual_location_dialog.dart';
 import 'system_voice_prompt.dart';
 import 'obs_automation_presets_page.dart';
+import 'external_subtitle_host.dart';
 import 'ui_runtime_flags.dart';
 import 'ui_scale.dart';
 import 'unified_carousel_settings.dart';
@@ -2190,6 +2193,29 @@ class _SettingsPageState extends State<SettingsPage>
             title: '信息情报接收过滤设置',
             children: [_buildMagFilterList()],
           ),
+          if (ExternalSubtitleSettings.supported) ...[
+            const _MinorSectionDivider(),
+            _buildSectionPanel(
+              icon: Icons.subtitles_outlined,
+              title: '应用外显示',
+              children: [
+                Consumer<ExternalSubtitleSettings?>(
+                  builder: (_, settings, _) {
+                    if (settings == null) return const SizedBox.shrink();
+                    return _buildInfoLayerSwitch(
+                      title: '应用外地震字幕',
+                      subtitle: _isAndroidNotificationPlatform
+                          ? '需要允许在其他应用上层显示'
+                          : 'OBS 窗口采集选择「RhythmQuake 地震字幕」，采集方式用 Windows 10（1903 及以上）',
+                      leading: Icons.subtitles_outlined,
+                      value: settings.enabled,
+                      onChanged: (value) => unawaited(settings.setEnabled(value)),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ],
         ];
       case _SettingsCategory.map:
         return [
@@ -3854,7 +3880,9 @@ class _SettingsPageState extends State<SettingsPage>
             ],
           ),
           Text(
-            '切到后台时仅保留 EEW / 信息数据源，关闭地图/测站等高功耗功能，并通过系统通知推送事件。',
+            _isAndroidNotificationPlatform
+                ? '切到后台后，通过系统通知显示预警和地震情报。可设置后台保留的 API 和实时测站。'
+                : '切到后台时仅保留 EEW / 信息数据源，关闭地图/测站等高功耗功能，并通过系统通知推送事件。',
             style: TextStyle(
               color: Colors.white.withValues(alpha: 0.55),
               fontSize: 11.5,
@@ -3891,6 +3919,39 @@ class _SettingsPageState extends State<SettingsPage>
                 },
               ),
               const Divider(height: 1, color: _dividerColor),
+              _buildBackgroundApiSettings(bg),
+              const Divider(height: 1, color: _dividerColor),
+              ExpansionTile(
+                tilePadding: const EdgeInsets.symmetric(horizontal: 4),
+                title: const Text(
+                  '后台实时测站',
+                  style: TextStyle(color: Colors.white, fontSize: 12.5),
+                ),
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                    child: Text(
+                      '实时测站默认在后台暂停。暂停时，该路摇晃检测和测站记录也会暂停。'
+                      '返回应用后按原设置恢复。',
+                      style: TextStyle(color: Colors.white70, fontSize: 11.5),
+                    ),
+                  ),
+                  for (final connection in BackgroundStationConnection.values)
+                    if (connection != BackgroundStationConnection.palert ||
+                        AppEdition.hasPAlertStations)
+                      _buildBackgroundSwitch(
+                        label: connection.label,
+                        value: bg.keepsStationConnected(connection),
+                        onChanged: (value) async {
+                          await bg.setStationConnected(connection, value);
+                          if (connection.hostedByForegroundService) {
+                            BackgroundService().syncStationConnections();
+                          }
+                        },
+                      ),
+                ],
+              ),
+              const Divider(height: 1, color: _dividerColor),
               const AndroidBackgroundPowerSettings(),
             ],
             if (bg.eewEnabled) ...[
@@ -3900,6 +3961,63 @@ class _SettingsPageState extends State<SettingsPage>
           ],
         ],
       ),
+    );
+  }
+
+  Widget _buildBackgroundApiSettings(BackgroundSettingsProvider bg) {
+    return ExpansionTile(
+      tilePadding: const EdgeInsets.symmetric(horizontal: 4),
+      title: const Text(
+        '后台 API 连接',
+        style: TextStyle(color: Colors.white, fontSize: 12.5),
+      ),
+      subtitle: Text(
+        bg.automaticApis ? '自动' : '手动',
+        style: const TextStyle(color: Colors.white70, fontSize: 11.5),
+      ),
+      children: [
+        _buildBackgroundSwitch(
+          label: '自动选择 API',
+          value: bg.automaticApis,
+          onChanged: (value) async {
+            await bg.setAutomaticApis(value);
+            BackgroundService().syncStationConnections();
+          },
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 0, 4, 4),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              bg.automaticApis
+                  ? '最多保留两个已启用的 API。优先覆盖大陆、台湾和日本，结合预警源和实测连接就绪耗时选择。'
+                  : '退到后台时，只保留勾选且在 API 管理中启用的项目。',
+              style: const TextStyle(color: Colors.white70, fontSize: 11.5),
+            ),
+          ),
+        ),
+        for (final api in BackgroundApi.values)
+          if (api.availableInEdition &&
+              (api != BackgroundApi.kmaPews || KmaPewsEewService.supported))
+            ListTile(
+              dense: true,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+              title: Text(api.label, style: const TextStyle(color: Colors.white)),
+              subtitle: Text(
+                api.coverageLabel,
+                style: const TextStyle(color: Colors.white70, fontSize: 11.5),
+              ),
+              trailing: bg.automaticApis
+                  ? null
+                  : Switch(
+                      value: bg.keepsApiConnected(api),
+                      onChanged: (value) async {
+                        await bg.setApiConnected(api, value);
+                        BackgroundService().syncStationConnections();
+                      },
+                    ),
+            ),
+      ],
     );
   }
 

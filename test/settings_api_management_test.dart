@@ -182,7 +182,10 @@ void main() {
           );
           expect(before, rhythmInitiallyEnabled);
           expect(manager.isSourceEnabled(SasmexService.sourceName), before);
-          expect(manager.isSourceEnabled(RhythmKmaEewService.sourceName), before);
+          expect(
+            manager.isSourceEnabled(RhythmKmaEewService.sourceName),
+            before,
+          );
         }
         await tester.tap(toggle);
         await tester.pumpAndSettle();
@@ -196,8 +199,14 @@ void main() {
         if (id == 'rhythm') {
           final manager = SourceManager();
           expect(manager.isSourceEnabled(SasmexService.sourceName), !before);
-          expect(manager.isSourceEnabled(RhythmKmaEewService.sourceName), !before);
-          expect(manager.isSourceEnabled(KmaPewsEewService.sourceName), isFalse);
+          expect(
+            manager.isSourceEnabled(RhythmKmaEewService.sourceName),
+            !before,
+          );
+          expect(
+            manager.isSourceEnabled(KmaPewsEewService.sourceName),
+            isFalse,
+          );
         }
         if (id == 'whews' || id == 'jian') {
           final serverRow = settingRow('${id.toUpperCase()} 默认服务器');
@@ -205,13 +214,13 @@ void main() {
             of: serverRow,
             matching: find.byType(PopupMenuButton<int>),
           );
-          final primary = id == 'jian' ? 'api.sismotide.top' : 'api.beecld.com';
-          final backup = id == 'jian' ? 'api.jianproject.cloud' : 'api.2v8.cn';
+          final primary = id == 'jian' ? 'api.sismotide.top' : 'api.2v8.cn';
+          final backup = id == 'jian'
+              ? 'api.jianproject.cloud'
+              : 'api.beecld.com';
+          final displayed = size.width < 600 ? backup : primary;
           expect(
-            find.descendant(
-              of: serverRow,
-              matching: find.text(size.width < 600 ? backup : primary),
-            ),
+            find.descendant(of: serverRow, matching: find.text(displayed)),
             findsOneWidget,
             reason: 'Restore the saved preferred server on settings entry',
           );
@@ -318,11 +327,7 @@ void main() {
         scrollable: scrollable,
       );
       final seedLinkGroup = find.byKey(const ValueKey('settings-api-seedlink'));
-      for (final title in [
-        '连接上限',
-        'SeedLink测站显示样式',
-        'SeedLink测站数值与配色',
-      ]) {
+      for (final title in ['连接上限', 'SeedLink测站显示样式', 'SeedLink测站数值与配色']) {
         expect(
           find.descendant(of: seedLinkGroup, matching: settingRow(title)),
           findsOneWidget,
@@ -332,7 +337,10 @@ void main() {
       await tester.tap(find.text('预警及信息设置').first);
       await tester.pumpAndSettle();
       expect(find.text('预警接收开关'), findsOneWidget);
-      expect(find.byKey(const ValueKey('settings-eew-channels')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('settings-eew-channels')),
+        findsOneWidget,
+      );
       final jmaEewSwitch = find.byKey(
         const ValueKey('eew-channel-switch-jmaEew'),
       );

@@ -45,6 +45,10 @@ class JmaMegaquakeAdvisoryService {
 
   List<JmaMegaquakeAdvisory> get active => activeNotifier.value;
 
+  void recheckExpiry() {
+    if (!_expireIfNeeded()) _scheduleExpiry();
+  }
+
   void start({Duration interval = refreshInterval}) {
     if (_started) {
       if (active.isEmpty) unawaited(fetchNow());
@@ -146,6 +150,7 @@ class JmaMegaquakeAdvisoryService {
       if (_isActive(advisory)) _byFamily[advisory.family] = advisory;
     }
     activeNotifier.value = _sortedActive();
+    _scheduleExpiry();
   }
 
   /// Ingests the snapshot returned by Wolfx Open API
@@ -405,18 +410,19 @@ class JmaMegaquakeAdvisoryService {
     _publish();
   }
 
-  void _expireIfNeeded() {
+  bool _expireIfNeeded() {
     final stale = _byFamily.entries
         .where((entry) => !_isActive(entry.value))
         .map((entry) => entry.key)
         .toList();
     if (stale.isEmpty && _sortedActive().length == active.length) {
-      return;
+      return false;
     }
     for (final family in stale) {
       _byFamily.remove(family);
     }
     _publish();
+    return true;
   }
 
   void _publish() {

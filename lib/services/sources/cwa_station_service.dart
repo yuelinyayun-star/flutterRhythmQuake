@@ -12,6 +12,7 @@ import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import 'native_station_runtime.dart';
 import 'native_station_display.dart';
+import 'jp_shindo_scale.dart';
 import '../obs_automation_input_service.dart';
 
 class CwaStation {
@@ -43,6 +44,14 @@ class CwaStation {
   });
 
   double get currentIntensity => hasAlert ? alertIntensity : intensity;
+
+  /// Current measured intensity, not the alert-held display value.
+  int get srevObservationCode =>
+      lastUpdate == null ? 0 : JpShindoScale.srevCodeFromShindo(intensity);
+
+  int get srevDisplayCode => lastUpdate == null
+      ? 0
+      : JpShindoScale.srevCodeFromShindo(currentIntensity);
 }
 
 class CwaStationService {
@@ -141,13 +150,8 @@ class CwaStationService {
   DateTime? _lastFrameReceivedAt;
   final ValueNotifier<DateTime?> dataTimeNotifier = ValueNotifier(null);
 
-  static int gridLevelFromInstShindo(num instShindo) {
-    final value = instShindo.toDouble();
-    if (value < -3.0) return -1;
-    if (value == -3.0) return 0;
-    if (value >= 6.5) return 20;
-    return (value * 2 + 7).floor();
-  }
+  static int gridLevelFromInstShindo(num instShindo) =>
+      JpShindoScale.kanameishiLevelFromShindo(instShindo.toDouble());
 
   static int shindoFromGridLevel(int level) {
     if (level < 0) return -1;
@@ -194,30 +198,46 @@ class CwaStationService {
     await _fetchStationList();
     if (!_isCurrentRun(generation)) return;
     _stationListTimer = Timer.periodic(
-      const Duration(minutes: 5), (_) => unawaited(_fetchStationList()),
+      const Duration(minutes: 5),
+      (_) => unawaited(_fetchStationList()),
     );
     _frameWatchdogTimer = Timer.periodic(
-      const Duration(seconds: 1), (_) => _checkFrameFreshness(generation),
+      const Duration(seconds: 1),
+      (_) => _checkFrameFreshness(generation),
     );
     unawaited(_connectRtsStream(generation));
   }
 
-  bool _isCurrentRun(int generation) => _running && generation == _runGeneration;
+  bool _isCurrentRun(int generation) =>
+      _running && generation == _runGeneration;
 
   Future<void> _fetchStationList() async {
     if (!_running || _client == null || _fetchingStationList) return;
     final generation = _runGeneration;
     _fetchingStationList = true;
     try {
-      for (var attempt = 0; attempt < TremProtocol.stationHosts.length; attempt++) {
-        final host = TremProtocol.stationHosts[_metadataHostIndex % TremProtocol.stationHosts.length];
+      for (
+        var attempt = 0;
+        attempt < TremProtocol.stationHosts.length;
+        attempt++
+      ) {
+        final host =
+            TremProtocol.stationHosts[_metadataHostIndex %
+                TremProtocol.stationHosts.length];
         try {
-          final response = await _client!.get(
-            Uri.parse('$host${TremProtocol.stationPath}'),
-            headers: const {'Accept': 'text/csv', 'Cache-Control': 'no-cache'},
-          ).timeout(_requestTimeout);
+          final response = await _client!
+              .get(
+                Uri.parse('$host${TremProtocol.stationPath}'),
+                headers: const {
+                  'Accept': 'text/csv',
+                  'Cache-Control': 'no-cache',
+                },
+              )
+              .timeout(_requestTimeout);
           if (!_isCurrentRun(generation)) return;
-          if (response.statusCode == 200 && _applyStationCsv(utf8.decode(response.bodyBytes))) return;
+          if (response.statusCode == 200 &&
+              _applyStationCsv(utf8.decode(response.bodyBytes)))
+            return;
         } catch (error) {
           if (!_isCurrentRun(generation)) return;
           debugPrint('TREM station catalogue error on $host: $error');
@@ -233,12 +253,25 @@ class CwaStationService {
     final entries = TremProtocol.catalogue(csv);
     if (entries.isEmpty) return false;
     _stationMap = {
-      for (final s in entries) s.id:
-        _stationMap[s.id]?.copyWith(code: s.code, net: s.net, work: s.work, coordinate: LatLng(s.lat, s.lon)) ??
-        CwaStation(id: s.id, code: s.code, net: s.net, work: s.work, coordinate: LatLng(s.lat, s.lon)),
+      for (final s in entries)
+        s.id:
+            _stationMap[s.id]?.copyWith(
+              code: s.code,
+              net: s.net,
+              work: s.work,
+              coordinate: LatLng(s.lat, s.lon),
+            ) ??
+            CwaStation(
+              id: s.id,
+              code: s.code,
+              net: s.net,
+              work: s.work,
+              coordinate: LatLng(s.lat, s.lon),
+            ),
     };
     StationHistoryCapture.instance.restoreOriginal('cwa', {
-      ...?StationHistoryCapture.instance.original('cwa'), 'metadata': csv,
+      ...?StationHistoryCapture.instance.original('cwa'),
+      'metadata': csv,
     });
     return true;
   }
@@ -328,7 +361,8 @@ class CwaStationService {
     return _acceptRtsPayload(data, _runGeneration);
   }
 
-  String get _currentRtsHost => TremProtocol.rtsHosts[_rtsHostIndex % TremProtocol.rtsHosts.length];
+  String get _currentRtsHost =>
+      TremProtocol.rtsHosts[_rtsHostIndex % TremProtocol.rtsHosts.length];
 
   void _nextRtsHost() {
     _rtsHostIndex = (_rtsHostIndex + 1) % TremProtocol.rtsHosts.length;
@@ -350,18 +384,29 @@ class CwaStationService {
     var receivedFrame = false;
 
     try {
-      final request = http.Request('GET', Uri.parse('$host${TremProtocol.rtsPath}'));
-      request.headers.addAll(const {'Accept': 'text/event-stream', 'Cache-Control': 'no-cache'});
+      final request = http.Request(
+        'GET',
+        Uri.parse('$host${TremProtocol.rtsPath}'),
+      );
+      request.headers.addAll(const {
+        'Accept': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+      });
       final response = await client.send(request).timeout(_requestTimeout);
-      if (!_isCurrentRun(generation) || !identical(_streamClient, client)) return;
+      if (!_isCurrentRun(generation) || !identical(_streamClient, client))
+        return;
       if (response.statusCode != 200 ||
-          !(response.headers['content-type'] ?? '').contains('text/event-stream')) {
+          !(response.headers['content-type'] ?? '').contains(
+            'text/event-stream',
+          )) {
         throw StateError('TREM SSE HTTP ${response.statusCode}');
       }
 
       _streamConnecting = false;
       _streamReceiving = true;
-      await for (final payload in TremProtocol.decode(response.stream.timeout(const Duration(seconds: 90)))) {
+      await for (final payload in TremProtocol.decode(
+        response.stream.timeout(const Duration(seconds: 90)),
+      )) {
         if (!_isCurrentRun(generation) || !identical(_streamClient, client)) {
           return;
         }
@@ -430,7 +475,8 @@ class CwaStationService {
       existing.intensity =
           double.tryParse(vals['i']?.toString() ?? '') ?? existing.intensity;
       existing.alertIntensity =
-          double.tryParse(vals[v1 ? 'i' : 'I']?.toString() ?? '') ?? existing.alertIntensity;
+          double.tryParse(vals[v1 ? 'i' : 'I']?.toString() ?? '') ??
+          existing.alertIntensity;
       existing.hasAlert = v1
           ? vals['alert'] == true || vals['alert'] == 1 || vals['alert'] == '1'
           : isActiveAlertValue(vals['alert']);

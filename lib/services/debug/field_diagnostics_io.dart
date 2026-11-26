@@ -30,6 +30,9 @@ class FieldDiagnostics {
   FieldDiagnostics._();
 
   static const bool enabled = bool.fromEnvironment('RQ_FIELD_LOG');
+  static const String _configuredDirectory = String.fromEnvironment(
+    'RQ_FIELD_LOG_DIR',
+  );
 
   static bool _active = false;
   static late final int Function(Pointer<Uint8>, int) _write;
@@ -124,6 +127,13 @@ class FieldDiagnostics {
   }
 
   static Future<Directory> _directory() async {
+    if (_configuredDirectory.isNotEmpty) {
+      final configured = Directory(_configuredDirectory);
+      if (!configured.isAbsolute) {
+        throw ArgumentError('RQ_FIELD_LOG_DIR must be an absolute path');
+      }
+      return configured.create(recursive: true);
+    }
     final Directory directory;
     final local = Platform.environment['LOCALAPPDATA'];
     if (Platform.isWindows && local != null) {

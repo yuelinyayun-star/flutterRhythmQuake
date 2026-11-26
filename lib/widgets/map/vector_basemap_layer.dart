@@ -8,8 +8,13 @@ import '../../services/vector_basemap_service.dart';
 import '../../services/debug/runtime_rendering_probe.dart';
 
 class VectorBasemapLayer extends StatefulWidget {
-  const VectorBasemapLayer({super.key, this.service});
+  const VectorBasemapLayer({
+    super.key,
+    this.service,
+    this.retainGraphics = true,
+  });
   final VectorBasemapService? service;
+  final bool retainGraphics;
 
   static const oceanColor = Color(0xFF202124);
   static const landColor = Color(0xFF393939);
@@ -32,6 +37,17 @@ class _VectorBasemapLayerState extends State<VectorBasemapLayer> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void didUpdateWidget(VectorBasemapLayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.retainGraphics && !widget.retainGraphics) {
+      _drawing = null;
+      _layers = null;
+      _projectionWindow = null;
+      _windowZoom = null;
+    }
   }
 
   Future<void> _load() async {
@@ -144,6 +160,7 @@ class _VectorBasemapLayerState extends State<VectorBasemapLayer> {
 
   @override
   Widget build(BuildContext context) {
+    if (!widget.retainGraphics) return const SizedBox.shrink();
     final camera = MapCamera.of(context);
     if (_polygons != null) _prepareWindow(camera);
     return RuntimePaintGate(

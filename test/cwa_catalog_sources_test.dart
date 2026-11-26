@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutterrhythmquake/core/utils/catalog_event_identity.dart';
+import 'package:flutterrhythmquake/core/cwa_report_intensities.dart';
 import 'package:flutterrhythmquake/models/quake_message.dart';
 import 'package:flutterrhythmquake/models/unified_quake_data.dart';
 import 'package:flutterrhythmquake/providers/quake_provider.dart';
@@ -157,6 +159,57 @@ void main() {
       );
       expect(catalogEventId('cwaEew', '115000'), '115000');
       expect(cwaDisplayLocation('臺灣東部海域'), '臺灣東部海域');
+    },
+  );
+
+  test(
+    'Jian summary loads the matching TREM observed report on demand',
+    () async {
+      final requested = <Uri>[];
+      final client = MockClient((request) async {
+        requested.add(request.url);
+        return http.Response.bytes(
+          File(
+            '$root/${request.url.hasQuery ? 'trem_list' : 'trem_detail'}.original.json',
+          ).readAsBytesSync(),
+          200,
+        );
+      });
+      addTearDown(client.close);
+      final service = CwaEqlistService.forTesting(client);
+      final provider = QuakeProvider(
+        startCatalogServices: false,
+        nativeUnifiedEvents: true,
+        manualCwaCatalog: service,
+      );
+      addTearDown(provider.dispose);
+      await provider.eewHistoryReadyForTest;
+      final event = QuakeEventAdapter.convertJian('cwa', jian.first)!;
+      final row = provider.unifiedToQuakeMessageForTest(event);
+      expect(row.informationMap?.warnArea, isEmpty);
+      final loaded = Completer<UnifiedQuakeData>();
+      provider.addListener(() {
+        final selected = provider.selectedInformationMapEvent;
+        if (selected != null &&
+            selected.warnArea.isNotEmpty &&
+            !loaded.isCompleted) {
+          loaded.complete(selected);
+        }
+      });
+      provider.selectHistoryMapProducts(row);
+      final selected = await loaded.future.timeout(const Duration(seconds: 3));
+      expect(selected.eventId, row.eventId);
+      expect(selected.rawEvent, same(row));
+      expect(
+        selected.warnArea,
+        CwaReportIntensities.toWarnArea(original('trem_detail.original.json')),
+      );
+      expect(requested.map((uri) => uri.path), [
+        '/api/v2/eq/report',
+        '/api/v2/eq/report/${trem.first['id']}',
+      ]);
+      expect(service.latestList, isEmpty);
+      expect(provider.unifiedEvents, isEmpty);
     },
   );
 

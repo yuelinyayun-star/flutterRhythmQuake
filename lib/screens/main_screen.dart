@@ -3,7 +3,7 @@ import 'dart:ui';
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart'
-    show compute, visibleForTesting;
+    show compute, defaultTargetPlatform, kIsWeb, visibleForTesting;
 import 'package:provider/provider.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart' show LatLng;
@@ -89,6 +89,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   final JmaLpgmService _jmaLpgmService = JmaLpgmService();
   final JmaMegaquakeAdvisoryService _jmaMegaquakeService =
       JmaMegaquakeAdvisoryService();
+  AppLifecycleListener? _advisoryLifecycle;
   StreamSubscription<Map<String, dynamic>>? _foregroundAuxSubscription;
   CmaLocalWeatherState _cmaWeatherState = const CmaLocalWeatherState();
   JmaLocalWeatherState _jmaWeatherState = const JmaLocalWeatherState();
@@ -210,6 +211,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   }
 
   bool _hasAutoInfoContent(StationSummaryData data, QuakeProvider provider) {
+    final now = DateTime.now();
     return _hasFormalNiedDetect(data) ||
         _localEewEvent(provider) != null ||
         data.snetTopStations.isNotEmpty ||
@@ -218,14 +220,16 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         _activeJmaLpgmBulletin(provider) != null ||
         _activeJmaMegaquakeAdvisories().isNotEmpty ||
         (_tsunamiSidebarVisible &&
-            ((provider.jmaTsunami?.isDisplayableAt(DateTime.now()) == true) ||
-                (provider.nmefcTsunami?.isDisplayableAt(DateTime.now()) ==
-                    true) ||
-                (provider.ptwcTsunami?.isActive == true) ||
-                (provider.ntwcTsunami?.isActive == true) ||
-                (provider.incoisTsunami?.isActive == true) ||
+            ((provider.jmaTsunami?.isDisplayableAt(now) == true) ||
+                (provider.nmefcTsunami?.isDisplayableAt(now) == true) ||
+                (provider.ptwcTsunami?.isActive == true &&
+                    provider.ptwcTsunami!.isDisplayableAt(now)) ||
+                (provider.ntwcTsunami?.isActive == true &&
+                    provider.ntwcTsunami!.isDisplayableAt(now)) ||
+                (provider.incoisTsunami?.isActive == true &&
+                    provider.incoisTsunami!.isDisplayableAt(now)) ||
                 provider.additionalTsunamis.any(
-                  (e) => e.isActive && e.isDisplayableAt(DateTime.now()),
+                  (e) => e.isActive && e.isDisplayableAt(now),
                 )));
   }
 
@@ -240,6 +244,11 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      _advisoryLifecycle = AppLifecycleListener(
+        onShow: _jmaMegaquakeService.recheckExpiry,
+      );
+    }
     _mapController = MapController();
     // Preload reference tables before replay or EEW sidebar display.
     unawaited(
@@ -380,6 +389,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    _advisoryLifecycle?.dispose();
     RuntimeRenderingProbe.unbind(this);
     UiRuntimeFlags.tsunamiSidebarVisibleNotifier.removeListener(
       _onTsunamiSidebarChanged,
@@ -462,6 +472,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                   weatherOnly:
                       !isPhone && _desktopWeatherOpen ||
                       isPhone && _mobileMapViewport == MapViewport.weather,
+                  weatherMapVisible: _mobileWeatherMapOpen,
                   onWeatherFrameTimes: (times) {
                     if (mounted) _weatherMapFrameTimes.value = times;
                   },
@@ -2255,7 +2266,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
           ? station.prefecture
           : station.code;
       final current = prefMax[name] ?? -1;
-      if (station.jmaShindo > current) prefMax[name] = station.jmaShindo;
+      if (station.jmaIndex > current) prefMax[name] = station.jmaIndex;
     }
     return prefMax.entries
         .map(
@@ -2759,26 +2770,33 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     final ptwcTsunami = provider.ptwcTsunami;
     final ntwcTsunami = provider.ntwcTsunami;
     final incoisTsunami = provider.incoisTsunami;
+    final now = DateTime.now();
     final jmaTsunamiTriggered =
         _tsunamiSidebarVisible &&
         jmaTsunami != null &&
-        jmaTsunami.isDisplayableAt(DateTime.now());
+        jmaTsunami.isDisplayableAt(now);
     final nmefcTsunamiTriggered =
         _tsunamiSidebarVisible &&
         nmefcTsunami?.isActive == true &&
-        nmefcTsunami!.isDisplayableAt(DateTime.now());
+        nmefcTsunami!.isDisplayableAt(now);
     final ptwcTsunamiTriggered =
-        _tsunamiSidebarVisible && ptwcTsunami?.isActive == true;
+        _tsunamiSidebarVisible &&
+        ptwcTsunami?.isActive == true &&
+        ptwcTsunami!.isDisplayableAt(now);
     final ntwcTsunamiTriggered =
-        _tsunamiSidebarVisible && ntwcTsunami?.isActive == true;
+        _tsunamiSidebarVisible &&
+        ntwcTsunami?.isActive == true &&
+        ntwcTsunami!.isDisplayableAt(now);
     final incoisTsunamiTriggered =
-        _tsunamiSidebarVisible && incoisTsunami?.isActive == true;
+        _tsunamiSidebarVisible &&
+        incoisTsunami?.isActive == true &&
+        incoisTsunami!.isDisplayableAt(now);
     final additionalTsunamis = provider.additionalTsunamis
         .where(
           (e) =>
               _tsunamiSidebarVisible &&
               e.isActive &&
-              e.isDisplayableAt(DateTime.now()),
+              e.isDisplayableAt(now),
         )
         .toList();
     String additionalSignature(TsunamiMessage e) =>
@@ -2839,13 +2857,13 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         ? '${nmefcTsunami.id}|${nmefcTsunami.reportNumber}|${nmefcTsunami.reportTime}|${nmefcTsunami.status}|${nmefcTsunami.areas.length}|${nmefcTsunami.observations.length}'
         : '-';
     final ptwcTsunamiSignature = ptwcTsunamiTriggered
-        ? '${ptwcTsunami!.id}|${ptwcTsunami.status}|${ptwcTsunami.grade.name}'
+        ? '${ptwcTsunami.id}|${ptwcTsunami.status}|${ptwcTsunami.grade.name}'
         : '-';
     final ntwcTsunamiSignature = ntwcTsunamiTriggered
-        ? '${ntwcTsunami!.id}|${ntwcTsunami.status}|${ntwcTsunami.grade.name}'
+        ? '${ntwcTsunami.id}|${ntwcTsunami.status}|${ntwcTsunami.grade.name}'
         : '-';
     final incoisTsunamiSignature = incoisTsunamiTriggered
-        ? '${incoisTsunami!.id}|${incoisTsunami.status}|${incoisTsunami.grade.name}'
+        ? '${incoisTsunami.id}|${incoisTsunami.status}|${incoisTsunami.grade.name}'
         : '-';
     final signature =
         '$localEewSignature|$niedSignature|$snetSignature|$jmaTsunamiSignature|$nmefcTsunamiSignature|$ptwcTsunamiSignature|$ntwcTsunamiSignature|$incoisTsunamiSignature|$additionalTsunamiSignature|$cmtSignature|$volcanoSignature|$jmaLpgmSignature|$megaquakeSignature';

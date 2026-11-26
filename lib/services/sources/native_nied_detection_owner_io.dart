@@ -6,6 +6,7 @@ import 'package:ffi/ffi.dart';
 import '../../models/source_payload.dart';
 import 'native_station_core_library_io.dart';
 import 'nied_monitor.dart';
+import 'jp_shindo_scale.dart';
 
 /// Raw station columns in; native station deltas and prepared UI projections out.
 /// Holds, expiry scheduling, grids, event lifecycle and effects belong to Rust.
@@ -14,6 +15,7 @@ final class NativeNiedDetectionOwner implements Finalizable {
     List<NiedStation> stations, {
     required this.onUpdate,
     bool manualClock = false,
+    this.useSrev = false,
   }) : _count = stations.length {
     if (!supported) {
       throw UnsupportedError(
@@ -32,7 +34,14 @@ final class NativeNiedDetectionOwner implements Finalizable {
         }
         final encoded = JsonUtf8Encoder().convert([
           for (final s in stations)
-            [s.code, s.isActive, s.detectState, s.detectReason, s.id],
+            [
+              s.code,
+              s.isActive,
+              s.detectState,
+              s.detectReason,
+              s.id,
+              if (useSrev) s.name,
+            ],
         ]);
         final bytes = arena<Uint8>(encoded.length);
         bytes.asTypedList(encoded.length).setAll(0, encoded);
@@ -58,6 +67,7 @@ final class NativeNiedDetectionOwner implements Finalizable {
       _active = [for (final s in stations) s.isActive];
       _states = [for (final s in stations) s.detectState];
       _reasons = [for (final s in stations) s.detectReason];
+      _triggerStamps = [for (final s in stations) s.triggerStamp];
     } catch (_) {
       dispose();
       rethrow;
@@ -76,6 +86,7 @@ final class NativeNiedDetectionOwner implements Finalizable {
   };
   final void Function(List<dynamic>) onUpdate;
   final int _count;
+  final bool useSrev;
   late final RawReceivePort _port;
   Pointer<Void> _owner = nullptr;
   StationCoreBuffer? _input, _length;
@@ -84,10 +95,16 @@ final class NativeNiedDetectionOwner implements Finalizable {
   late final List<bool> _active;
   late final List<int> _states;
   late final List<String> _reasons;
+  late final List<int> _triggerStamps;
   bool _disposed = false, _draining = false;
   String? layerSignature;
 
-  void process(List<NiedStation> stations, int sensitivity, {int clock = 0}) {
+  void process(
+    List<NiedStation> stations,
+    int sensitivity, {
+    int clock = 0,
+    bool solveSrev = false,
+  }) {
     if (_disposed) throw StateError('NIED detection owner is disposed');
     if (stations.length != _count) {
       throw ArgumentError('NIED directory changed');
@@ -100,15 +117,30 @@ final class NativeNiedDetectionOwner implements Finalizable {
       final observed = s.lastDataTime ?? s.lastUpdate;
       _integers[offset] = s.kaLevel;
       _doubles[offset + 1] = s.activity;
-      _integers[offset + 2] = s.ascend;
-      _doubles[offset + 3] = s.continuousShindo;
+      if (useSrev) {
+        final rawLevel = s.recentLevel.isEmpty
+            ? s.kaLevel
+            : s.recentLevel.first;
+        final fine = s.gifObservation?.shindo;
+        _integers[offset + 2] = rawLevel;
+        _doubles[offset + 3] =
+            fine != null &&
+                JpShindoScale.kanameishiLevelFromShindo(fine) == rawLevel
+            ? fine
+            : double.nan;
+      } else {
+        _integers[offset + 2] = s.ascend;
+        _doubles[offset + 3] = s.continuousShindo;
+      }
       _integers[offset + 4] = s.triggerStamp;
       _integers[offset + 5] =
           observed?.microsecondsSinceEpoch ?? -9223372036854775808;
       _integers[offset + 6] = observed?.isUtc == true ? 1 : 0;
       // Raw sampler reset/missing-frame invalidation, not a detection decision.
       _integers[offset + 7] =
-          (s.isActive ? 1 : 0) | (s.isRealtimeObservationMissing ? 2 : 0);
+          (s.isActive ? 1 : 0) |
+          (s.isRealtimeObservationMissing ? 2 : 0) |
+          (solveSrev && useSrev ? 4 : 0);
     }
     final error = _api.apply(
       _owner,
@@ -149,6 +181,7 @@ final class NativeNiedDetectionOwner implements Finalizable {
           _active[index] = row[1] as bool;
           _states[index] = row[2] as int;
           _reasons[index] = row[3] as String;
+          if (useSrev && row.length > 4) _triggerStamps[index] = row[4] as int;
         }
         if (result[3] case final String signature) layerSignature = signature;
         onUpdate(result);
@@ -165,6 +198,7 @@ final class NativeNiedDetectionOwner implements Finalizable {
         ..isActive = _active[i]
         ..detectState = _states[i]
         ..detectReason = _reasons[i];
+      if (useSrev) stations[i].triggerStamp = _triggerStamps[i];
     }
   }
 
@@ -176,6 +210,7 @@ final class NativeNiedDetectionOwner implements Finalizable {
       _active.fillRange(0, _count, false);
       _states.fillRange(0, _count, 0);
       _reasons.fillRange(0, _count, '');
+      _triggerStamps.fillRange(0, _count, 0);
     }
   }
 

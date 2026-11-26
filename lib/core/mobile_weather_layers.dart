@@ -3,6 +3,8 @@ import 'dart:convert';
 // Display-profile keys only. Original source data and global switches stay intact.
 const mobileWeatherPreferenceKey = 'mobile_weather_map_layers_v1';
 const mobileWeatherStationModeKey = 'mobile_weather_map_station_mode';
+const mobileWeatherPrecipitationStationsKey =
+    'mobile_weather_map_precipitation_stations';
 const mobileWeatherLayerKeys = <String>{
   'cloudLayer',
   'rainLayer',

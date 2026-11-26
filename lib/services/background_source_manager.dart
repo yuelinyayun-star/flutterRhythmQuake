@@ -6,17 +6,21 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/quake_message.dart';
 import '../core/app_edition.dart';
+import '../core/background_api.dart';
+import '../core/background_station_connection.dart';
 import '../models/cenc_ir_data.dart';
 import '../models/weather_alarm.dart';
 import '../models/unified_quake_data.dart';
 import '../models/tsunami_message.dart';
 import '../models/source_status.dart';
 import 'background_event_processor.dart';
+import 'background_api_connections.dart';
 import 'background_source_reload_plan.dart';
 import '../core/mobile_weather_layers.dart';
 import 'weather_map_source_requests.dart';
 import 'epicenter_region_service.dart';
 import 'location_service.dart';
+import 'jian_auth_service.dart';
 import 'ntp_service.dart';
 import 'quake_event_adapter.dart';
 import 'sources/emsc_eqlist_service.dart';
@@ -79,6 +83,7 @@ final List<StreamSubscription> _backgroundSubscriptions = [];
 final List<Timer> _backgroundTimers = [];
 SourceManager? _backgroundManager;
 BackgroundEventProcessor? _backgroundEventProcessor;
+BackgroundApiConnections? _backgroundApiConnections;
 
 void setBackgroundJmaVolcanoPushEnabled(bool enabled) {
   _backgroundEventProcessor?.jmaVolcanoPushEnabled = enabled;
@@ -88,6 +93,7 @@ void setBackgroundJmaVolcanoPushEnabled(bool enabled) {
 }
 
 void reloadBackgroundJianCredentials() {
+  _backgroundApiConnections?.forgetReadiness(BackgroundApi.jian);
   _backgroundManager?.getSource<JianService>()?.reloadCredentials();
 }
 
@@ -95,10 +101,12 @@ void reloadBackgroundJianCredentials() {
 void setBackgroundAggregateDefaultServer(String source, int index) {
   if (source == JianService.sourceName) {
     if (index < 0 || index >= JianService.serverOptions.length) return;
+    _backgroundApiConnections?.forgetReadiness(BackgroundApi.jian);
     _backgroundManager?.getSource<JianService>()?.setDefaultServerIndex(index);
     _backgroundSettings?[JianService.defaultServerPreferenceKey] = index;
   } else if (source == 'WHEWS') {
     if (index < 0 || index >= WhewsService.serverOptions.length) return;
+    _backgroundApiConnections?.forgetReadiness(BackgroundApi.whews);
     _backgroundManager?.getSource<WhewsService>()?.setDefaultServerIndex(index);
     _backgroundSettings?[WhewsService.defaultServerPreferenceKey] = index;
   }
@@ -162,6 +170,9 @@ JmaLpgmService? _backgroundJmaLpgm;
 JmaMegaquakeAdvisoryService? _backgroundJmaMegaquake;
 Map<String, Object>? _backgroundSettings;
 String _backgroundNiedSource = 'lmoni';
+Set<BackgroundStationConnection> _pausedBackgroundStations = {};
+Timer? _backgroundFdsnStatusTimer;
+void Function(Map<String, dynamic>)? _onBackgroundStationData;
 
 void setBackgroundPAlertDetectionSensitivity(int value) {
   _backgroundPAlert?.setSensitivity(value);
@@ -183,17 +194,94 @@ Future<bool> reloadBackgroundStationSettings() async {
   final next = _settingsSnapshot(prefs);
   final plan = BackgroundSourceReloadPlan(previous, next);
   if (plan.requiresFullReload) return false;
-  for (final station in plan.stations) {
+  await _applyBackgroundStationConnections(prefs, {
+    for (final station in BackgroundStationConnection.values)
+      if (plan.stations.contains(station.name)) station,
+  }, resetNiedWorker: true);
+  _backgroundSettings = next;
+  return true;
+}
+
+/// Apply Android visibility preferences without resetting the event processor.
+Future<void> syncBackgroundStationConnections({required bool uiVisible}) async {
+  if (_backgroundSettings == null) return;
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.reload();
+  final apiConnections = _backgroundApiConnections;
+  if (apiConnections != null) {
+    await _configureBackgroundApis(prefs, apiConnections, uiVisible: uiVisible);
+  }
+  final next = BackgroundStationConnection.paused(
+    uiVisible: uiVisible,
+    read: prefs.getBool,
+  );
+  final changed = {
+    ..._pausedBackgroundStations.difference(next),
+    ...next.difference(_pausedBackgroundStations),
+  };
+  _pausedBackgroundStations = next;
+  await _applyBackgroundStationConnections(prefs, changed);
+}
+
+Future<bool> _hasBackgroundJianCredential() async {
+  try {
+    final credential = await JianCredentialStore().readCredential();
+    return credential.token.isNotEmpty &&
+        (credential.expiresAt?.isAfter(DateTime.now()) ?? true);
+  } catch (error) {
+    debugPrint('JIAN credential storage unavailable: ${error.runtimeType}.');
+    return false;
+  }
+}
+
+Future<void> _configureBackgroundApis(
+  SharedPreferences prefs,
+  BackgroundApiConnections connections, {
+  required bool uiVisible,
+}) async {
+  final eligible = {...connections.enabledInForeground};
+  if (connections.enabledInForeground.contains(BackgroundApi.fan) &&
+      (prefs.getString(FanService.apiKeyPreferenceKey) ?? '').trim().isEmpty) {
+    eligible.remove(BackgroundApi.fan);
+  }
+  if (!uiVisible &&
+      eligible.contains(BackgroundApi.jian) &&
+      !await _hasBackgroundJianCredential()) {
+    eligible.remove(BackgroundApi.jian);
+  }
+  connections.configure(
+    visible: uiVisible,
+    automatic: prefs.getBool(BackgroundApi.automaticPreferenceKey) ?? true,
+    manual: BackgroundApi.readManualSelection(
+      prefs.getStringList(BackgroundApi.manualSelectionPreferenceKey),
+    ),
+    eligible: eligible,
+  );
+}
+
+Future<void> _applyBackgroundStationConnections(
+  SharedPreferences prefs,
+  Set<BackgroundStationConnection> stations, {
+  bool initial = false,
+  bool resetNiedWorker = false,
+}) async {
+  for (final station in stations) {
+    final enabled = !_pausedBackgroundStations.contains(station);
     switch (station) {
-      case 'nied':
-        _backgroundNiedMonitor!.stop();
-        NiedBackgroundWorker.instance.stop();
-        _backgroundLmoni!.stop();
-        _backgroundYahoo!.stop();
-        _backgroundWhewsNied!.stop();
-        _backgroundJianNied!.stop();
+      case BackgroundStationConnection.nied:
+        if (!initial) {
+          _backgroundNiedMonitor!.stop();
+          // Ordinary source changes retain the original worker reset. A
+          // visibility change must leave the independently enabled LPGM alive.
+          if (resetNiedWorker && enabled) NiedBackgroundWorker.instance.stop();
+          _backgroundLmoni!.stop();
+          _backgroundYahoo!.stop();
+          _backgroundWhewsNied!.stop();
+          _backgroundJianNied!.stop();
+        }
         _backgroundNiedSource = prefs.getString('nied_data_source') ?? 'lmoni';
-        if (prefs.getBool('api_source_nied_monitor_enabled') ?? true) {
+        if (enabled &&
+            (prefs.getBool('api_source_nied_monitor_enabled') ?? true)) {
           if (_backgroundNiedSource == 'yahoo') {
             _backgroundYahoo!.start();
           } else if (_backgroundNiedSource != 'whews' &&
@@ -203,67 +291,136 @@ Future<bool> reloadBackgroundStationSettings() async {
             _backgroundNiedMonitor!.start();
           }
         }
-      case 'kma':
-        _backgroundKma!.disconnect();
-        _backgroundWhewsKma!.stop();
-        _backgroundJianKma!.stop();
+      case BackgroundStationConnection.kma:
+        if (!initial) {
+          _backgroundKma!.disconnect();
+          _backgroundWhewsKma!.stop();
+          _backgroundJianKma!.stop();
+        }
         final source = prefs.getString('kma_data_source') ?? 'pews';
-        if ((prefs.getBool('api_source_kma_pews_enabled') ?? true) &&
+        if (enabled &&
+            (prefs.getBool('api_source_kma_pews_enabled') ?? true) &&
             source != 'whews' &&
             source != 'jian') {
           _backgroundKma!.setConnectionSource(source);
           _backgroundKma!.setExternalInputEnabled(false);
           _backgroundKma!.connect();
         }
-      case 'snet':
-        _backgroundSnet!.stopMonitoring();
-        _backgroundWhewsSnet!.stop();
-        _backgroundJianSnet!.stop();
-        if ((prefs.getBool('api_source_snet_enabled') ?? true) &&
+      case BackgroundStationConnection.snet:
+        if (!initial) {
+          _backgroundSnet!.stopMonitoring();
+          _backgroundWhewsSnet!.stop();
+          _backgroundJianSnet!.stop();
+        }
+        if (enabled &&
+            (prefs.getBool('api_source_snet_enabled') ?? true) &&
             !const {
               'whews',
               'jian',
             }.contains(prefs.getString('snet_data_source'))) {
           unawaited(_backgroundSnet!.startMonitoring());
         }
-      case 'trem':
-        _backgroundCwa!.stop();
-        if (prefs.getBool('trem_station_enabled') ?? true) {
+      case BackgroundStationConnection.trem:
+        if (!initial) _backgroundCwa!.stop();
+        if (enabled && (prefs.getBool('trem_station_enabled') ?? true)) {
           _backgroundCwa!.start();
         }
-      case 'seisjs':
-        _backgroundSeisJs!.disconnect();
-        if (prefs.getBool('api_source_wolfx_seisjs_enabled') ?? true) {
+      case BackgroundStationConnection.seisjs:
+        if (!initial) _backgroundSeisJs!.disconnect();
+        if (enabled &&
+            (prefs.getBool('api_source_wolfx_seisjs_enabled') ?? true)) {
           _backgroundSeisJs!.connect();
         }
-      case 'palert':
-        _backgroundPAlert!.stop();
-        if (AppEdition.hasPAlertStations &&
+      case BackgroundStationConnection.palert:
+        if (!initial) _backgroundPAlert!.stop();
+        if (enabled &&
+            AppEdition.hasPAlertStations &&
             (prefs.getBool('api_source_palert_enabled') ?? true)) {
           _backgroundPAlert!.start();
         }
+      case BackgroundStationConnection.lpgm:
+        if (!initial) _backgroundLpgm!.stop();
+        if (enabled &&
+            (prefs.getBool('api_source_nied_lpgm_enabled') ?? true)) {
+          unawaited(
+            _backgroundLpgm!.start(interval: const Duration(seconds: 15)),
+          );
+        }
+      case BackgroundStationConnection.fdsn:
+        _syncBackgroundFdsn(prefs, enabled: enabled, initial: initial);
+      case BackgroundStationConnection.fssn:
+        // The map layer owns its separate socket.
+        break;
     }
   }
-  if (plan.stations.any(
-    (station) => const {'nied', 'kma', 'snet'}.contains(station),
-  )) {
+  final arrayStations = {
+    for (final station in stations)
+      if (!_pausedBackgroundStations.contains(station) &&
+          (station == BackgroundStationConnection.nied ||
+              station == BackgroundStationConnection.snet ||
+              station == BackgroundStationConnection.kma))
+        station.name,
+  };
+  final whewsStations = arrayStations
+      .where((station) => prefs.getString('${station}_data_source') == 'whews')
+      .toSet();
+  if (whewsStations.isNotEmpty) {
     await _startBackgroundWhewsStationsIfAuthorized(
       prefs,
       whewsNied: _backgroundWhewsNied!,
       whewsKma: _backgroundWhewsKma!,
       whewsSnet: _backgroundWhewsSnet!,
-      only: plan.stations,
+      only: whewsStations,
     );
+  }
+  if (arrayStations.isNotEmpty) {
     _startBackgroundJianStations(
       prefs,
       nied: _backgroundJianNied!,
       snet: _backgroundJianSnet!,
       kma: _backgroundJianKma!,
-      only: plan.stations,
+      only: arrayStations,
     );
   }
-  _backgroundSettings = next;
-  return true;
+}
+
+void _syncBackgroundFdsn(
+  SharedPreferences prefs, {
+  required bool enabled,
+  required bool initial,
+}) {
+  final motion = _backgroundFdsnMotion!;
+  _backgroundFdsnStatusTimer?.cancel();
+  _backgroundFdsnStatusTimer = null;
+  if (!initial) {
+    for (final service in _backgroundFdsnStations.values) {
+      service.stop();
+    }
+    motion.disconnect();
+  }
+  if (!enabled ||
+      !(prefs.getBool('api_source_fdsn_seedlink_enabled') ?? false)) {
+    return;
+  }
+  final sources = {
+    for (final source in FdsnSourceCatalog.sources)
+      if (source.readEnabled(prefs.getBool)) source.name,
+  };
+  if (sources.isEmpty) return;
+  for (final source in sources) {
+    unawaited(_backgroundFdsnStations[source]!.start());
+  }
+  motion.connect(
+    stationLimit:
+        prefs.getInt(FdsnMotionService.stationLimitPreferenceKey) ??
+        FdsnMotionService.defaultStationLimit,
+    enabledSources: sources,
+  );
+  _backgroundFdsnStatusTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+    _onBackgroundStationData?.call(
+      ForegroundStationPayload.fdsnStatus(motion.sourceStatusesNotifier.value),
+    );
+  });
 }
 
 Iterable<Map<String, dynamic>> backgroundLocalWeatherSnapshots() sync* {
@@ -411,6 +568,7 @@ Future<void> startBackgroundSources({
   required void Function(String source, List<Map<String, dynamic>> items)
   onCmtList,
   required void Function(Map<String, dynamic> payload) onAuxData,
+  required bool Function() isStationUiVisible,
   bool Function()? isStationHistoryRecording,
 }) async {
   if (kIsWeb || !Platform.isAndroid) return;
@@ -420,6 +578,8 @@ Future<void> startBackgroundSources({
 
   final prefs = await SharedPreferences.getInstance();
   await prefs.reload();
+  final whewsCredentials = _readBackgroundWhewsCredentials(prefs);
+  _onBackgroundStationData = onStationData;
   await FdsnSourceCatalog.initializePreferences(prefs.getBool, prefs.setBool);
   await EpicenterRegionService.instance.load();
   final initialSettings = _settingsSnapshot(prefs);
@@ -637,6 +797,10 @@ Future<void> startBackgroundSources({
   // 注册到 isolate 内的 SourceManager（新的单例实例）
   final manager = SourceManager();
   _backgroundManager = manager;
+  final cencListEnabled = _isInfoSourceEnabled(prefs, QuakeSourceType.cenc);
+  if (cencListEnabled) {
+    wolfx.onCencEqlistUpdated = (items) => onSourceList('cenc', items);
+  }
   wolfx.onJmaEqlistUpdated = (items) => onSourceList('jma', items);
   wolfx.onJmaSpecialEqUpdated = jmaMegaquake.ingestWolfxSnapshot;
   fan.onFssnListUpdated = (items) => onSourceList('fssn', items);
@@ -654,13 +818,8 @@ Future<void> startBackgroundSources({
   manager.registerSource(wolfx);
   manager.registerSource(whews);
   manager.registerSource(jian);
-  manager.setSourceEnabled(
-    jian.name,
-    prefs.getBool(JianService.enabledPreferenceKey) ?? false,
-  );
   manager.registerSource(fan);
   manager.registerSource(fssn);
-  manager.setSourceEnabled(FssnService.sourceName, fssnEnabled);
   manager.registerSource(nowQuakeCencIr);
   manager.registerSource(p2p);
   manager.registerSource(mock);
@@ -671,34 +830,65 @@ Future<void> startBackgroundSources({
   manager.registerSource(sasmex);
   manager.registerSource(pewsEew);
   manager.registerSource(rhythmKmaEew);
-  manager.setSourceEnabled(
-    KmaPewsEewService.sourceName,
-    prefs.getBool(KmaPewsEewService.enabledPreferenceKey) ?? true,
-  );
-  manager.setSourceEnabled(
-    RhythmKmaEewService.sourceName,
-    rhythmEnabled,
-  );
   if (AppEdition.hasGlobalQuake) manager.registerSource(globalQuake);
   if (AppEdition.hasIcl) {
     manager.registerSource(jianIcl);
     manager.registerSource(chinaEewIcl);
   }
-  manager.setSourceEnabled(
-    'FAN',
-    prefs.getBool('api_source_fan_enabled') ?? true,
+  final credentials = await whewsCredentials;
+  whews.setApiToken(credentials?.apiToken ?? '');
+  final whewsEnabled =
+      (credentials?.hasApiToken ?? false) &&
+      (prefs.getBool(WhewsService.enabledPreferenceKey) ?? false);
+  final apiConnections = BackgroundApiConnections(
+    sources: {
+      BackgroundApi.wolfx: [wolfx.name],
+      BackgroundApi.jian: [jian.name],
+      BackgroundApi.whews: [whews.name],
+      BackgroundApi.fan: [fan.name],
+      BackgroundApi.rhythm: [sasmex.name, rhythmKmaEew.name],
+      BackgroundApi.kmaPews: [pewsEew.name],
+      BackgroundApi.p2p: [p2p.name],
+      BackgroundApi.fssn: [fssn.name],
+      BackgroundApi.nowQuake: [nowQuakeCencIr.name],
+      if (AppEdition.hasGlobalQuake)
+        BackgroundApi.globalQuake: [globalQuake.name],
+      if (AppEdition.hasIcl) ...{
+        BackgroundApi.jianIcl: [jianIcl.name],
+        BackgroundApi.chinaEewIcl: [chinaEewIcl.name],
+      },
+    },
+    enabledInForeground: {
+      if (prefs.getBool('api_source_wolfx_enabled') ?? true) BackgroundApi.wolfx,
+      if (prefs.getBool(JianService.enabledPreferenceKey) ?? false)
+        BackgroundApi.jian,
+      if (whewsEnabled) BackgroundApi.whews,
+      if (prefs.getBool('api_source_fan_enabled') ?? true) BackgroundApi.fan,
+      if (rhythmEnabled) BackgroundApi.rhythm,
+      if (prefs.getBool(KmaPewsEewService.enabledPreferenceKey) ?? true)
+        BackgroundApi.kmaPews,
+      if (prefs.getBool('api_source_p2pquake_enabled') ?? true) BackgroundApi.p2p,
+      if (fssnEnabled) BackgroundApi.fssn,
+      if (nowQuakeCencIrEnabled) BackgroundApi.nowQuake,
+      if (AppEdition.hasGlobalQuake &&
+          (prefs.getBool(GlobalQuakeService.enabledPreferenceKey) ?? false))
+        BackgroundApi.globalQuake,
+      if (AppEdition.hasIcl &&
+          (prefs.getBool(JianIclService.enabledPreferenceKey) ?? false))
+        BackgroundApi.jianIcl,
+      if (AppEdition.hasIcl &&
+          (prefs.getBool(ChinaEewIclService.enabledPreferenceKey) ?? false))
+        BackgroundApi.chinaEewIcl,
+    },
+    setSourceEnabled: manager.setSourceEnabled,
+    whewsCoverageReady: () => whews.hasFullEewCoverage,
   );
-  manager.setSourceEnabled(nowQuakeCencIr.name, nowQuakeCencIrEnabled);
-  manager.setSourceEnabled(
-    'Wolfx',
-    prefs.getBool('api_source_wolfx_enabled') ?? true,
+  _backgroundApiConnections = apiConnections;
+  await _configureBackgroundApis(
+    prefs,
+    apiConnections,
+    uiVisible: isStationUiVisible(),
   );
-  manager.setSourceEnabled('WHEWS', false);
-  manager.setSourceEnabled(
-    'P2P',
-    prefs.getBool('api_source_p2pquake_enabled') ?? true,
-  );
-  manager.setSourceEnabled(SasmexService.sourceName, rhythmEnabled);
 
   var nowQuakeStatus = SourceStatus.disconnected;
   var fanCencIrFallbackActive = !nowQuakeCencIrEnabled;
@@ -719,6 +909,7 @@ Future<void> startBackgroundSources({
   nowQuakeCencIr.onListAvailabilityChanged = syncFanCencIrRequests;
   _backgroundSubscriptions.add(
     manager.onStatusUpdate.listen((update) {
+      apiConnections.onStatus(update);
       if (update.sourceName == nowQuakeCencIr.name) {
         nowQuakeStatus = update.status;
         syncFanCencIrRequests();
@@ -801,7 +992,7 @@ Future<void> startBackgroundSources({
         handleOfficialCurrent('cwaEqlist', data);
     officialCwa.start();
   }
-  if (_isInfoSourceEnabled(prefs, QuakeSourceType.cenc)) {
+  if (cencListEnabled) {
     _backgroundOfficialCenc = officialCenc;
     officialCenc.onListUpdated = (items) => onSourceList('cenc', items);
     officialCenc.start();
@@ -811,8 +1002,6 @@ Future<void> startBackgroundSources({
     officialJma.onListUpdated = (items) => onSourceList('jma', items);
     officialJma.start();
   }
-
-  await _restoreBackgroundWhews(prefs, manager, whews);
 
   void stationStatus(String source, bool connected) {
     onSourceStatus(
@@ -1017,57 +1206,11 @@ Future<void> startBackgroundSources({
     ),
   );
 
-  if (prefs.getBool('api_source_nied_monitor_enabled') ?? true) {
-    if (niedSource == 'whews' || niedSource == 'jian') {
-      // The selected array station socket is started below.
-    } else if (niedSource == 'yahoo') {
-      yahoo.start();
-    } else {
-      niedMonitor.configureEndpoint(niedSource);
-      lmoni.start();
-      niedMonitor.start();
-    }
-  }
-  if (prefs.getBool('api_source_kma_pews_enabled') ?? true) {
-    final kmaSource = prefs.getString('kma_data_source') ?? 'pews';
-    if (kmaSource != 'whews' && kmaSource != 'jian') {
-      kma.setConnectionSource(kmaSource);
-      kma.setExternalInputEnabled(false);
-      kma.connect();
-    }
-  }
-  if (prefs.getBool('trem_station_enabled') ?? true) cwa.start();
-  if ((prefs.getBool('api_source_snet_enabled') ?? true) &&
-      !const {'whews', 'jian'}.contains(prefs.getString('snet_data_source')))
-    snet.startMonitoring();
-  if (prefs.getBool('api_source_wolfx_seisjs_enabled') ?? true)
-    seisJs.connect();
-  if (AppEdition.hasPAlertStations &&
-      (prefs.getBool('api_source_palert_enabled') ?? true)) {
-    pAlert.start();
-  }
-  await _startBackgroundWhewsStationsIfAuthorized(
-    prefs,
-    whewsNied: whewsNied,
-    whewsSnet: whewsSnet,
-    whewsKma: whewsKma,
-  );
-  _startBackgroundJianStations(
-    prefs,
-    nied: jianNied,
-    snet: jianSnet,
-    kma: jianKma,
-  );
-
   _backgroundAuxSubscriptions.add(
     lpgm.snapshotStream.listen((snapshot) {
       onStationData(ForegroundStationPayload.lpgm(snapshot));
     }),
   );
-  if (prefs.getBool('api_source_nied_lpgm_enabled') ?? true) {
-    await lpgm.start(interval: const Duration(seconds: 15));
-  }
-
   for (final entry in fdsnStations.entries) {
     _backgroundAuxSubscriptions.add(
       entry.value.stationStream.listen((stations) {
@@ -1155,32 +1298,16 @@ Future<void> startBackgroundSources({
           .toList(growable: false),
     });
   });
-  final fdsnEnabled =
-      prefs.getBool('api_source_fdsn_seedlink_enabled') ?? false;
-  final fdsnSources = <String>{
-    for (final source in FdsnSourceCatalog.sources)
-      if (source.readEnabled(prefs.getBool)) source.name,
-  };
-  if (fdsnEnabled && fdsnSources.isNotEmpty) {
-    final limit =
-        prefs.getInt(FdsnMotionService.stationLimitPreferenceKey) ??
-        FdsnMotionService.defaultStationLimit;
-    for (final source in fdsnSources) {
-      unawaited(fdsnStations[source]!.start());
-    }
-    fdsnMotion.connect(stationLimit: limit, enabledSources: fdsnSources);
-    // Send small summaries, not station histories. Repeating the current snapshot
-    // also restores the dashboard when the UI isolate attaches after startup.
-    _backgroundTimers.add(
-      Timer.periodic(const Duration(seconds: 5), (_) {
-        onStationData(
-          ForegroundStationPayload.fdsnStatus(
-            fdsnMotion.sourceStatusesNotifier.value,
-          ),
-        );
-      }),
-    );
-  }
+  _pausedBackgroundStations = BackgroundStationConnection.paused(
+    uiVisible: isStationUiVisible(),
+    read: prefs.getBool,
+  );
+  await _applyBackgroundStationConnections(
+    prefs,
+    BackgroundStationConnection.values.toSet(),
+    initial: true,
+  );
+
   final weatherSources = requiredWeatherMapSources(prefs);
   if (weatherSources.contains('radarChinaLayer')) {
     fanRadar.start(
@@ -1261,15 +1388,15 @@ Future<void> startBackgroundSources({
   );
 
   if (AppEdition.hasGlobalQuake &&
-      (prefs.getBool(GlobalQuakeService.enabledPreferenceKey) ?? false)) {
+      manager.isSourceEnabled(globalQuake.name)) {
     globalQuake.connect();
   }
   if (AppEdition.hasIcl &&
-      (prefs.getBool(JianIclService.enabledPreferenceKey) ?? false)) {
+      manager.isSourceEnabled(jianIcl.name)) {
     jianIcl.connect();
   }
   if (AppEdition.hasIcl &&
-      (prefs.getBool(ChinaEewIclService.enabledPreferenceKey) ?? false)) {
+      manager.isSourceEnabled(chinaEewIcl.name)) {
     chinaEewIcl.connect();
   }
 
@@ -1279,6 +1406,12 @@ Future<void> startBackgroundSources({
 /// 停止前台服务 isolate 中的所有连接，供服务退出和设置重载使用。
 Future<void> stopBackgroundSources() async {
   _backgroundSettings = null;
+  _backgroundApiConnections?.dispose();
+  _backgroundApiConnections = null;
+  _pausedBackgroundStations = {};
+  _backgroundFdsnStatusTimer?.cancel();
+  _backgroundFdsnStatusTimer = null;
+  _onBackgroundStationData = null;
   _backgroundSeenStatePersistTimer?.cancel();
   _backgroundSeenStatePersistTimer = null;
   for (final timer in _backgroundTimers) {
@@ -1492,17 +1625,17 @@ Future<void> _startBackgroundWhewsStationsIfAuthorized(
       preferences: prefs,
     );
   } catch (_) {
-    whewsNied.stop();
-    whewsSnet.stop();
-    whewsKma.stop();
+    if (only.contains('nied')) whewsNied.stop();
+    if (only.contains('snet')) whewsSnet.stop();
+    if (only.contains('kma')) whewsKma.stop();
     debugPrint('WHEWS station credential storage unavailable.');
     return;
   }
   final token = credentials.apiToken.trim();
   final auth = prefs.getBool(WhewsService.enabledPreferenceKey) ?? false;
-  whewsNied.setApiToken(token);
-  whewsSnet.setApiToken(token);
-  whewsKma.setApiToken(token);
+  if (only.contains('nied')) whewsNied.setApiToken(token);
+  if (only.contains('snet')) whewsSnet.setApiToken(token);
+  if (only.contains('kma')) whewsKma.setApiToken(token);
   if (token.isEmpty) return;
   if (only.contains('nied') &&
       auth &&
@@ -1527,28 +1660,17 @@ Future<void> _startBackgroundWhewsStationsIfAuthorized(
   }
 }
 
-Future<void> _restoreBackgroundWhews(
+Future<WAuthCredentials?> _readBackgroundWhewsCredentials(
   SharedPreferences prefs,
-  SourceManager manager,
-  WhewsService whews,
 ) async {
-  WAuthCredentials credentials;
   try {
-    credentials = await WAuthCredentialStore().readAndMigrate(
+    return await WAuthCredentialStore().readAndMigrate(
       preferences: prefs,
     );
   } catch (_) {
-    whews.setApiToken('');
-    manager.setSourceEnabled('WHEWS', false);
     debugPrint('WHEWS credential storage unavailable.');
-    return;
+    return null;
   }
-  whews.setApiToken(credentials.apiToken);
-  manager.setSourceEnabled(
-    'WHEWS',
-    credentials.hasApiToken &&
-        (prefs.getBool(WhewsService.enabledPreferenceKey) ?? false),
-  );
 }
 
 bool _isInfoSourceEnabled(SharedPreferences prefs, QuakeSourceType source) {

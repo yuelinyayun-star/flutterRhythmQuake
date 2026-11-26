@@ -1,15 +1,17 @@
+import '../core/utils/eew_event_identity.dart';
 import '../core/utils/quake_time.dart';
 import '../models/unified_quake_data.dart';
 
 typedef _ReportShape = (int, double, double, double, double);
 
-/// Shares only fill ownership and threshold sounds after an identical domestic
-/// report has actually been observed. Does not merge or rewrite UI events.
+/// Shares fill ownership and threshold sounds by event, and across domestic
+/// agencies when an identical report has been observed.
 class DomesticEewEffects {
   final _members = <String, _Effects>{};
   int _sequence = 0;
 
-  static String _key(UnifiedQuakeData e) => '${e.source}|${e.eventId}';
+  static String _key(UnifiedQuakeData e) =>
+      '${e.source}|${e.source == 'ceaEew' ? canonicalEewEventId(e) : e.eventId}';
 
   static _ReportShape? _shape(UnifiedQuakeData e) {
     if (!e.isEew ||

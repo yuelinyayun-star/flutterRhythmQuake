@@ -69,6 +69,42 @@ fn same_jma(a: &Value, b: &Value) -> bool {
         && (comparable(a) / SECOND == comparable(b) / SECOND
             || jma_key(a).is_some_and(|v| Some(v) == jma_key(b)))
 }
+
+/// Match list summaries to an already reported JMA map payload. An official
+/// ID wins. Without one on both sides, require the same full observation.
+pub fn jma_observed_map_bindings(command: &Value) -> Value {
+    let (Some(summaries), Some(reports)) = (
+        command["summaries"].as_array(),
+        command["reports"].as_array(),
+    ) else {
+        return json!([]);
+    };
+    let official_id = |id: &str| id.len() == 14 && id.bytes().all(|b| b.is_ascii_digit());
+    let matches = summaries.iter().map(|summary| {
+        let id = s(summary, "eventId");
+        if !id.is_empty() {
+            if let Some(index) = reports.iter().position(|report| s(report, "eventId") == id) {
+                return Some(index);
+            }
+        }
+        let mut candidates = reports.iter().enumerate().filter(|(_, report)| {
+            let report_id = s(report, "eventId");
+            !(official_id(id) && official_id(report_id))
+                && time(summary, "originTime").is_some()
+                && time(report, "originTime").is_some()
+                && comparable(summary) / SECOND == comparable(report) / SECOND
+                && !s(summary, "hypocenter").is_empty()
+                && s(summary, "hypocenter") == s(report, "hypocenter")
+                && ["lat", "lng", "magnitude", "depth"].iter().all(|field| {
+                    n(summary, field).is_finite() && n(summary, field) == n(report, field)
+                })
+        });
+        let (index, _) = candidates.next()?;
+        candidates.next().is_none().then_some(index)
+    });
+    json!(matches.collect::<Vec<_>>())
+}
+
 fn agency_source(bucket: &str) -> Option<&str> {
     match bucket {
         "usgsEqlist" => Some("usgs"),

@@ -15,6 +15,20 @@ class SharedCancellableTileProvider extends NetworkTileProvider {
 
   final Map<String, _TileRequest> _requests = {};
 
+  /// Drops decoded images used by the attached layer. Compressed disk and
+  /// network caches keep their normal lifetime.
+  void evictActiveDecodedTiles() {
+    final cache = PaintingBinding.instance.imageCache;
+    for (final request in _requests.values) {
+      final image = request.image;
+      unawaited(
+        image.obtainKey(ImageConfiguration.empty).then((key) {
+          cache.evict(key);
+        }),
+      );
+    }
+  }
+
   @override
   ImageProvider getImageWithCancelLoadingSupport(
     TileCoordinates coordinates,

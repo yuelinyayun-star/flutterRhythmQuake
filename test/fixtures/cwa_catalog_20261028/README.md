@@ -26,3 +26,12 @@ There are 22 overlapping JIAN/TREM reports. Three of those report pairs have
 different hypocentral parameters and must still share the same agency event
 identity. Comparisons use normalized internal keys; the source reports stay
 unchanged. The 2026-10-17 WHEWS report also exists in both captured lists.
+
+The manual map regression also uses two unchanged HTTP response bodies
+captured on 2026-11-23 from `api.core.exptech.dev`:
+
+- `trem_list_20261123.original.json`: `/api/v2/eq/report?limit=25`.
+  SHA-256: `d2bfc61e91d0891715d8f98989f3f2a5e93b53bbec332e1fb1fd30a8edbe6d9d`.
+- `trem_second_detail_20261123.original.json`:
+  `/api/v2/eq/report/115000-2026-1117-222850`.
+  SHA-256: `eeb38126cd7d2a8da6b441d93afdf997698f9dddea46b40471a255b8cc4fc168`.

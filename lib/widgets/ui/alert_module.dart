@@ -437,8 +437,14 @@ class _AlertModuleState extends State<AlertModule> {
       estimate.originTime ?? sourceEvent.startedAt,
       offsetHours: isPAlert ? 8 : 9,
     );
+    final isSrev = estimate.method == 'nied_srev_hyp_rust_v1';
+    final srevAccepted = isSrev
+        ? DateTime.tryParse(
+            estimate.diagnostics['srev_hyp_report_time']?.toString() ?? '',
+          )
+        : null;
     final reportTime = _sourceEstimationJstWallClock(
-      sourceEvent.updatedAt,
+      srevAccepted ?? sourceEvent.updatedAt,
       offsetHours: isPAlert ? 8 : 9,
     );
     final supportCount = _sourceDisplaySupportCount(estimate);
@@ -473,6 +479,13 @@ class _AlertModuleState extends State<AlertModule> {
         ? null
         : _positiveInt(estimate.diagnostics['nied_dart_hyp_report_num']);
     final dartHypStable = estimate.diagnostics['nied_dart_hyp_stable'] == true;
+    final srevReport = _positiveInt(
+      estimate.diagnostics['srev_hyp_report_num'],
+    );
+    final srevFinished = estimate.diagnostics['srev_hyp_state'] == 'finished';
+    final srevLabel = srevReport == null
+        ? (srevFinished ? '更新结束' : '')
+        : '第${srevReport}报${srevFinished ? '（更新结束）' : ''}';
 
     return UnifiedQuakeData(
       source: isPAlert
@@ -489,7 +502,9 @@ class _AlertModuleState extends State<AlertModule> {
       isEew: false,
       timeZone: isPAlert ? 8 : 9,
       titleText: sourceEstimationTitle,
-      reportNumText: dartHypReportNumber == null
+      reportNumText: isSrev
+          ? srevLabel
+          : dartHypReportNumber == null
           ? ''
           : '第$dartHypReportNumber报${dartHypStable ? '（稳定）' : ''}',
       useShindo: true,
@@ -508,7 +523,6 @@ class _AlertModuleState extends State<AlertModule> {
       depthText: _sourceEstimateDetailsText(
         estimate,
         supportCount: supportCount,
-        methodLabel: _sourceMethodLabelV2(estimate.method),
       ),
       lat: estimate.latitude,
       lng: estimate.longitude,
@@ -522,7 +536,6 @@ class _AlertModuleState extends State<AlertModule> {
   String _sourceEstimateDetailsText(
     SourceEstimate estimate, {
     required int supportCount,
-    required String methodLabel,
   }) {
     final magnitude = estimate.magnitude;
     return <String>[
@@ -532,7 +545,6 @@ class _AlertModuleState extends State<AlertModule> {
           ? '\u6df1\u5ea6 --'
           : '\u6df1\u5ea6 ${estimate.depthKm!.round()}km',
       '\u652f\u6301 $supportCount\u7ad9',
-      methodLabel,
     ].join(' \u00b7 ');
   }
 
@@ -575,7 +587,7 @@ class _AlertModuleState extends State<AlertModule> {
     );
     final elapsedMs = _sourceDiagnosticInt(estimate, 'bridge_elapsed_ms');
     final parts = <String>[
-      if (error != null) 'JS\u8bef\u5dee ${error.toStringAsFixed(3)}',
+      if (error != null) '\u8bef\u5dee ${error.toStringAsFixed(3)}',
       if (support != null) '\u652f\u6301 $support\u7ad9',
       if (processed != null) '\u7b2c$processed\u5e27',
       if (detectionIds != null) 'ID $detectionIds',
@@ -585,6 +597,10 @@ class _AlertModuleState extends State<AlertModule> {
   }
 
   String? _sourceDartHypResultText(SourceEstimate estimate) {
+    if (estimate.method == 'nied_srev_hyp_rust_v1') {
+      final residual = _sourceDiagnosticDouble(estimate, 'srev_error');
+      return residual == null ? null : '误差 ${residual.toStringAsFixed(2)}';
+    }
     if (estimate.method != 'nied_dart_hyp_v1' &&
         estimate.method != 'palert_hyp_v1') {
       return null;
@@ -723,17 +739,6 @@ class _AlertModuleState extends State<AlertModule> {
     return 'dark-gray';
   }
 
-  String _sourceMethodLabelV2(String method) => switch (method) {
-    'palert_hyp_v1' => 'P-Alert HYP',
-    'nied_gif_kotoho7_js_receiver_v1' => 'kotoho7 JS',
-    'nied_dart_hyp_v1' => 'Dart HYP',
-    'nied_gif_hybrid_v1' => 'GIF\u6df7\u5408',
-    'trigger_time_grid_v2' => '\u5230\u65f6\u7f51\u683c',
-    'trigger_time_depth_grid_v3' => '\u6df1\u5ea6\u7f51\u683c',
-    'weighted_centroid_baseline' => '\u52a0\u6743\u8d28\u5fc3',
-    _ => method,
-  };
-
   UnifiedQuakeData? sourceEstimationUnifiedEventLegacy(
     SeismicActiveEvent? sourceEvent,
   ) {
@@ -783,7 +788,6 @@ class _AlertModuleState extends State<AlertModule> {
       depthText: _sourceEstimateDetailsText(
         estimate,
         supportCount: estimate.supportingStationCount,
-        methodLabel: _sourceMethodLabel(estimate.method),
       ),
       lat: estimate.latitude,
       lng: estimate.longitude,
@@ -846,15 +850,6 @@ class _AlertModuleState extends State<AlertModule> {
 
   String _formatSourceUncertainty(double? value) =>
       value == null ? 'P90 --km' : 'P90 ${value.round()}km';
-
-  String _sourceMethodLabel(String method) => switch (method) {
-    'nied_dart_hyp_v1' => 'Dart HYP',
-    'nied_gif_hybrid_v1' => 'GIF混合',
-    'trigger_time_grid_v2' => '到时网格',
-    'trigger_time_depth_grid_v3' => '深度网格',
-    'weighted_centroid_baseline' => '加权质心',
-    _ => method,
-  };
 
   Widget _buildStackedUnifiedView(
     QuakeProvider provider,

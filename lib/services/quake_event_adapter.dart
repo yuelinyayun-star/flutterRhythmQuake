@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../models/source_payload.dart';
+import '../models/jma_lpgm_bulletin.dart';
 import 'native_jma_eew.dart';
 import '../models/unified_quake_data.dart';
 import 'sources/jma_lpgm_api_adapter.dart';
@@ -1710,6 +1711,11 @@ class QuakeEventAdapter {
     final originTimeValue = origin == _originWhews
         ? data['shockTime'] ?? data['originTime']
         : data['originTime'];
+    final latitude = _parseDouble(data['latitude']);
+    final longitude = _parseDouble(data['longitude']);
+    final originalLocation = '${data['location'] ?? ''}';
+    final location = _stringValue(data['placename_zh']) ??
+        kmaDisplayLocation(originalLocation, latitude, longitude);
 
     return UnifiedQuakeData(
       source: source,
@@ -1722,7 +1728,7 @@ class QuakeEventAdapter {
       useShindo: false,
       maxIntensity: maxIntensity,
       className: _setClassName(maxIntensity, false, false),
-      hypocenter: '${data['location'] ?? ''}',
+      hypocenter: location,
       originTime: _parseTime(originTimeValue, 9),
       reportTime: origin == _originWhews
           ? _parseTime(
@@ -1733,8 +1739,8 @@ class QuakeEventAdapter {
       magnitude: _parseDouble(data['magnitude']) ?? -1,
       depth: _parseDouble(data['depth']) ?? -1,
       depthText: _formatDepthText(_parseDouble(data['depth']) ?? -1, 9),
-      lat: _parseDouble(data['latitude']) ?? 0,
-      lng: _parseDouble(data['longitude']) ?? 0,
+      lat: latitude ?? 0,
+      lng: longitude ?? 0,
       isWarn: isWarn,
       isFinal: false,
       isCanceled: false,
@@ -1807,6 +1813,212 @@ class QuakeEventAdapter {
     }
     return _wolfxJmaEqlist(source, data);
   }
+
+  static UnifiedQuakeData? convertWolfxJmaDetail(
+    Map<String, dynamic> row, {
+    required bool isSnapshot,
+  }) {
+    final report = row['report'] as Map<String, dynamic>;
+    final product = report['product'];
+    final eventId = row['eventId'] as String;
+    final canceled = report['status'] == 'cancelled';
+    final infoType = switch (report['status']) {
+      'corrected' => '訂正',
+      'cancelled' => '取消',
+      _ => '',
+    };
+    final observation = report['observation'] as Map? ?? const {};
+    final hypocenter = row['hypocenter'] as Map? ?? const {};
+    final place = _stringValue(hypocenter['name']) ?? '';
+    final lat = _parseDouble(hypocenter['latitude']);
+    final lng = _parseDouble(hypocenter['longitude']);
+    final hasLocation = _hasValidJmaCoordinates(lat, lng);
+    final depth = _parseJmaDepth(hypocenter['depth']);
+    final magnitude = _validMagnitude(report['magnitude']);
+    final reportTime = report['time'] ?? report['issuedAt'];
+    final areas = observation['areas'] as List? ?? const [];
+    final intensity = _knownJmaShindo(observation['maxIntensity']);
+    final payload = snapshotSourcePayload({
+      'eventId': eventId,
+      'report': report,
+      if (row['hypocenter'] != null) 'hypocenter': hypocenter,
+    });
+
+    if (product == 'VXSE62') {
+      final level = _parseInt(observation['maxLongPeriod']) ?? 0;
+      if (!canceled && (level < 1 || level > 4)) return null;
+      final prefectures = row['prefectures'] as List;
+      final regions = <JmaLpgmRegion>[];
+      final stations = <JmaLpgmStation>[];
+      for (final (index, item) in areas.indexed) {
+        if (item is! Map) continue;
+        final name = _stringValue(item['name']) ?? '';
+        final areaLevel = _parseInt(item['lg']) ?? 0;
+        if (name.isNotEmpty && areaLevel >= 1 && areaLevel <= 4) {
+          regions.add(
+            JmaLpgmRegion(
+              name: name,
+              code: _stringValue(item['code']) ?? '',
+              maxLgInt: areaLevel,
+              maxInt: _knownJmaShindo(item['int']) ?? '',
+            ),
+          );
+        }
+        final areaStations = item['stations'];
+        if (areaStations is! List) continue;
+        for (final station in areaStations.whereType<Map>()) {
+          final stationName = _stringValue(station['name']) ?? '';
+          final stationLevel = _parseInt(station['lg']) ?? 0;
+          if (stationName.isEmpty || stationLevel < 1 || stationLevel > 4) {
+            continue;
+          }
+          final periods = station['periods'];
+          final classes = <JmaLpgmPeriodValue>[];
+          final amplitudes = <JmaLpgmPeriodValue>[];
+          if (periods is List) {
+            for (final period in periods.whereType<Map>()) {
+              final band = _parseDouble(period['period']);
+              if (band == null || band < 1 || band > 7 || band % 1 != 0) {
+                continue;
+              }
+              final rank = _parseDouble(period['class']);
+              final sva = _parseDouble(period['sva']);
+              if (rank != null) {
+                classes.add(
+                  JmaLpgmPeriodValue(band: band.toInt(), value: rank),
+                );
+              }
+              if (sva != null) {
+                amplitudes.add(
+                  JmaLpgmPeriodValue(band: band.toInt(), value: sva),
+                );
+              }
+            }
+          }
+          stations.add(
+            JmaLpgmStation(
+              name: stationName,
+              code: _stringValue(station['code']) ?? '',
+              intensity: _knownJmaShindo(station['int']) ?? '',
+              lgInt: stationLevel,
+              sva: _parseDouble(station['sva']),
+              lgIntPerPeriod: List.unmodifiable(classes),
+              svaPerPeriod: List.unmodifiable(amplitudes),
+              prefecture: prefectures[index] as String,
+              area: name,
+            ),
+          );
+        }
+      }
+      final comments = report['comments'] as Map? ?? const {};
+      final urls = comments['urls'];
+      final bulletin = JmaLpgmBulletin(
+        eventId: eventId,
+        serial: _parseInt(report['serial']) ?? 1,
+        infoType: infoType,
+        headline: _stringValue(report['text']) ?? '',
+        maxInt: intensity ?? '',
+        maxLgInt: canceled ? 0 : level,
+        lgCategory: _stringValue(observation['longPeriodCategory']) ?? '',
+        originTime: DateTime.tryParse('${report['originTime'] ?? ''}'),
+        reportTime: DateTime.tryParse('${reportTime ?? ''}'),
+        publishedAt: DateTime.tryParse('${report['issuedAt'] ?? ''}'),
+        hypocenter: place,
+        latitude: hasLocation ? lat : null,
+        longitude: hasLocation ? lng : null,
+        depthKm: depth >= 0 ? depth : null,
+        magnitude: magnitude > 0 ? magnitude : null,
+        detailUrl: urls is List && urls.isNotEmpty ? '${urls.first}' : '',
+        regions: List.unmodifiable(regions),
+        stations: List.unmodifiable(stations),
+      );
+      return jmaLpgmToUnified(bulletin).copyWith(
+        origin: _originWolfx,
+        apiTypeLabel: 'Wolfx',
+        isCanceled: canceled,
+        isSnapshot: isSnapshot,
+        useSourceTimeForExpiry: true,
+        sourcePayload: payload,
+      );
+    }
+
+    final reportedAreas = _parseWhewsJmaIntensities([
+      {
+        'areas': [
+          for (final area in areas.whereType<Map>())
+            {'name': area['name'], 'maxIntensity': area['int']},
+        ],
+      },
+    ]);
+    final shindo = intensity ?? reportedAreas.maxIntensity;
+    return UnifiedQuakeData(
+      source: 'jmaEqlist',
+      origin: _originWolfx,
+      eventId: eventId,
+      isEew: false,
+      timeZone: 9,
+      titleText: _p2pTitleText(switch (product) {
+        'VXSE51' => 'ScalePrompt',
+        'VXSE52' => 'Destination',
+        _ => 'ScaleAndDestination',
+      }),
+      reportNumText: infoType,
+      useShindo: true,
+      maxIntensity: _normalizeJmaShindo(shindo),
+      className: canceled ? 'dark-gray' : _setClassName(shindo, true, false),
+      hypocenter: place,
+      originTime: _parseTime(
+        report['originTime'] ??
+            (product == 'VXSE51' ? report['targetTime'] : null),
+        9,
+      ),
+      reportTime: _parseTime(report['issuedAt'] ?? reportTime, 9),
+      magnitude: magnitude,
+      depth: depth,
+      depthText: _formatDepthText(depth, 9),
+      lat: hasLocation ? lat : null,
+      lng: hasLocation ? lng : null,
+      isCanceled: canceled,
+      warnArea: canceled ? '' : reportedAreas.warnArea,
+      apiTypeLabel: 'Wolfx',
+      isSnapshot: isSnapshot,
+      useSourceTimeForExpiry: true,
+      sourcePayload: payload,
+    );
+  }
+
+  static UnifiedQuakeData jmaLpgmToUnified(JmaLpgmBulletin bulletin) =>
+      UnifiedQuakeData(
+        source: 'jmaLpgm',
+        origin: 7,
+        eventId: bulletin.eventId,
+        isEew: false,
+        timeZone: 9,
+        titleText: jmaLpgmObservationTitle,
+        reportNumText: bulletin.serial > 0 ? '第${bulletin.serial}报' : '',
+        useShindo: false,
+        maxIntensity: bulletin.maxLgInt.toString(),
+        className: switch (bulletin.maxLgInt) {
+          1 => 'yellow',
+          2 => 'orange',
+          3 => 'red',
+          4 => 'purple',
+          _ => 'gray',
+        },
+        hypocenter: bulletin.hypocenter,
+        originTime: bulletin.originTime,
+        reportTime: bulletin.reportTime,
+        magnitude: bulletin.magnitude ?? -1,
+        depth: bulletin.depthKm ?? -1,
+        depthText: bulletin.depthKm == null
+            ? ''
+            : '深度 ${bulletin.depthKm!.toStringAsFixed(0)}km',
+        lat: bulletin.latitude,
+        lng: bulletin.longitude,
+        apiTypeLabel: 'JMA · VXSE62',
+        isJmaLpgm: true,
+        jmaLpgmBulletin: bulletin,
+      );
 
   static UnifiedQuakeData? _wolfxJmaEqlist(
     String source,

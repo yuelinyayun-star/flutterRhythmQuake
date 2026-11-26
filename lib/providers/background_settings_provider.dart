@@ -9,6 +9,9 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/background_api.dart';
+import '../core/background_station_connection.dart';
+
 class BackgroundSettingsProvider with ChangeNotifier {
   static const String _prefix = 'background_';
   static const String _enabledKey = '${_prefix}enabled';
@@ -22,12 +25,22 @@ class BackgroundSettingsProvider with ChangeNotifier {
   bool _reportEnabled = true;
   bool _eewEnabled = true;
   double _eewMinIntensity = 0.0;
+  Set<BackgroundStationConnection> _pausedStations = BackgroundStationConnection
+      .values
+      .toSet();
+  bool _automaticApis = true;
+  Set<BackgroundApi> _manualApis = {};
 
   bool get enabled => _enabled;
   bool get autoStartOnBoot => _autoStartOnBoot;
   bool get reportEnabled => _reportEnabled;
   bool get eewEnabled => _eewEnabled;
   double get eewMinIntensity => _eewMinIntensity;
+  bool get automaticApis => _automaticApis;
+  bool keepsApiConnected(BackgroundApi api) => _manualApis.contains(api);
+
+  bool keepsStationConnected(BackgroundStationConnection connection) =>
+      !_pausedStations.contains(connection);
 
   /// 是否允许发送 EEW 系统通知
   bool get canNotifyEew => _enabled && _eewEnabled;
@@ -42,6 +55,51 @@ class BackgroundSettingsProvider with ChangeNotifier {
     _reportEnabled = prefs.getBool(_reportEnabledKey) ?? true;
     _eewEnabled = prefs.getBool(_eewEnabledKey) ?? true;
     _eewMinIntensity = prefs.getDouble(_eewMinIntensityKey) ?? 0.0;
+    _automaticApis =
+        prefs.getBool(BackgroundApi.automaticPreferenceKey) ?? true;
+    _manualApis = BackgroundApi.readManualSelection(
+      prefs.getStringList(BackgroundApi.manualSelectionPreferenceKey),
+    );
+    _pausedStations = BackgroundStationConnection.paused(
+      uiVisible: false,
+      read: prefs.getBool,
+    );
+    notifyListeners();
+  }
+
+  Future<void> setStationConnected(
+    BackgroundStationConnection connection,
+    bool value,
+  ) async {
+    if (keepsStationConnected(connection) == value) return;
+    if (value) {
+      _pausedStations.remove(connection);
+    } else {
+      _pausedStations.add(connection);
+    }
+    await _saveBool(connection.preferenceKey, value);
+    notifyListeners();
+  }
+
+  Future<void> setAutomaticApis(bool value) async {
+    if (_automaticApis == value) return;
+    _automaticApis = value;
+    await _saveBool(BackgroundApi.automaticPreferenceKey, value);
+    notifyListeners();
+  }
+
+  Future<void> setApiConnected(BackgroundApi api, bool value) async {
+    if (keepsApiConnected(api) == value) return;
+    if (value) {
+      _manualApis.add(api);
+    } else {
+      _manualApis.remove(api);
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(BackgroundApi.manualSelectionPreferenceKey, [
+      for (final api in BackgroundApi.values)
+        if (_manualApis.contains(api)) api.name,
+    ]);
     notifyListeners();
   }
 

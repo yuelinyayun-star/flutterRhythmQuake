@@ -33,6 +33,8 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'wolfx_socket_stub.dart'
     if (dart.library.io) 'wolfx_socket_io.dart'
     as socket;
+import 'wolfx_jma_detail_feed.dart';
+import '../../models/unified_quake_data.dart';
 import 'base_source.dart';
 import '../quake_event_adapter.dart';
 import '../../models/quake_message.dart';
@@ -44,6 +46,11 @@ import '../../models/tsunami_message.dart';
 /// 继承自 BaseSourceService，实现 Wolfx API 的具体逻辑。
 /// 负责管理 WebSocket 连接、消息解析和数据分发。
 class WolfxService extends BaseSourceService {
+  late final _jmaDetail = WolfxJmaDetailFeed(onReport: emitUnified);
+
+  Future<List<UnifiedQuakeData>>? readJmaObservationSnapshot() =>
+      _jmaDetail.runningObservationSnapshot();
+
   /// 服务名称标识
   @override
   String get name => 'Wolfx';
@@ -81,7 +88,9 @@ class WolfxService extends BaseSourceService {
 
   /// 每种报文仅保留最后一次完整原始内容，用于压制查询得到的重复日志。
   final Map<String, String> _lastLoggedRawPayloadByType = {};
+  String? _lastPublishedCencEqlist;
 
+  void Function(List<QuakeMessage>)? onCencEqlistUpdated;
   void Function(List<QuakeMessage>)? onJmaEqlistUpdated;
   void Function(Map<String, dynamic> snapshot)? onJmaSpecialEqUpdated;
 
@@ -101,6 +110,7 @@ class WolfxService extends BaseSourceService {
   /// 连接成功后自动监听消息流，连接失败则触发重连机制。
   @override
   void connect() {
+    _jmaDetail.start();
     unawaited(_connect());
   }
 
@@ -261,6 +271,14 @@ class WolfxService extends BaseSourceService {
           if (firstEntry is Map) {
             _emitUnified('cencEqlist', Map<String, dynamic>.from(firstEntry));
           }
+          final publishCencList = onCencEqlistUpdated;
+          if (publishCencList != null && rawPayload != _lastPublishedCencEqlist) {
+            final items = QuakeEventAdapter.convertWolfxCencEqlist(json);
+            if (items.isNotEmpty) {
+              publishCencList(items);
+              _lastPublishedCencEqlist = rawPayload;
+            }
+          }
           break;
         case 'jma_eqlist':
           final jmaItems = QuakeEventAdapter.convertWolfxJmaEqlist(json);
@@ -373,6 +391,7 @@ class WolfxService extends BaseSourceService {
   /// 设置手动关闭标志，避免触发自动重连。
   @override
   void disconnect() {
+    _jmaDetail.stop();
     _isManualClose = true;
     _connectionSerial++;
     _retryCount = 0;
@@ -397,6 +416,7 @@ class WolfxService extends BaseSourceService {
   @override
   void dispose() {
     disconnect();
+    _jmaDetail.dispose();
     _reconnectTimer?.cancel();
     super.dispose();
   }

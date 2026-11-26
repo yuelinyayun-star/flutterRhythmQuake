@@ -1,10 +1,14 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+import 'package:flutter/foundation.dart' show listEquals, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../services/sources/cma_local_weather_service.dart';
+import '../../services/sources/precipitation_stations_service.dart';
 
 /// 气象站展示模式
 enum WeatherStationDisplayMode {
@@ -62,11 +66,10 @@ enum WeatherStationDisplayMode {
   }
 }
 
-/// 高性能气象站实况地图图层
-///
-/// 采用单 Canvas 批处理绘制 + 视口空间剔除 (Viewport Culling) + LOD 视距分级自适应渲染，
-/// 配合后台 Worker 批量防抖预加载，彻底消除缩放卡顿，60fps/120fps 丝滑流畅。
+/// Keeps station markers at all zooms and shows readings in the close view.
 class WeatherStationMapLayer extends StatefulWidget {
+  static const labelMinZoom = 8.4;
+
   final List<CmaStationSummary> stations;
   final WeatherStationDisplayMode mode;
 
@@ -81,52 +84,89 @@ class WeatherStationMapLayer extends StatefulWidget {
 }
 
 class _WeatherStationMapLayerState extends State<WeatherStationMapLayer> {
-  Timer? _debounceTimer;
+  Timer? _preloadTimer;
+  List<CmaStationSummary>? _stations;
+  Crs? _crs;
+  List<Offset> _projected = const [];
+  WeatherStationDisplayMode? _mode;
+  Map<String, CmaLocalWeatherObservation>? _observations;
+  List<_StationReading> _readings = const [];
+  List<_StationReading> _markers = const [];
+  final _readingAtlas = _WeatherStationAtlas();
+  final _markerAtlas = _WeatherStationAtlas();
 
   void _scheduleViewportPreload(MapCamera camera) {
-    _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(milliseconds: 120), () {
-      if (!mounted) return;
-      // 预取视口内及周边扩展区域站点，用户放大或移动前数据已在内存就绪
+    _preloadTimer?.cancel();
+    _preloadTimer = Timer(const Duration(milliseconds: 120), () {
       final bounds = camera.visibleBounds;
-      final visibleIds = widget.stations
-          .where((stn) => bounds.contains(LatLng(stn.latitude, stn.longitude)))
-          .map((stn) => stn.id)
-          .toList();
-
-      if (visibleIds.isNotEmpty) {
-        CmaLocalWeatherService.preloadStations(visibleIds);
-      }
+      CmaLocalWeatherService.preloadStations([
+        for (final station in widget.stations)
+          if (bounds.contains(LatLng(station.latitude, station.longitude)))
+            station.id,
+      ]);
     });
+  }
+
+  void _prepareReadings(Map<String, CmaLocalWeatherObservation> observations) {
+    if (_mode == widget.mode && identical(_observations, observations)) return;
+    final readings = [
+      for (final station in widget.stations)
+        _stationReading(station, observations[station.id], widget.mode),
+    ];
+    if (!listEquals(_readings, readings)) {
+      _readings = readings;
+      final markers = [
+        for (final reading in readings)
+          (label: null, color: reading.color, windPointer: reading.windPointer),
+      ];
+      if (!listEquals(_markers, markers)) _markers = markers;
+    }
+    _mode = widget.mode;
+    _observations = observations;
   }
 
   @override
   void dispose() {
-    _debounceTimer?.cancel();
+    _preloadTimer?.cancel();
+    _readingAtlas.dispose();
+    _markerAtlas.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (widget.stations.isEmpty) return const SizedBox.shrink();
+    if (widget.stations.isEmpty) {
+      _preloadTimer?.cancel();
+      _readingAtlas.dispose();
+      _markerAtlas.dispose();
+      return const SizedBox.shrink();
+    }
     final camera = MapCamera.of(context);
+    if (_crs != camera.crs || !identical(_stations, widget.stations)) {
+      _projected = [
+        for (final station in widget.stations)
+          camera.projectAtZoom(LatLng(station.latitude, station.longitude), 0),
+      ];
+      _crs = camera.crs;
+      _stations = widget.stations;
+      _observations = null;
+    }
     _scheduleViewportPreload(camera);
+    final ratio = MediaQuery.devicePixelRatioOf(context);
+    final showLabels = camera.zoom >= WeatherStationMapLayer.labelMinZoom;
 
     return ValueListenableBuilder<Map<String, CmaLocalWeatherObservation>>(
       valueListenable: CmaLocalWeatherService.stationObservationMapNotifier,
       builder: (context, observations, _) {
+        _prepareReadings(observations);
+        final sprites = showLabels
+            ? _readingAtlas.prepare(_readings, ratio)
+            : _markerAtlas.prepare(_markers, ratio);
         return MobileLayerTransformer(
           child: RepaintBoundary(
             child: CustomPaint(
               size: camera.size,
-              isComplex: true,
-              willChange: false,
-              painter: _WeatherStationPainter(
-                camera: camera,
-                stations: widget.stations,
-                mode: widget.mode,
-                observations: observations,
-              ),
+              painter: _WeatherStationPainter(camera, _projected, sprites),
             ),
           ),
         );
@@ -135,25 +175,225 @@ class _WeatherStationMapLayerState extends State<WeatherStationMapLayer> {
   }
 }
 
-class _WeatherStationPainter extends CustomPainter {
-  final MapCamera camera;
-  final List<CmaStationSummary> stations;
-  final WeatherStationDisplayMode mode;
-  final Map<String, CmaLocalWeatherObservation> observations;
-
-  _WeatherStationPainter({
-    required this.camera,
-    required this.stations,
-    required this.mode,
-    required this.observations,
+/// Same atlas and zoom behavior as the existing station layer, with readings
+/// from the displayed precipitation hour instead of the live station cache.
+class PrecipitationStationsLayer extends StatefulWidget {
+  const PrecipitationStationsLayer({
+    super.key,
+    required this.time,
+    this.service,
   });
+
+  final DateTime time;
+  final PrecipitationStationsService? service;
+
+  @override
+  State<PrecipitationStationsLayer> createState() =>
+      _PrecipitationStationsLayerState();
+}
+
+class _PrecipitationStationsLayerState extends State<PrecipitationStationsLayer> {
+  late final _source = widget.service ?? PrecipitationStationsService();
+  final _cache = <DateTime, Float64List>{};
+  final _atlas = _WeatherStationAtlas();
+  Completer<void>? _abort;
+  Timer? _debounce;
+  Float64List? _rows;
+  Float64List? _prepared;
+  Crs? _crs;
+  List<Offset> _projected = const [];
+  List<_StationReading> _labels = const [];
+  List<_StationReading> _markers = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _selectHour();
+  }
+
+  @override
+  void didUpdateWidget(covariant PrecipitationStationsLayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.time != widget.time) _selectHour();
+  }
+
+  void _cancel() {
+    _debounce?.cancel();
+    final abort = _abort;
+    if (abort != null && !abort.isCompleted) abort.complete();
+    _abort = null;
+  }
+
+  void _selectHour() {
+    _cancel();
+    final time = widget.time.toUtc();
+    final cached = _cache.remove(time);
+    _rows = cached;
+    if (cached != null) {
+      _cache[time] = cached;
+      return;
+    }
+    _debounce = Timer(const Duration(milliseconds: 100), () async {
+      final abort = _abort = Completer<void>();
+      final rows = await _source.fetch(time, abort);
+      if (!mounted || !identical(_abort, abort) || rows == null) return;
+      _cache[time] = rows;
+      if (_cache.length > 24) _cache.remove(_cache.keys.first);
+      setState(() => _rows = rows);
+    });
+  }
+
+  @override
+  void dispose() {
+    _cancel();
+    _source.close();
+    _atlas.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = _rows;
+    if (rows == null || rows.isEmpty) {
+      _atlas.dispose();
+      return const SizedBox.shrink();
+    }
+    final camera = MapCamera.of(context);
+    if (!identical(_prepared, rows) || camera.crs != _crs) {
+      _projected = [
+        for (var i = 0; i < rows.length; i += 3)
+          camera.projectAtZoom(LatLng(rows[i], rows[i + 1]), 0),
+      ];
+      _labels = [
+        for (var i = 2; i < rows.length; i += 3)
+          (
+            label: '${rows[i].toStringAsFixed(1)}mm',
+            color: _hourlyRainColor(rows[i]),
+            windPointer: null,
+          ),
+      ];
+      _markers = [
+        for (final label in _labels)
+          (label: null, color: label.color, windPointer: null),
+      ];
+      _prepared = rows;
+      _crs = camera.crs;
+    }
+    final sprites = _atlas.prepare(
+      camera.zoom >= WeatherStationMapLayer.labelMinZoom ? _labels : _markers,
+      MediaQuery.devicePixelRatioOf(context),
+    );
+    return MobileLayerTransformer(
+      child: RepaintBoundary(
+        child: CustomPaint(
+          key: const ValueKey('precipitation-station-points'),
+          size: camera.size,
+          painter: _WeatherStationPainter(camera, _projected, sprites),
+        ),
+      ),
+    );
+  }
+
+  // China Weather's hourly station palette.
+  static Color _hourlyRainColor(double mm) => switch (mm) {
+    < 1 => const Color(0xFFCEFFFE),
+    < 2 => const Color(0xFF22FFFC),
+    < 4 => const Color(0xFF23B7FF),
+    < 6 => const Color(0xFF2376FF),
+    < 8 => const Color(0xFF092FD1),
+    < 10 => const Color(0xFF7B4DF2),
+    < 20 => const Color(0xFF8716EF),
+    < 50 => const Color(0xFF6A059F),
+    _ => const Color(0xFF4C0669),
+  };
+}
+
+typedef _StationReading = ({String? label, Color color, Offset? windPointer});
+
+double? _observedRain(CmaLocalWeatherObservation? observation) {
+  final value = observation?.precipitation;
+  return value != null && value >= 0 && value < 9000 ? value : null;
+}
+
+@visibleForTesting
+String? weatherStationValueLabel(
+  CmaStationSummary station,
+  CmaLocalWeatherObservation? observation,
+  WeatherStationDisplayMode mode,
+) => _stationReading(station, observation, mode).label;
+
+_StationReading _stationReading(
+  CmaStationSummary station,
+  CmaLocalWeatherObservation? observation,
+  WeatherStationDisplayMode mode,
+) {
+  final rain = _observedRain(observation);
+  if (mode == WeatherStationDisplayMode.auto) {
+    mode = station.isRaining || (rain ?? 0) > 0
+        ? WeatherStationDisplayMode.rain
+        : WeatherStationDisplayMode.temperature;
+  }
+  if (mode == WeatherStationDisplayMode.rain) {
+    final severity = station.rainSeverity;
+    return (
+      label: rain == null ? null : '${rain.toStringAsFixed(1)}mm',
+      color: _WeatherStationPainter._getRainColor(severity),
+      windPointer: null,
+    );
+  }
+  if (mode == WeatherStationDisplayMode.wind) {
+    final observedScale = observation?.windScale.trim();
+    final scale =
+        observedScale != null &&
+            observedScale.isNotEmpty &&
+            observedScale != '9999'
+        ? observedScale
+        : station.windScale;
+    final observedDirection = observation?.windDirection.trim();
+    final direction =
+        observedDirection != null &&
+            observedDirection.isNotEmpty &&
+            observedDirection != '9999'
+        ? observedDirection
+        : station.windDirection;
+    final speed = observation?.windSpeed;
+    final angle = _WeatherStationPainter._windDirectionToAngle(direction);
+    return (
+      label: speed != null && speed >= 0 && speed < 9000
+          ? '${speed.toStringAsFixed(1)}m/s'
+          : scale.isEmpty
+          ? null
+          : scale,
+      color: _WeatherStationPainter._getWindColor(scale),
+      windPointer: angle == null
+          ? null
+          : Offset(math.sin(angle), -math.cos(angle)) * 6,
+    );
+  }
+  final observedTemp = observation?.temperature;
+  final temperature =
+      observedTemp != null && observedTemp.isFinite && observedTemp < 9000
+      ? observedTemp
+      : station.temperature;
+  return (
+    label: temperature == null ? null : '${temperature.toStringAsFixed(1)}℃',
+    color: _WeatherStationPainter._getTemperatureColor(temperature),
+    windPointer: null,
+  );
+}
+
+class _WeatherStationPainter extends CustomPainter {
+  _WeatherStationPainter(this.camera, this.projected, this.sprites);
+
+  final MapCamera camera;
+  final List<Offset> projected;
+  final _WeatherStationSprites sprites;
 
   // === CMA 中国气象局官方业务标准配色 (GB/T 28592-2012 / NMC 色标体系) ===
   static const Color _cNoRain = Color(0xFF78909C); // 无降水 (蓝灰底色)
   static const Color _cRain1 = Color(0xFFA6F28F); // 小雨/阵雨 (0.1~9.9mm: 官方标准浅翠绿)
   static const Color _cRain2 = Color(0xFF3DBA3D); // 中雨 (10~24.9mm: 官方标准深绿)
   static const Color _cRain3 = Color(0xFF61B8FF); // 大雨 (25~49.9mm: 官方标准天蓝)
-  static const Color _cRain4 = Color(0xFF0000FF); // 暴雨 (50~99.9mm: 官方标准纯深蓝)
   static const Color _cRain5 = Color(0xFFFA00FA); // 大暴雨 (100~249.9mm: 官方标准洋红亮紫)
   static const Color _cRain6 = Color(0xFF700000); // 特大暴雨 (>=250mm: 官方标准褐红)
 
@@ -210,52 +450,13 @@ class _WeatherStationPainter extends CustomPainter {
     if (s.contains('9') || s.contains('10')) {
       return const Color(0xFFE53935); // 9~10级: 狂风鲜红
     }
-    if (s.contains('11') || s.contains('12') || s.contains('13') || s.contains('14')) {
+    if (s.contains('11') ||
+        s.contains('12') ||
+        s.contains('13') ||
+        s.contains('14')) {
       return const Color(0xFF880E4F); // 11级+: 飓风紫红
     }
     return const Color(0xFF78909C);
-  }
-
-  static String _windScaleToSpeedText(String scale) {
-    final s = scale.trim();
-    if (s.isEmpty) return '0.0m/s';
-    if (s.contains('微风') ||
-        s.contains('0级') ||
-        s.contains('1级') ||
-        s.contains('2级') ||
-        s.contains('1-2')) {
-      return '1.5m/s';
-    }
-    if (s.contains('3-4')) return '5.5m/s';
-    if (s.contains('3级')) return '4.4m/s';
-    if (s.contains('4-5')) return '8.0m/s';
-    if (s.contains('4级')) return '6.7m/s';
-    if (s.contains('5-6')) return '10.8m/s';
-    if (s.contains('5级')) return '9.3m/s';
-    if (s.contains('6-7')) return '13.9m/s';
-    if (s.contains('6级')) return '12.3m/s';
-    if (s.contains('7-8')) return '17.2m/s';
-    if (s.contains('7级')) return '15.5m/s';
-    if (s.contains('8-9')) return '20.8m/s';
-    if (s.contains('8级')) return '18.9m/s';
-    if (s.contains('9-10')) return '24.5m/s';
-    if (s.contains('9级')) return '22.6m/s';
-    if (s.contains('10级')) return '26.4m/s';
-    if (s.contains('11级')) return '30.5m/s';
-    if (s.contains('12级')) return '34.8m/s';
-
-    final match = RegExp(r'(\d+)').firstMatch(s);
-    if (match != null) {
-      final grade = int.tryParse(match.group(1) ?? '') ?? 0;
-      if (grade <= 2) return '1.5m/s';
-      if (grade == 3) return '4.4m/s';
-      if (grade == 4) return '6.7m/s';
-      if (grade == 5) return '9.3m/s';
-      if (grade == 6) return '12.3m/s';
-      if (grade == 7) return '15.5m/s';
-      if (grade >= 8) return '${(15.0 + (grade - 7) * 2.5).toStringAsFixed(1)}m/s';
-    }
-    return '0.0m/s';
   }
 
   static double? _windDirectionToAngle(String dir) {
@@ -274,385 +475,225 @@ class _WeatherStationPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final worldWidth = camera.getWorldWidthAtZoom();
+    final scale = camera.getZoomScale(camera.zoom, 0);
     final origin = camera.pixelOrigin;
     final visible = camera.pixelBounds.inflate(36);
-    final fillPaint = Paint()..style = PaintingStyle.fill;
-    final strokePaint = Paint()..style = PaintingStyle.stroke;
-    final textPainter = TextPainter(
-      textDirection: TextDirection.ltr,
-    );
-
-    final zoom = camera.zoom;
-    final isDistant = zoom < 6.2;
-    final isMedium = zoom >= 6.2 && zoom < 9.2;
-    final isClose = zoom >= 9.2;
-
-    for (final stn in stations) {
-      final projected = camera.projectAtZoom(LatLng(stn.latitude, stn.longitude));
-      _drawStation(
-        canvas: canvas,
-        projected: projected,
-        origin: origin,
-        visible: visible,
-        fillPaint: fillPaint,
-        strokePaint: strokePaint,
-        textPainter: textPainter,
-        stn: stn,
-        isDistant: isDistant,
-        isMedium: isMedium,
-        isClose: isClose,
-      );
-
-      if (worldWidth > 0) {
-        // 世界左右跨界平移处理
-        for (double shift = -worldWidth;; shift -= worldWidth) {
-          final shifted = Offset(projected.dx + shift, projected.dy);
-          if (!visible.contains(shifted)) break;
-          _drawStation(
-            canvas: canvas,
-            projected: shifted,
-            origin: origin,
-            visible: visible,
-            fillPaint: fillPaint,
-            strokePaint: strokePaint,
-            textPainter: textPainter,
-            stn: stn,
-            isDistant: isDistant,
-            isMedium: isMedium,
-            isClose: isClose,
-          );
+    sprites.begin();
+    for (var i = 0; i < projected.length; i++) {
+      final point = projected[i] * scale;
+      if (point.dy < visible.top || point.dy >= visible.bottom) continue;
+      if (worldWidth == 0) {
+        if (visible.contains(point)) {
+          sprites.add(canvas, i, point.dx - origin.dx, point.dy - origin.dy);
         }
-        for (double shift = worldWidth;; shift += worldWidth) {
-          final shifted = Offset(projected.dx + shift, projected.dy);
-          if (!visible.contains(shifted)) break;
-          _drawStation(
-            canvas: canvas,
-            projected: shifted,
-            origin: origin,
-            visible: visible,
-            fillPaint: fillPaint,
-            strokePaint: strokePaint,
-            textPainter: textPainter,
-            stn: stn,
-            isDistant: isDistant,
-            isMedium: isMedium,
-            isClose: isClose,
-          );
-        }
+        continue;
+      }
+      final firstWorld = ((visible.left - point.dx) / worldWidth).ceil();
+      for (
+        var x = point.dx + firstWorld * worldWidth;
+        x < visible.right;
+        x += worldWidth
+      ) {
+        sprites.add(canvas, i, x - origin.dx, point.dy - origin.dy);
       }
     }
-  }
-
-  void _drawStation({
-    required Canvas canvas,
-    required Offset projected,
-    required Offset origin,
-    required Rect visible,
-    required Paint fillPaint,
-    required Paint strokePaint,
-    required TextPainter textPainter,
-    required CmaStationSummary stn,
-    required bool isDistant,
-    required bool isMedium,
-    required bool isClose,
-  }) {
-    if (!visible.contains(projected)) return;
-    final pos = projected - origin;
-
-    final isRaining = stn.isRaining;
-    final rainSev = stn.rainSeverity;
-
-    // 确定主体颜色
-    Color baseColor;
-    switch (mode) {
-      case WeatherStationDisplayMode.rain:
-        baseColor = _getRainColor(rainSev);
-        break;
-      case WeatherStationDisplayMode.temperature:
-        baseColor = _getTemperatureColor(stn.temperature);
-        break;
-      case WeatherStationDisplayMode.wind:
-        baseColor = _getWindColor(stn.windScale);
-        break;
-      case WeatherStationDisplayMode.auto:
-      default:
-        baseColor = isRaining ? _getRainColor(rainSev) : _getTemperatureColor(stn.temperature);
-        break;
-    }
-
-    if (isDistant) {
-      // 1. 远景极简点阵：全部测站点正常 100% 不透明度清晰呈现
-      if (isRaining) {
-        // 微型光晕边缘 (半径 3.0px)
-        strokePaint
-          ..color = baseColor.withValues(alpha: 0.32)
-          ..strokeWidth = 0.7;
-        canvas.drawCircle(pos, 3.0, strokePaint);
-      }
-
-      // 主体色点 (100% 正常不透明度)
-      fillPaint.color = baseColor;
-      canvas.drawCircle(pos, 1.8, fillPaint);
-      return;
-    }
-
-    final obs = observations[stn.id];
-    if (obs == null && (isMedium || isClose)) {
-      unawaited(CmaLocalWeatherService.fetchStationObservation(stn.id));
-    }
-
-    // 1. 真实降水实测文本（直接使用官方天气现象代码表对应天气 + 真实实测数值，如 "大雨 12.5mm"、"晴 0.0mm"、"多云 0.0mm"）
-    final prec = obs?.precipitation;
-    final weatherName = stn.weather.isNotEmpty ? stn.weather : '晴';
-    final rainAmount = (prec ?? 0.0).toStringAsFixed(1);
-    final rainText = '$weatherName ${rainAmount}mm';
-
-    // 2. 真实风速实测文本（风向 + 真实风速数值 + 风力等级 如 "东北风 4.4m/s (3级)"）
-    final windDir = obs?.windDirection.isNotEmpty == true ? obs!.windDirection : stn.windDirection;
-    final windSpeed = obs?.windSpeed;
-    final windScale = obs?.windScale.isNotEmpty == true ? obs!.windScale : stn.windScale;
-    final windText = [
-      if (windDir.isNotEmpty) windDir else '风向',
-      if (windSpeed != null) '${windSpeed.toStringAsFixed(1)}m/s',
-      if (windScale.isNotEmpty) '($windScale)',
-    ].join(' ');
-
-    // 3. 真实气温数值（纯数值+单位 如 "25.8℃"）
-    final tempVal = obs?.temperature ?? stn.temperature;
-    final tempText = tempVal != null ? '${tempVal.toStringAsFixed(1)}℃' : '';
-
-    // 中景（Medium LOD）：
-    // 1. 胶囊内仅显示对应的实测数值与单位 (如 "12.5mm" / "4.4m/s" / "25.8℃")
-    String badgeValueText = '';
-    switch (mode) {
-      case WeatherStationDisplayMode.rain:
-        badgeValueText = '${rainAmount}mm';
-        break;
-      case WeatherStationDisplayMode.temperature:
-        badgeValueText = tempText;
-        break;
-      case WeatherStationDisplayMode.wind:
-        badgeValueText = windSpeed != null
-            ? '${windSpeed.toStringAsFixed(1)}m/s'
-            : _windScaleToSpeedText(stn.windScale);
-        break;
-      case WeatherStationDisplayMode.auto:
-      default:
-        badgeValueText = (isRaining || (prec != null && prec > 0.0))
-            ? '${rainAmount}mm'
-            : tempText;
-        break;
-    }
-
-    // 2. 站点下方字幕：显示站点名 + 官方实况天气现象 (如 "诸暨 大雨" / "诸暨 东北风 (3级)")
-    String subtitleText = '';
-    switch (mode) {
-      case WeatherStationDisplayMode.wind:
-        subtitleText = [
-          stn.name,
-          if (windDir.isNotEmpty) windDir,
-          if (windScale.isNotEmpty) '($windScale)',
-        ].join(' ');
-        break;
-      case WeatherStationDisplayMode.rain:
-      case WeatherStationDisplayMode.temperature:
-      case WeatherStationDisplayMode.auto:
-      default:
-        subtitleText = '${stn.name} $weatherName';
-        break;
-    }
-
-    if (isMedium || isClose) {
-      final dotRadius = isClose ? 4.8 : (isRaining ? 4.2 : 3.4);
-
-      // 绘制圆点
-      fillPaint.color = baseColor;
-      canvas.drawCircle(pos, dotRadius, fillPaint);
-      strokePaint
-        ..color = isClose ? Colors.white : Colors.black.withValues(alpha: 0.55)
-        ..strokeWidth = isClose ? 1.2 : 1.0;
-      canvas.drawCircle(pos, dotRadius, strokePaint);
-
-      // 风向指针
-      if (mode == WeatherStationDisplayMode.wind || isRaining || windDir.isNotEmpty) {
-        final angle = _windDirectionToAngle(windDir);
-        if (angle != null) {
-          final pointerLength = isClose ? 7.5 : 6.0;
-          final dx = math.sin(angle) * pointerLength;
-          final dy = -math.cos(angle) * pointerLength;
-          strokePaint
-            ..color = baseColor
-            ..strokeWidth = isClose ? 1.8 : 1.5;
-          canvas.drawLine(pos, Offset(pos.dx + dx, pos.dy + dy), strokePaint);
-        }
-      }
-
-      if (mode != WeatherStationDisplayMode.auto) {
-        // 专项模式（降水/风速/气温）：采用【纯数值胶囊 + 测站正下方居中字幕】样式
-        if (badgeValueText.isNotEmpty) {
-          final textColor = (isRaining && baseColor.computeLuminance() > 0.5)
-              ? const Color(0xFF102027)
-              : Colors.white;
-
-          textPainter.text = TextSpan(
-            text: badgeValueText,
-            style: TextStyle(
-              color: textColor,
-              fontSize: isClose ? (isRaining ? 10.5 : 10.0) : (isRaining ? 10.0 : 9.5),
-              fontWeight: FontWeight.w800,
-              height: 1.1,
-              shadows: textColor == Colors.white
-                  ? const [
-                      Shadow(color: Colors.black54, blurRadius: 2.0, offset: Offset(0.5, 0.5)),
-                    ]
-                  : null,
-            ),
-          );
-          textPainter.textAlign = TextAlign.center;
-          textPainter.layout();
-
-          final bgRect = RRect.fromRectAndRadius(
-            Rect.fromLTWH(
-              pos.dx + (isClose ? 6.0 : 5.0),
-              pos.dy - (textPainter.height / 2) - (isClose ? 2.0 : 1.5),
-              textPainter.width + (isClose ? 7.0 : 6.0),
-              textPainter.height + (isClose ? 4.0 : 3.0),
-            ),
-            Radius.circular(isClose ? 4.0 : 3.5),
-          );
-          fillPaint.color = isRaining
-              ? baseColor.withValues(alpha: 0.95)
-              : (isClose
-                  ? Colors.black.withValues(alpha: 0.72)
-                  : Colors.black.withValues(alpha: 0.68));
-          canvas.drawRRect(bgRect, fillPaint);
-
-          textPainter.paint(
-            canvas,
-            Offset(pos.dx + (isClose ? 9.5 : 8.0), pos.dy - (textPainter.height / 2)),
-          );
-        }
-
-        if (subtitleText.isNotEmpty) {
-          textPainter.text = TextSpan(
-            text: subtitleText,
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: isClose ? 10.0 : 9.5,
-              fontWeight: FontWeight.w700,
-              height: 1.1,
-              shadows: const [
-                Shadow(color: Colors.black, blurRadius: 3.0, offset: Offset(0.5, 0.5)),
-                Shadow(color: Colors.black87, blurRadius: 4.0, offset: Offset(-0.5, -0.5)),
-              ],
-            ),
-          );
-          textPainter.textAlign = TextAlign.center;
-          textPainter.layout();
-
-          final subtitleOffset = Offset(
-            pos.dx - (textPainter.width / 2),
-            pos.dy + dotRadius + (isClose ? 3.5 : 3.0),
-          );
-          textPainter.paint(canvas, subtitleOffset);
-        }
-        return;
-      }
-
-      // 综合模式（auto）：在第 2 层与第 3 层均展示 4 行完整详细信息卡片
-      final spans = <TextSpan>[
-        TextSpan(
-          text: '${stn.name}\n',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: isClose ? 11.0 : 10.5,
-            fontWeight: FontWeight.w800,
-            height: 1.2,
-          ),
-        ),
-        // 降水/天气行
-        TextSpan(
-          text: '$rainText\n',
-          style: TextStyle(
-            color: isRaining ? baseColor : const Color(0xFF80D8FF),
-            fontSize: isClose ? 10.0 : 9.5,
-            fontWeight: FontWeight.w800,
-            height: 1.2,
-          ),
-        ),
-      ];
-
-      // 气温行（显示真实数值 ℃）
-      final tempVal = obs?.temperature ?? stn.temperature;
-      if (tempVal != null) {
-        spans.add(
-          TextSpan(
-            text: '${tempVal.toStringAsFixed(1)}℃\n',
-            style: TextStyle(
-              color: const Color(0xFFFFD54F),
-              fontSize: isClose ? 9.5 : 9.0,
-              fontWeight: FontWeight.w700,
-              height: 1.2,
-            ),
-          ),
-        );
-      }
-
-      // 风向风速行（显示真实数值 m/s 与风力等级，独立成行）
-      final windSpeed = obs?.windSpeed;
-      final windScale = obs?.windScale.isNotEmpty == true ? obs!.windScale : stn.windScale;
-      if (windDir.isNotEmpty || windSpeed != null || windScale.isNotEmpty) {
-        final windParts = <String>[
-          if (windDir.isNotEmpty) windDir,
-          if (windSpeed != null) '${windSpeed.toStringAsFixed(1)}m/s',
-          if (windScale.isNotEmpty) '($windScale)',
-        ];
-        spans.add(
-          TextSpan(
-            text: windParts.join(' '),
-            style: TextStyle(
-              color: const Color(0xFF80CBC4),
-              fontSize: isClose ? 9.0 : 8.5,
-              fontWeight: FontWeight.w600,
-              height: 1.2,
-            ),
-          ),
-        );
-      }
-
-      textPainter.text = TextSpan(children: spans);
-      textPainter.textAlign = TextAlign.left;
-      textPainter.layout();
-
-      final badgeRect = RRect.fromRectAndRadius(
-        Rect.fromLTWH(
-          pos.dx + (isClose ? 7.0 : 6.0),
-          pos.dy - (textPainter.height / 2) - 2.0,
-          textPainter.width + 6.0,
-          textPainter.height + 4.0,
-        ),
-        Radius.circular(isClose ? 4.0 : 3.5),
-      );
-
-      fillPaint.color = const Color(0xDD1E1E1E);
-      canvas.drawRRect(badgeRect, fillPaint);
-      strokePaint
-        ..color = baseColor.withValues(alpha: 0.8)
-        ..strokeWidth = 0.8;
-      canvas.drawRRect(badgeRect, strokePaint);
-
-      textPainter.paint(
-        canvas,
-        Offset(pos.dx + (isClose ? 10.0 : 9.0), pos.dy - (textPainter.height / 2)),
-      );
-    }
+    sprites.flush(canvas);
   }
 
   @override
-  bool shouldRepaint(covariant _WeatherStationPainter oldDelegate) {
-    return oldDelegate.camera != camera ||
-        oldDelegate.stations != stations ||
-        oldDelegate.mode != mode ||
-        oldDelegate.observations != observations;
+  bool shouldRepaint(covariant _WeatherStationPainter oldDelegate) =>
+      oldDelegate.camera != camera ||
+      !identical(oldDelegate.projected, projected) ||
+      !identical(oldDelegate.sprites, sprites);
+}
+
+typedef _StationSprite = ({ui.Image image, Rect source, Offset anchor});
+
+/// Packs each distinct marker and reading once at the device's pixel ratio.
+/// Camera changes reuse the texture. The active readings bound its size.
+class _WeatherStationAtlas {
+  static const _maxPageSize = 2048;
+  static const _padding = 8.0;
+  final _images = <ui.Image>[];
+  final _entries = <_StationReading, _StationSprite>{};
+  List<_StationReading>? _readings;
+  _WeatherStationSprites? _sprites;
+  double? _ratio;
+
+  _WeatherStationSprites prepare(List<_StationReading> readings, double ratio) {
+    if (_ratio == ratio && identical(_readings, readings)) return _sprites!;
+    final active = readings.toSet();
+    if (_ratio != ratio || !active.every(_entries.containsKey)) {
+      dispose();
+      _ratio = ratio;
+      _pack(active, ratio);
+    }
+    _readings = readings;
+    return _sprites = _WeatherStationSprites([
+      for (final reading in readings) _entries[reading]!,
+    ], ratio);
+  }
+
+  void _pack(Set<_StationReading> readings, double ratio) {
+    final labels = <String, TextPainter>{};
+    final pending = <_StationReading, Rect>{};
+    final padding = (_padding * ratio).ceil();
+    final marker = Paint()..strokeWidth = 1.5;
+    final background = Paint()..color = const Color(0xDD1E1E1E);
+    var recorder = ui.PictureRecorder();
+    var canvas = Canvas(recorder);
+    var x = 0, y = 0, rowHeight = 0, pageWidth = 0;
+
+    void finishPage() {
+      final picture = recorder.endRecording();
+      if (pending.isNotEmpty) {
+        final image = picture.toImageSync(pageWidth, y + rowHeight);
+        _images.add(image);
+        for (final entry in pending.entries) {
+          _entries[entry.key] = (
+            image: image,
+            source: entry.value,
+            anchor: Offset(padding / ratio, entry.value.height / (2 * ratio)),
+          );
+        }
+      }
+      picture.dispose();
+      pending.clear();
+    }
+
+    for (final reading in readings) {
+      final label = reading.label;
+      final text = label == null
+          ? null
+          : labels.putIfAbsent(
+              label,
+              () => TextPainter(
+                text: TextSpan(
+                  text: label,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                textDirection: TextDirection.ltr,
+              )..layout(),
+            );
+      final width =
+          padding +
+          (text == null ? padding : ((10 + text.width) * ratio).ceil());
+      final height = math.max(
+        padding * 2,
+        (((text?.height ?? 0) + 6) * ratio).ceil(),
+      );
+      if (x + width > _maxPageSize && x > 0) {
+        x = 0;
+        y += rowHeight;
+        rowHeight = 0;
+      }
+      if (y + height > _maxPageSize && pending.isNotEmpty) {
+        finishPage();
+        recorder = ui.PictureRecorder();
+        canvas = Canvas(recorder);
+        x = y = rowHeight = pageWidth = 0;
+      }
+      pending[reading] = Rect.fromLTWH(
+        x.toDouble(),
+        y.toDouble(),
+        width.toDouble(),
+        height.toDouble(),
+      );
+      canvas.save();
+      canvas.translate(x + padding.toDouble(), y + height / 2);
+      canvas.scale(ratio);
+      marker.color = reading.color;
+      canvas.drawCircle(Offset.zero, 3, marker);
+      if (reading.windPointer case final pointer?) {
+        canvas.drawLine(Offset.zero, pointer, marker);
+      }
+      if (text != null) {
+        final offset = Offset(7, -text.height / 2);
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            (offset & text.size).inflate(2),
+            const Radius.circular(2),
+          ),
+          background,
+        );
+        text.paint(canvas, offset);
+      }
+      canvas.restore();
+      x += width;
+      rowHeight = math.max(rowHeight, height);
+      pageWidth = math.max(pageWidth, x);
+    }
+    finishPage();
+    for (final text in labels.values) {
+      text.dispose();
+    }
+  }
+
+  void dispose() {
+    for (final image in _images) {
+      image.dispose();
+    }
+    _images.clear();
+    _entries.clear();
+    _sprites = null;
+    _readings = null;
+    _ratio = null;
+  }
+}
+
+/// Sends consecutive sprites on the same texture in one call, preserving the
+/// station draw order even when readings span more than one texture.
+class _WeatherStationSprites {
+  _WeatherStationSprites(this.entries, double ratio)
+    : scale = 1 / ratio,
+      _transforms = Float32List(entries.length * 4),
+      _rectangles = Float32List(entries.length * 4);
+
+  final List<_StationSprite> entries;
+  final double scale;
+  final Float32List _transforms;
+  final Float32List _rectangles;
+  final _paint = Paint()..filterQuality = FilterQuality.low;
+  ui.Image? _image;
+  int _offset = 0;
+
+  void begin() {
+    _offset = 0;
+    _image = null;
+  }
+
+  void add(Canvas canvas, int station, double x, double y) {
+    final sprite = entries[station];
+    if (!identical(_image, sprite.image) || _offset == _transforms.length) {
+      flush(canvas);
+      _image = sprite.image;
+    }
+    final i = _offset;
+    _transforms[i] = scale;
+    _transforms[i + 2] = x - sprite.anchor.dx;
+    _transforms[i + 3] = y - sprite.anchor.dy;
+    _rectangles[i] = sprite.source.left;
+    _rectangles[i + 1] = sprite.source.top;
+    _rectangles[i + 2] = sprite.source.right;
+    _rectangles[i + 3] = sprite.source.bottom;
+    _offset += 4;
+  }
+
+  void flush(Canvas canvas) {
+    if (_offset == 0) return;
+    canvas.drawRawAtlas(
+      _image!,
+      Float32List.sublistView(_transforms, 0, _offset),
+      Float32List.sublistView(_rectangles, 0, _offset),
+      null,
+      null,
+      null,
+      _paint,
+    );
+    _offset = 0;
   }
 }

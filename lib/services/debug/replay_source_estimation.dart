@@ -6,6 +6,8 @@ import '../../core/source_estimation/source_estimation_models.dart';
 import '../../models/station_history_frame.dart';
 import '../sources/nied_source_estimation_worker.dart';
 import '../sources/palert_source_worker.dart';
+import '../sources/palert_service.dart';
+import '../sources/native_nied_detection_owner.dart';
 import 'station_replay_blocks.dart';
 
 /// Replay owns separate workers and output; never publishes into live trackers,
@@ -38,9 +40,13 @@ class ReplaySourceEstimation extends ChangeNotifier {
     stop();
     session = id;
     _clock = clock;
-    _nied = NiedSourceEstimationWorker(displayOnly: true)
-      ..setSensitivity(sensitivity);
-    _palert = PAlertSourceWorker()..setSensitivity(sensitivity);
+    _nied = NiedSourceEstimationWorker(
+      displayOnly: true,
+      useSrevHyp: NativeNiedDetectionOwner.supported,
+    )..setSensitivity(sensitivity);
+    if (PAlertService.sourceEstimationAvailable) {
+      _palert = PAlertSourceWorker()..setSensitivity(sensitivity);
+    }
     notifyListeners();
   }
 
@@ -54,7 +60,9 @@ class ReplaySourceEstimation extends ChangeNotifier {
     String kind,
     FutureOr<StationHistoryFrame> Function() load,
   ) {
-    if (session == null || (kind != 'nied' && kind != 'palert')) {
+    if (session == null ||
+        (kind != 'nied' && kind != 'palert') ||
+        (kind == 'palert' && !PAlertService.sourceEstimationAvailable)) {
       return Future.value();
     }
     final job = _ReplayInferenceJob(load);
@@ -107,6 +115,7 @@ class ReplaySourceEstimation extends ChangeNotifier {
           lastComputationMicroseconds = result.computationMicroseconds;
           niedFrameReceivedAt = frame.receivedAt;
         case 'palert':
+          if (_palert == null) return;
           final events = await _palert!.processRecordedSnapshot(
             frame.snapshot,
             receivedAt: frame.receivedAt,

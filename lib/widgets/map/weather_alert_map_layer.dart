@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,14 +12,14 @@ import '../../services/sources/china_weather_alert_map_service.dart';
 /// 全国气象灾害预警地图图层组件
 ///
 /// 严格遵循中国气象局（CMA）与国家标准 GB/T 28564-2012 规范：
-/// 1. 多边形图层：绘制受灾行政区县的半透明染色多边形面与轮廓边框；
+/// 1. 多边形图层：按预警等级绘制半透明色块，选中区域绘制白色轮廓；
 /// 2. 国标四宫格气象徽章：按 LOD 视距过滤算法（省级 Zoom 4~5、市级 Zoom 4~8、县级 Zoom >=6.8）
 ///    在预警中心点精准绘制 40×36 标准四宫格气象徽章（图形符号 + 竖排中文 + 等级字 + 英文全称）；
 /// 3. 交互点击弹窗：点击命中测试由父层 MapOptions.onTap 处理，弹窗由父层驱动。
 ///
 /// 注意：本组件内部不持有任何手势检测器（GestureDetector），所有点击由
 /// [onAlertTap] 回调从外部触发。这避免了 FlutterMap 手势竞技场抢占问题。
-class WeatherAlertMapLayer extends StatelessWidget {
+class WeatherAlertMapLayer extends StatefulWidget {
   final List<WeatherAlertMapItem> alerts;
 
   /// 当前选中的预警项（由父组件维护状态）
@@ -34,85 +36,7 @@ class WeatherAlertMapLayer extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    if (alerts.isEmpty) return const SizedBox.shrink();
-    final camera = MapCamera.of(context);
-    final zoom = camera.zoom;
-
-    // 筛选当前缩放等级下可见的预警图标（严格遵循 CMA 官方分级 LOD 规则）
-    final visibleAlerts =
-        alerts.where((a) => a.isIconVisibleAtZoom(zoom)).toList();
-    final selected = selectedAlert;
-
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        // 1. 预警多边形区域染色层（纯渲染，无手势，点击由父层 MapOptions.onTap 处理）
-        RepaintBoundary(
-          child: CustomPaint(
-            painter: _WeatherAlertPolygonPainter(
-              alerts: alerts,
-              camera: camera,
-              selectedAlertId: selected?.id,
-            ),
-            size: Size.infinite,
-            isComplex: true,
-            willChange: false,
-          ),
-        ),
-
-        // 2. 国标四宫格气象徽章图层（随缩放动态平滑缩放，放大地图时更清晰饱满）
-        () {
-          final zoomScale = getBadgeZoomScale(zoom);
-          return MarkerLayer(
-            markers: visibleAlerts.map((alert) {
-              final isSelected = alert.id == selected?.id;
-              final selectedScale = isSelected ? 1.15 : 1.0;
-              final totalScale = zoomScale * selectedScale;
-              final markerW = 44.0 * totalScale;
-              final markerH = 40.0 * totalScale;
-
-              return Marker(
-                point: alert.center,
-                width: markerW,
-                height: markerH,
-                alignment: Alignment.center,
-                child: MouseRegion(
-                  cursor: SystemMouseCursors.click,
-                  child: CustomPaint(
-                    painter: _WeatherAlertSingleBadgePainter(
-                      alert: alert,
-                      scale: totalScale,
-                      isSelected: isSelected,
-                    ),
-                    size: Size.infinite,
-                  ),
-                ),
-              );
-            }).toList(),
-          );
-        }(),
-
-        // 3. 选中预警弹窗详情卡片（以屏幕像素锚定在预警中心上方，彻底规避 MarkerLayer 缩放形变）
-        if (selected != null) ...[
-          () {
-            final cardRect = getPopupCardRect(selected, camera);
-            if (cardRect == null) return const SizedBox.shrink();
-
-            return Positioned(
-              left: cardRect.left,
-              top: cardRect.top,
-              width: cardRect.width,
-              child: _WeatherAlertPopupCard(
-                alert: selected,
-                onClose: onDismiss ?? () {},
-              ),
-            );
-          }(),
-        ],
-      ],
-    );
-  }
+  State<WeatherAlertMapLayer> createState() => _WeatherAlertMapLayerState();
 
   /// 计算随地图缩放级别动态变化的图标缩放系数（远景 0.85x ~ 近景 1.28x）
   static double getBadgeZoomScale(double zoom) {
@@ -182,81 +106,382 @@ class WeatherAlertMapLayer extends StatelessWidget {
   }
 }
 
+class _WeatherAlertMapLayerState extends State<WeatherAlertMapLayer> {
+  final _polygonImage = _WeatherAlertPolygonImage();
 
+  @override
+  void dispose() {
+    _polygonImage.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final alerts = widget.alerts;
+    if (alerts.isEmpty) {
+      _polygonImage.clear();
+      return const SizedBox.shrink();
+    }
+    final camera = MapCamera.of(context);
+    final zoom = camera.zoom;
+
+    // 筛选当前缩放等级下可见的预警图标（严格遵循 CMA 官方分级 LOD 规则）
+    final visibleAlerts =
+        alerts.where((a) => a.isIconVisibleAtZoom(zoom)).toList();
+    final selected = widget.selectedAlert;
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // 1. 预警多边形区域染色层（纯渲染，无手势，点击由父层 MapOptions.onTap 处理）
+        RepaintBoundary(
+          child: CustomPaint(
+            painter: _WeatherAlertPolygonPainter(
+              alerts: alerts,
+              camera: camera,
+              selectedAlertId: selected?.id,
+              image: _polygonImage,
+              pixelRatio: MediaQuery.devicePixelRatioOf(context),
+            ),
+            size: Size.infinite,
+            isComplex: true,
+            willChange: false,
+          ),
+        ),
+
+        // 2. 国标四宫格气象徽章图层（随缩放动态平滑缩放，放大地图时更清晰饱满）
+        () {
+          final zoomScale = WeatherAlertMapLayer.getBadgeZoomScale(zoom);
+          return MarkerLayer(
+            markers: visibleAlerts.map((alert) {
+              final isSelected = alert.id == selected?.id;
+              final selectedScale = isSelected ? 1.15 : 1.0;
+              final totalScale = zoomScale * selectedScale;
+              final markerW = 44.0 * totalScale;
+              final markerH = 40.0 * totalScale;
+
+              return Marker(
+                point: alert.center,
+                width: markerW,
+                height: markerH,
+                alignment: Alignment.center,
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: CustomPaint(
+                    painter: _WeatherAlertSingleBadgePainter(
+                      alert: alert,
+                      scale: totalScale,
+                      isSelected: isSelected,
+                    ),
+                    size: Size.infinite,
+                  ),
+                ),
+              );
+            }).toList(),
+          );
+        }(),
+
+        // 3. 选中预警弹窗详情卡片（以屏幕像素锚定在预警中心上方，彻底规避 MarkerLayer 缩放形变）
+        if (selected != null) ...[
+          () {
+            final cardRect = WeatherAlertMapLayer.getPopupCardRect(
+              selected,
+              camera,
+            );
+            if (cardRect == null) return const SizedBox.shrink();
+
+            return Positioned(
+              left: cardRect.left,
+              top: cardRect.top,
+              width: cardRect.width,
+              child: _WeatherAlertPopupCard(
+                alert: selected,
+                onClose: widget.onDismiss ?? () {},
+              ),
+            );
+          }(),
+        ],
+      ],
+    );
+  }
+
+}
+
+
+
+class _WeatherAlertPolygonImage extends ChangeNotifier {
+  static const _maxZoomDelta = 0.5;
+  static const _zoomSettleTime = Duration(milliseconds: 160);
+  static const _textureLimit = 4096;
+  static const _pixelLimit = 4 * 1024 * 1024;
+  final _paint = Paint()..filterQuality = FilterQuality.low;
+  ui.Image? _image;
+  Rect _bounds = Rect.zero;
+  List<WeatherAlertMapItem>? _alerts;
+  Crs? _crs;
+  double? _zoom;
+  double? _pixelRatio;
+  double? _rescaledZoom;
+  Timer? _settleTimer;
+
+  bool draw(Canvas canvas, Rect viewport, _WeatherAlertPolygonPainter painter) {
+    final camera = painter.camera;
+    final zoom = camera.zoom;
+    final anchorZoom = _zoom;
+    final supportsRescale = camera.crs.runtimeType == Epsg3857;
+    if (anchorZoom != null &&
+        identical(_alerts, painter.alerts) &&
+        _crs == camera.crs &&
+        _pixelRatio == painter.pixelRatio) {
+      final canRescale =
+          supportsRescale &&
+          (anchorZoom - zoom).abs() <= _maxZoomDelta &&
+          (_rescaledZoom != zoom || _settleTimer != null);
+      if (anchorZoom == zoom || canRescale) {
+        final scale = camera.getZoomScale(zoom, anchorZoom);
+        final coverage = Rect.fromPoints(
+          _bounds.topLeft * scale,
+          _bounds.bottomRight * scale,
+        );
+        if (coverage.left <= viewport.left &&
+            coverage.top <= viewport.top &&
+            coverage.right >= viewport.right &&
+            coverage.bottom >= viewport.bottom) {
+          if (anchorZoom != zoom) {
+            _settleAt(zoom);
+          } else {
+            _cancelSettle();
+          }
+          _drawImage(canvas, coverage.shift(-viewport.topLeft));
+          return true;
+        }
+      }
+    }
+
+    clear();
+    final ratio = painter.pixelRatio;
+    final expansion = supportsRescale
+        ? camera.getZoomScale(zoom, zoom - _maxZoomDelta)
+        : 1.0;
+    final padded = Rect.fromCenter(
+      center: viewport.center,
+      width: viewport.width * expansion + 96,
+      height: viewport.height * expansion + 96,
+    );
+    final left = (padded.left * ratio).floor() / ratio;
+    final top = (padded.top * ratio).floor() / ratio;
+    final width = ((padded.right - left) * ratio).ceil();
+    final height = ((padded.bottom - top) * ratio).ceil();
+    if (width > _textureLimit ||
+        height > _textureLimit ||
+        width * height > _pixelLimit) {
+      return false;
+    }
+
+    final bounds = Rect.fromLTWH(left, top, width / ratio, height / ratio);
+    final recorder = ui.PictureRecorder();
+    final scene = Canvas(recorder)
+      ..scale(ratio)
+      ..translate(-left, -top);
+    final drawn = painter.drawWorld(scene, bounds);
+    final picture = recorder.endRecording();
+    try {
+      if (drawn) _image = picture.toImageSync(width, height);
+    } finally {
+      picture.dispose();
+    }
+    _alerts = painter.alerts;
+    _crs = camera.crs;
+    _zoom = zoom;
+    _pixelRatio = ratio;
+    _bounds = bounds;
+    _drawImage(canvas, bounds.shift(-viewport.topLeft));
+    return true;
+  }
+
+  void _drawImage(Canvas canvas, Rect destination) {
+    final image = _image;
+    if (image == null) return;
+    canvas.drawImageRect(
+      image,
+      Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+      destination,
+      _paint,
+    );
+  }
+
+  // This mask only contains warning fills, in world coordinates. It never
+  // samples the basemap, labels or glass panels from an earlier frame.
+  void _settleAt(double zoom) {
+    if (_rescaledZoom == zoom) return;
+    _settleTimer?.cancel();
+    _rescaledZoom = zoom;
+    _settleTimer = Timer(_zoomSettleTime, () {
+      _settleTimer = null;
+      notifyListeners();
+    });
+  }
+
+  void _cancelSettle() {
+    _settleTimer?.cancel();
+    _settleTimer = null;
+    _rescaledZoom = null;
+  }
+
+  void clear() {
+    _cancelSettle();
+    _image?.dispose();
+    _image = null;
+    _alerts = null;
+    _crs = null;
+    _zoom = null;
+    _pixelRatio = null;
+    _bounds = Rect.zero;
+  }
+
+  @override
+  void dispose() {
+    clear();
+    super.dispose();
+  }
+}
 
 class _WeatherAlertPolygonPainter extends CustomPainter {
-  // Each ring retains only its latest projection; old snapshots remain collectable.
-  static final _projectedRings = Expando<
-      ({double zoom, Object crs, Path path, Rect bounds})>();
+  static const _projectionZoom = 8.0;
+  static final _ringProjections =
+      Expando<({Crs crs, Rect bounds, Float64List? points})>();
+  static final _scaledRings = Expando<({Crs crs, double zoom, Path path})>();
   final List<WeatherAlertMapItem> alerts;
   final MapCamera camera;
   final String? selectedAlertId;
+  final _WeatherAlertPolygonImage image;
+  final double pixelRatio;
 
   _WeatherAlertPolygonPainter({
     required this.alerts,
     required this.camera,
+    required this.image,
+    required this.pixelRatio,
     this.selectedAlertId,
-  });
+  }) : super(repaint: image);
 
   @override
   void paint(Canvas canvas, Size size) {
     if (alerts.isEmpty) return;
     final origin = camera.pixelOrigin;
-    final viewport = (Offset.zero & size).shift(origin).inflate(3);
+    final viewport = (Offset.zero & size).shift(origin);
+    final cached = image.draw(canvas, viewport, this);
+    if (cached && selectedAlertId == null) return;
     canvas.save();
     canvas.translate(-origin.dx, -origin.dy);
+    final bounds = viewport.inflate(3);
+    if (!cached) drawWorld(canvas, bounds);
+    if (selectedAlertId != null) {
+      drawWorld(canvas, bounds, highlightSelection: true);
+    }
+    canvas.restore();
+  }
+
+  bool drawWorld(
+    Canvas canvas,
+    Rect viewport, {
+    bool highlightSelection = false,
+  }) {
+    final scale = camera.getZoomScale(camera.zoom, _projectionZoom);
+    // EPSG:3857 applies zoom as a final multiplication by its world scale.
+    // At zoom 8 that scale is a power of two, so rescaling the cached doubles
+    // yields the same coordinates as projecting each vertex at the new zoom.
+    final canRescaleProjection = camera.crs.runtimeType == Epsg3857;
+    final unscaledViewport = Rect.fromPoints(
+      viewport.topLeft / scale - const Offset(0.001, 0.001),
+      viewport.bottomRight / scale + const Offset(0.001, 0.001),
+    );
+    var drawn = false;
+    final fillPaint = Paint();
+    final selectionStroke = highlightSelection
+        ? (Paint()
+            ..color = Colors.white
+            ..strokeWidth = 2.5
+            ..style = PaintingStyle.stroke)
+        : null;
 
     for (final alert in alerts) {
-      if (alert.polygons.isEmpty) continue;
-      final isSelected = alert.id == selectedAlertId;
-      final levelColor = alert.levelColor;
-
-      final fillPaint = Paint()
-        ..color = isSelected
-            ? levelColor.withValues(alpha: 0.42)
-            : levelColor.withValues(alpha: 0.22)
-        ..style = PaintingStyle.fill;
-
-      final strokePaint = Paint()
-        ..color = isSelected
-            ? Colors.white
-            : levelColor.withValues(alpha: 0.85)
-        ..strokeWidth = isSelected ? 2.5 : 1.2
-        ..style = PaintingStyle.stroke;
+      if (alert.polygons.isEmpty ||
+          (highlightSelection && alert.id != selectedAlertId)) {
+        continue;
+      }
+      fillPaint.color = alert.levelColor.withValues(
+        alpha: highlightSelection ? 0.28 : 0.38,
+      );
 
       for (final polygon in alert.polygons) {
         if (polygon.length < 3) continue;
 
-        var projected = _projectedRings[polygon];
-        if (projected == null || projected.zoom != camera.zoom ||
-            projected.crs != camera.crs) {
-          final path = Path();
-          for (var i = 0; i < polygon.length; i++) {
-            final px = camera.projectAtZoom(polygon[i], camera.zoom);
-            if (i == 0) {
-              path.moveTo(px.dx, px.dy);
-            } else {
-              path.lineTo(px.dx, px.dy);
-            }
+        var extent = _ringProjections[polygon];
+        if (extent == null || extent.crs != camera.crs) {
+          final first = camera.projectAtZoom(polygon.first, _projectionZoom);
+          final points = canRescaleProjection
+              ? Float64List(polygon.length * 2)
+              : null;
+          if (points != null) {
+            points[0] = first.dx;
+            points[1] = first.dy;
           }
-          path.close();
-          projected = (zoom: camera.zoom, crs: camera.crs,
-              path: path, bounds: path.getBounds());
-          _projectedRings[polygon] = projected;
+          var left = first.dx, right = first.dx, top = first.dy, bottom = first.dy;
+          for (var i = 1; i < polygon.length; i++) {
+            final point = camera.projectAtZoom(polygon[i], _projectionZoom);
+            if (points != null) {
+              points[2 * i] = point.dx;
+              points[2 * i + 1] = point.dy;
+            }
+            left = math.min(left, point.dx);
+            right = math.max(right, point.dx);
+            top = math.min(top, point.dy);
+            bottom = math.max(bottom, point.dy);
+          }
+          extent = (
+            crs: camera.crs,
+            bounds: Rect.fromLTRB(left, top, right, bottom),
+            points: points,
+          );
+          _ringProjections[polygon] = extent;
         }
-        if (!viewport.overlaps(projected.bounds)) continue;
-        canvas.drawPath(projected.path, fillPaint);
-        canvas.drawPath(projected.path, strokePaint);
+        if (!unscaledViewport.overlaps(extent.bounds)) continue;
+        var scaled = _scaledRings[polygon];
+        if (scaled == null ||
+            scaled.crs != camera.crs ||
+            scaled.zoom != camera.zoom) {
+          final projected = extent.points;
+          final vertices = List<Offset>.generate(
+            polygon.length,
+            projected == null
+                ? (i) => camera.projectAtZoom(polygon[i], camera.zoom)
+                : (i) => Offset(
+                    projected[2 * i] * scale,
+                    projected[2 * i + 1] * scale,
+                  ),
+            growable: false,
+          );
+          final path = Path()..addPolygon(vertices, true);
+          scaled = (crs: camera.crs, zoom: camera.zoom, path: path);
+          _scaledRings[polygon] = scaled;
+        }
+        canvas.drawPath(scaled.path, fillPaint);
+        if (selectionStroke != null) {
+          canvas.drawPath(scaled.path, selectionStroke);
+        }
+        drawn = true;
       }
     }
-    canvas.restore();
+    return drawn;
   }
 
   @override
   bool shouldRepaint(covariant _WeatherAlertPolygonPainter oldDelegate) {
     return oldDelegate.selectedAlertId != selectedAlertId ||
         oldDelegate.camera != camera ||
-        oldDelegate.alerts != alerts;
+        oldDelegate.alerts != alerts ||
+        oldDelegate.pixelRatio != pixelRatio;
   }
 }
 

@@ -170,6 +170,9 @@ class _MobileWeatherMapState extends State<MobileWeatherMap> {
         values,
         stationMode: prefs.getString(mobileWeatherStationModeKey),
       );
+      map.setMobileWeatherPrecipitationStations(
+        prefs.getBool(mobileWeatherPrecipitationStationsKey) ?? false,
+      );
       BackgroundService().syncWeatherMapLayers();
       if (mounted) setState(() => _ready = true);
     } catch (error) {
@@ -219,6 +222,26 @@ class _MobileWeatherMapState extends State<MobileWeatherMap> {
   void _solo(String key, {String? mode}) => _apply({
     for (final candidate in mobileWeatherLayerKeys) candidate: candidate == key,
   }, mode: mode);
+
+  Future<void> _setPrecipitationStations(bool enabled) async {
+    if (_saving || !_ready) return;
+    setState(() => _saving = true);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!await prefs.setBool(mobileWeatherPrecipitationStationsKey, enabled)) {
+        throw StateError('配置保存失败');
+      }
+      if (mounted) _map!.setMobileWeatherPrecipitationStations(enabled);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('站点数据设置失败：$error')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
 
   void _showLayers() {
     showModalBottomSheet<void>(
@@ -488,7 +511,7 @@ class _MobileWeatherMapState extends State<MobileWeatherMap> {
         : 14.0;
     return Selector<MapStateProvider, String>(
       selector: (_, m) =>
-          '${[for (final e in weatherMapLayers) m.mobileWeatherLayerEnabled(e.key)].join()}|${m.mobileWeatherStationMode}',
+          '${[for (final e in weatherMapLayers) m.mobileWeatherLayerEnabled(e.key)].join()}|${m.mobileWeatherStationMode}|${m.mobileWeatherPrecipitationStations}',
       builder: (context, _, child) {
         final map = context.read<MapStateProvider>();
         final enabled = weatherMapLayers
@@ -724,6 +747,26 @@ class _MobileWeatherMapState extends State<MobileWeatherMap> {
                             },
                           ),
                     ),
+                    if (map.mobileWeatherLayerEnabled('precipitationChinaLayer'))
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            '站点数据',
+                            style: TextStyle(color: Colors.white, fontSize: 13),
+                          ),
+                          Semantics(
+                            label: '站点数据',
+                            child: Switch.adaptive(
+                              key: const ValueKey('precipitation-station-data'),
+                              value: map.mobileWeatherPrecipitationStations,
+                              onChanged: !_ready || _saving
+                                  ? null
+                                  : _setPrecipitationStations,
+                            ),
+                          ),
+                        ],
+                      ),
                     MobileWeatherPlaybackControls(controller: _playback),
                   ],
                 ),

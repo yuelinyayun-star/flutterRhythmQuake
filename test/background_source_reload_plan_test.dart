@@ -1,14 +1,36 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutterrhythmquake/core/background_api.dart';
 import 'package:flutterrhythmquake/services/background_source_reload_plan.dart';
 
 void main() {
-  test('profile, observation caches and UI history never reconnect stations', () {
-    for (final key in BackgroundSourceReloadPlan.runtimeKeys) {
-      final plan = BackgroundSourceReloadPlan({key: 'old'}, {key: 'new'});
-      expect(plan.requiresFullReload, isFalse, reason: key);
-      expect(plan.stations, isEmpty, reason: key);
-    }
+  test('background station preferences use visibility sync only', () {
+    final plan = BackgroundSourceReloadPlan({}, {
+      for (final key in BackgroundSourceReloadPlan.stationConnectionKeys)
+        key: false,
+    });
+    expect(plan.requiresFullReload, isFalse);
+    expect(plan.stations, isEmpty);
   });
+
+  test('background API choices use visibility sync only', () {
+    final plan = BackgroundSourceReloadPlan({}, {
+      BackgroundApi.automaticPreferenceKey: false,
+      BackgroundApi.manualSelectionPreferenceKey: [BackgroundApi.rhythm.name],
+    });
+    expect(plan.requiresFullReload, isFalse);
+    expect(plan.stations, isEmpty);
+  });
+
+  test(
+    'profile, observation caches and UI history never reconnect stations',
+    () {
+      for (final key in BackgroundSourceReloadPlan.runtimeKeys) {
+        final plan = BackgroundSourceReloadPlan({key: 'old'}, {key: 'new'});
+        expect(plan.requiresFullReload, isFalse, reason: key);
+        expect(plan.stations, isEmpty, reason: key);
+      }
+    },
+  );
   test('unchanged settings and persisted event history do not reconnect', () {
     final plan = BackgroundSourceReloadPlan(
       {

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/live_display_time.dart';
 
 enum WeatherAlarmSource { fan, whews, chinaWeatherLocal, jmaLocal }
 
@@ -95,7 +96,9 @@ class WeatherAlarm {
 
   DateTime get validUntilUtc =>
       expiresInstantUtc ??
-      (effectiveInstantUtc ?? receivedAtUtc).add(const Duration(hours: 24));
+      (effectiveInstantUtc ?? receivedAtUtc).add(
+        liveDisplayLifetime(LiveDisplayLifetime.weatherWithoutExpiry),
+      );
 
   bool isExpired([DateTime? now]) =>
       !validUntilUtc.isAfter((now ?? DateTime.now()).toUtc());

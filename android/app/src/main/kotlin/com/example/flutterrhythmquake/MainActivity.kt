@@ -13,6 +13,8 @@ import io.flutter.plugin.common.MethodChannel
 import kotlin.math.abs
 
 class MainActivity : FlutterActivity() {
+    private var externalSubtitles: ExternalSubtitleWindow? = null
+
     private companion object {
         const val TARGET_REFRESH_RATE = 60f
         const val SYSTEM_SETTINGS_CHANNEL = "flutterrhythmquake/system_settings"
@@ -20,6 +22,7 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        externalSubtitles = ExternalSubtitleWindow(this, flutterEngine.dartExecutor.binaryMessenger)
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             SYSTEM_SETTINGS_CHANNEL,
@@ -64,6 +67,12 @@ class MainActivity : FlutterActivity() {
                 result.error("SYSTEM_SETTINGS_FAILED", error.message, null)
             }
         }
+    }
+
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        externalSubtitles?.dispose()
+        externalSubtitles = null
+        super.cleanUpFlutterEngine(flutterEngine)
     }
 
     private fun appDetailsIntent() = Intent(

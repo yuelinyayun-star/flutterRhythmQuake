@@ -6,19 +6,26 @@ abstract final class NativeWhewsConnection {
     if (request['op'] == 'endpoints') {
       final original = request['url'] as String;
       final uri = Uri.parse(original);
-      final shared =
-          uri.scheme == 'wss' &&
-          uri.host == 'api.beecld.com' &&
-          !uri.hasPort &&
-          const {
-            '/ws/all',
-            '/ws/nied',
-            '/ws/snet',
-            '/ws/kma_station',
-          }.contains(uri.path);
+      const sharedPaths = {
+        '/ws/all',
+        '/ws/cea_all',
+        '/ws/nied',
+        '/ws/snet',
+        '/ws/kma_station',
+      };
+      if (uri.scheme != 'wss' ||
+          uri.hasPort ||
+          !sharedPaths.contains(uri.path)) {
+        return [original];
+      }
+      final otherHost = switch (uri.host) {
+        'api.beecld.com' => 'api.2v8.cn',
+        'api.2v8.cn' => 'api.beecld.com',
+        _ => null,
+      };
       return [
         original,
-        if (shared) original.replaceFirst('api.beecld.com', 'api.2v8.cn'),
+        if (otherHost != null) uri.replace(host: otherHost).toString(),
       ];
     }
     if (request['op'] == 'retry') {

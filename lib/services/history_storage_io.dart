@@ -1,6 +1,13 @@
+import 'dart:io';
+import 'dart:isolate';
+import 'dart:ui' show RootIsolateToken;
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show BackgroundIsolateBinaryMessenger;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
+import 'package:shared_preferences_platform_interface/types.dart';
 import 'history_storage.dart';
 import 'windows_preferences_worker.dart';
 import 'replay_history_files.dart';
@@ -14,8 +21,24 @@ Future<void> initializeHistoryFileStorage() async {
   if (SharedPreferencesStorePlatform.instance is WindowsPreferencesWorker) {
     return;
   }
-  _portableRoot =
+  final root =
       '${(await getApplicationSupportDirectory()).path}/replay_history/v3';
+  if (Platform.isAndroid) {
+    final token = RootIsolateToken.instance!;
+    try {
+      await Isolate.run(() async {
+        BackgroundIsolateBinaryMessenger.ensureInitialized(token);
+        await migrateAndroidHistoryPreferences(
+          root,
+          SharedPreferencesStorePlatform.instance,
+        );
+      }, debugName: 'migrate-legacy-history-preferences');
+    } catch (error) {
+      // The original preferences remain available if staging or readback fails.
+      debugPrint('Legacy EEW history migration failed: ${error.runtimeType}');
+    }
+  }
+  _portableRoot = root;
 }
 
 HistoryStorage? separateHistoryStorage() {
@@ -24,23 +47,99 @@ HistoryStorage? separateHistoryStorage() {
       ? _WindowsHistoryStorage(backend)
       : _portableRoot == null
       ? null
-      : DirectoryHistoryStorage(_portableRoot!);
+      : DirectoryHistoryStorage(
+          _portableRoot!,
+          readMigratedPreferences: Platform.isAndroid,
+        );
+}
+
+ReplayHistoryFiles _openHistoryFiles(String root) =>
+    NativeReplayHistoryFiles.supported
+    ? NativeReplayHistoryFiles(root)
+    : ReplayHistoryFiles(root);
+
+String _legacyPreferencesPath(String root) => '$root/legacy_preferences';
+
+@visibleForTesting
+Future<void> migrateAndroidHistoryPreferences(
+  String root,
+  SharedPreferencesStorePlatform preferences,
+) async {
+  const preferencePrefix = 'flutter.';
+  const historyPrefix = '${preferencePrefix}unified_eew_history';
+  final history = Map.of(
+    await preferences.getAllWithParameters(
+      GetAllParameters(filter: PreferencesFilter(prefix: historyPrefix)),
+    ),
+  );
+  history.removeWhere(
+    (key, _) => key != historyPrefix && !key.startsWith('${historyPrefix}_'),
+  );
+  if (history.isEmpty) return;
+
+  final destination = await Directory(
+    _legacyPreferencesPath(root),
+  ).create(recursive: true);
+  // Android can start the UI and the service in separate isolate groups.
+  // Each migrator stages in its own directory and publishes immutable values.
+  final staging = await destination.createTemp('migration-');
+  final stagedFiles = _openHistoryFiles(staging.path);
+  final legacyFiles = _openHistoryFiles(destination.path);
+  try {
+    for (final entry in history.entries) {
+      final key = entry.key.substring(preferencePrefix.length);
+      final value = entry.value;
+      if (value is! String &&
+          (value is! List || value.any((v) => v is! String))) {
+        throw const FormatException('Invalid legacy EEW history preference');
+      }
+      await stagedFiles.writeRecord(key, value, null);
+      final saved = (await stagedFiles.record(key))?['value'];
+      if (value is List && saved is List
+          ? !listEquals(value, saved)
+          : value != saved) {
+        throw const FormatException('Legacy EEW history readback differs');
+      }
+      final target = File(legacyFiles.recordPath(key));
+      await target.parent.create(recursive: true);
+      await File(stagedFiles.recordPath(key)).rename(target.path);
+    }
+    if (!await preferences.clearWithParameters(
+      ClearParameters(
+        filter: PreferencesFilter(
+          prefix: historyPrefix,
+          allowList: history.keys.toSet(),
+        ),
+      ),
+    )) {
+      throw StateError(
+        'Unable to commit legacy EEW history preference removal',
+      );
+    }
+  } finally {
+    stagedFiles.dispose();
+    legacyFiles.dispose();
+    await staging.delete(recursive: true);
+  }
 }
 
 /// IO platforms use the same file layout. Preferences are a read-only legacy
 /// migration source, never the destination of newly received frames/reports.
 class DirectoryHistoryStorage
     implements HistoryStorage, HistoryStreamingStorage {
-  DirectoryHistoryStorage(String root)
-    : files = NativeReplayHistoryFiles.supported
-          ? NativeReplayHistoryFiles(root)
-          : ReplayHistoryFiles(root);
+  DirectoryHistoryStorage(String root, {bool readMigratedPreferences = false})
+    : files = _openHistoryFiles(root),
+      _legacyPreferences = readMigratedPreferences
+          ? _openHistoryFiles(_legacyPreferencesPath(root))
+          : null;
   final ReplayHistoryFiles files;
+  final ReplayHistoryFiles? _legacyPreferences;
   @override
   bool get separate => true;
   @override
   Future<Object?> read(String key) async =>
       (await files.record(key))?['value'] ??
+      (await _legacyPreferences?.record(key))?['value'] ??
       (await SharedPreferences.getInstance()).get(key);
   @override
   Future<bool> write(String key, Object value) =>
@@ -112,6 +211,7 @@ class DirectoryHistoryStorage
   Future<void> close() async {
     await flushPending();
     files.dispose();
+    _legacyPreferences?.dispose();
   }
 }
 

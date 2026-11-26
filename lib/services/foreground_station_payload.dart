@@ -153,7 +153,7 @@ class ForegroundStationPayload {
         PAlertService.isFrameStale(received, now)) {
       return const [];
     }
-    return [
+    final recorded = [
       for (final cell in raw)
         if (cell is List &&
             cell.length == 3 &&
@@ -174,6 +174,27 @@ class ForegroundStationPayload {
             level: cell[2] as int,
           ),
     ];
+    // Old recordings carry the strongest station's offset in their grid
+    // coordinates. Reconstruct from the actual archived confirmed station IDs
+    // rather than shifting a legacy box away from its member stations.
+    if (recorded.any(
+      (cell) => cell.center != taiwanDetectionGridCenter(cell.center),
+    )) {
+      final ids = decodePAlertDetectedStationIds(payload, now: now);
+      if (ids.isNotEmpty && payload['stations'] is List) {
+        final active = decodePAlert(payload['stations'])
+            .where((s) => ids.contains(s.id) && s.gridLevel >= 0)
+            .map(
+              (s) => PAlertDetectionGridCell(
+                center: taiwanDetectionGridCenter(s.coordinate),
+                level: s.gridLevel,
+              ),
+            )
+            .toList();
+        if (active.isNotEmpty) return alignTaiwanDetectionCells(active);
+      }
+    }
+    return alignTaiwanDetectionCells(recorded);
   }
 
   static DateTime? frameTime(Map<String, dynamic> payload) =>

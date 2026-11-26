@@ -7,11 +7,17 @@ import '../../core/utils/quake_time.dart';
 import '../../models/quake_message.dart';
 import '../../models/usgs_dyfi.dart';
 import '../native_dyfi_grid.dart';
+import 'usgs_automatic_product_expiry.dart';
 
 /// DYFI products observe the official catalogue, independently of quake alerts.
 class UsgsDyfiService extends ChangeNotifier {
-  UsgsDyfiService({http.Client? client})
-    : _client = client ?? createSourceHttpClient();
+  UsgsDyfiService({http.Client? client, int Function()? elapsedUs})
+    : _client = client ?? createSourceHttpClient() {
+    _expiry = UsgsAutomaticProductExpiry(() {
+      _automatic = null;
+      notifyListeners();
+    }, elapsedUs: elapsedUs);
+  }
   final http.Client _client;
   final Map<String, QuakeMessage> _events = {};
   final Map<String, UsgsDyfiFrame> _frames = {};
@@ -24,11 +30,12 @@ class UsgsDyfiService extends ChangeNotifier {
   int _selectionSerial = 0;
   QuakeMessage? _selected;
   UsgsDyfiFrame? _automatic, _manual;
-  Timer? _expiry;
+  late final UsgsAutomaticProductExpiry _expiry;
   String? status;
   UsgsDyfiFrame? get automaticFrame => _automatic;
   UsgsDyfiFrame? get manualFrame => _manual;
   UsgsDyfiFrame? get frame => _selected != null ? _manual : _automatic;
+  void recheckAutomaticExpiry() => _expiry.recheck();
   bool _passes(QuakeMessage e) =>
       _threshold >= 0 && (_threshold == 0 || e.magnitude >= _threshold);
 
@@ -61,7 +68,7 @@ class UsgsDyfiService extends ChangeNotifier {
     _threshold = threshold;
     if (_automatic != null && !_passes(_resolve(_automatic!.event))) {
       _automatic = null;
-      _expiry?.cancel();
+      _expiry.cancel();
     }
     if (_selected != null && !_passes(_resolve(_selected!))) {
       ++_selectionSerial;
@@ -99,7 +106,7 @@ class UsgsDyfiService extends ChangeNotifier {
     }
     if (_automatic != null && !_passes(_resolve(_automatic!.event))) {
       _automatic = null;
-      _expiry?.cancel();
+      _expiry.cancel();
       notifyListeners();
     }
     if (_manual != null && !_passes(_resolve(_manual!.event))) {
@@ -148,7 +155,7 @@ class UsgsDyfiService extends ChangeNotifier {
         _announced.remove(id);
         if (_automatic?.event.eventId == id) {
           _automatic = null;
-          _expiry?.cancel();
+          _expiry.cancel();
         }
         if (_manual?.event.eventId == id) _manual = null;
       } else {
@@ -162,12 +169,7 @@ class UsgsDyfiService extends ChangeNotifier {
           if (_automatic == null ||
               !result.product.updated.isBefore(_automatic!.product.updated)) {
             _automatic = result;
-            _expiry?.cancel();
-            _expiry = Timer(const Duration(minutes: 2), () {
-              if (_disposed) return;
-              _automatic = null;
-              notifyListeners();
-            });
+            _expiry.start();
           }
         }
         _announced[id] = result.product.identity;
@@ -308,7 +310,7 @@ class UsgsDyfiService extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     ++_selectionSerial;
-    _expiry?.cancel();
+    _expiry.cancel();
     _client.close();
     super.dispose();
   }

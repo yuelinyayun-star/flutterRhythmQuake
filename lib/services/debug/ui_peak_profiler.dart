@@ -1,10 +1,12 @@
 import 'package:flutter/scheduler.dart';
 
+import 'field_diagnostics.dart';
+
 /// Read-only UI-thread workload profiler for field jank attribution.
 ///
 /// Zero behavior change: zones are Stopwatch-only and FrameTiming aggregation
-/// is passive. Output goes to `print` (logcat) only when a zone exceeds its
-/// threshold, plus a periodic FrameTiming aggregate line. Opt out entirely
+/// is passive. Output goes to `print` and, on field builds, the rolling log.
+/// Slow zones, zone summaries, and FrameTiming aggregates are reported. Opt out
 /// with --dart-define=RQ_UI_PROFILER=false.
 // Diagnostic field profiler: print is intentional so release builds reach
 // logcat (debugPrint is a release no-op in main.dart).
@@ -48,7 +50,7 @@ class UiPeakProfiler {
       _maxMicros[zone] = micros;
     }
     if (micros >= reportThresholdMs * 1000) {
-      print('$tag SLOW zone=$zone took=${(micros / 1000).toStringAsFixed(1)}ms');
+      _report('SLOW zone=$zone took=${(micros / 1000).toStringAsFixed(1)}ms');
     }
   }
 
@@ -60,8 +62,8 @@ class UiPeakProfiler {
       final total = _totalMicros[zone] ?? 0;
       final max = _maxMicros[zone] ?? 0;
       if (hits == 0) continue;
-      print(
-        '$tag SUM zone=$zone hits=$hits avg=${(total / hits / 1000).toStringAsFixed(2)}ms '
+      _report(
+        'SUM zone=$zone hits=$hits avg=${(total / hits / 1000).toStringAsFixed(2)}ms '
         'max=${(max / 1000).toStringAsFixed(1)}ms total=${(total / 1000).toStringAsFixed(0)}ms',
       );
     }
@@ -83,32 +85,35 @@ class UiPeakProfiler {
     if (now.difference(_lastFrameFlush).inSeconds < 2) return;
     _lastFrameFlush = now;
     if (_pendingTimings.isEmpty) {
-      print('$tag FRAME win=2s n=0 (no frames produced)');
+      _report('FRAME win=2s n=0 (no frames produced)');
       return;
     }
-    final builds = _pendingTimings
-        .map((t) => t.buildDuration.inMicroseconds)
-        .toList()
-      ..sort();
-    final rasters = _pendingTimings
-        .map((t) => t.rasterDuration.inMicroseconds)
-        .toList()
-      ..sort();
-    final totalSpans = _pendingTimings
-        .map((t) => t.totalSpan.inMicroseconds)
-        .toList()
-      ..sort();
+    final builds =
+        _pendingTimings.map((t) => t.buildDuration.inMicroseconds).toList()
+          ..sort();
+    final rasters =
+        _pendingTimings.map((t) => t.rasterDuration.inMicroseconds).toList()
+          ..sort();
+    final totalSpans =
+        _pendingTimings.map((t) => t.totalSpan.inMicroseconds).toList()..sort();
     String pct(List<int> sorted, double p) =>
         (sorted[((sorted.length - 1) * p).round().clamp(0, sorted.length - 1)] /
-            1000)
-        .toStringAsFixed(1);
+                1000)
+            .toStringAsFixed(1);
     final jank100 = totalSpans.where((us) => us > 100 * 1000).length;
-    print(
-      '$tag FRAME win=2s n=${_pendingTimings.length} '
+    _report(
+      'FRAME win=2s n=${_pendingTimings.length} '
       'build p50=${pct(builds, 0.5)} p95=${pct(builds, 0.95)} max=${pct(builds, 1.0)}ms '
       'raster p50=${pct(rasters, 0.5)} p95=${pct(rasters, 0.95)} max=${pct(rasters, 1.0)}ms '
       'span max=${pct(totalSpans, 1.0)}ms jank100=$jank100',
     );
     _pendingTimings.clear();
+  }
+
+  static void _report(String message) {
+    print('$tag $message');
+    if (FieldDiagnostics.enabled) {
+      FieldDiagnostics.event('ui_performance', {'message': message});
+    }
   }
 }

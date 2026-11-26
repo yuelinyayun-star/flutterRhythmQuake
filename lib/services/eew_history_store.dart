@@ -148,8 +148,13 @@ class EewHistoryStore {
   // Weak keys: remembering a durable group must not retain its expanded raw
   // payload after the provider replaces it with the compact historical copy.
   final _savedGroups = Expando<bool>('durable-history');
-  final _releasedGroups = Expando<EewEventGroup>('compact-history');
-  final _deferredGroups = Expando<EewEventGroup>('deferred-history');
+  // A retained older group must not keep every subsequent summary reachable.
+  final _releasedGroups = Expando<WeakReference<EewEventGroup>>(
+    'compact-history',
+  );
+  final _deferredGroups = Expando<WeakReference<EewEventGroup>>(
+    'deferred-history',
+  );
   final Map<EewEventGroup, Future<EewEventGroup>> _reportLoads = Map.identity();
   static const _snapshotFormat = 'rhythmquake-history-snapshot-v1';
   static const _snapshotPresentationVersion = 1;
@@ -771,23 +776,49 @@ class EewHistoryStore {
     EewEventGroup group, {
     bool deferReports = false,
   }) {
-    final cache = deferReports ? _deferredGroups : _releasedGroups;
-    final released = cache[group];
-    final refs = _diskRefs[recordKey(group)];
-    if (released != null && identical(released.storedStations, refs)) {
-      return released;
-    }
+    final key = recordKey(group);
+    final refs = _diskRefs[key];
     if (refs == null) {
       return group;
     }
-    final persisted = refs.frameKeys.toSet();
+    final durablySaved = _savedGroups[group] == true;
+    final compactReports = deferReports
+        ? durablySaved &&
+              group.reports.any((report) {
+                final ref = group.storedReports?.payloads[report];
+                return ref == null
+                    ? report.sourcePayload != null
+                    : ref.fileId == null &&
+                          _fileReports[key]?[ref.signature]?.fileId != null;
+              })
+        : group.reports.any(
+            (report) =>
+                report.source == 'globalQuakeEew' &&
+                report.sourcePayload != null &&
+                report.sourcePayload is! EncodedSourcePayload,
+          );
+    if (identical(group.storedStations, refs) &&
+        group.stationFrames.isEmpty &&
+        !compactReports) {
+      return group;
+    }
+    final cache = deferReports ? _deferredGroups : _releasedGroups;
+    final released = cache[group]?.target;
+    if (released != null && identical(released.storedStations, refs)) {
+      return released;
+    }
+    final persisted = group.stationFrames.isEmpty
+        ? const <String>{}
+        : refs.frameKeys.toSet();
     var result = group.copyWith(
       reports: List.unmodifiable(
         group.reports.map((report) {
           final payload = report.sourcePayload;
-          return !deferReports &&
+          return compactReports &&
+                  !deferReports &&
                   report.source == 'globalQuakeEew' &&
-                  payload != null
+                  payload != null &&
+                  payload is! EncodedSourcePayload
               ? report.copyWith(sourcePayload: compactSourcePayload(payload))
               : report;
         }),
@@ -799,16 +830,15 @@ class EewHistoryStore {
         ),
       ),
     );
-    final durablySaved = _savedGroups[group] == true;
     // A newer report can arrive while an older provider save is awaiting IO.
     // Its body must stay in memory until that exact group has been committed.
-    if (deferReports && durablySaved) {
-      result = _deferReports(result, recordKey(group));
+    if (deferReports && compactReports) {
+      result = _deferReports(result, key);
     }
     if (!deferReports || durablySaved) {
-      cache[group] = result;
+      cache[group] = WeakReference(result);
     }
-    if (_savedGroups[group] == true) {
+    if (durablySaved) {
       _savedGroups[result] = true;
     }
     return result;
@@ -903,6 +933,9 @@ class EewHistoryStore {
           listEquals(savedRefs.frameKeys, refs.frameKeys) &&
           listEquals(savedRefs.archiveKeys, refs.archiveKeys) &&
           listEquals(savedRefs.standaloneFrameKeys, refs.standaloneFrameKeys)) {
+        if (savedRefs.files == refs.files) {
+          nextRefs[entry.key] = savedRefs;
+        }
         continue;
       }
       final complete = await loadReports(entry.value);

@@ -86,6 +86,24 @@ void main() {
     },
   );
 
+  test('unchanged saved groups stay identical across repeated saves', () async {
+    final original = saved(captured('cwa_1150074'));
+    final writer = store();
+    await writer.save(prefs, [original]);
+    final summary = writer.releaseSavedFrames(original, deferReports: true);
+    expect(summary.hasDeferredReports, isTrue);
+    expect(summary.stationFrames, isEmpty);
+
+    for (var i = 0; i < 3; i++) {
+      await writer.save(prefs, [summary]);
+      expect(
+        writer.releaseSavedFrames(summary, deferReports: true),
+        same(summary),
+      );
+    }
+    expect((await writer.loadReports(summary)).toMap(), original.toMap());
+  });
+
   test(
     'individual frames remain on disk during preparation, export and import',
     () async {

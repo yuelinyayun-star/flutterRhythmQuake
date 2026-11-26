@@ -113,6 +113,21 @@ void main() {
     }
   });
 
+  test('resume expires a gesture without shortening a longer camera lock', () {
+    final provider = MapStateProvider();
+    addTearDown(provider.dispose);
+    final now = DateTime.now();
+    provider.pauseAutoZoom(resumeAfter: const Duration(minutes: 1));
+    provider.pauseAutoZoomForGesture();
+
+    provider.recheckAutoFollowPause(now: now.add(const Duration(seconds: 10)));
+    expect(provider.isGestureAutoFollowPaused, isFalse);
+    expect(provider.cameraMode, MapCameraMode.manualLocked);
+
+    provider.recheckAutoFollowPause(now: now.add(const Duration(seconds: 61)));
+    expect(provider.canAutoFollow, isTrue);
+  });
+
   testWidgets('screen offset is measured in pixels at destination zoom', (
     tester,
   ) async {

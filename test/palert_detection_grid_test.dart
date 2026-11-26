@@ -1,9 +1,15 @@
+import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutterrhythmquake/services/foreground_station_payload.dart';
+import 'package:flutterrhythmquake/services/sources/native_station_display.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutterrhythmquake/services/sources/palert_detection_grid.dart';
 import 'package:flutterrhythmquake/services/sources/palert_service.dart';
 import 'package:flutterrhythmquake/widgets/map/palert_station_layer.dart';
+import 'package:flutterrhythmquake/widgets/map/cwa_station_layer.dart';
+import 'package:flutterrhythmquake/services/sources/cwa_station_service.dart';
 import 'package:latlong2/latlong.dart';
 
 void main() {
@@ -25,14 +31,20 @@ void main() {
     receivedAt: receivedAt ?? now,
   );
 
-  const first = PAlertDetectionGridCell(center: LatLng(23.5, 121), level: 15);
-  const distant = PAlertDetectionGridCell(center: LatLng(25.5, 122), level: 9);
+  const first = PAlertDetectionGridCell(center: LatLng(23.5, 121.5), level: 15);
+  const distant = PAlertDetectionGridCell(
+    center: LatLng(25.5, 122.5),
+    level: 9,
+  );
 
   test(
     'camera consumes all confirmed detection cells without station filtering',
     () {
       final grid = PAlertDetectionGrid()..update([first, distant]);
-      expect(grid.centers, [const LatLng(23.5, 121), const LatLng(25.5, 122)]);
+      expect(grid.centers, [
+        const LatLng(23.5, 121.5),
+        const LatLng(25.5, 122.5),
+      ]);
       expect(grid.cells.map((cell) => cell.level), [15, 9]);
     },
   );
@@ -47,9 +59,9 @@ void main() {
   test('confirmed zero-level hold is kept until the detector ends it', () {
     final grid = PAlertDetectionGrid()
       ..update([
-        const PAlertDetectionGridCell(center: LatLng(23.5, 121), level: 0),
+        const PAlertDetectionGridCell(center: LatLng(23.5, 121.5), level: 0),
       ]);
-    expect(grid.centers, [const LatLng(23.5, 121)]);
+    expect(grid.centers, [const LatLng(23.5, 121.5)]);
     grid.clear();
     expect(grid.centers, isEmpty);
   });
@@ -59,6 +71,160 @@ void main() {
     final b = PAlertDetectionGrid()..update([distant, first]);
     expect(a.signature, b.signature);
   });
+
+  testWidgets(
+    'TREM and P-Alert overlapping cells use identical polygon vertices',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: FlutterMap(
+            options: const MapOptions(
+              initialCenter: LatLng(23.5, 121.5),
+              initialZoom: 6,
+            ),
+            children: [
+              CwaStationLayer(
+                stations: [
+                  CwaStation(
+                    id: 'T',
+                    code: 1,
+                    net: 'TREM',
+                    coordinate: const LatLng(23.1, 121.9),
+                    work: true,
+                    intensity: 2.5,
+                    alertIntensity: 2.5,
+                    hasAlert: true,
+                    lastUpdate: now,
+                  ),
+                ],
+              ),
+              PAlertStationLayer(
+                stations: [station('P', 23.9, 121.1, 4)],
+                detectionGridCells: const [
+                  PAlertDetectionGridCell(
+                    center: LatLng(23.5, 121.5),
+                    level: 15,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final layers = tester
+          .widgetList<PolygonLayer>(find.byType(PolygonLayer))
+          .toList();
+      expect(layers.length, 2);
+      expect(
+        layers.first.polygons.single.points,
+        layers.last.polygons.single.points,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'legacy prepared and archived Taiwan cells use one fixed geometry',
+    (tester) async {
+      final staleTrem = NativeStationGrid(const LatLng(23.1, 121.2), 12, const [
+        LatLng(22.605, 120.705),
+        LatLng(23.595, 120.705),
+        LatLng(23.595, 121.695),
+        LatLng(22.605, 121.695),
+      ]);
+      final stalePalert =
+          NativeStationGrid(const LatLng(23.8, 121.9), 15, const [
+            LatLng(23.305, 121.405),
+            LatLng(24.295, 121.405),
+            LatLng(24.295, 122.395),
+            LatLng(23.305, 122.395),
+          ]);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: FlutterMap(
+            options: const MapOptions(
+              initialCenter: LatLng(23.5, 121.5),
+              initialZoom: 6,
+            ),
+            children: [
+              CwaStationLayer(
+                stations: [
+                  CwaStation(
+                    id: 'T',
+                    code: 1,
+                    net: 'TREM',
+                    coordinate: const LatLng(23.1, 121.2),
+                    work: true,
+                    hasAlert: true,
+                    intensity: 2.5,
+                    alertIntensity: 2.5,
+                    lastUpdate: now,
+                  ),
+                ],
+                preparedGrids: [staleTrem],
+              ),
+              PAlertStationLayer(
+                stations: [station('P', 23.8, 121.9, 4)],
+                preparedGrids: [stalePalert],
+              ),
+            ],
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final layers = tester
+          .widgetList<PolygonLayer>(find.byType(PolygonLayer))
+          .toList();
+      expect(layers.length, 2);
+      expect(
+        layers[0].polygons.single.points,
+        taiwanDetectionGridVertices(const LatLng(23.5, 121.5)),
+      );
+      expect(
+        layers[0].polygons.single.points,
+        layers[1].polygons.single.points,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  test(
+    'real archived legacy P-Alert frames regroup confirmed stations',
+    () {
+      final root = Directory('tmp/srev_nied_migration_20261125');
+      final files = root
+          .listSync()
+          .whereType<File>()
+          .where((f) => f.uri.pathSegments.last.startsWith('grid_legacy_'))
+          .toList();
+      expect(files, isNotEmpty);
+      for (final file in files) {
+        final payload =
+            jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+        final time = DateTime.parse(payload['receivedTime'] as String);
+        final ids = ForegroundStationPayload.decodePAlertDetectedStationIds(
+          payload,
+          now: time,
+        );
+        final expected =
+            ForegroundStationPayload.decodePAlert(payload['stations'])
+                .where((s) => ids.contains(s.id) && s.gridLevel >= 0)
+                .map((s) => taiwanDetectionGridCenter(s.coordinate))
+                .toSet();
+        final actual = ForegroundStationPayload.decodePAlertDetection(
+          payload,
+          now: time,
+        );
+        expect(actual.map((c) => c.center).toSet(), expected);
+        expect(actual, isNotEmpty);
+        print(
+          '${file.uri.pathSegments.last}: ${ids.length} confirmed stations, ${actual.length} aligned cells',
+        );
+      }
+    },
+    skip: !Directory('tmp/srev_nied_migration_20261125').existsSync(),
+  );
 
   for (final size in [const Size(1280, 720), const Size(390, 844)]) {
     testWidgets(
@@ -75,7 +241,7 @@ void main() {
             MaterialApp(
               home: FlutterMap(
                 options: const MapOptions(
-                  initialCenter: LatLng(23.5, 121),
+                  initialCenter: LatLng(23.5, 121.5),
                   initialZoom: 6,
                 ),
                 children: [

@@ -19,6 +19,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'source_socket.dart';
 import 'native_station_runtime.dart';
 import 'native_station_display.dart';
+import 'jp_shindo_scale.dart';
 import '../obs_automation_input_service.dart';
 
 @visibleForTesting
@@ -40,6 +41,14 @@ class SeisJsStation {
   double maxIntensity;
   bool isDesktop;
   DateTime? lastUpdate;
+
+  /// Diagnostic conversion of CalcShindo, not the CSIS Intensity field.
+  /// Missing CalcShindo is normalized to -3 by the existing wire parser,
+  /// so -3 must remain untrusted for a future detector.
+  int get srevCalculatedCode => lastUpdate == null || calcShindo <= -3
+      ? 0
+      : JpShindoScale.srevCodeFromShindo(calcShindo);
+
   int? preparedMapLevel;
   bool? preparedMapActive;
 

@@ -529,7 +529,11 @@ class _NiedPipelineOwner {
     };
     detector.onShakeExpired = () {
       signals.add(null);
-      if (!processing) emit();
+      if (!processing) {
+        emit();
+        if (estimateEnabled)
+          output.send(inference.project(const [], stations, DateTime.now()));
+      }
     };
   }
   final SendPort output;
@@ -541,9 +545,8 @@ class _NiedPipelineOwner {
   final whews = WhewsStationService(kind: WhewsStationKind.nied, apiToken: '');
   final jian = JianStationService(kind: WhewsStationKind.nied);
   final detector = ShakeDetectionService.forSource('nied', nativeOwner: true);
-  final inference = NiedSourceEstimationWorker(
-    includeObservationHistory: false,
-  );
+  final inference = SrevSourceProjection();
+  int _hypFrames = 0, _hypUs = 0, _maxHypUs = 0;
   final array = NiedArrayObservationProcessor();
   final encoder = NiedSourceStationEncoder();
   final subscriptions = <StreamSubscription<dynamic>>[];
@@ -553,16 +556,14 @@ class _NiedPipelineOwner {
   final signals = <int?>[];
   bool recording;
   bool estimateEnabled, processing = false, closed = false;
-  int estimateGeneration = 0;
-  Future<void>? lastInference;
+
   Future<void> arrayFrames = Future.value();
 
   void configure(int sensitivity, bool estimate) {
     detector.setSensitivity(sensitivity);
-    inference.setSensitivity(sensitivity);
+    detector.solveSrev = estimate;
     if (estimateEnabled && !estimate) {
       inference.reset();
-      estimateGeneration++;
     }
     estimateEnabled = estimate;
     if (!estimate) monitor.setPhysicalLayersEnabled(false);
@@ -635,6 +636,8 @@ class _NiedPipelineOwner {
       stations = const [];
       detector.reset(detachStations: true);
       emit();
+      if (estimateEnabled)
+        output.send(inference.project(const [], stations, received));
       return;
     }
     if (frame.values.length != frame.coordinates.length ||
@@ -649,7 +652,16 @@ class _NiedPipelineOwner {
     var same = array.stations.length == frame.coordinates.length;
     if (same) {
       for (var i = 0; i < frame.coordinates.length; i++) {
-        if (array.stations[i].coordinate != frame.coordinates[i]) {
+        final station = array.stations[i];
+        if (station.coordinate != frame.coordinates[i] ||
+            (source == 'jian' &&
+                (station.code != frame.codes[i].trim() ||
+                    (frame.names[i].trim().isNotEmpty &&
+                        station.name != frame.names[i].trim()) ||
+                    (frame.regions[i].trim().isNotEmpty &&
+                        station.prefecture != frame.regions[i].trim()) ||
+                    (frame.stationTypes[i].trim().isNotEmpty &&
+                        station.network != frame.stationTypes[i].trim())))) {
           same = false;
           break;
         }
@@ -661,7 +673,6 @@ class _NiedPipelineOwner {
       processing = true;
       detector.reset(detachStations: true, emitSnapshot: false);
       inference.reset();
-      estimateGeneration++;
       encoder.reset();
       array.configure(
         buildWhewsNiedStations(
@@ -705,13 +716,13 @@ class _NiedPipelineOwner {
     );
     image.publishStations();
     await Future<void>.delayed(Duration.zero);
-    await lastInference;
   }
 
   void accept(List<NiedStation> value) {
     if (closed) return;
     stations = value;
     processing = true;
+    final watch = Stopwatch()..start();
     try {
       if (value.isEmpty) {
         detector.reset(detachStations: true);
@@ -723,32 +734,29 @@ class _NiedPipelineOwner {
       }
     } finally {
       processing = false;
+      watch.stop();
+      if (estimateEnabled) {
+        _hypFrames++;
+        _hypUs = watch.elapsedMicroseconds;
+        if (_hypUs > _maxHypUs) _maxHypUs = _hypUs;
+      }
     }
     emit();
-    if (estimateEnabled && value.isNotEmpty) {
-      final generation = estimateGeneration;
-      // All inference transport preparation executes here, off the UI isolate.
-      unawaited(
-        lastInference = inference
-            .processStations(value)
-            .then(
-              (result) {
-                if (closed ||
-                    !estimateEnabled ||
-                    generation != estimateGeneration ||
-                    result == null) {
-                  return;
-                }
-                monitor.setPhysicalLayersEnabled(
-                  result.detection.hasActiveEvent,
-                );
-                output.send(result);
-              },
-              onError: (Object error) {
-                if (!closed) output.send(('error', error.toString()));
-              },
-            ),
+    if (estimateEnabled) {
+      final time =
+          value.fold<DateTime?>(null, (old, s) {
+            final t = s.lastDataTime ?? s.lastUpdate;
+            return t != null && (old == null || t.isAfter(old)) ? t : old;
+          }) ??
+          DateTime.now();
+      final result = inference.project(
+        detector.srevSourceRows,
+        value,
+        time,
+        computationMicroseconds: _hypUs,
       );
+      monitor.setPhysicalLayersEnabled(result.detection.hasActiveEvent);
+      output.send(result);
     }
   }
 
@@ -759,7 +767,6 @@ class _NiedPipelineOwner {
     image.start();
     detector.reset(detachStations: true);
     inference.reset();
-    estimateGeneration++;
     encoder.reset();
     stations = const [];
     processing = false;
@@ -813,7 +820,15 @@ class _NiedPipelineOwner {
         Isolate.current.debugName,
         _layerSignature(),
         automation,
-        inference.diagnostics,
+        {
+          'method': SrevSourceProjection.method,
+          'submitted': _hypFrames,
+          'completed': _hypFrames,
+          'lastComputeUs': _hypUs,
+          'maxComputeUs': _maxHypUs,
+          'pending': 0,
+          'maxPending': 0,
+        },
       ),
     );
     signals.clear();
@@ -836,7 +851,7 @@ class _NiedPipelineOwner {
     whews.dispose();
     jian.dispose();
     detector.reset(detachStations: true, emitSnapshot: false);
-    inference.dispose();
+    inference.reset();
     array.dispose();
     for (final subscription in subscriptions) {
       unawaited(subscription.cancel());

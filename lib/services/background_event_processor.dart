@@ -453,6 +453,12 @@ class BackgroundEventProcessor {
         event.reportTime == null) {
       return 0;
     }
+    if (event.isJmaLpgm && event.apiTypeLabel == 'Wolfx') {
+      final stamp = event.jmaLpgmBulletin?.freshnessTime;
+      if (stamp == null) return 0;
+      final now = _eewClock?.call() ?? DateTime.now();
+      return 60 - now.difference(stamp).inSeconds.clamp(0, 999999);
+    }
     if (unifiedCatalogSources.containsKey(event.source) &&
         event.originTime == null) {
       return 0;

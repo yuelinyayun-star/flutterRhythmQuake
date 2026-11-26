@@ -477,6 +477,64 @@ void main() {
   );
 
   test(
+    'TREM v1 upstream alert controls both Dart and native independent cells',
+    () async {
+      final h = Harness({'kind': 'cwa'});
+      final reference = CwaStationService.detached();
+      addTearDown(() async {
+        reference.stop();
+        await h.close();
+      });
+      final clock = DateTime.utc(2026, 11, 25, 8, 47);
+      const csv =
+          'id,lat,lon,code,net,work\nA123456,23.2,121.2,1,3,1\nB123456,24.2,122.2,2,3,1\nC123456,23.2,121.3,3,3,1';
+      reference.handleOriginalForTesting(csv, metadata: true);
+      h.runtime.injectOriginal(utf8.encode(jsonEncode(csv)), clock);
+      final frames = [
+        {
+          'A123456': {'i': 0.2, 'alert': 1},
+          'B123456': {'i': 1.2, 'alert': 1},
+          'C123456': {'i': 4.0},
+        },
+        {
+          'A123456': {'i': 0.2},
+          'B123456': {'i': 0.1, 'alert': 1},
+          'C123456': {'i': 4.0},
+        },
+        {
+          'A123456': {'i': 0.2},
+          'B123456': {'i': 0.1},
+          'C123456': {'i': 4.0},
+        },
+      ];
+      final expected = [
+        ['A123456', 'B123456'],
+        ['B123456'],
+        <String>[],
+      ];
+      for (var i = 0; i < frames.length; i++) {
+        final time = clock.add(Duration(milliseconds: i * 500));
+        final raw = jsonEncode({
+          'ts': time.millisecondsSinceEpoch,
+          'stations': frames[i],
+        });
+        expect(reference.handleOriginalForTesting(raw), isTrue);
+        h.runtime.injectOriginal(utf8.encode(raw), time);
+        final snap = await h.frame(i + 1);
+        final actual = ForegroundStationPayload.decodeCwa(snap['stations']);
+        List<String> active(List<CwaStation> v) =>
+            v.where((s) => s.hasAlert).map((s) => s.id).toList()..sort();
+        expect(active(actual), expected[i]);
+        expect(active(reference.stations), expected[i]);
+        final grids = snap['grids'] as List;
+        expect(grids.length, expected[i].length);
+        if (i == 1) expect(grids.single['center'], [24.5, 122.5]);
+      }
+    },
+    skip: !enabled,
+  );
+
+  test(
     'source actors release on stop and cannot publish into their replacement',
     () async {
       final baseline = NativeStationRuntime.workers;

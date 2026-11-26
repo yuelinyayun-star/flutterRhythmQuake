@@ -191,7 +191,9 @@ void main() {
     () async {
       var detail = detailVersion('1');
       var failContours = false;
+      var elapsedUs = 0;
       final service = UsgsShakeMapService(
+        elapsedUs: () => elapsedUs,
         client: MockClient((request) async {
           if (request.url.path.endsWith('/cont_mmi.json')) {
             return failContours
@@ -216,6 +218,15 @@ void main() {
       failContours = false;
       await service.observe([eventFor(detail)]);
       await settle();
+      expect(service.frame?.product.version, '3');
+
+      await service.select(eventFor(detail));
+      elapsedUs = const Duration(minutes: 2).inMicroseconds - 1;
+      service.recheckAutomaticExpiry();
+      expect(service.automaticFrame?.product.version, '3');
+      elapsedUs++;
+      service.recheckAutomaticExpiry();
+      expect(service.automaticFrame, isNull);
       expect(service.frame?.product.version, '3');
     },
   );

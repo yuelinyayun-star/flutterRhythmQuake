@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -210,7 +212,7 @@ void main() {
     expect(getFEName(23.1101922, 121.3562179), '台湾省台东县成功镇附近');
   });
 
-  test('loads all four runtime Flutter assets', () async {
+  test('loads the runtime region index', () async {
     await EpicenterRegionService.instance.load();
     expect(EpicenterRegionService.instance.isLoaded, isTrue);
     expect(getFEName(39.9042, 116.4074), '北京市东城区附近');
@@ -220,4 +222,61 @@ void main() {
       NativeEastAsiaRegions.supported ? '中国台湾东部海域附近' : '台湾省台东县绿岛乡附近',
     );
   });
+
+  test(
+    'native runtime matches the original Dart lookup in both callers',
+    () async {
+      final service = EpicenterRegionService.instance;
+      final points = <(double, double)>[];
+      for (final source in ['cenc', 'jma']) {
+        final rawReports = File(
+          'test/fixtures/event_render_20261104/wolfx-$source.original.json',
+        ).readAsStringSync();
+        final reports = jsonDecode(rawReports) as Map<String, dynamic>;
+        for (final report in reports.values.whereType<Map<String, dynamic>>()) {
+          points.add((
+            double.parse(report['latitude'] as String),
+            double.parse(report['longitude'] as String),
+          ));
+        }
+      }
+      points.addAll([
+        (39.9042, 116.4074),
+        (29.36, 120.17),
+        (22.2210, 113.5520),
+        (23.1101922, 121.3562179),
+        (22.6658421, 121.4705314),
+        (24.9517868, 122.0129126),
+        (25.945652978002556, 119.96425136181097),
+        (24.4670, 123.0000),
+        (32.6817, 130.7217),
+        (38.1, 142.0),
+        (37.4837, 127.0324),
+        (45.5152, -122.6784),
+        (double.nan, 120),
+        (91, 120),
+        for (var lat = 18; lat <= 54; lat += 3)
+          for (var lon = 75; lon <= 144; lon += 3) (lat + 0.37, lon + 0.61),
+      ]);
+      final expected = [
+        for (final (lat, lon) in points)
+          (resolver.lookup(lat, lon), resolver.lookupChinaPlace(lat, lon)),
+      ];
+      await service.load();
+      expect([
+        for (final (lat, lon) in points)
+          (service.lookup(lat, lon), service.lookupChinaPlace(lat, lon)),
+      ], expected);
+      final secondIsolate = await Isolate.run(() async {
+        final service = EpicenterRegionService.instance;
+        await service.load();
+        return [
+          for (final (lat, lon) in points)
+            (service.lookup(lat, lon), service.lookupChinaPlace(lat, lon)),
+        ];
+      });
+      expect(secondIsolate, expected);
+    },
+    skip: !NativeEastAsiaRegions.supported,
+  );
 }

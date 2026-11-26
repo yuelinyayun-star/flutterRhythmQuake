@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import '../../models/in_app_notification.dart';
 import '../../services/in_app_notification_controller.dart';
+import '../../services/live_display_time.dart';
 
 /// 应用内轻通知覆盖层
 ///
@@ -18,10 +20,14 @@ class InAppNotificationOverlay extends StatefulWidget {
 class _InAppNotificationOverlayState extends State<InAppNotificationOverlay> {
   final List<_PendingNotification> _notifications = [];
   StreamSubscription<InAppNotification>? _subscription;
+  AppLifecycleListener? _lifecycle;
 
   @override
   void initState() {
     super.initState();
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      _lifecycle = AppLifecycleListener(onShow: _recheckExpiry);
+    }
     _subscription = InAppNotificationController().stream.listen(
       _onNotification,
     );
@@ -29,6 +35,7 @@ class _InAppNotificationOverlayState extends State<InAppNotificationOverlay> {
 
   @override
   void dispose() {
+    _lifecycle?.dispose();
     _subscription?.cancel();
     for (final item in _notifications) {
       item.timer?.cancel();
@@ -38,7 +45,11 @@ class _InAppNotificationOverlayState extends State<InAppNotificationOverlay> {
 
   void _onNotification(InAppNotification notification) {
     setState(() {
-      _notifications.removeWhere((n) => n.data.id == notification.id);
+      _notifications.removeWhere((item) {
+        if (item.data.id != notification.id) return false;
+        item.timer?.cancel();
+        return true;
+      });
       final pending = _PendingNotification(notification);
       pending.timer = Timer(const Duration(seconds: 6), () => _remove(pending));
       _notifications.add(pending);
@@ -47,6 +58,22 @@ class _InAppNotificationOverlayState extends State<InAppNotificationOverlay> {
         oldest.timer?.cancel();
       }
     });
+  }
+
+  void _recheckExpiry() {
+    final now = liveDisplayElapsedUs();
+    for (final item in _notifications.toList()) {
+      item.timer?.cancel();
+      final remaining = item.expiryUs - now;
+      if (remaining <= 0) {
+        _remove(item);
+      } else {
+        item.timer = Timer(
+          Duration(microseconds: remaining),
+          () => _remove(item),
+        );
+      }
+    }
   }
 
   void _remove(_PendingNotification item) {
@@ -166,6 +193,8 @@ class _InAppNotificationOverlayState extends State<InAppNotificationOverlay> {
 
 class _PendingNotification {
   final InAppNotification data;
+  final int expiryUs =
+      liveDisplayElapsedUs() + const Duration(seconds: 6).inMicroseconds;
   Timer? timer;
   _PendingNotification(this.data);
 }

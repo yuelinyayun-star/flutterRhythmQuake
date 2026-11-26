@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:io';
 
 import 'package:flutter/foundation.dart'
@@ -217,6 +218,15 @@ class LocalInjectServer {
         });
         return;
       }
+      if (request.method == 'GET' && path == '/debug/vm-service') {
+        final info = await developer.Service.getInfo();
+        await _writeJson(request.response, HttpStatus.ok, {
+          'ok': info.serverUri != null,
+          'vmServiceUri': info.serverUri?.toString(),
+          'vmServiceWebSocketUri': info.serverWebSocketUri?.toString(),
+        });
+        return;
+      }
 
       if (request.method == 'POST' && path == '/inject') {
         final body = await _readBody(request);
@@ -365,6 +375,7 @@ class LocalInjectServer {
         'POST /inject':
             '原始 JSON；可选 ?format=fan&source=cenc 或 {format,source,payload}；不改写时间',
         'GET /health': 'Mock 服务标识、监听端口和回放状态',
+        'GET /debug/vm-service': '返回当前 Flutter Dart 调试服务地址，供本地字幕测试面板自动重连',
         'GET /diagnostics/performance': '只读进程/原生内存、EEW/情报队列和震源推算积压计数；不含原始报文及凭据',
         'POST /diagnostics/rendering': '临时绘制隔离 painting=all/overlays/none、freezeCamera={latitude,longitude,zoom}；reset=true 恢复；不停止数据处理',
         'POST /inject/eew':

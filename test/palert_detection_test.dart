@@ -449,7 +449,23 @@ void main() {
             detector.snapshot.detectedStations.map((s) => s.code),
             expected.detectedStations.map((s) => s.code),
           );
-          expect(detector.snapshot.gridCells.keys, expected.gridCells.keys);
+          // Same detector states and IDs, but a fixed geographic grid
+          // rather than the reference source's dynamic offset.
+          final centers = stations
+              .where(
+                (s) => expected.detectedStations.any((e) => e.code == s.code),
+              )
+              .map(
+                (s) => LatLng(
+                  s.coordinate.latitude.floor() + 0.5,
+                  s.coordinate.longitude.floor() + 0.5,
+                ),
+              )
+              .toSet();
+          expect(
+            detector.snapshot.gridCells.values.map((c) => c.center).toSet(),
+            centers,
+          );
         }
       } finally {
         reference.reset(detachStations: true);

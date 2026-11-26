@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -43,11 +44,15 @@ class VolcanoAshfallLayer extends StatefulWidget {
 
 class _VolcanoAshfallLayerState extends State<VolcanoAshfallLayer> {
   Timer? _windowTimer;
+  AppLifecycleListener? _lifecycle;
   DateTime _now = DateTime.now();
 
   @override
   void initState() {
     super.initState();
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      _lifecycle = AppLifecycleListener(onShow: _refreshWindow);
+    }
     _syncTimer();
   }
 
@@ -59,6 +64,7 @@ class _VolcanoAshfallLayerState extends State<VolcanoAshfallLayer> {
 
   @override
   void dispose() {
+    _lifecycle?.dispose();
     _windowTimer?.cancel();
     super.dispose();
   }
@@ -72,9 +78,14 @@ class _VolcanoAshfallLayerState extends State<VolcanoAshfallLayer> {
       _windowTimer = null;
       return;
     }
-    _windowTimer ??= Timer.periodic(const Duration(seconds: 30), (_) {
-      if (mounted) setState(() => _now = DateTime.now());
-    });
+    _windowTimer ??= Timer.periodic(
+      const Duration(seconds: 30),
+      (_) => _refreshWindow(),
+    );
+  }
+
+  void _refreshWindow() {
+    if (mounted && _windowTimer != null) setState(() => _now = DateTime.now());
   }
 
   @override

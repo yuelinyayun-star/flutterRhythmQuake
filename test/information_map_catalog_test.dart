@@ -3,7 +3,9 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutterrhythmquake/models/quake_message.dart';
+import 'package:flutterrhythmquake/services/native_unified_event_owner.dart';
 import 'package:flutterrhythmquake/services/quake_event_adapter.dart';
+import 'package:flutterrhythmquake/services/sources/eqlist/eqlist_manager.dart';
 import 'package:flutterrhythmquake/services/sources/eqlist/jma_eqlist_service.dart';
 import 'package:flutterrhythmquake/services/sources/eqlist/cwa_eqlist_service.dart';
 import 'package:http/http.dart' as http;
@@ -53,6 +55,64 @@ void main() {
       }
       expect(observed, greaterThan(5));
       expect(file.readAsBytesSync(), bytes);
+    },
+  );
+  test(
+    'Wolfx JMA summaries preserve regions observed through P2P HTTP',
+    () async {
+      final bytes = File(
+        'test/fixtures/jma_camera_20261030/p2p_history.original.json',
+      ).readAsBytesSync();
+      final service = JmaEqlistService.forTesting(
+        MockClient(
+          (_) async => http.Response.bytes(
+            bytes,
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          ),
+        ),
+      );
+      var p2pRows = <QuakeMessage>[];
+      service.onListUpdated = (rows) => p2pRows = rows;
+      await service.fetch();
+      final detail = p2pRows.firstWhere(
+        (row) =>
+            row.eventId == '2026-10-30 17:45:00' &&
+            row.informationMap!.warnArea.isNotEmpty,
+      );
+      final original = File(
+        'test/fixtures/event_render_20261104/wolfx-jma.original.json',
+      ).readAsStringSync(encoding: utf8);
+      final summaries = QuakeEventAdapter.convertWolfxJmaEqlist(
+        jsonDecode(original) as Map<String, dynamic>,
+      );
+      final summary = summaries.singleWhere(
+        (row) => row.eventId == '20261030174600',
+      );
+      expect(summary.informationMap, isNull);
+      expect(detail.location, summary.location);
+      final manager = EqlistManager();
+      final owner = NativeUnifiedEventOwner.supported
+          ? NativeUnifiedEventOwner(onBatch: (_, _) {})
+          : null;
+      addTearDown(() {
+        manager.onJmaObservedMapBindings = null;
+        manager.updateJmaList(const []);
+        owner?.dispose();
+      });
+      for (final binding in [
+        null,
+        if (owner != null) owner.jmaObservedMapBindings,
+      ]) {
+        manager.onJmaObservedMapBindings = binding;
+        manager.updateJmaList([detail]);
+        manager.updateJmaList(summaries);
+        final retained = manager.jmaList.singleWhere(
+          (row) => row.eventId == summary.eventId,
+        );
+        expect(retained.informationMap, same(detail.informationMap));
+        expect(retained.toMap()..remove('informationMap'), summary.toMap());
+      }
     },
   );
   test(

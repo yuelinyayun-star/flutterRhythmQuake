@@ -1670,8 +1670,17 @@ class _DebugPageState extends State<DebugPage> {
               'History: ${history.length}',
               'Estimate: ${estimate == null ? "--" : "${estimate.latitude.toStringAsFixed(3)}, ${estimate.longitude.toStringAsFixed(3)}"}',
               'Depth: ${estimate?.depthKm == null ? "--" : estimate!.depthKm!.toStringAsFixed(1)} km',
-              'Confidence: ${estimate == null ? "--" : estimate.confidence.toStringAsFixed(2)}',
+              'Confidence: ${estimate == null || estimate.diagnostics['confidence_available'] == false ? "--" : estimate.confidence.toStringAsFixed(2)}',
               'Method: ${estimate?.method ?? "--"}',
+              if (estimate?.method == 'nied_srev_hyp_rust_v1') ...[
+                'Published M: ${estimate?.magnitude?.toStringAsFixed(2) ?? "--"}',
+                'SREV original M: ${(estimate?.diagnostics['srev_original_magnitude'] as num?)?.toStringAsFixed(2) ?? "--"}',
+                'Magnitude model: ${estimate?.diagnostics['magnitude_model'] ?? "--"}',
+                'RQ peak M: ${(estimate?.diagnostics['rq_magnitude_shadow'] as num?)?.toStringAsFixed(2) ?? "--"}',
+                'RQ current M: ${(estimate?.diagnostics['rq_magnitude_shadow_current'] as num?)?.toStringAsFixed(2) ?? "--"}',
+                'RQ peak I: ${(estimate?.diagnostics['rq_magnitude_shadow_peak'] as num?)?.toStringAsFixed(2) ?? "--"}',
+                'RQ D: ${(estimate?.diagnostics['rq_magnitude_shadow_distance_km'] as num?)?.toStringAsFixed(1) ?? "--"} km',
+              ],
               'Support: ${estimate?.supportingStationCount ?? 0}',
               if (estimate?.originTime != null)
                 'Origin: ${_fmtTime(estimate!.originTime!)}',

@@ -31,6 +31,8 @@ class NativeUnifiedEventOwner {
     bool suppressEffects = false,
   }) {}
   void send(Map<String, dynamic> command) {}
+  void replaceProductSlot(String source, UnifiedQuakeData? event) =>
+      throw UnsupportedError('Native unified events unavailable');
   dynamic query(
     String op, {
     UnifiedQuakeData? event,
@@ -45,6 +47,11 @@ class NativeUnifiedEventOwner {
       throw UnsupportedError('Native unified events unavailable');
   dynamic queryRaw(Map<String, dynamic> command) => null;
   void dispose() {}
+  List<int?> jmaObservedMapBindings(
+    List<QuakeMessage> summaries,
+    List<QuakeMessage> reports,
+  ) => throw UnsupportedError('Native unified events are unavailable');
+
   ({List<QuakeMessage> rows, int notifications}) upsertBucket(
     String bucket,
     List<QuakeMessage> current,

@@ -44,7 +44,9 @@ class WhewsService extends BaseSourceService {
   static const String enabledPreferenceKey = 'api_source_whews_enabled';
   static const String apiAuthorizedPreferenceKey =
       'api_source_whews_authorized';
-  static const String aggregateUrl = 'wss://api.beecld.com/ws/all';
+  // 当前国内站的 /ws/all 已合并 CEA/CEA-PR 与其他预警、情报源。
+  // 测站仍按各自的专用路径由 BackgroundStationConnection 管理。
+  static const String aggregateUrl = 'wss://api.2v8.cn/ws/all';
   static const defaultServerPreferenceKey = 'whews_default_server_index';
   static List<String> get serverOptions => [
     for (final url
@@ -55,9 +57,6 @@ class WhewsService extends BaseSourceService {
             as List)
       Uri.parse(url as String).host,
   ];
-  // CEA/CEA-PR are not included in the overseas /ws/all aggregate; connect
-  // the domestic node separately per https://api.beecld.com/#overview.
-  static const String ceaAggregateUrl = 'wss://api.2v8.cn/ws/cea_all';
   static const int adapterOrigin = 3;
   static const Set<String> tsunamiSources = {
     'tsunami',
@@ -73,7 +72,6 @@ class WhewsService extends BaseSourceService {
   final DateTime Function() _now;
   final WebSocketChannel Function(Uri)? _socketFactory;
   WhewsSocketClient? _aggregateClient;
-  WhewsSocketClient? _ceaClient;
   final LinkedHashSet<String> _seenFrames = LinkedHashSet<String>();
   final Map<String, WhewsSocketState> _states = {};
   final JmaAshfallForecastService _ashfallForecastService;
@@ -96,10 +94,12 @@ class WhewsService extends BaseSourceService {
   @override
   String get name => 'WHEWS';
 
+  bool get hasFullEewCoverage =>
+      _states[aggregateUrl] == WhewsSocketState.connected;
+
   void setDefaultServerIndex(int index) {
     if (index < 0 || index >= serverOptions.length) return;
     _defaultServerIndex = index;
-    // The CEA-only connection is complementary, not an interchangeable node.
     _aggregateClient?.setDefaultServerIndex(index);
   }
 
@@ -121,7 +121,6 @@ class WhewsService extends BaseSourceService {
       return;
     }
     _aggregateClient?.setApiToken(next);
-    _ceaClient?.setApiToken(next);
     if (_connectionRequested && !_running) {
       _openClients();
     }
@@ -144,14 +143,11 @@ class WhewsService extends BaseSourceService {
     _connectionGeneration++;
     _states
       ..clear()
-      ..[aggregateUrl] = WhewsSocketState.connecting
-      ..[ceaAggregateUrl] = WhewsSocketState.connecting;
+      ..[aggregateUrl] = WhewsSocketState.connecting;
     onStatusChanged?.call(SourceStatus.connecting);
     _aggregateClient = _createClient(aggregateUrl);
     _aggregateClient!.setDefaultServerIndex(_defaultServerIndex);
-    _ceaClient = _createClient(ceaAggregateUrl);
     _aggregateClient!.start();
-    _ceaClient!.start();
   }
 
   WhewsSocketClient _createClient(String url) {
@@ -637,9 +633,7 @@ class WhewsService extends BaseSourceService {
     _connectionGeneration++;
     _running = false;
     _aggregateClient?.dispose();
-    _ceaClient?.dispose();
     _aggregateClient = null;
-    _ceaClient = null;
     _states.clear();
     _seenFrames.clear();
     _ashfallFetches.clear();

@@ -19,19 +19,26 @@ pub fn retry(index: usize, seconds: u64, count: usize, code: u32) -> Option<(usi
     let delay = if code == 4503 { seconds.max(15) } else { seconds };
     Some((next, delay, (delay * 2).min(300)))
 }
+fn shared_path(path: &str) -> bool {
+    matches!(path, "/ws/all" | "/ws/cea_all" | "/ws/nied" | "/ws/snet" | "/ws/kma_station")
+}
 fn execute(v: &Value) -> Result<Value, String> {
     match v["op"].as_str().unwrap_or("") {
         "endpoints" => {
             let original = v["url"].as_str().ok_or("Invalid URL")?;
-            // Only the shared feeds currently consumed by this application.
-            // CEA-only routes and arbitrary/custom endpoints remain untouched.
-            let prefix = format!("wss://{PRIMARY}");
-            let shared = original.strip_prefix(&prefix).is_some_and(|suffix| {
-                let path = suffix.split('?').next().unwrap_or("");
-                matches!(path, "/ws/all" | "/ws/nied" | "/ws/snet" | "/ws/kma_station")
-            });
-            Ok(if shared { json!([original, original.replacen(PRIMARY, BACKUP, 1)]) }
-                else { json!([original]) })
+            // Keep the requested server first, then use the other documented
+            // server as its failover. CEA/CEA-PR has the same contract when
+            // its dedicated endpoint is used.
+            let endpoint = |host: &str, other: &str| {
+                let prefix = format!("wss://{host}");
+                original.strip_prefix(&prefix).and_then(|suffix| {
+                    let path = suffix.split('?').next().unwrap_or("");
+                    shared_path(path).then(|| json!([original, original.replacen(host, other, 1)]))
+                })
+            };
+            Ok(endpoint(PRIMARY, BACKUP)
+                .or_else(|| endpoint(BACKUP, PRIMARY))
+                .unwrap_or_else(|| json!([original])))
         }
         "retry" => {
             let index = v["index"].as_u64().ok_or("Invalid index")? as usize;
@@ -89,12 +96,20 @@ mod tests {
         assert_eq!(retry(0,300,1,0), Some((0,300,300)));
     }
     #[test]
-    fn only_documented_shared_endpoints_have_a_backup() {
+    fn documented_shared_endpoints_have_ordered_failover() {
         for path in ["all","nied","snet","kma_station"] {
             let result = execute(&json!({"op":"endpoints","url":format!("wss://{PRIMARY}/ws/{path}?lang=zh")})).unwrap();
             assert_eq!(result[1], format!("wss://{BACKUP}/ws/{path}?lang=zh"));
+            let reverse = execute(&json!({"op":"endpoints","url":format!("wss://{BACKUP}/ws/{path}?lang=zh")})).unwrap();
+            assert_eq!(reverse[1], format!("wss://{PRIMARY}/ws/{path}?lang=zh"));
         }
-        for url in ["wss://api.2v8.cn/ws/cea_all","wss://api.beecld.com/ws/cea_all","ws://localhost/ws/all","wss://api.beecld.com.evil/ws/all"] {
+        for path in ["cea_all"] {
+            let result = execute(&json!({"op":"endpoints","url":format!("wss://{PRIMARY}/ws/{path}")})).unwrap();
+            assert_eq!(result, json!([format!("wss://{PRIMARY}/ws/{path}"), format!("wss://{BACKUP}/ws/{path}")]));
+            let reverse = execute(&json!({"op":"endpoints","url":format!("wss://{BACKUP}/ws/{path}")})).unwrap();
+            assert_eq!(reverse, json!([format!("wss://{BACKUP}/ws/{path}"), format!("wss://{PRIMARY}/ws/{path}")]));
+        }
+        for url in ["ws://localhost/ws/all","wss://api.beecld.com.evil/ws/all"] {
             assert_eq!(execute(&json!({"op":"endpoints","url":url})).unwrap(), json!([url]));
         }
         assert_eq!(host(0), PRIMARY); assert_eq!(host(1), BACKUP);
