@@ -1,0 +1,11 @@
+services:
+  nexusdock:
+    image: ${NEXUS_IMAGE:-ghcr.io/uvwt/nexusdock:latest}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${NEXUS_HTTP_PORT:-18777}:18777"
+    environment:
+      NEXUS_PUBLIC_URL: ${NEXUS_PUBLIC_URL:-https://mcp.yuelinrhythm.top}
+    volumes:
+      - ${NEXUS_DATA_DIR:-./nexus-data}:/var/lib/nexus
+      - ${RECALL_REPO_DIR:-./recall}:/recall

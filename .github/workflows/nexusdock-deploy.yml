@@ -1,0 +1,154 @@
+name: Deploy NexusDock control plane
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rhythmquake-nexusdock-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SSH client tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+
+      - name: Deploy NexusDock files and reverse proxy
+        env:
+          SSHPASS: ${{ secrets.RHYTHMQUAKE_SSH_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SSHPASS" ]; then
+            echo 'RHYTHMQUAKE_SSH_PASSWORD is required.' >&2
+            exit 1
+          fi
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          ssh-keyscan -T 10 -H 64.90.20.78 >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          remote=(sshpass -e ssh -o StrictHostKeyChecking=yes -o ConnectTimeout=15 root@64.90.20.78)
+          "${remote[@]}" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          install -d -m 0750 /opt/rhythmquake/nexusdock
+          install -d -m 0750 /opt/rhythmquake/nexusdock/nexus-data
+          install -d -m 0750 /opt/rhythmquake/nexusdock/recall
+          REMOTE
+          tar -C server/nexusdock -czf - compose.yaml .env.example README.md | \
+            "${remote[@]}" 'tar -xz -C /opt/rhythmquake/nexusdock'
+          "${remote[@]}" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/rhythmquake/nexusdock
+          if ! command -v docker >/dev/null 2>&1; then
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io docker-compose-plugin
+            systemctl enable --now docker
+          fi
+          if ! docker compose version >/dev/null 2>&1; then
+            echo 'Docker Compose plugin is unavailable.' >&2
+            exit 1
+          fi
+          cat > .env <<'ENV'
+          NEXUS_PUBLIC_URL=https://mcp.yuelinrhythm.top
+          NEXUS_HTTP_PORT=18777
+          NEXUS_DATA_DIR=/opt/rhythmquake/nexusdock/nexus-data
+          RECALL_REPO_DIR=/opt/rhythmquake/nexusdock/recall
+          ENV
+          chown -R 10001:10001 /opt/rhythmquake/nexusdock/nexus-data /opt/rhythmquake/nexusdock/recall
+          docker compose pull
+          docker compose up -d
+          curl --fail --silent --show-error --max-time 30 http://127.0.0.1:18777/health
+          cat > /etc/nginx/conf.d/rhythmquake-mcp.conf <<'CONF'
+          server {
+              listen 80;
+              server_name mcp.yuelinrhythm.top;
+              location /.well-known/acme-challenge/ {
+                  root /var/www/letsencrypt;
+              }
+              location / {
+                  proxy_pass http://127.0.0.1:18777;
+                  proxy_http_version 1.1;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Forwarded-Host $host;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header Upgrade $http_upgrade;
+                  proxy_set_header Connection "upgrade";
+                  proxy_read_timeout 3600s;
+                  proxy_send_timeout 3600s;
+              }
+          }
+          CONF
+          nginx -t
+          systemctl enable --now nginx
+          systemctl reload nginx
+          REMOTE
+
+      - name: Enable certificate for MCP hostname
+        env:
+          SSHPASS: ${{ secrets.RHYTHMQUAKE_SSH_PASSWORD }}
+        run: |
+          set -euo pipefail
+          records=$(getent ahostsv4 mcp.yuelinrhythm.top 2>/dev/null | awk '{print $1}' | sort -u || true)
+          if [ -z "$records" ]; then
+            echo 'mcp.yuelinrhythm.top has no visible DNS record; HTTPS setup is pending.'
+            exit 0
+          fi
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          ssh-keyscan -T 10 -H 64.90.20.78 >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          sshpass -e ssh -o StrictHostKeyChecking=yes -o ConnectTimeout=15 root@64.90.20.78 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          mkdir -p /var/www/letsencrypt
+          if ! command -v certbot >/dev/null 2>&1; then
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y certbot
+          fi
+          certbot certonly --webroot -w /var/www/letsencrypt \
+            -d mcp.yuelinrhythm.top --non-interactive --agree-tos \
+            --register-unsafely-without-email --keep-until-expiring
+          cat > /etc/nginx/conf.d/rhythmquake-mcp.conf <<'CONF'
+          server {
+              listen 80;
+              server_name mcp.yuelinrhythm.top;
+              location /.well-known/acme-challenge/ {
+                  root /var/www/letsencrypt;
+              }
+              location / {
+                  return 301 https://$host$request_uri;
+              }
+          }
+          server {
+              listen 443 ssl;
+              server_name mcp.yuelinrhythm.top;
+              ssl_certificate /etc/letsencrypt/live/mcp.yuelinrhythm.top/fullchain.pem;
+              ssl_certificate_key /etc/letsencrypt/live/mcp.yuelinrhythm.top/privkey.pem;
+              ssl_protocols TLSv1.2 TLSv1.3;
+              location /.well-known/acme-challenge/ {
+                  root /var/www/letsencrypt;
+              }
+              location / {
+                  proxy_pass http://127.0.0.1:18777;
+                  proxy_http_version 1.1;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Forwarded-Host $host;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header Upgrade $http_upgrade;
+                  proxy_set_header Connection "upgrade";
+                  proxy_read_timeout 3600s;
+                  proxy_send_timeout 3600s;
+              }
+          }
+          CONF
+          nginx -t
+          systemctl reload nginx
+          REMOTE
