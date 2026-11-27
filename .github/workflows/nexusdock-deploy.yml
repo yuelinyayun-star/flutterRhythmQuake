@@ -22,6 +22,7 @@ jobs:
       - name: Deploy NexusDock files and reverse proxy
         env:
           SSHPASS: ${{ secrets.RHYTHMQUAKE_SSH_PASSWORD }}
+          NEXUS_ADMIN_PASSWORD: ${{ secrets.NEXUS_ADMIN_PASSWORD }}
         run: |
           set -euo pipefail
           if [ -z "$SSHPASS" ]; then
@@ -33,7 +34,12 @@ jobs:
           ssh-keyscan -T 10 -H 64.90.20.78 >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
           remote=(sshpass -e ssh -o StrictHostKeyChecking=yes -o ConnectTimeout=15 root@64.90.20.78)
-          "${remote[@]}" 'bash -se' <<'REMOTE'
+          if [ -n "$NEXUS_ADMIN_PASSWORD" ] && [ "${#NEXUS_ADMIN_PASSWORD}" -lt 12 ]; then
+            echo 'NEXUS_ADMIN_PASSWORD must be at least 12 characters.' >&2
+            exit 1
+          fi
+          admin_remote=(sshpass -e ssh -o StrictHostKeyChecking=yes -o ConnectTimeout=15 root@64.90.20.78 "NEXUS_ADMIN_PASSWORD=$(printf '%q' "$NEXUS_ADMIN_PASSWORD") bash -se")
+          "${admin_remote[@]}" <<'REMOTE'
           set -euo pipefail
           install -d -m 0750 /opt/rhythmquake/nexusdock
           install -d -m 0750 /opt/rhythmquake/nexusdock/nexus-data
@@ -41,7 +47,7 @@ jobs:
           REMOTE
           tar -C server/nexusdock -czf - compose.yaml .env.example README.md | \
             "${remote[@]}" 'tar -xz -C /opt/rhythmquake/nexusdock'
-          "${remote[@]}" 'bash -se' <<'REMOTE'
+          "${admin_remote[@]}" <<'REMOTE'
           set -euo pipefail
           cd /opt/rhythmquake/nexusdock
           if ! command -v docker >/dev/null 2>&1; then
@@ -63,6 +69,13 @@ jobs:
           docker compose pull
           docker compose up -d
           curl --fail --silent --show-error --max-time 30 http://127.0.0.1:18777/health
+          if [ -n "${NEXUS_ADMIN_PASSWORD:-}" ]; then
+            auth_status=$(curl --fail --silent --show-error --max-time 10 http://127.0.0.1:18777/v1/auth/status)
+            if printf '%s' "$auth_status" | grep -q '"initialized":false'; then
+              printf '%s\n%s\n' "$NEXUS_ADMIN_PASSWORD" "$NEXUS_ADMIN_PASSWORD" |
+                docker compose run -T --rm nexusdock admin init admin
+            fi
+          fi
           cat > /etc/nginx/conf.d/rhythmquake-mcp.conf <<'CONF'
           server {
               listen 80;

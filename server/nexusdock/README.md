@@ -18,9 +18,9 @@ MCP ports do not need public firewall rules.
 
 ## First-time setup
 
-The deployment workflow starts the service and installs the HTTPS proxy. The
-administrator account must be initialized separately by an operator with server
-access. Credentials are never stored in this repository.
+The deployment workflow starts the service, installs the HTTPS proxy, and
+initializes the administrator when the `NEXUS_ADMIN_PASSWORD` GitHub Secret is
+present. Credentials are never stored in this repository.
 
 From `/opt/rhythmquake/nexusdock` on the server:
 
