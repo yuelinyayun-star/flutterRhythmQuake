@@ -111,9 +111,20 @@ jobs:
             apt-get update
             DEBIAN_FRONTEND=noninteractive apt-get install -y certbot
           fi
-          certbot certonly --webroot -w /var/www/letsencrypt \
-            -d mcp.yuelinrhythm.top --non-interactive --agree-tos \
-            --register-unsafely-without-email --keep-until-expiring
+          for attempt in $(seq 1 24); do
+            if [ -f /etc/letsencrypt/live/mcp.yuelinrhythm.top/fullchain.pem ]; then
+              break
+            fi
+            if pgrep -x certbot >/dev/null 2>&1; then
+              sleep 5
+              continue
+            fi
+            certbot certonly --webroot -w /var/www/letsencrypt \
+              -d mcp.yuelinrhythm.top --non-interactive --agree-tos \
+              --register-unsafely-without-email --keep-until-expiring
+            break
+          done
+          test -f /etc/letsencrypt/live/mcp.yuelinrhythm.top/fullchain.pem
           cat > /etc/nginx/conf.d/rhythmquake-mcp.conf <<'CONF'
           server {
               listen 80;
