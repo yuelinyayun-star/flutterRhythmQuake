@@ -50,7 +50,7 @@ try {
             if ($null -ne $tunnel) { Write-Status ('SSH tunnel exited: ' + $tunnel.ExitCode) }
             Rotate-Log 'ssh.out.log'
             Rotate-Log 'ssh.err.log'
-            $arguments = @('-N', '-T', '-v', '-i', ('"' + (Join-Path $root 'private\cloud_ed25519') + '"'), '-o', ('UserKnownHostsFile="' + (Join-Path $root 'private\known_hosts') + '"'), '-o', 'StrictHostKeyChecking=yes', '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes', '-o', 'ExitOnForwardFailure=yes', '-o', 'ServerAliveInterval=20', '-o', 'ServerAliveCountMax=3', '-o', 'ConnectTimeout=10', '-R', '127.0.0.1:18769:127.0.0.1:18770', 'rq-mcp-cloud@64.90.20.78')
+            $arguments = @('-N', '-T', '-v', '-p', '2222', '-i', ('"' + (Join-Path $root 'private\cloud_ed25519') + '"'), '-o', ('UserKnownHostsFile="' + (Join-Path $root 'private\known_hosts') + '"'), '-o', 'StrictHostKeyChecking=yes', '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes', '-o', 'ExitOnForwardFailure=yes', '-o', 'ServerAliveInterval=20', '-o', 'ServerAliveCountMax=3', '-o', 'ConnectTimeout=10', '-R', '127.0.0.1:18769:127.0.0.1:18770', 'rq-mcp-cloud@64.90.20.78')
             $tunnel = Start-Process -FilePath $ssh -ArgumentList $arguments -WorkingDirectory $root -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $logs 'ssh.out.log') -RedirectStandardError (Join-Path $logs 'ssh.err.log')
             Write-Status ('SSH tunnel pid ' + $tunnel.Id)
         }

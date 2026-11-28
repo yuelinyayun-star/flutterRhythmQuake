@@ -29,7 +29,7 @@ def main():
     c = paramiko.SSHClient()
     c.load_system_host_keys()
     c.set_missing_host_key_policy(paramiko.RejectPolicy())
-    c.connect(host, username='root', password=os.environ['RQ_RELAY_PASSWORD'],
+    c.connect(host, port=2222, username='root', password=os.environ['RQ_RELAY_PASSWORD'],
               allow_agent=False, look_for_keys=False, timeout=15)
     def run(command):
         _, out, err = c.exec_command(command, timeout=20)

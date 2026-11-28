@@ -57,7 +57,7 @@ def check(target):
 
 def run(root):
     settings = json.loads((root/'private/session.json').read_text(encoding='utf8'))
-    targets = ['tcp://'+settings['host']+':22', 'https://agent.yuelinrhythm.top/']
+    targets = ['tcp://'+settings['host']+':2222', 'https://agent.yuelinrhythm.top/']
     file = root/'network-targets.txt'
     if file.exists():
         targets.extend(s.strip() for s in file.read_text(encoding='utf-8-sig').splitlines() if s.strip() and not s.lstrip().startswith('#'))

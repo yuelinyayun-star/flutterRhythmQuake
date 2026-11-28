@@ -192,7 +192,7 @@ def main():
         args = [str(ssh), '-N', '-T', '-v', '-i', str(ROOT/'private/device_ed25519'),
             '-o', 'UserKnownHostsFile="'+str(ROOT/'private/known_hosts')+'"', '-o', 'StrictHostKeyChecking=yes',
             '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes', '-o', 'ExitOnForwardFailure=yes',
-            '-o', 'ConnectTimeout=12', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2',
+            '-p', '2222', '-o', 'ConnectTimeout=12', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2',
             '-R', f'127.0.0.1:{settings["remotePort"]}:127.0.0.1:{port}',
             settings['deviceUser']+'@'+settings['host']]
         print('[2/2] Connecting temporary outbound tunnel...', flush=True)

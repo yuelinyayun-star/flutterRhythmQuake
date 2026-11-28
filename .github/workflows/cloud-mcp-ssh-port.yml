@@ -1,0 +1,49 @@
+name: Enable Cloud MCP SSH port
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rhythmquake-cloud-mcp-ssh-port
+  cancel-in-progress: false
+
+jobs:
+  enable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SSH client tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+
+      - name: Enable restricted SSH listener on port 2222
+        env:
+          SSHPASS: ${{ secrets.RHYTHMQUAKE_SSH_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SSHPASS" ]; then
+            echo 'RHYTHMQUAKE_SSH_PASSWORD is required.' >&2
+            exit 1
+          fi
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          ssh-keyscan -T 10 -H 64.90.20.78 >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          sshpass -e ssh -o StrictHostKeyChecking=yes -o ConnectTimeout=15 root@64.90.20.78 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          if ! sshd -T | awk '$1 == "port" {print $2}' | grep -qx 2222; then
+            install -d -m 0755 /etc/ssh/sshd_config.d
+            cat > /etc/ssh/sshd_config.d/99-rhythmquake-cloud-mcp-port.conf <<'CONF'
+          Port 2222
+          CONF
+          fi
+          if command -v ufw >/dev/null 2>&1 && ufw status | grep -q '^Status: active'; then
+            ufw allow 2222/tcp
+          fi
+          sshd -t
+          systemctl reload ssh
+          ss -ltn | grep -E '(^|[[:space:]])[^[:space:]]+:2222[[:space:]]'
+          REMOTE

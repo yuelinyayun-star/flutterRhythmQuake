@@ -17,7 +17,7 @@ ssh = Path(os.environ['SystemRoot'])/'System32/OpenSSH/ssh.exe'
 args = [str(ssh), '-N', '-T', '-i', str(PRIVATE/'reader_ed25519'),
     '-o', 'UserKnownHostsFile="'+str(PRIVATE/'known_hosts')+'"', '-o', 'StrictHostKeyChecking=yes',
     '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes', '-o', 'ExitOnForwardFailure=yes',
-    '-o', 'ConnectTimeout=12', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2',
+    '-p', '2222', '-o', 'ConnectTimeout=12', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2',
     '-L', f'127.0.0.1:{settings["readerPort"]}:127.0.0.1:{settings["remotePort"]}',
     settings['readerUser']+'@'+settings['host']]
 with (PRIVATE/'reader.err.log').open('wb') as err:
